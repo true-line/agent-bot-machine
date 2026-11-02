@@ -649,7 +649,7 @@ func buildFullDist(repoRoot, ver, distDir string) error {
 		if goos == "windows" {
 			archiveBytes, err = packReleaseZip(binName, binBytes, licBytes)
 		} else {
-			archiveBytes, err = packReleaseTarGz(binName, binBytes, licBytes)
+			archiveBytes, err = packTargetTarGz(goos, ver, binName, binBytes, licBytes)
 		}
 		if err != nil {
 			return err
@@ -741,7 +741,46 @@ func compileCoreBinary(repoRoot, ver, goos, goarch, outPath string) error {
 
 var releaseArchiveEpoch = time.Date(1980, time.January, 1, 0, 0, 0, 0, time.UTC)
 
+// packTargetTarGz packs a tar.gz release archive for goos, adding the
+// AgentBotMachine.app entries that mm-release build writes on darwin.
+func packTargetTarGz(goos, ver, binName string, binBytes, licBytes []byte) ([]byte, error) {
+	if goos != "darwin" {
+		return packReleaseTarGz(binName, binBytes, licBytes)
+	}
+	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>managed-machine</string>
+	<key>CFBundleIdentifier</key>
+	<string>%s</string>
+	<key>CFBundleShortVersionString</key>
+	<string>%s</string>
+</dict>
+</plist>
+`, darwinBundleID, ver)
+	return packTarGzItems([]releaseTarItem{
+		{name: darwinBundleInfoPlist, mode: 0o644, data: []byte(plist)},
+		{name: darwinBundleMainExe, mode: 0o755, data: binBytes},
+		{name: "LICENSE", mode: 0o644, data: licBytes},
+		{name: binName, mode: 0o755, data: binBytes},
+	})
+}
+
+type releaseTarItem struct {
+	name string
+	mode int64
+	data []byte
+}
+
 func packReleaseTarGz(binName string, binBytes, licBytes []byte) ([]byte, error) {
+	return packTarGzItems([]releaseTarItem{
+		{name: "LICENSE", mode: 0o644, data: licBytes},
+		{name: binName, mode: 0o755, data: binBytes},
+	})
+}
+
+func packTarGzItems(items []releaseTarItem) ([]byte, error) {
 	var buf bytes.Buffer
 	gz, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 	if err != nil {
@@ -753,15 +792,6 @@ func packReleaseTarGz(binName string, binBytes, licBytes []byte) ([]byte, error)
 	gz.ModTime = time.Time{}
 	gz.OS = 255
 	tw := tar.NewWriter(gz)
-	type item struct {
-		name string
-		mode int64
-		data []byte
-	}
-	items := []item{
-		{name: "LICENSE", mode: 0o644, data: licBytes},
-		{name: binName, mode: 0o755, data: binBytes},
-	}
 	for _, it := range items {
 		hdr := &tar.Header{
 			Typeflag: tar.TypeReg,
