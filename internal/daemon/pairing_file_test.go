@@ -22,6 +22,26 @@ func peerPath(t *testing.T, dir, client, suffix string) string {
 	return filepath.Join(peers, client+suffix)
 }
 
+func TestEnrollReadsHomeDropWhenStateDirDenied(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read a 0700 directory")
+	}
+	userHome := t.TempDir()
+	adminHome := t.TempDir()
+	t.Setenv("AGENT_MACHINE_CHANNEL", filepath.Join(t.TempDir(), "channel"))
+	pubPath, err := PairClient(userHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hidden := filepath.Join(stateDir(userHome), "client.pub")
+	if err := os.Chmod(stateDir(userHome), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnrollClient(adminHome, "terminal", hidden); err != nil {
+		t.Fatalf("enroll hidden path: %v (drop %s)", err, pubPath)
+	}
+}
+
 func TestLoadPairingKeepsLiveUntilConfirm(t *testing.T) {
 	dir := t.TempDir()
 	livePub, _, err := ed25519.GenerateKey(nil)

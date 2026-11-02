@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // pairingClients are the only live peers. terminal is the Terminal thin
@@ -80,7 +81,146 @@ func PairTerminal(root string) (string, error) {
 	if _, err := loadOrCreateKey(filepath.Join(dir, "daemon.key")); err != nil {
 		return "", err
 	}
+	pub, err := mintClientKey(filepath.Join(dir, "client.key"))
+	if err != nil {
+		return "", err
+	}
+	if err := stageClient(peers, "terminal", pub); err != nil {
+		return "", err
+	}
+	if _, err := loadPairing(dir); err != nil {
+		return "", err
+	}
+	return filepath.Join(peers, "terminal.pub"), nil
+}
+
+// PairClient mints client.key and client.pub in the caller's state
+// directory. It does not write the daemon's peers/ — that is EnrollClient.
+func PairClient(root string) (string, error) {
+	dir := stateDir(root)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := stripDarwinACL(dir); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", err
+	}
 	clientKeyPath := filepath.Join(dir, "client.key")
+	pub, err := mintClientKey(clientKeyPath)
+	if err != nil {
+		return "", err
+	}
+	if err := writePublicFile(filepath.Join(dir, "client.pub"), pub, 0o600); err != nil {
+		return "", err
+	}
+	// ~/.config is often 0700, so the enroll copy lives in the account home
+	// (0755) where the prefix owner can read it.
+	homePub := filepath.Join(root, "agent-machine.client.pub")
+	if err := writePublicFile(homePub, pub, 0o644); err != nil {
+		return "", err
+	}
+	if ch := ChannelDir(); ch != "" {
+		if src, err := os.ReadFile(filepath.Join(ch, "daemon.pub")); err == nil && len(src) == ed25519.PublicKeySize {
+			_ = writePublicFile(filepath.Join(dir, "daemon.pub"), ed25519.PublicKey(src), 0o600)
+		}
+		if err := ensureEnrollDir(ch); err == nil {
+			drop := filepath.Join(ch, "enroll", "terminal.pub")
+			if err := writePublicFile(drop, pub, 0o644); err == nil {
+				return drop, nil
+			}
+		}
+	}
+	return homePub, nil
+}
+
+func loadPublicForEnroll(pubPath string) (ed25519.PublicKey, error) {
+	pub, err := loadPublic(pubPath)
+	if err == nil {
+		return pub, nil
+	}
+	if !isDenied(err) {
+		return nil, err
+	}
+	for _, alt := range enrollFallbacks(pubPath) {
+		if pub, altErr := loadPublic(alt); altErr == nil {
+			return pub, nil
+		}
+	}
+	return nil, err
+}
+
+func enrollFallbacks(pubPath string) []string {
+	var out []string
+	if ch := ChannelDir(); ch != "" {
+		out = append(out, filepath.Join(ch, "enroll", "terminal.pub"))
+	}
+	if filepath.Base(pubPath) == "client.pub" {
+		state := filepath.Dir(pubPath)
+		if filepath.Base(state) == "agent-machine" && filepath.Base(filepath.Dir(state)) == ".config" {
+			out = append(out, filepath.Join(filepath.Dir(filepath.Dir(state)), "agent-machine.client.pub"))
+		}
+	}
+	return out
+}
+
+func isDenied(err error) bool {
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES)
+}
+
+func writePublicFile(path string, pub ed25519.PublicKey, mode os.FileMode) error {
+	_ = os.Remove(path)
+	if err := os.WriteFile(path, pub, mode); err != nil {
+		return err
+	}
+	if err := stripDarwinACL(path); err != nil {
+		return err
+	}
+	return os.Chmod(path, mode)
+}
+
+// EnrollClient stages a client public key from pubPath into the daemon
+// peers directory. client is terminal or agent-daemon.
+func EnrollClient(root, client, pubPath string) (string, error) {
+	if client == "" {
+		client = "terminal"
+	}
+	ok := false
+	for _, name := range pairingClients {
+		if name == client {
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return "", fmt.Errorf("client must be terminal or agent-daemon")
+	}
+	pub, err := loadPublicForEnroll(pubPath)
+	if err != nil {
+		return "", err
+	}
+	dir := stateDir(root)
+	if err := purgeLegacySharedState(dir, defaultLegacySharedDir(root), defaultKeyStore(filepath.Join(dir, "daemon.key"))); err != nil {
+		return "", err
+	}
+	peers, err := ensureStateDirAndPeers(dir)
+	if err != nil {
+		return "", err
+	}
+	if err := checkPairingFiles(peers); err != nil {
+		return "", err
+	}
+	if err := stageClient(peers, client, pub); err != nil {
+		return "", err
+	}
+	if _, err := loadPairing(dir); err != nil {
+		return "", err
+	}
+	return filepath.Join(peers, client+".pub"), nil
+}
+
+func mintClientKey(clientKeyPath string) (ed25519.PublicKey, error) {
 	seed, err := os.ReadFile(clientKeyPath)
 	defer zeroBytes(seed)
 	var priv ed25519.PrivateKey
@@ -90,47 +230,47 @@ func PairTerminal(root string) (string, error) {
 	case errors.Is(err, os.ErrNotExist):
 		_, priv, err = ed25519.GenerateKey(nil)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		newSeed := priv.Seed()
 		defer zeroBytes(newSeed)
 		_ = os.Remove(clientKeyPath)
 		if err := os.WriteFile(clientKeyPath, newSeed, 0o600); err != nil {
-			return "", err
+			return nil, err
 		}
 		if err := stripDarwinACL(clientKeyPath); err != nil {
-			return "", err
+			return nil, err
 		}
 		if err := os.Chmod(clientKeyPath, 0o600); err != nil {
-			return "", err
+			return nil, err
 		}
 	case err != nil:
-		return "", err
+		return nil, err
 	default:
-		return "", errors.New("client key has the wrong length")
+		return nil, errors.New("client key has the wrong length")
 	}
-	pub := priv.Public().(ed25519.PublicKey)
-	nextPath := filepath.Join(peers, "terminal.next")
-	confirmPath := filepath.Join(peers, "terminal.confirm")
+	return priv.Public().(ed25519.PublicKey), nil
+}
+
+func stageClient(peers, client string, pub ed25519.PublicKey) error {
+	nextPath := filepath.Join(peers, client+".next")
+	confirmPath := filepath.Join(peers, client+".confirm")
 	_ = os.Remove(nextPath)
 	if err := os.WriteFile(nextPath, pub, 0o600); err != nil {
-		return "", err
+		return err
 	}
 	if err := stripDarwinACL(nextPath); err != nil {
-		return "", err
+		return err
 	}
 	sum := sha256.Sum256(pub)
 	_ = os.Remove(confirmPath)
 	if err := os.WriteFile(confirmPath, []byte(hex.EncodeToString(sum[:])+"\n"), 0o600); err != nil {
-		return "", err
+		return err
 	}
 	if err := stripDarwinACL(confirmPath); err != nil {
-		return "", err
+		return err
 	}
-	if _, err := loadPairing(dir); err != nil {
-		return "", err
-	}
-	return filepath.Join(peers, "terminal.pub"), nil
+	return nil
 }
 
 // UnpairTerminal revokes the terminal pairing and removes client.key.

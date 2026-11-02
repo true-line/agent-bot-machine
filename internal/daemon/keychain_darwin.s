@@ -92,6 +92,11 @@ TEXT kc_SecTrustedApplicationValidateWithPath_trampoline<>(SB),NOSPLIT,$0-0
 GLOBL	·kc_SecTrustedApplicationValidateWithPath_trampoline_addr(SB), RODATA, $8
 DATA	·kc_SecTrustedApplicationValidateWithPath_trampoline_addr(SB)/8, $kc_SecTrustedApplicationValidateWithPath_trampoline<>(SB)
 
+TEXT kc_SecTrustedApplicationCopyData_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecTrustedApplicationCopyData(SB)
+GLOBL	·kc_SecTrustedApplicationCopyData_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecTrustedApplicationCopyData_trampoline_addr(SB)/8, $kc_SecTrustedApplicationCopyData_trampoline<>(SB)
+
 TEXT kc_SecAccessCreate_trampoline<>(SB),NOSPLIT,$0-0
 	JMP	kc_SecAccessCreate(SB)
 GLOBL	·kc_SecAccessCreate_trampoline_addr(SB), RODATA, $8
@@ -126,3 +131,43 @@ TEXT kc_SecKeychainItemFreeContent_trampoline<>(SB),NOSPLIT,$0-0
 	JMP	kc_SecKeychainItemFreeContent(SB)
 GLOBL	·kc_SecKeychainItemFreeContent_trampoline_addr(SB), RODATA, $8
 DATA	·kc_SecKeychainItemFreeContent_trampoline_addr(SB)/8, $kc_SecKeychainItemFreeContent_trampoline<>(SB)
+
+TEXT kc_SecKeychainCreate_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecKeychainCreate(SB)
+GLOBL	·kc_SecKeychainCreate_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecKeychainCreate_trampoline_addr(SB)/8, $kc_SecKeychainCreate_trampoline<>(SB)
+
+TEXT kc_SecKeychainOpen_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecKeychainOpen(SB)
+GLOBL	·kc_SecKeychainOpen_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecKeychainOpen_trampoline_addr(SB)/8, $kc_SecKeychainOpen_trampoline<>(SB)
+
+TEXT kc_SecKeychainUnlock_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecKeychainUnlock(SB)
+GLOBL	·kc_SecKeychainUnlock_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecKeychainUnlock_trampoline_addr(SB)/8, $kc_SecKeychainUnlock_trampoline<>(SB)
+
+TEXT kc_SecKeychainSetUserInteractionAllowed_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecKeychainSetUserInteractionAllowed(SB)
+GLOBL	·kc_SecKeychainSetUserInteractionAllowed_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecKeychainSetUserInteractionAllowed_trampoline_addr(SB)/8, $kc_SecKeychainSetUserInteractionAllowed_trampoline<>(SB)
+
+TEXT kc_SecKeychainCopyDefault_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecKeychainCopyDefault(SB)
+GLOBL	·kc_SecKeychainCopyDefault_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecKeychainCopyDefault_trampoline_addr(SB)/8, $kc_SecKeychainCopyDefault_trampoline<>(SB)
+
+TEXT kc_SecKeychainSetDefault_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecKeychainSetDefault(SB)
+GLOBL	·kc_SecKeychainSetDefault_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecKeychainSetDefault_trampoline_addr(SB)/8, $kc_SecKeychainSetDefault_trampoline<>(SB)
+
+TEXT kc_SecKeychainGetStatus_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecKeychainGetStatus(SB)
+GLOBL	·kc_SecKeychainGetStatus_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecKeychainGetStatus_trampoline_addr(SB)/8, $kc_SecKeychainGetStatus_trampoline<>(SB)
+
+TEXT kc_SecKeychainSetSettings_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecKeychainSetSettings(SB)
+GLOBL	·kc_SecKeychainSetSettings_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecKeychainSetSettings_trampoline_addr(SB)/8, $kc_SecKeychainSetSettings_trampoline<>(SB)

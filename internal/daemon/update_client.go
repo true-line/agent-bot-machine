@@ -11,9 +11,10 @@ import (
 )
 
 // TryUpdateForCaller refuses root, agent accounts, agent sessions, and a
-// foreign HOME before touching the client key or the daemon socket.
+// foreign HOME before touching the client key or the daemon socket. The
+// prefix owner check is not applied: the thin client runs in the user account.
 func TryUpdateForCaller(caller Caller, endpoint, keyPath, flavor string) (bool, Response, error) {
-	if caller.Refuse() != "" {
+	if caller.RefuseClient() != "" {
 		return false, Response{}, nil
 	}
 	return TryUpdate(endpoint, keyPath, flavor)
@@ -23,8 +24,14 @@ func TryUpdateForCaller(caller Caller, endpoint, keyPath, flavor string) (bool, 
 // the client key exists. A missing daemon or key returns handled false so the
 // legacy --update path can run. The nonce is single-use. Harness is terminal
 // so the receipt names this client. The response is accepted only when
-// daemon.pub, beside the client key, verifies it.
+// daemon.pub, beside the client key or on the channel, verifies it.
 func TryUpdate(endpoint, keyPath, flavor string) (bool, Response, error) {
+	return TryRPC(endpoint, keyPath, "update", flavor)
+}
+
+// TryRPC sends one signed request on the local channel. A missing daemon or
+// key returns handled false.
+func TryRPC(endpoint, keyPath, verb, name string) (bool, Response, error) {
 	seed, err := os.ReadFile(keyPath)
 	defer zeroBytes(seed)
 	if err != nil {
@@ -49,7 +56,7 @@ func TryUpdate(endpoint, keyPath, flavor string) (bool, Response, error) {
 	if err != nil {
 		return true, Response{}, err
 	}
-	req := Request{Verb: "update", Name: flavor, Harness: "terminal", Timestamp: time.Now().Unix(), Nonce: nonce}
+	req := Request{Verb: verb, Name: name, Harness: "terminal", Timestamp: time.Now().Unix(), Nonce: nonce}
 	if err := Sign(priv, &req); err != nil {
 		return true, Response{}, err
 	}
@@ -69,7 +76,7 @@ func TryUpdate(endpoint, keyPath, flavor string) (bool, Response, error) {
 	if err := json.Unmarshal(line, &res); err != nil {
 		return true, Response{}, err
 	}
-	pub, err := loadPublic(filepath.Join(filepath.Dir(keyPath), "daemon.pub"))
+	pub, err := loadDaemonPub(keyPath)
 	if err != nil {
 		return true, Response{}, err
 	}
@@ -77,4 +84,17 @@ func TryUpdate(endpoint, keyPath, flavor string) (bool, Response, error) {
 		return true, Response{}, errors.New("daemon response signature does not match")
 	}
 	return true, res, nil
+}
+
+func loadDaemonPub(keyPath string) (ed25519.PublicKey, error) {
+	pub, err := loadPublic(filepath.Join(filepath.Dir(keyPath), "daemon.pub"))
+	if err == nil {
+		return pub, nil
+	}
+	if ch := ChannelDir(); ch != "" {
+		if pub, chErr := loadPublic(filepath.Join(ch, "daemon.pub")); chErr == nil {
+			return pub, nil
+		}
+	}
+	return nil, err
 }

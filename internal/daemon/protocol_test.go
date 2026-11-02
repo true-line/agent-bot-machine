@@ -41,8 +41,12 @@ func TestGateAcceptsLiveKey(t *testing.T) {
 		t.Fatalf("id %q req %#v", id, req)
 	}
 	raw2 := signed(t, priv, Request{Verb: "status", Soul: "iron", Harness: "cursor", Timestamp: now.Unix(), Nonce: "n2"})
-	if _, id2, _ := g.verify(502, raw2); id2 != diag.DaemonPeerRefused {
-		t.Fatalf("expected non-owner peer uid 502 to be refused with %s, got %q", diag.DaemonPeerRefused, id2)
+	if _, id2, _ := g.verify(502, raw2); id2 != "" {
+		t.Fatalf("expected local uid 502 with a live pairing key to be accepted, got %q", id2)
+	}
+	raw3 := signed(t, priv, Request{Verb: "status", Soul: "iron", Harness: "cursor", Timestamp: now.Unix(), Nonce: "n3"})
+	if _, id3, _ := g.verify(-1, raw3); id3 != diag.DaemonPeerRefused {
+		t.Fatalf("expected a missing local identity to be refused with %s, got %q", diag.DaemonPeerRefused, id3)
 	}
 }
 
@@ -62,7 +66,7 @@ func TestGateRefusals(t *testing.T) {
 		{"unknown key", 501, signed(t, other, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "k"}), diag.DaemonUnknownKey},
 		{"same uid unregistered", 501, signed(t, other, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "u"}), diag.DaemonUnknownKey},
 		{"stale", 501, signed(t, priv, Request{Verb: "status", Timestamp: now.Add(-time.Hour).Unix(), Nonce: "s"}), diag.DaemonStale},
-		{"peer", 502, signed(t, priv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "p"}), diag.DaemonPeerRefused},
+		{"peer", -1, signed(t, priv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "p"}), diag.DaemonPeerRefused},
 		{"verb", 501, signed(t, priv, Request{Verb: "shell", Timestamp: now.Unix(), Nonce: "v"}), diag.DaemonVerbUnknown},
 		{"extra field", 501, []byte(`{"verb":"status","url":"https://evil","timestamp":1700000000,"nonce":"e","public_key":"aa","signature":"bb"}`), diag.DaemonTampered},
 	}

@@ -169,10 +169,11 @@ func verifyPrivateDir(path string) error {
 	return verifyDirOwner(path, info)
 }
 
-// purgeLegacySharedState removes an exposed <prefix>/var/agent-machine
-// directory from v0.11.2/v0.11.3, unlinks a ~/.config/agent-machine symlink
-// that pointed at it, and rotates daemon.key, client.key, and peers/ because
-// the shared directory was readable by other local accounts.
+// purgeLegacySharedState removes leaked secrets from <prefix>/var/agent-machine
+// (v0.11.2/v0.11.3 stored keys there), unlinks a ~/.config/agent-machine
+// symlink that pointed at it, and rotates daemon.key, client.key, and peers/
+// because those files were readable by other local accounts. The directory
+// itself stays: it is the cross-account channel (socket + daemon.pub).
 func purgeLegacySharedState(dir, legacySharedDir string, store keyStore) error {
 	rotated := false
 	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
@@ -191,10 +192,21 @@ func purgeLegacySharedState(dir, legacySharedDir string, store keyStore) error {
 	}
 	if legacySharedDir != "" {
 		if _, err := os.Lstat(legacySharedDir); err == nil {
-			if err := os.RemoveAll(legacySharedDir); err != nil {
-				return err
+			leaked := false
+			for _, name := range []string{"daemon.key", "client.key", "daemon.keychain-db", "peers"} {
+				p := filepath.Join(legacySharedDir, name)
+				if _, err := os.Lstat(p); err == nil {
+					leaked = true
+					if err := os.RemoveAll(p); err != nil {
+						return err
+					}
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
 			}
-			rotated = true
+			if leaked {
+				rotated = true
+			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}

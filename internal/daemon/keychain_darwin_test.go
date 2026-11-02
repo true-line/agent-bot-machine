@@ -14,7 +14,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -34,8 +33,9 @@ func TestMain(m *testing.M) {
 		acct := fmt.Sprintf("%s.test.%d.%s", keychainAccount, os.Getpid(), hex.EncodeToString(sum[:6]))
 		testKeychainMu.Lock()
 		testKeychainStores = append(testKeychainStores, darwinKeychainStore{
-			service: keychainService,
-			account: acct,
+			service:      keychainService,
+			account:      acct,
+			keychainPath: filepath.Join(filepath.Dir(cleanPath), "daemon.keychain-db"),
 		})
 		testKeychainMu.Unlock()
 		return acct
@@ -144,13 +144,41 @@ func TestDarwinKeychainNeverImportsExec(t *testing.T) {
 	}
 }
 
+func newTestStore(t *testing.T, acct string) darwinKeychainStore {
+	t.Helper()
+	s := darwinKeychainStore{
+		service:      keychainService + ".test",
+		account:      acct,
+		keychainPath: filepath.Join(t.TempDir(), "daemon.keychain-db"),
+	}
+	t.Cleanup(func() { _ = s.Delete() })
+	return s
+}
+
+func plantItem(t *testing.T, store darwinKeychainStore, access uintptr, payload []byte) {
+	t.Helper()
+	kc, sl, err := store.openDedicatedKeychain(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cfRelease(kc)
+	defer cfRelease(sl)
+	attrs, refs := store.itemQuery(kc, sl, true)
+	kAcc := cfString("acls")
+	kData, vData := cfString("v_Data"), cfData(payload)
+	refs = append(refs, access, kAcc, kData, vData)
+	cfDictSet(attrs, kAcc, access)
+	cfDictSet(attrs, kData, vData)
+	r1, _, _ := syscall_syscall(kc_SecItemAdd_trampoline_addr, attrs, 0, 0)
+	releaseAll(refs)
+	if int32(r1) != 0 {
+		t.Fatalf("SecItemAdd plant: OSStatus %d", int32(r1))
+	}
+}
+
 func TestDarwinKeychainStoreInProcessRoundTrip(t *testing.T) {
 	acct := fmt.Sprintf("daemon.key.test.%d", os.Getpid())
-	store := darwinKeychainStore{
-		service: keychainService + ".test",
-		account: acct,
-	}
-	t.Cleanup(func() { _ = store.Delete() })
+	store := newTestStore(t, acct)
 	_ = store.Delete()
 
 	got, ok, err := store.Load()
@@ -261,30 +289,14 @@ func createMultiAppAccess(t *testing.T, label string) uintptr {
 func TestDarwinKeychainRejectsPrePlantedOpenOrMultiAppACLAndReplacesOnSave(t *testing.T) {
 	dir := t.TempDir()
 	acct := fmt.Sprintf("daemon.key.preplant.%d", os.Getpid())
-	store := darwinKeychainStore{
-		service: keychainService + ".test",
-		account: acct,
-	}
-	t.Cleanup(func() { _ = store.Delete() })
+	store := newTestStore(t, acct)
 	_ = store.Delete()
 
 	attackerSeed := bytes.Repeat([]byte{0x41}, ed25519.SeedSize)
 
 	// 1. Pre-seed an item with an open ("allow all applications") ACL.
 	openAccess := createOpenAccess(t, store.service)
-	attrs, refs := store.loginQuery()
-	kPdmn, vPdmn := cfString("pdmn"), cfString("cku")
-	kAcc := cfString("acls")
-	kData, vData := cfString("v_Data"), cfData(attackerSeed)
-	refs = append(refs, openAccess, kPdmn, vPdmn, kAcc, kData, vData)
-	cfDictSet(attrs, kPdmn, vPdmn)
-	cfDictSet(attrs, kAcc, openAccess)
-	cfDictSet(attrs, kData, vData)
-	r1, _, _ := syscall_syscall(kc_SecItemAdd_trampoline_addr, attrs, 0, 0)
-	releaseAll(refs)
-	if int32(r1) != 0 {
-		t.Fatalf("SecItemAdd(openAccess): OSStatus %d", int32(r1))
-	}
+	plantItem(t, store, openAccess, attackerSeed)
 
 	// Load and loadOrCreateKeyWithStore must refuse the pre-planted open-ACL item.
 	if got, ok, err := store.Load(); err == nil || ok || got != nil {
@@ -317,16 +329,7 @@ func TestDarwinKeychainRejectsPrePlantedOpenOrMultiAppACLAndReplacesOnSave(t *te
 	// Re-plant the open-ACL item and verify a normal Save replaces it with a
 	// self-only ACL item.
 	openAccess2 := createOpenAccess(t, store.service)
-	attrsR, refsR := store.loginQuery()
-	kPdmnR, vPdmnR := cfString("pdmn"), cfString("cku")
-	kAccR := cfString("acls")
-	kDataR, vDataR := cfString("v_Data"), cfData(attackerSeed)
-	refsR = append(refsR, openAccess2, kPdmnR, vPdmnR, kAccR, kDataR, vDataR)
-	cfDictSet(attrsR, kPdmnR, vPdmnR)
-	cfDictSet(attrsR, kAccR, openAccess2)
-	cfDictSet(attrsR, kDataR, vDataR)
-	_, _, _ = syscall_syscall(kc_SecItemAdd_trampoline_addr, attrsR, 0, 0)
-	releaseAll(refsR)
+	plantItem(t, store, openAccess2, attackerSeed)
 
 	if err := store.Save(realSeed); err != nil {
 		t.Fatalf("Save over pre-planted open-ACL item: %v", err)
@@ -356,19 +359,7 @@ func TestDarwinKeychainRejectsPrePlantedOpenOrMultiAppACLAndReplacesOnSave(t *te
 
 	// 2. Pre-seed an item whose ACL trusts both self and /usr/bin/security.
 	multiAccess := createMultiAppAccess(t, store.service)
-	attrs2, refs2 := store.loginQuery()
-	kPdmn2, vPdmn2 := cfString("pdmn"), cfString("cku")
-	kAcc2 := cfString("acls")
-	kData2, vData2 := cfString("v_Data"), cfData(attackerSeed)
-	refs2 = append(refs2, multiAccess, kPdmn2, vPdmn2, kAcc2, kData2, vData2)
-	cfDictSet(attrs2, kPdmn2, vPdmn2)
-	cfDictSet(attrs2, kAcc2, multiAccess)
-	cfDictSet(attrs2, kData2, vData2)
-	r2, _, _ := syscall_syscall(kc_SecItemAdd_trampoline_addr, attrs2, 0, 0)
-	releaseAll(refs2)
-	if int32(r2) != 0 {
-		t.Fatalf("SecItemAdd(multiAccess): OSStatus %d", int32(r2))
-	}
+	plantItem(t, store, multiAccess, attackerSeed)
 	if got, ok, err := store.Load(); err == nil || ok || got != nil {
 		t.Fatalf("Load accepted pre-planted multi-app ACL item: ok=%v err=%v", ok, err)
 	} else if !strings.Contains(err.Error(), "trusts 2 applications, want 1") {
@@ -379,11 +370,7 @@ func TestDarwinKeychainRejectsPrePlantedOpenOrMultiAppACLAndReplacesOnSave(t *te
 func TestDarwinKeychainFailsClosedOnMalformedItemOrDiskKey(t *testing.T) {
 	dir := t.TempDir()
 	acct := fmt.Sprintf("daemon.key.malformed.%d", os.Getpid())
-	store := darwinKeychainStore{
-		service: keychainService + ".test",
-		account: acct,
-	}
-	t.Cleanup(func() { _ = store.Delete() })
+	store := newTestStore(t, acct)
 	_ = store.Delete()
 
 	// Insert a non-32-byte payload with a valid self-only ACL.
@@ -391,21 +378,7 @@ func TestDarwinKeychainFailsClosedOnMalformedItemOrDiskKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	attrs, refs := store.loginQuery()
-	kPdmn := cfString("pdmn")
-	vPdmn := cfString("cku")
-	kAcc := cfString("acls")
-	kData := cfString("v_Data")
-	vData := cfData([]byte("SEW1-corrupted-or-wrapped-payload-not-32-bytes"))
-	refs = append(refs, access, kPdmn, vPdmn, kAcc, kData, vData)
-	cfDictSet(attrs, kPdmn, vPdmn)
-	cfDictSet(attrs, kAcc, access)
-	cfDictSet(attrs, kData, vData)
-	r1, _, _ := syscall_syscall(kc_SecItemAdd_trampoline_addr, attrs, 0, 0)
-	releaseAll(refs)
-	if status := int32(r1); status != 0 {
-		t.Fatalf("SecItemAdd test setup failed: OSStatus %d", status)
-	}
+	plantItem(t, store, access, []byte("SEW1-corrupted-or-wrapped-payload-not-32-bytes"))
 
 	keyPath := filepath.Join(dir, "daemon.key")
 	if _, err := loadOrCreateKeyWithStore(keyPath, store); err == nil {
@@ -422,33 +395,21 @@ func TestDarwinKeychainFailsClosedOnMalformedItemOrDiskKey(t *testing.T) {
 	}
 }
 
-func TestDarwinKeychainMigratesLegacyDiskKeyAndIgnoresPlantedKeychainFile(t *testing.T) {
+func TestDarwinKeychainMigratesLegacyDiskKeyIntoDedicatedKeychain(t *testing.T) {
 	dir := t.TempDir()
 	acct := fmt.Sprintf("daemon.key.migrate.%d", os.Getpid())
-	svc := keychainService + ".test"
 	store := darwinKeychainStore{
-		service: svc,
-		account: acct,
+		service:      keychainService + ".test",
+		account:      acct,
+		keychainPath: filepath.Join(dir, "daemon.keychain-db"),
 	}
 	t.Cleanup(func() { _ = store.Delete() })
 	_ = store.Delete()
 
-	// 1. An attacker-planted daemon.keychain-db file in the state directory must
-	// be ignored by Load() (never opened or imported).
-	plantedKCPath := filepath.Join(dir, "daemon.keychain-db")
-	out, err := exec.Command("/usr/bin/security", "create-keychain", "-p", "", plantedKCPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("security create-keychain: %v: %s", err, out)
-	}
-	t.Cleanup(func() {
-		_ = exec.Command("/usr/bin/security", "delete-keychain", plantedKCPath).Run()
-		_ = os.Remove(plantedKCPath)
-	})
 	if got, ok, err := store.Load(); err != nil || ok || got != nil {
-		t.Fatalf("Load must ignore planted daemon.keychain-db, got ok=%v err=%v", ok, err)
+		t.Fatalf("expected absent item before migration, got ok=%v err=%v", ok, err)
 	}
 
-	// 2. Migrate from a legacy on-disk daemon.key file.
 	seedDisk := make([]byte, ed25519.SeedSize)
 	if _, err := rand.Read(seedDisk); err != nil {
 		t.Fatal(err)
@@ -467,9 +428,76 @@ func TestDarwinKeychainMigratesLegacyDiskKeyAndIgnoresPlantedKeychainFile(t *tes
 	if _, err := os.Lstat(keyPath); !os.IsNotExist(err) {
 		t.Fatalf("expected legacy daemon.key to be removed after migration, got err=%v", err)
 	}
+	info, err := os.Lstat(store.keychainPath)
+	if err != nil {
+		t.Fatalf("expected dedicated keychain after migration: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("dedicated keychain mode %v, want 0600", info.Mode().Perm())
+	}
 	got, ok, err := store.Load()
 	if err != nil || !ok || !bytes.Equal(got, seedDisk) {
-		t.Fatalf("login keychain after daemon.key migration: ok=%v err=%v", ok, err)
+		t.Fatalf("dedicated keychain after daemon.key migration: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestDarwinKeychainWorksWithoutLoginKeychain(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	acct := fmt.Sprintf("daemon.key.nologin.%d", os.Getpid())
+	store := newTestStore(t, acct)
+	seed := make([]byte, ed25519.SeedSize)
+	if _, err := rand.Read(seed); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(seed); err != nil {
+		t.Fatalf("Save without login keychain: %v", err)
+	}
+	got, ok, err := store.Load()
+	if err != nil || !ok || !bytes.Equal(got, seed) {
+		t.Fatalf("Load without login keychain: ok=%v err=%v", ok, err)
+	}
+	if _, err := os.Lstat(filepath.Join(home, "Library", "Keychains")); !os.IsNotExist(err) {
+		t.Fatalf("Save must not create a login keychain under HOME, got err=%v", err)
+	}
+}
+
+func TestDarwinKeychainReopenUnlocksWithoutPassword(t *testing.T) {
+	acct := fmt.Sprintf("daemon.key.reopen.%d", os.Getpid())
+	store := newTestStore(t, acct)
+	seed := make([]byte, ed25519.SeedSize)
+	if _, err := rand.Read(seed); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(seed); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		got, ok, err := store.Load()
+		if err != nil || !ok || !bytes.Equal(got, seed) {
+			t.Fatalf("Load #%d: ok=%v err=%v", i+1, ok, err)
+		}
+		zeroBytes(got)
+	}
+}
+
+func TestTrustedAppPathMatchesThisBinary(t *testing.T) {
+	got, err := pathFromTrustedAppData([]byte("xx\x00/tmp/agent-machine-fix\x00yy"))
+	if err != nil || got != "/tmp/agent-machine-fix" {
+		t.Fatalf("pathFromTrustedAppData: %q %v", got, err)
+	}
+	if _, err := pathFromTrustedAppData([]byte("no-path-here")); err == nil {
+		t.Fatal("expected an error for data with no path")
+	}
+	var selfApp uintptr
+	r1, _, _ := syscall_syscall(kc_SecTrustedApplicationCreateFromPath_trampoline_addr, 0, uintptr(unsafe.Pointer(&selfApp)), 0)
+	if int32(r1) != 0 || selfApp == 0 {
+		t.Fatalf("SecTrustedApplicationCreateFromPath: %d", int32(r1))
+	}
+	defer cfRelease(selfApp)
+	if !trustedAppMatchesExecutable(selfApp) {
+		path, err := trustedAppPath(selfApp)
+		t.Fatalf("self trusted app path %q %v should match this test binary", path, err)
 	}
 }
 
@@ -477,8 +505,9 @@ func TestDarwinKeySaveLoadRotateNeverLeaksKeyToChildArgvOrEnv(t *testing.T) {
 	dir := t.TempDir()
 	acct := fmt.Sprintf("daemon.key.noleak.%d", os.Getpid())
 	store := darwinKeychainStore{
-		service: keychainService + ".test",
-		account: acct,
+		service:      keychainService + ".test",
+		account:      acct,
+		keychainPath: filepath.Join(dir, "state", "daemon.keychain-db"),
 	}
 	t.Cleanup(func() { _ = store.Delete() })
 	_ = store.Delete()

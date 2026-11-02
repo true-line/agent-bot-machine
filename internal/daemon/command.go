@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/command"
@@ -30,7 +31,9 @@ func Command(deps Deps) cli.Command {
 agent-machine daemon run|install|uninstall|status|pair|unpair
 
 install and uninstall write a per-user service unit for the prefix owner.
-pair and unpair manage the Terminal --update thin client key.
+pair mints a Terminal thin-client key in the caller's home. pair --enroll
+PATH installs that public key (or an agent-daemon key) into the prefix
+owner's peers/. status is a signed RPC when a client key and channel exist.
 They refuse root, agent accounts, agent sessions, and a foreign home.
 The unit is a LaunchAgent, a systemd user unit, or a Windows service
 description. Nothing is registered with a system service manager.`,
@@ -41,8 +44,16 @@ description. Nothing is registered with a system service manager.`,
 }
 
 func run(deps Deps, ctx cli.Context, args []string) cli.Result {
-	var verb string
-	if d := command.Parse(args, command.Spec{Positional: &verb, PositionalName: "daemon verb"}); d != nil {
+	var verb, enroll, clientName string
+	clientName = "terminal"
+	if d := command.Parse(args, command.Spec{
+		Positional:     &verb,
+		PositionalName: "daemon verb",
+		Values: map[string]command.Flag{
+			"--enroll": {Value: &enroll},
+			"--client": {Value: &clientName},
+		},
+	}); d != nil {
 		return cli.Result{Diagnostic: d}
 	}
 	switch verb {
@@ -50,20 +61,38 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	default:
 		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, uninstall, status, pair, or unpair")}
 	}
+	if enroll != "" && verb != "pair" {
+		return cli.Result{Diagnostic: command.UsageErr("--enroll is only valid with pair")}
+	}
 	goos := deps.GOOS
 	if goos == "" {
 		goos = hostOS()
 	}
+	caller, err := deps.caller()
 	if verb != "status" {
-		caller, err := deps.caller()
 		if err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
 		}
-		if msg := caller.Refuse(); msg != "" {
-			d := diag.New(diag.DaemonCallerRefused, msg)
-			return cli.Result{Diagnostic: &d}
+		switch verb {
+		case "pair":
+			if enroll != "" {
+				if msg := caller.Refuse(); msg != "" {
+					d := diag.New(diag.DaemonCallerRefused, msg)
+					return cli.Result{Diagnostic: &d}
+				}
+			} else if msg := caller.RefuseClient(); msg != "" {
+				d := diag.New(diag.DaemonCallerRefused, msg)
+				return cli.Result{Diagnostic: &d}
+			}
+		default:
+			if msg := caller.Refuse(); msg != "" {
+				d := diag.New(diag.DaemonCallerRefused, msg)
+				return cli.Result{Diagnostic: &d}
+			}
 		}
+	} else if err != nil {
+		caller = Caller{}
 	}
 	root, err := deps.root()
 	if err != nil {
@@ -82,6 +111,10 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			state = "installed"
 		}
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", state).Set("os", goos)
+		key := filepath.Join(stateDir(root), "client.key")
+		if handled, res, rpcErr := TryRPC(ChannelSocket(), key, "status", ""); handled && rpcErr == nil && res.OK {
+			rec.Set("channel", "signed").Set("daemon", res.State)
+		}
 		return cli.Result{Records: []*output.Record{rec}}
 	case "install":
 		exec, err := deps.executable(ctx)
@@ -123,12 +156,30 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "stopped")
 		return cli.Result{Records: []*output.Record{rec}}
 	case "pair":
-		path, err := PairTerminal(root)
+		if enroll != "" {
+			path, err := EnrollClient(root, clientName, enroll)
+			if err != nil {
+				d := diag.New(diag.DaemonCallerRefused, err.Error())
+				return cli.Result{Diagnostic: &d}
+			}
+			rec := output.New().Set("service", "agent-machine").Set("client", clientName).Set("state", "paired").Set("path", path)
+			return cli.Result{Records: []*output.Record{rec}}
+		}
+		if caller.Refuse() == "" {
+			path, err := PairTerminal(root)
+			if err != nil {
+				d := diag.New(diag.DaemonCallerRefused, err.Error())
+				return cli.Result{Diagnostic: &d}
+			}
+			rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "paired").Set("path", path)
+			return cli.Result{Records: []*output.Record{rec}}
+		}
+		path, err := PairClient(root)
 		if err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
 		}
-		rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "paired").Set("path", path)
+		rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "minted").Set("path", path)
 		return cli.Result{Records: []*output.Record{rec}}
 	case "unpair":
 		if err := UnpairTerminal(root); err != nil {

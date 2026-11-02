@@ -18,9 +18,8 @@ type Caller struct {
 	Env            map[string]string
 }
 
-// Refuse reports why this caller may not install, uninstall, or run the
-// service. The zero value is a human caller and is allowed. status is not
-// gated here.
+// Refuse reports why this caller may not install, uninstall, run, enroll,
+// or unpair the service. The zero value is a human caller and is allowed.
 func (c Caller) Refuse() string {
 	name := strings.TrimSpace(c.Username)
 	lower := strings.ToLower(name)
@@ -45,6 +44,34 @@ func (c Caller) Refuse() string {
 	owner := strings.TrimSpace(c.PrefixOwner)
 	if owner != "" && owner != name && (c.UID <= 0 || owner != strconv.Itoa(c.UID)) {
 		return "the daemon service is installed by the prefix owner (" + owner + "), not " + name
+	}
+	return ""
+}
+
+// RefuseClient reports why this caller may not mint a pairing key or send
+// a signed thin-client request. It is the same human/home gate as Refuse
+// without the prefix-owner check: the Terminal client and agent-daemon run
+// in the user account.
+func (c Caller) RefuseClient() string {
+	name := strings.TrimSpace(c.Username)
+	lower := strings.ToLower(name)
+	switch lower {
+	case "root", "system", "localsystem":
+		return "the daemon client is not used as " + name
+	}
+	if c.UID == 0 {
+		return "the daemon client is not used as uid 0"
+	}
+	if agentAccount(name) || agentAccount(c.Env["AGENT_BOT_ACCOUNT"]) {
+		return "agent accounts talk to agent-machine through agent-daemon, not as a thin client"
+	}
+	if marker := agentEnv(c.Env); marker != "" {
+		return "an agent session talks to agent-machine through agent-daemon (" + marker + ")"
+	}
+	home := filepath.Clean(c.Home)
+	registered := filepath.Clean(c.RegisteredHome)
+	if c.RegisteredHome == "" || home != registered {
+		return "HOME is not the registered home of " + name
 	}
 	return ""
 }
