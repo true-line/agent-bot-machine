@@ -649,7 +649,7 @@ func buildFullDist(repoRoot, ver, distDir string) error {
 		if goos == "windows" {
 			archiveBytes, err = packReleaseZip(binName, binBytes, licBytes)
 		} else {
-			archiveBytes, err = packTargetTarGz(goos, ver, binName, binBytes, licBytes)
+			archiveBytes, err = packReleaseTarGz(binName, binBytes, licBytes)
 		}
 		if err != nil {
 			return err
@@ -741,46 +741,7 @@ func compileCoreBinary(repoRoot, ver, goos, goarch, outPath string) error {
 
 var releaseArchiveEpoch = time.Date(1980, time.January, 1, 0, 0, 0, 0, time.UTC)
 
-// packTargetTarGz packs a tar.gz release archive for goos, adding the
-// AgentBotMachine.app entries that mm-release build writes on darwin.
-func packTargetTarGz(goos, ver, binName string, binBytes, licBytes []byte) ([]byte, error) {
-	if goos != "darwin" {
-		return packReleaseTarGz(binName, binBytes, licBytes)
-	}
-	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0">
-<dict>
-	<key>CFBundleExecutable</key>
-	<string>managed-machine</string>
-	<key>CFBundleIdentifier</key>
-	<string>%s</string>
-	<key>CFBundleShortVersionString</key>
-	<string>%s</string>
-</dict>
-</plist>
-`, darwinBundleID, ver)
-	return packTarGzItems([]releaseTarItem{
-		{name: darwinBundleInfoPlist, mode: 0o644, data: []byte(plist)},
-		{name: darwinBundleMainExe, mode: 0o755, data: binBytes},
-		{name: "LICENSE", mode: 0o644, data: licBytes},
-		{name: binName, mode: 0o755, data: binBytes},
-	})
-}
-
-type releaseTarItem struct {
-	name string
-	mode int64
-	data []byte
-}
-
 func packReleaseTarGz(binName string, binBytes, licBytes []byte) ([]byte, error) {
-	return packTarGzItems([]releaseTarItem{
-		{name: "LICENSE", mode: 0o644, data: licBytes},
-		{name: binName, mode: 0o755, data: binBytes},
-	})
-}
-
-func packTarGzItems(items []releaseTarItem) ([]byte, error) {
 	var buf bytes.Buffer
 	gz, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 	if err != nil {
@@ -792,6 +753,15 @@ func packTarGzItems(items []releaseTarItem) ([]byte, error) {
 	gz.ModTime = time.Time{}
 	gz.OS = 255
 	tw := tar.NewWriter(gz)
+	type item struct {
+		name string
+		mode int64
+		data []byte
+	}
+	items := []item{
+		{name: "LICENSE", mode: 0o644, data: licBytes},
+		{name: binName, mode: 0o755, data: binBytes},
+	}
 	for _, it := range items {
 		hdr := &tar.Header{
 			Typeflag: tar.TypeReg,
@@ -1198,21 +1168,11 @@ func (h *releaseHarness) runChecksums() {
 			wantTargetName, actualTargetSHA[:12]))
 }
 
-// The darwin archive leads with the AgentBotMachine.app bundle that
-// mm-release build writes; its main executable is the same binary as the root
-// managed-machine.
-const (
-	darwinBundleID        = "ai.true-line.agent-bot-machine"
-	darwinBundleInfoPlist = "AgentBotMachine.app/Contents/Info.plist"
-	darwinBundleMainExe   = "AgentBotMachine.app/Contents/MacOS/managed-machine"
-)
-
 // runArchiveLayout proves `archive-layout` (D10): the target archive has the
-// exact sorted entries (on darwin the bundle Info.plist 0644 and main
-// executable 0755, then LICENSE 0644 and managed-machine[.exe] 0755), uid/gid
+// exact sorted root entries (LICENSE 0644, managed-machine[.exe] 0755), uid/gid
 // 0, empty uname/gname, constant mtime (1980-01-01T00:00:00Z), gzip header
-// empty/OS=255 or zip deflate with no extra fields, and every binary's digest
-// equal to binary_sha256.
+// empty/OS=255 or zip deflate with no extra fields, and binary digest equal to
+// binary_sha256.
 func (h *releaseHarness) runArchiveLayout() {
 	const name = caseReleaseArchiveLayout
 	archiveName := targetArchiveName(h.releaseVer, h.target)
@@ -1308,26 +1268,20 @@ func (h *releaseHarness) runArchiveLayout() {
 	}
 	tr := tar.NewReader(gz)
 	type wantTarEntry struct {
-		name   string
-		mode   int64
-		binary bool
+		name string
+		mode int64
 	}
-	var wants []wantTarEntry
-	if strings.HasPrefix(h.target, "darwin/") {
-		wants = append(wants,
-			wantTarEntry{name: darwinBundleInfoPlist, mode: 0o644},
-			wantTarEntry{name: darwinBundleMainExe, mode: 0o755, binary: true})
+	wants := []wantTarEntry{
+		{name: "LICENSE", mode: 0o644},
+		{name: "managed-machine", mode: 0o755},
 	}
-	wants = append(wants,
-		wantTarEntry{name: "LICENSE", mode: 0o644},
-		wantTarEntry{name: "managed-machine", mode: 0o755, binary: true})
 	for i, w := range wants {
 		hdr, err := tr.Next()
 		if err != nil {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("tar entry %d (%s): %v", i, w.name, err))
 			return
 		}
-		if hdr.Typeflag != tar.TypeReg || hdr.Name != w.name {
+		if hdr.Typeflag != tar.TypeReg || hdr.Name != w.name || strings.Contains(hdr.Name, "/") {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("tar entry %d = %q (type %v), want %q", i, hdr.Name, hdr.Typeflag, w.name))
 			return
 		}
@@ -1346,16 +1300,12 @@ func (h *releaseHarness) runArchiveLayout() {
 			h.recordCase(name, "ok", observedFailed, false, err.Error())
 			return
 		}
-		if w.name == "LICENSE" && !bytes.Equal(payload, wantLic) {
+		if i == 0 && !bytes.Equal(payload, wantLic) {
 			h.recordCase(name, "ok", observedFailed, false, "tar LICENSE payload mismatch")
 			return
 		}
-		if w.name == darwinBundleInfoPlist && !bytes.Contains(payload, []byte("<string>"+darwinBundleID+"</string>")) {
-			h.recordCase(name, "ok", observedFailed, false, "bundle Info.plist does not name "+darwinBundleID)
-			return
-		}
-		if w.binary && sum(payload) != h.ev.BinarySHA256 {
-			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("tar %s sha256 %s != %s", w.name, sum(payload), h.ev.BinarySHA256))
+		if i == 1 && sum(payload) != h.ev.BinarySHA256 {
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("tar binary sha256 %s != %s", sum(payload), h.ev.BinarySHA256))
 			return
 		}
 	}
@@ -1363,13 +1313,9 @@ func (h *releaseHarness) runArchiveLayout() {
 		h.recordCase(name, "ok", observedFailed, false, "tar archive has unexpected extra entries")
 		return
 	}
-	layout := make([]string, 0, len(wants))
-	for _, w := range wants {
-		layout = append(layout, fmt.Sprintf("%s %04o", w.name, w.mode))
-	}
 	h.recordCase(name, "ok", "ok", true,
-		fmt.Sprintf("%s verified: sorted entries [%s], uid/gid 0, empty uname/gname, mtime 1980-01-01T00:00:00Z, gzip OS=255, binary sha256 %s",
-			archiveName, strings.Join(layout, ", "), h.ev.BinarySHA256[:12]))
+		fmt.Sprintf("%s verified: sorted root entries [LICENSE 0644, managed-machine 0755], uid/gid 0, empty uname/gname, mtime 1980-01-01T00:00:00Z, gzip OS=255, binary sha256 %s",
+			archiveName, h.ev.BinarySHA256[:12]))
 }
 
 // runVersion proves `version` (D10): `--version` prints `<X.Y.Z>\n` matching

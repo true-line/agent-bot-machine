@@ -20,7 +20,12 @@ func TestRunChecksRealPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(root) })
+	t.Cleanup(func() {
+		if store := defaultKeyStore(filepath.Join(stateDir(root), "daemon.key")); store != nil {
+			_ = store.Delete()
+		}
+		os.RemoveAll(root)
+	})
 	dir := stateDir(root)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)

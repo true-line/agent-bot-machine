@@ -313,7 +313,7 @@ func TestSignWorkflowContract(t *testing.T) {
 		t.Errorf("sign.permissions = %v, want {contents: write}", job.Permissions)
 	}
 	allowed := map[string]bool{
-		"MACOS_DEVID_P12": true, "MACOS_DEVID_P12_PASSWORD": true, "MACOS_PROVISION_PROFILE": true,
+		"MACOS_DEVID_P12": true, "MACOS_DEVID_P12_PASSWORD": true,
 		"NOTARY_KEY_P8": true, "NOTARY_KEY_ID": true, "NOTARY_ISSUER_ID": true,
 	}
 	seen := map[string]bool{}
@@ -345,6 +345,27 @@ func TestSignWorkflowContract(t *testing.T) {
 	text := string(raw)
 	if n := strings.Count(text, "secrets."); n != len(allowed) {
 		t.Errorf("sign.yml references secrets.* %d times, want %d (one env entry each)", n, len(allowed))
+	}
+	for _, forbidden := range []string{
+		"security create-keychain -p",
+		"security unlock-keychain -p",
+		"security import ",
+		"security set-key-partition-list ",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("sign.yml contains forbidden command-line pattern %q", forbidden)
+		}
+	}
+	const wantImportLine = `import "$RUNNER_TEMP/identity.p12" -k "$keychain" -P "$esc_p12" -f pkcs12 -T /usr/bin/codesign`
+	var importLines []string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "import ") {
+			importLines = append(importLines, trimmed)
+		}
+	}
+	if len(importLines) != 1 || importLines[0] != wantImportLine {
+		t.Errorf("sign.yml security -i import lines = %q, want [%q]", importLines, wantImportLine)
 	}
 }
 

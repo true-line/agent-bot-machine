@@ -205,9 +205,6 @@ func buildCmd(args []string, stdout io.Writer) error {
 				{Name: "LICENSE", Mode: 0o644, Data: licenseBytes},
 				{Name: spec.BinaryName, Mode: 0o755, Data: binBytes},
 			}
-			if spec.Target == target.DarwinARM64 {
-				entries = append(entries, darwinBundleEntries(*version, binBytes)...)
-			}
 			sort.Slice(entries, func(a, b int) bool {
 				return entries[a].Name < entries[b].Name
 			})

@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Fake gh for the release tests. It answers only the calls scripts/release
 # makes to sign a release, and stands in for .github/workflows/sign.yml by
-# building the deterministic dist from FAKE_GH_ROOT, adding a profile and a
-# CodeResources seal to the bundle, writing the Team ID into each binary's
-# signature region, and repacking with `mm-release repack`. Every other call
-# is recorded in $FAKE_GH_STATE/unexpected and fails.
+# building the deterministic dist from FAKE_GH_ROOT, writing the Team ID into
+# the binary's signature region, and repacking with `mm-release repack`. Every
+# other call is recorded in $FAKE_GH_STATE/unexpected and fails.
 set -euo pipefail
 
 state="${FAKE_GH_STATE:?}"
@@ -37,18 +36,10 @@ fake_sign() {
     tar -xzf "$work/unsigned/managed-machine_${bare}_darwin_arm64.tar.gz" -C "$work/tree"
     python3 - "$work/tree" <<'PY'
 import os, sys
-tree = sys.argv[1]
-contents = os.path.join(tree, "AgentBotMachine.app", "Contents")
-os.makedirs(os.path.join(contents, "_CodeSignature"), exist_ok=True)
-with open(os.path.join(contents, "embedded.provisionprofile"), "w") as fh:
-    fh.write("fake profile for Z5DM34QS5U.ai.true-line.agent-bot-machine\n")
-with open(os.path.join(contents, "_CodeSignature", "CodeResources"), "w") as fh:
-    fh.write("<plist/>\n")
-for rel in ("managed-machine", "AgentBotMachine.app/Contents/MacOS/managed-machine"):
-    path = os.path.join(tree, rel)
-    with open(path, "r+b") as fh:
-        fh.seek(-10, os.SEEK_END)
-        fh.write(b"Z5DM34QS5U")
+path = os.path.join(sys.argv[1], "managed-machine")
+with open(path, "r+b") as fh:
+    fh.seek(-10, os.SEEK_END)
+    fh.write(b"Z5DM34QS5U")
 PY
     rm -rf "$out"
     (cd "$root" && GOTOOLCHAIN=local go run ./cmd/mm-release repack -dist "$work/unsigned" -tree "$work/tree" -out "$out") >/dev/null

@@ -12,10 +12,9 @@
 # release vX.Y.Z, proves the signed dist is that build plus Developer ID
 # signatures with `mm-release verify-signed`, creates branch release/vX.Y.Z,
 # updates VERSION and Formula/managed-machine.rb (tag, version, arm64/sequoia
-# constraints, managed-machine-config tag+revision, the signed
-# AgentBotMachine.app install block, and core resource URL + signed sha256),
-# commits "Release vX.Y.Z", pushes the branch only, and prints the
-# `gh pr create` command.
+# constraints, managed-machine-config tag+revision, and core resource URL +
+# signed sha256), commits "Release vX.Y.Z", pushes the branch only, and prints
+# the `gh pr create` command.
 #
 # `tag` runs after the release PR is merged and the owner has explicitly
 # confirmed: it checks out main, verifies HEAD == origin/main, VERSION == X.Y.Z,
@@ -383,15 +382,14 @@ d3_install_block = """  def install
     SH
     chmod 0755, libexec / "scripts/update"
 
-    # Install the signed AgentBotMachine.app bundle and link bin/managed-machine
-    # into it: the daemon can use its keychain access group only when it runs
-    # from the bundle that holds the provisioning profile. agent-machine is the
-    # command alias.
+    # Install the prebuilt Go core binary directly as bin/managed-machine
+    # (S8 P01 inversion: the Go core is the primary entry point; agent-machine
+    # is the command alias).
     bin.mkpath
     resource("core").stage do
-      prefix.install "AgentBotMachine.app"
+      bin.install "managed-machine"
+      chmod 0755, bin / "managed-machine"
     end
-    bin.install_symlink prefix / "AgentBotMachine.app/Contents/MacOS/managed-machine"
     bin.install_symlink "managed-machine" => "agent-machine"
 
     # ENG-0055 skill bundle: `managed-machine --version` and `skill path`
@@ -434,7 +432,6 @@ d3_test_block = """  test do
     assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip
     assert_equal version.to_s, shell_output("#{bin}/agent-machine --version").strip
     shell_output("#{bin}/managed-machine version")
-    assert_predicate prefix/"AgentBotMachine.app/Contents/embedded.provisionprofile", :exist?
   end
 end"""
 
@@ -542,10 +539,9 @@ for snippet in (
     'exec "$(dirname "$0")/../legacy/scripts/update" "$@"',
     'chmod 0755, libexec / "scripts/update"',
     'resource("core").stage',
-    'prefix.install "AgentBotMachine.app"',
-    'bin.install_symlink prefix / "AgentBotMachine.app/Contents/MacOS/managed-machine"',
+    'bin.install "managed-machine"',
+    'chmod 0755, bin / "managed-machine"',
     'bin.install_symlink "managed-machine" => "agent-machine"',
-    'assert_predicate prefix/"AgentBotMachine.app/Contents/embedded.provisionprofile", :exist?',
     'cp "VERSION", legacy / "VERSION"',
     'assert_match "[legacy] adopt", help_output',
     'assert_predicate libexec/"legacy/setup-hostname", :executable?',
@@ -561,8 +557,6 @@ for forbidden in (
     '(libexec / "core")',
     '#{libexec}/core/managed-machine --version',
     'bin.install "bin/managed-machine"',
-    'bin.install "managed-machine"',
-    'chmod 0755, bin / "managed-machine"',
     'if File.exist?("legacy/bin/managed-machine")',
     'if (libexec / "legacy").exist?',
 ):

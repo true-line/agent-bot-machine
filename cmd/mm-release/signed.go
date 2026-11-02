@@ -215,7 +215,7 @@ func compareSignedDarwin(unsigned, signed map[string]archiveEntry, team string) 
 		if s.Mode != u.Mode {
 			return fmt.Errorf("%s: mode %#o, want %#o", name, s.Mode, u.Mode)
 		}
-		if name == bundleMainExe || name == bundleExecutable {
+		if name == "managed-machine" {
 			if err := machoEqualIgnoringSignature(u.Data, s.Data, team); err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
@@ -226,21 +226,9 @@ func compareSignedDarwin(unsigned, signed map[string]archiveEntry, team string) 
 		}
 	}
 	for name := range signed {
-		if _, ok := unsigned[name]; ok {
-			continue
-		}
-		if !signedOnlyEntries[name] {
+		if _, ok := unsigned[name]; !ok {
 			return fmt.Errorf("signed archive adds unexpected file %s", name)
 		}
-	}
-	for _, required := range []string{bundleProfile, bundleSealed} {
-		if _, ok := signed[required]; !ok {
-			return fmt.Errorf("signed archive is missing %s", required)
-		}
-	}
-	appID := team + "." + bundleID
-	if !bytes.Contains(signed[bundleProfile].Data, []byte(appID)) {
-		return fmt.Errorf("%s does not name %s", bundleProfile, appID)
 	}
 	return nil
 }

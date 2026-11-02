@@ -105,7 +105,7 @@ func TestMachoEqualIgnoringSignatureWithCodesign(t *testing.T) {
 	if err := os.WriteFile(signedPath, unsigned, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	sign := exec.Command("/usr/bin/codesign", "--force", "-s", "-", "--options", "runtime", "-i", bundleID, signedPath)
+	sign := exec.Command("/usr/bin/codesign", "--force", "-s", "-", "--options", "runtime", "-i", "ai.true-line.agent-bot-machine", signedPath)
 	if out, err := sign.CombinedOutput(); err != nil {
 		t.Fatalf("codesign: %v: %s", err, out)
 	}
@@ -116,7 +116,7 @@ func TestMachoEqualIgnoringSignatureWithCodesign(t *testing.T) {
 	if bytes.Equal(signed, unsigned) {
 		t.Fatal("codesign left the binary unchanged")
 	}
-	if err := machoEqualIgnoringSignature(unsigned, signed, bundleID); err != nil {
+	if err := machoEqualIgnoringSignature(unsigned, signed, "ai.true-line.agent-bot-machine"); err != nil {
 		t.Fatalf("codesign-resigned binary refused: %v", err)
 	}
 }
@@ -162,10 +162,10 @@ func sortSumLines(lines []string) {
 }
 
 func unsignedDarwin(binary []byte) []archiveEntry {
-	return append([]archiveEntry{
+	return []archiveEntry{
 		{Name: "LICENSE", Mode: 0o644, Data: []byte("license\n")},
-		{Name: bundleExecutable, Mode: 0o755, Data: binary},
-	}, darwinBundleEntries("1.2.3", binary)...)
+		{Name: "managed-machine", Mode: 0o755, Data: binary},
+	}
 }
 
 func writeTree(t *testing.T, root string, entries []archiveEntry) {
@@ -181,14 +181,10 @@ func writeTree(t *testing.T, root string, entries []archiveEntry) {
 	}
 }
 
-func signedTree(binary, signedBinary, profile []byte) []archiveEntry {
+func signedTree(signedBinary []byte) []archiveEntry {
 	return []archiveEntry{
 		{Name: "LICENSE", Mode: 0o644, Data: []byte("license\n")},
-		{Name: bundleExecutable, Mode: 0o755, Data: signedBinary},
-		{Name: bundleInfoPlist, Mode: 0o644, Data: infoPlist("1.2.3")},
-		{Name: bundleMainExe, Mode: 0o755, Data: signedBinary},
-		{Name: bundleProfile, Mode: 0o644, Data: profile},
-		{Name: bundleSealed, Mode: 0o644, Data: []byte("<plist/>")},
+		{Name: "managed-machine", Mode: 0o755, Data: signedBinary},
 	}
 }
 
@@ -205,22 +201,21 @@ func TestRepackAndVerifySigned(t *testing.T) {
 		tree    []archiveEntry
 		wantErr string
 	}{
-		{"signed", signedTree(unsignedBin, signedBin, []byte("profile "+testTeam+"."+bundleID)), ""},
+		{"signed", signedTree(signedBin), ""},
 		{"tree without executable bits", func() []archiveEntry {
-			tree := signedTree(unsignedBin, signedBin, []byte("profile "+testTeam+"."+bundleID))
+			tree := signedTree(signedBin)
 			for i := range tree {
 				tree[i].Mode = 0o644
 			}
 			return tree
 		}(), ""},
-		{"profile for another app", signedTree(unsignedBin, signedBin, []byte("profile "+testTeam+".other")), "does not name"},
-		{"extra file", append(signedTree(unsignedBin, signedBin, []byte(testTeam+"."+bundleID)), archiveEntry{Name: bundleName + "/Contents/MacOS/helper", Mode: 0o755, Data: []byte("x")}), "unexpected file"},
-		{"changed plist", func() []archiveEntry {
-			tree := signedTree(unsignedBin, signedBin, []byte(testTeam+"."+bundleID))
-			tree[2].Data = []byte("<plist>changed</plist>")
+		{"extra file", append(signedTree(signedBin), archiveEntry{Name: "helper", Mode: 0o755, Data: []byte("x")}), "unexpected file"},
+		{"changed license", func() []archiveEntry {
+			tree := signedTree(signedBin)
+			tree[0].Data = []byte("changed\n")
 			return tree
-		}(), "Info.plist differs"},
-		{"unsigned binary left in place", signedTree(unsignedBin, unsignedBin, []byte(testTeam+"."+bundleID)), "Team ID"},
+		}(), "LICENSE differs"},
+		{"unsigned binary left in place", signedTree(unsignedBin), "Team ID"},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -258,7 +253,7 @@ func TestVerifySignedRefusesChangedOtherArchive(t *testing.T) {
 	unsigned := filepath.Join(dir, "unsigned")
 	writeArchiveDist(t, unsigned, "1.2.3", unsignedDarwin(unsignedBin))
 	tree := filepath.Join(dir, "tree")
-	writeTree(t, tree, signedTree(unsignedBin, signedBin, []byte(testTeam+"."+bundleID)))
+	writeTree(t, tree, signedTree(signedBin))
 	out := filepath.Join(dir, "signed")
 	if err := repackCmd([]string{"-dist", unsigned, "-tree", tree, "-out", out}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
