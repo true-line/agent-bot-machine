@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/qwts/managed-machine/internal/cli"
@@ -157,11 +158,19 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 	if pubPath == "" {
 		t.Fatalf("user pair path %v", res)
 	}
-	if filepath.Base(filepath.Dir(pubPath)) != "enroll" {
+	if runtime.GOOS == "windows" {
+		if filepath.Base(pubPath) != "agent-machine.client.pub" {
+			t.Fatalf("expected home-root pub on Windows, got %s", pubPath)
+		}
+	} else if filepath.Base(filepath.Dir(pubPath)) != "enroll" {
 		t.Fatalf("expected channel enroll drop, got %s", pubPath)
 	}
-	if st, err := os.Stat(pubPath); err != nil || st.Mode().Perm() != 0o644 {
-		t.Fatalf("enroll pub %v %v", st, err)
+	st, err := os.Stat(pubPath)
+	if err != nil {
+		t.Fatalf("client pub %v", err)
+	}
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o644 {
+		t.Fatalf("client pub mode %v", st.Mode())
 	}
 	res = run(userDeps, cli.Context{}, []string{"pair", "--enroll", pubPath})
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {

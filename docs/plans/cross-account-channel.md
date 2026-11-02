@@ -6,7 +6,7 @@ overview: >-
   pairing gate, and a thin-client enroll path that does not need the user's
   0700 ~/.config. Later slices finish install verbs, the LaunchAgent, the
   agent-bot client, and the hosted relay.
-related_prs: []
+related_prs: [455]
 related_issues:
   - true-line/agent-bot-machine#442
   - true-line/agent-bot-machine#446
@@ -107,7 +107,8 @@ off for `SecItemAdd` yields `-25293`.
   `daemon.pub` next to the socket. A second unsigned rebuild of the same
   path still loads.
 - User `daemon pair` returns a readable drop
-  (`$HOME/agent-machine.client.pub` or `enroll/terminal.pub`).
+  (`enroll/terminal.pub` on unix, `$HOME/agent-machine.client.pub` on
+  Windows — there is no unix enroll dir next to the named pipe).
 - Admin `daemon pair --enroll` of that drop stages `peers/terminal.*`.
 - User `daemon status` against a running admin daemon reports
   `channel=signed` and a daemon state. That is the product proof for S1.

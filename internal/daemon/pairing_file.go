@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 )
@@ -125,10 +126,12 @@ func PairClient(root string) (string, error) {
 		if src, err := os.ReadFile(filepath.Join(ch, "daemon.pub")); err == nil && len(src) == ed25519.PublicKeySize {
 			_ = writePublicFile(filepath.Join(dir, "daemon.pub"), ed25519.PublicKey(src), 0o600)
 		}
-		if err := ensureEnrollDir(ch); err == nil {
-			drop := filepath.Join(ch, "enroll", "terminal.pub")
-			if err := writePublicFile(drop, pub, 0o644); err == nil {
-				return drop, nil
+		if runtime.GOOS != "windows" {
+			if err := ensureEnrollDir(ch); err == nil {
+				drop := filepath.Join(ch, "enroll", "terminal.pub")
+				if err := writePublicFile(drop, pub, 0o644); err == nil {
+					return drop, nil
+				}
 			}
 		}
 	}
