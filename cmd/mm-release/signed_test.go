@@ -206,6 +206,13 @@ func TestRepackAndVerifySigned(t *testing.T) {
 		wantErr string
 	}{
 		{"signed", signedTree(unsignedBin, signedBin, []byte("profile "+testTeam+"."+bundleID)), ""},
+		{"tree without executable bits", func() []archiveEntry {
+			tree := signedTree(unsignedBin, signedBin, []byte("profile "+testTeam+"."+bundleID))
+			for i := range tree {
+				tree[i].Mode = 0o644
+			}
+			return tree
+		}(), ""},
 		{"profile for another app", signedTree(unsignedBin, signedBin, []byte("profile "+testTeam+".other")), "does not name"},
 		{"extra file", append(signedTree(unsignedBin, signedBin, []byte(testTeam+"."+bundleID)), archiveEntry{Name: bundleName + "/Contents/MacOS/helper", Mode: 0o755, Data: []byte("x")}), "unexpected file"},
 		{"changed plist", func() []archiveEntry {
