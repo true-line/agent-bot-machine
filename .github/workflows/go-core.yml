@@ -104,16 +104,23 @@ jobs:
           version="$(tr -d '[:space:]' <VERSION)"
           go run ./cmd/mm-release build -version "$version" -out dist
       - name: Verify the release archives and formula pin
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          pin=()
+          go run ./cmd/mm-release verify -dist dist
+          require_pin=false
           if [ "${{ github.ref_type }}" = "tag" ]; then
-            pin=(-formula Formula/managed-machine.rb -require-pin)
+            require_pin=true
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             if git diff --name-only HEAD^1 HEAD 2>/dev/null | grep -qx 'VERSION'; then
-              pin=(-formula Formula/managed-machine.rb -require-pin)
+              require_pin=true
             fi
           fi
-          go run ./cmd/mm-release verify -dist dist ${pin[@]+"${pin[@]}"}
+          if [ "$require_pin" = "true" ]; then
+            tag="v$(tr -d '[:space:]' <VERSION)"
+            gh release download "$tag" --dir signed --pattern 'managed-machine_*' --pattern SHA256SUMS
+            go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -formula Formula/managed-machine.rb -require-pin
+          fi
       - name: Upload the dist artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

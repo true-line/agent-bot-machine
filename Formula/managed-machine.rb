@@ -24,8 +24,8 @@ class ManagedMachine < Formula
   homepage "https://github.com/qwts/managed-machine"
   url "https://github.com/qwts/managed-machine.git",
       using: :git,
-      tag:   "v0.11.3"
-  version "0.11.3"
+      tag:   "v0.11.4"
+  version "0.11.4"
   license "MIT"
 
   depends_on arch: :arm64
@@ -39,7 +39,7 @@ class ManagedMachine < Formula
   resource "managed-machine-config" do
     url "https://github.com/qwts/managed-machine-config.git",
         using:    :git,
-        tag:      "v0.11.3",
+        tag:      "v0.11.4",
         revision: "33c185503927616a50695dcc1e044c762715afab",
         shallow:  false
   end
@@ -56,8 +56,8 @@ class ManagedMachine < Formula
   # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, S8 D3).
   # Installed as bin/managed-machine; legacy Bash tree staged under libexec/legacy.
   resource "core" do
-    url "https://github.com/qwts/managed-machine/releases/download/v0.11.3/managed-machine_0.11.3_darwin_arm64.tar.gz"
-    sha256 "7d9745c8e5a27fb051bbac224baeeb09b9d0002685e5c063c885593470422cdc"
+    url "https://github.com/qwts/managed-machine/releases/download/v0.11.4/managed-machine_0.11.4_darwin_arm64.tar.gz"
+    sha256 "e0d027cf110c368653a861dbe445c5118adeae796e0031002be1b5d671f201a9"
   end
 
   def install
@@ -88,8 +88,9 @@ class ManagedMachine < Formula
     SH
     chmod 0755, libexec / "scripts/update"
 
-    # Install the compiled Go core binary as bin/managed-machine and expose the
-    # agent-machine command alias.
+    # Install the prebuilt Go core binary directly as bin/managed-machine
+    # (S8 P01 inversion: the Go core is the primary entry point; agent-machine
+    # is the command alias).
     bin.mkpath
     resource("core").stage do
       bin.install "managed-machine"
