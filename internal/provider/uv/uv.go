@@ -171,6 +171,7 @@ func (p *Provider) Plan(ctx context.Context, r Request) (*Resolution, error) {
 	if err != nil {
 		return nil, err
 	}
+	pin, python := r.Options["version"], r.Options["python"]
 	path, err := p.tool()
 	if err != nil {
 		return nil, err
@@ -186,18 +187,18 @@ func (p *Provider) Plan(ctx context.Context, r Request) (*Resolution, error) {
 		}
 		pre = append(pre, plan.Precondition{Kind: "privilege", Subject: "custom-root", Requirement: rootRequirement + root, Observed: "writable"})
 	}
-	latest, err := p.resolve(ctx, tool)
+	latest, err := p.resolve(ctx, tool, pin)
 	if err != nil {
 		return nil, err
 	}
-	installed, err := p.list(ctx, root)
+	installed, err := p.list(ctx, root, python != "")
 	if err != nil {
 		return nil, err
 	}
 	res := &Resolution{Package: tool, Version: latest, ProviderVersion: ver, Preconditions: pre}
-	if have, ok := installed[normalize(tool)]; ok && have == latest {
-		// The planned version is already installed: the plan has no
-		// operation and the install is unchanged.
+	if have, ok := installed[normalize(tool)]; ok && have.version == latest && (python == "" || have.python == python) {
+		// The planned version is already installed on the pinned Python:
+		// the plan has no operation and the install is unchanged.
 		res.Installed = true
 		return res, nil
 	}
@@ -209,16 +210,33 @@ func (p *Provider) Plan(ctx context.Context, r Request) (*Resolution, error) {
 	if root != "" {
 		params["root"] = root
 	}
+	if python != "" {
+		params["python"] = python
+	}
 	res.Operations = []plan.Operation{{ID: "1", Operation: "software:" + r.Software, Target: r.Target, Action: action, Provider: Name,
 		Params: params}}
 	return res, nil
 }
 
-// parse validates the request: the recipe names exactly one tool, and the
-// target is the current user or a custom root named by an absolute path.
+// pinnedVersion is the release shape a recipe may pin (X.Y.Z).
+var pinnedVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// pythonVersion is the interpreter a recipe may pin: a CPython 3 major.minor,
+// never a path.
+var pythonVersion = regexp.MustCompile(`^3\.[0-9]{1,2}$`)
+
+// parse validates the request: the recipe names exactly one tool, optionally
+// its pinned version and Python, and the target is the current user or a
+// custom root named by an absolute path.
 func (p *Provider) parse(r Request) (tool, root string, err error) {
-	for k := range r.Options {
-		if k != "tool" {
+	for k, v := range r.Options {
+		switch {
+		case k == "tool":
+		case k == "version" && pinnedVersion.MatchString(v):
+		case k == "python" && pythonVersion.MatchString(v):
+		case k == "version" || k == "python":
+			return "", "", fmt.Errorf("%w: %s %q is not a pinned value", ErrUnsupported, k, v)
+		default:
 			return "", "", fmt.Errorf("%w: option %q; the uv provider installs exactly one tool", ErrUnsupported, k)
 		}
 	}
@@ -300,18 +318,34 @@ func (p *Provider) run(ctx context.Context, path, root string, args ...string) (
 	return p.Run(ctx, path, args, p.env(root))
 }
 
-// toolLine is one installed tool: "ruff v0.7.4".
-var toolLine = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*) v([0-9][0-9A-Za-z.\-+]*)$`)
+// toolLine is one installed tool: "ruff v0.7.4", or with --show-python
+// "ruff v0.7.4 [CPython 3.12.3]".
+var toolLine = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*) v([0-9][0-9A-Za-z.\-+]*)(?: \[CPython ([0-9]+\.[0-9]+)\.[0-9A-Za-z+]*\])?$`)
+
+// installedTool is one tool uv lists: its version and, when the list was
+// asked for it, the major.minor of its CPython.
+type installedTool struct {
+	version, python string
+}
+
+// listArgs is the argv of the tool list; showPython adds each tool's
+// interpreter.
+func listArgs(showPython bool) []string {
+	if showPython {
+		return []string{"tool", "list", "--show-python"}
+	}
+	return []string{"tool", "list"}
+}
 
 // list reads the installed tools of the target with the target's
 // environment. An empty list, or "No tools installed", means no tool is
 // installed.
-func (p *Provider) list(ctx context.Context, root string) (map[string]string, error) {
+func (p *Provider) list(ctx context.Context, root string, showPython bool) (map[string]installedTool, error) {
 	path, err := p.tool()
 	if err != nil {
 		return nil, err
 	}
-	r, err := p.run(ctx, path, root, "tool", "list")
+	r, err := p.run(ctx, path, root, listArgs(showPython)...)
 	if err != nil {
 		return nil, err
 	}
@@ -323,8 +357,8 @@ func (p *Provider) list(ctx context.Context, root string) (map[string]string, er
 
 // parseTools reads the tool list uv prints: one "<name> v<version>" line
 // per installed tool, each followed by its executable lines.
-func parseTools(out string) map[string]string {
-	tools := map[string]string{}
+func parseTools(out string) map[string]installedTool {
+	tools := map[string]installedTool{}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "-") {
@@ -334,7 +368,7 @@ func parseTools(out string) map[string]string {
 		if m == nil {
 			continue
 		}
-		tools[normalize(m[1])] = m[2]
+		tools[normalize(m[1])] = installedTool{version: m[2], python: m[3]}
 	}
 	return tools
 }
@@ -345,13 +379,17 @@ func normalize(name string) string {
 	return strings.ToLower(strings.NewReplacer("_", "-", ".", "-").Replace(name))
 }
 
-// resolve reads the version the index publishes for the tool.
-func (p *Provider) resolve(ctx context.Context, tool string) (string, error) {
+// resolve reads the version the index publishes for the tool: the latest
+// release, or exactly the pinned one, which the index must publish.
+func (p *Provider) resolve(ctx context.Context, tool, pin string) (string, error) {
 	base := p.IndexBase
 	if base == "" {
 		base = DefaultIndexBase
 	}
 	u := strings.TrimSuffix(base, "/") + "/pypi/" + url.PathEscape(tool) + "/json"
+	if pin != "" {
+		u = strings.TrimSuffix(base, "/") + "/pypi/" + url.PathEscape(tool) + "/" + url.PathEscape(pin) + "/json"
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return "", fmt.Errorf("the index URL of %s is malformed: %v", tool, err)
@@ -383,6 +421,9 @@ func (p *Provider) resolve(ctx context.Context, tool string) (string, error) {
 	}
 	if doc.Info.Version == "" {
 		return "", fmt.Errorf("%w: the index publishes no version for %q", ErrUnsupported, tool)
+	}
+	if pin != "" && doc.Info.Version != pin {
+		return "", fmt.Errorf("%w: the index answered %s for the pinned %s==%s", ErrUnsupported, doc.Info.Version, tool, pin)
 	}
 	return doc.Info.Version, nil
 }
@@ -479,26 +520,35 @@ func (p *Provider) Step(op plan.Operation) (execute.Step, error) {
 	default:
 		return nil, fmt.Errorf("%w: operation %s has the action %q", ErrUnsupported, op.ID, op.Action)
 	}
+	params := 2
+	python, pinned := op.Params["python"]
+	if pinned {
+		if !pythonVersion.MatchString(python) {
+			return nil, fmt.Errorf("%w: operation %s", ErrUnsupported, op.ID)
+		}
+		params++
+	}
 	var root string
 	switch {
 	case op.Target == TargetUser:
-		if len(op.Params) != 2 {
+		if len(op.Params) != params {
 			return nil, fmt.Errorf("%w: operation %s", ErrUnsupported, op.ID)
 		}
 	case strings.HasPrefix(op.Target, targetPrefix):
 		root = strings.TrimPrefix(op.Target, targetPrefix)
-		if root == "" || !filepath.IsAbs(root) || op.Params["root"] != root || len(op.Params) != 3 {
+		if root == "" || !filepath.IsAbs(root) || op.Params["root"] != root || len(op.Params) != params+1 {
 			return nil, fmt.Errorf("%w: operation %s", ErrUnsupported, op.ID)
 		}
 	default:
 		return nil, fmt.Errorf("%w: operation %s targets %s", ErrUnsupported, op.ID, op.Target)
 	}
-	return &step{p: p, tool: tool, version: version, root: root, action: op.Action}, nil
+	return &step{p: p, tool: tool, version: version, python: python, root: root, action: op.Action}, nil
 }
 
 type step struct {
 	p             *Provider
 	tool, version string
+	python        string
 	root          string
 	action        string
 }
@@ -519,6 +569,9 @@ func (s *step) Apply(ctx context.Context) (execute.Evidence, error) {
 	if s.action == ActionUpdate {
 		args = append(args, "--force")
 	}
+	if s.python != "" {
+		args = append(args, "--python", s.python)
+	}
 	args = append(args, s.tool+"=="+s.version)
 	r, err := s.p.run(ctx, path, s.root, args...)
 	if err != nil {
@@ -532,17 +585,18 @@ func (s *step) Apply(ctx context.Context) (execute.Evidence, error) {
 }
 
 // Verify asks uv what is installed, independently of the install's own
-// exit status, and requires the planned version.
+// exit status, and requires the planned version and Python.
 func (s *step) Verify(ctx context.Context) (execute.Evidence, error) {
 	path, err := s.p.tool()
 	if err != nil {
 		return nil, err
 	}
-	r, err := s.p.run(ctx, path, s.root, "tool", "list")
+	args := listArgs(s.python != "")
+	r, err := s.p.run(ctx, path, s.root, args...)
 	if err != nil {
 		return nil, err
 	}
-	ev := execute.Evidence{"command": "uv tool list", "exit": r.Exit}
+	ev := execute.Evidence{"command": "uv " + strings.Join(args, " "), "exit": r.Exit}
 	if r.Exit != 0 {
 		return ev, fmt.Errorf("uv tool list exited %d: %s", r.Exit, firstLine(r.Stderr, r.Stdout))
 	}
@@ -550,11 +604,14 @@ func (s *step) Verify(ctx context.Context) (execute.Evidence, error) {
 	if !ok {
 		return ev, fmt.Errorf("%s is not installed after uv tool install", s.tool)
 	}
-	ev["installed"] = have
-	if have != s.version {
-		return ev, fmt.Errorf("%s %s was planned but %s is installed", s.tool, s.version, have)
+	ev["installed"] = have.version
+	if have.version != s.version {
+		return ev, fmt.Errorf("%s %s was planned but %s is installed", s.tool, s.version, have.version)
 	}
-	ev["version"] = have
+	if s.python != "" && have.python != s.python {
+		return ev, fmt.Errorf("%s was planned on Python %s but runs on %q", s.tool, s.python, have.python)
+	}
+	ev["version"] = have.version
 	return ev, nil
 }
 

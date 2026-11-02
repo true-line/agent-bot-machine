@@ -31,8 +31,14 @@ func TestMinimalEnvDropsPackageManagerVars(t *testing.T) {
 		t.Fatalf("env %v", env)
 	}
 	winPath := fixedPathFor("windows/amd64", "/Users/admin")
-	if !strings.Contains(winPath, filepath.Join("/Users/admin", "AppData", "Local", "Microsoft", "WindowsApps")) || !strings.Contains(winPath, `C:\Windows\System32`) {
-		t.Fatalf("windows path %s", winPath)
+	want := strings.Join([]string{
+		filepath.Join("/Users/admin", "AppData", "Local", "Microsoft", "WindowsApps"),
+		filepath.Join("/Users/admin", "AppData", "Local", "Microsoft", "WinGet", "Links"),
+		`C:\Program Files\nodejs`,
+		`C:\Windows\System32`,
+	}, ";")
+	if winPath != want {
+		t.Fatalf("windows path %s, want %s", winPath, want)
 	}
 	for _, banned := range []string{"HOMEBREW_", "npm_config_", "UV_", "/tmp/evil", "HOME=/tmp/agent"} {
 		if strings.Contains(text, banned) {
@@ -95,26 +101,28 @@ func TestApplyWithProviderRefusesAFormulaOnAnotherProvider(t *testing.T) {
 
 func TestApplyWithProviderPassesThePackageAndToolTokens(t *testing.T) {
 	rec := &recordingProvider{}
-	npmItem := Item{Name: "cline", Provider: "npm", Package: "cline"}
+	npmItem := Item{Name: "cline", Provider: "npm", Package: "cline", Version: "3.0.74"}
 	if err := applyWithProvider(context.Background(), npmItem, "1.2.3", "user", t.TempDir(), rec); err != nil {
 		t.Fatal(err)
 	}
-	if rec.req.Options["package"] != "cline" {
+	if rec.req.Options["package"] != "cline" || rec.req.Options["version"] != "3.0.74" || len(rec.req.Options) != 2 {
 		t.Fatalf("npm %#v", rec.req)
 	}
-	if _, ok := rec.req.Options["version"]; ok {
-		t.Fatal("the request option reached npm")
-	}
 	rec2 := &recordingProvider{}
-	uvItem := Item{Name: "mistral-vibe", Provider: "uv", Tool: "mistral-vibe"}
+	uvItem := Item{Name: "mistral-vibe", Provider: "uv", Tool: "mistral-vibe", Version: "2.25.8", Python: "3.12"}
 	if err := applyWithProvider(context.Background(), uvItem, "0.1.0", "user", t.TempDir(), rec2); err != nil {
 		t.Fatal(err)
 	}
-	if rec2.req.Options["tool"] != "mistral-vibe" {
+	if rec2.req.Options["tool"] != "mistral-vibe" || rec2.req.Options["version"] != "2.25.8" || rec2.req.Options["python"] != "3.12" || len(rec2.req.Options) != 3 {
 		t.Fatalf("uv %#v", rec2.req)
 	}
-	if _, ok := rec2.req.Options["version"]; ok {
-		t.Fatal("the request option reached uv")
+	rec3 := &recordingProvider{}
+	uvItem.Python = ""
+	if err := applyWithProvider(context.Background(), uvItem, "", "user", t.TempDir(), rec3); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rec3.req.Options["python"]; ok || len(rec3.req.Options) != 2 {
+		t.Fatalf("uv without python %#v", rec3.req)
 	}
 }
 
@@ -128,6 +136,11 @@ func TestApplyWithProviderRefusesARecipeTokenOnTheWrongProvider(t *testing.T) {
 		{Item{Name: "vibe", Provider: "npm", Tool: "mistral-vibe"}, errToolProvider},
 		{Item{Name: "vibe", Provider: "uv"}, errUvTool},
 		{Item{Name: "jq", Provider: "brew", Formula: "jq", Package: "jq"}, errOneToken},
+		{Item{Name: "cline", Provider: "npm", Package: "cline"}, errRegistryVersion},
+		{Item{Name: "vibe", Provider: "uv", Tool: "mistral-vibe", Python: "3.12"}, errRegistryVersion},
+		{Item{Name: "cline", Provider: "npm", Package: "cline", Version: "3.0.74", Python: "3.12"}, errPythonProvider},
+		{Item{Name: "jq", Provider: "brew", Formula: "jq", Python: "3.12"}, errPythonProvider},
+		{Item{Name: "cline", Provider: "npm", Package: "cline", Version: "3.0.74", URL: "https://example.com/x"}, errOneToken},
 	}
 	for _, tc := range cases {
 		rec := &recordingProvider{}
@@ -154,7 +167,7 @@ func TestRunProviderConstructsNpmAndUvAndRefusesWhenMissing(t *testing.T) {
 			"PATH=" + t.TempDir(),
 		}
 	}
-	npmItem := Item{Name: "cline", Provider: "npm", Package: "cline"}
+	npmItem := Item{Name: "cline", Provider: "npm", Package: "cline", Version: "3.0.74"}
 	impl, err := runProvider(t.TempDir(), npmItem)
 	if err != nil || impl == nil || impl.Name() != "npm" {
 		t.Fatalf("npm %v %v", impl, err)
@@ -164,7 +177,7 @@ func TestRunProviderConstructsNpmAndUvAndRefusesWhenMissing(t *testing.T) {
 	if err := applyWithProvider(context.Background(), npmItem, "", "user", t.TempDir(), npmProv); !errors.Is(err, provider.ErrMissing) {
 		t.Fatalf("missing npm: %v", err)
 	}
-	uvItem := Item{Name: "vibe", Provider: "uv", Tool: "mistral-vibe"}
+	uvItem := Item{Name: "vibe", Provider: "uv", Tool: "mistral-vibe", Version: "2.25.8"}
 	impl, err = runProvider(t.TempDir(), uvItem)
 	if err != nil || impl == nil || impl.Name() != "uv" {
 		t.Fatalf("uv %v %v", impl, err)
