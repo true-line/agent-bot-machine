@@ -52,7 +52,11 @@ func repackCmd(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("unsigned dist: %w", err)
 	}
-	entries, err := readTree(*treeDir)
+	unsigned, err := readTarGzFile(filepath.Join(*distDir, darwinArchiveName(version)))
+	if err != nil {
+		return fmt.Errorf("unsigned dist: %w", err)
+	}
+	entries, err := readTree(*treeDir, unsigned)
 	if err != nil {
 		return err
 	}
@@ -90,7 +94,10 @@ func repackCmd(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func readTree(root string) ([]archiveEntry, error) {
+// readTree takes each file's mode from the unsigned archive rather than the
+// filesystem, which on Windows has no executable bit; files signing added are
+// 0644.
+func readTree(root string, unsigned map[string]archiveEntry) ([]archiveEntry, error) {
 	var entries []archiveEntry
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -114,11 +121,12 @@ func readTree(root string) ([]archiveEntry, error) {
 		if err != nil {
 			return err
 		}
+		name := filepath.ToSlash(rel)
 		mode := int64(0o644)
-		if info.Mode().Perm()&0o111 != 0 {
-			mode = 0o755
+		if prev, ok := unsigned[name]; ok {
+			mode = prev.Mode
 		}
-		entries = append(entries, archiveEntry{Name: filepath.ToSlash(rel), Mode: mode, Data: data})
+		entries = append(entries, archiveEntry{Name: name, Mode: mode, Data: data})
 		return nil
 	})
 	if err != nil {
