@@ -29,6 +29,13 @@ func TestCallerRefuse(t *testing.T) {
 		{"unknown home", Caller{Username: "admin", UID: 501, Home: "/Users/admin"}},
 		{"not prefix owner", Caller{Username: "user", UID: 502, Home: "/Users/user", RegisteredHome: "/Users/user", PrefixOwner: "admin"}},
 	}
+	user := Caller{Username: "user", UID: 502, Home: "/Users/user", RegisteredHome: "/Users/user", PrefixOwner: "admin"}
+	if user.Refuse() == "" {
+		t.Fatal("user should be refused for service install")
+	}
+	if user.RefuseClient() != "" {
+		t.Fatalf("user should be allowed as a thin client: %s", user.RefuseClient())
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.c.Refuse() == "" {

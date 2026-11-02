@@ -20,6 +20,8 @@ func TestRunChecksRealPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	channel := filepath.Join(root, "channel")
+	t.Setenv("AGENT_MACHINE_CHANNEL", channel)
 	t.Cleanup(func() {
 		if store := defaultKeyStore(filepath.Join(stateDir(root), "daemon.key")); store != nil {
 			_ = store.Delete()
@@ -39,7 +41,7 @@ func TestRunChecksRealPeer(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- Run(ctx, root) }()
 
-	sock := filepath.Join(dir, "daemon.sock")
+	sock := filepath.Join(channel, "daemon.sock")
 	var conn net.Conn
 	for i := 0; i < 50; i++ {
 		conn, err = net.Dial("unix", sock)

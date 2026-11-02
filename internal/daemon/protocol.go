@@ -89,8 +89,11 @@ func (p Pairing) allows(key ed25519.PublicKey) bool {
 	return false
 }
 
-// Gate verifies peer identity, signature, time, and nonce. Peer identity is
-// necessary and never sufficient.
+// Gate verifies peer identity, signature, time, and nonce. A local process
+// identity (getpeereid / SO_PEERCRED) is necessary and never sufficient:
+// the pairing key authorizes the request. The caller UID does not have to
+// match the daemon account — agent-daemon and the Terminal thin client
+// run in the user account.
 type Gate struct {
 	Pairing Pairing
 	// Dir is the daemon state directory. When set, verify reads the pairing
@@ -109,8 +112,8 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if err := dec.Decode(&req); err != nil {
 		return req, diag.DaemonTampered, "request was not a single known object"
 	}
-	if peerUID != g.PeerUID {
-		return req, diag.DaemonPeerRefused, "caller is not the paired agent-daemon"
+	if peerUID < 0 {
+		return req, diag.DaemonPeerRefused, "caller is not a local process"
 	}
 	if req.Signature == "" || req.PublicKey == "" {
 		return req, diag.DaemonUnsigned, "request is not signed"

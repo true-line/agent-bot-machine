@@ -146,6 +146,20 @@ func TestTryUpdateNamesTheTerminalClient(t *testing.T) {
 	}
 }
 
+func TestTryUpdateForCallerAllowsUser(t *testing.T) {
+	caller := Caller{
+		Username:       "user",
+		UID:            502,
+		Home:           "/Users/user",
+		RegisteredHome: "/Users/user",
+		PrefixOwner:    "admin",
+	}
+	handled, _, err := TryUpdateForCaller(caller, filepath.Join(t.TempDir(), "daemon.sock"), filepath.Join(t.TempDir(), "client.key"), "")
+	if err != nil || handled {
+		t.Fatalf("user thin client handled %v err %v", handled, err)
+	}
+}
+
 func TestTryUpdateForCallerRefusesAgentSession(t *testing.T) {
 	caller := Caller{
 		Username:       "admin",

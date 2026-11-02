@@ -38,6 +38,45 @@ func TestListenModes(t *testing.T) {
 	}
 }
 
+func TestListenChannelModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket permissions are not the Windows pipe")
+	}
+	base, err := os.MkdirTemp("/tmp", "mm-ch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(base) })
+	dir := filepath.Join(base, "channel")
+	ln, err := ListenChannel(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("channel dir mode %o", info.Mode().Perm())
+	}
+	sock, err := os.Stat(filepath.Join(dir, "daemon.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sock.Mode().Perm() != 0o666 {
+		t.Fatalf("channel socket mode %o", sock.Mode().Perm())
+	}
+	enroll := filepath.Join(dir, "enroll")
+	info, err = os.Stat(enroll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o733 || info.Mode()&os.ModeSticky == 0 {
+		t.Fatalf("enroll dir mode %v, want sticky 1733", info.Mode())
+	}
+}
+
 func TestServeStatusSigned(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix socket permissions are not the Windows pipe")
@@ -86,6 +125,55 @@ func TestServeStatusSigned(t *testing.T) {
 	res.RequestNonce = "other"
 	if VerifyResponse(dpub, res) {
 		t.Fatal("a response for another request verified")
+	}
+	cancel()
+	<-done
+}
+
+func TestThinClientStatusFromOtherUID(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket permissions are not the Windows pipe")
+	}
+	base, err := os.MkdirTemp("/tmp", "mm-thin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(base) })
+	admin := filepath.Join(base, "admin")
+	user := filepath.Join(base, "user")
+	channel := filepath.Join(base, "channel")
+	t.Setenv("AGENT_MACHINE_CHANNEL", channel)
+	pubPath, err := PairClient(user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnrollClient(admin, "terminal", pubPath); err != nil {
+		t.Fatal(err)
+	}
+	priv, err := loadOrCreateKey(filepath.Join(stateDir(admin), "daemon.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeChannelPub(channel, priv); err != nil {
+		t.Fatal(err)
+	}
+	pairing, err := loadPairing(stateDir(admin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := ListenChannel(channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, ln, &Gate{Pairing: pairing, Dir: stateDir(admin)}, priv, func(net.Conn) (int, error) { return 502, nil }, Hooks{})
+	}()
+	handled, res, err := TryRPC(filepath.Join(channel, "daemon.sock"), filepath.Join(stateDir(user), "client.key"), "status", "")
+	if err != nil || !handled || !res.OK || res.State != "idle" {
+		t.Fatalf("handled %v res %#v err %v", handled, res, err)
 	}
 	cancel()
 	<-done

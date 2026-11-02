@@ -1,11 +1,24 @@
 package daemon
 
 import (
+	"crypto/ed25519"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/diag"
 )
+
+func mustLoadPub(t *testing.T, path string) ed25519.PublicKey {
+	t.Helper()
+	pub, err := loadPublic(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pub
+}
 
 func owner(root string) Deps {
 	return Deps{
@@ -119,14 +132,56 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 		t.Fatalf("unpaired terminal key %v %v", pairing, err)
 	}
 
-	userDeps := owner(root)
+	userRoot := t.TempDir()
+	userDeps := owner(userRoot)
 	userDeps.Caller = func() (Caller, error) {
-		return Caller{Username: "user", UID: 502, Home: root, RegisteredHome: root, PrefixOwner: "admin"}, nil
+		return Caller{Username: "user", UID: 502, Home: userRoot, RegisteredHome: userRoot, PrefixOwner: "admin"}, nil
 	}
-	for _, verb := range []string{"install", "uninstall", "run", "pair", "unpair"} {
+	userDeps.Root = func() (string, error) { return userRoot, nil }
+	for _, verb := range []string{"install", "uninstall", "run", "unpair"} {
 		res := run(userDeps, cli.Context{}, []string{verb})
 		if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {
 			t.Fatalf("expected user %s to be refused, got %#v", verb, res.Diagnostic)
 		}
+	}
+	t.Setenv("AGENT_MACHINE_CHANNEL", filepath.Join(userRoot, "channel"))
+	res = run(userDeps, cli.Context{}, []string{"pair"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	got, ok := res.Records[0].Get("state")
+	if !ok || got != "minted" {
+		t.Fatalf("user pair state %v", res)
+	}
+	rawPath, _ := res.Records[0].Get("path")
+	pubPath, _ := rawPath.(string)
+	if pubPath == "" {
+		t.Fatalf("user pair path %v", res)
+	}
+	if runtime.GOOS == "windows" {
+		if filepath.Base(pubPath) != "agent-machine.client.pub" {
+			t.Fatalf("expected home-root pub on Windows, got %s", pubPath)
+		}
+	} else if filepath.Base(filepath.Dir(pubPath)) != "enroll" {
+		t.Fatalf("expected channel enroll drop, got %s", pubPath)
+	}
+	st, err := os.Stat(pubPath)
+	if err != nil {
+		t.Fatalf("client pub %v", err)
+	}
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o644 {
+		t.Fatalf("client pub mode %v", st.Mode())
+	}
+	res = run(userDeps, cli.Context{}, []string{"pair", "--enroll", pubPath})
+	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {
+		t.Fatalf("expected user enroll to be refused, got %#v", res.Diagnostic)
+	}
+	res = run(owner(root), cli.Context{}, []string{"pair", "--enroll", pubPath})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	pairing, err = loadPairing(stateDir(root))
+	if err != nil || !pairing.allows(mustLoadPub(t, pubPath)) {
+		t.Fatalf("enrolled user key %v %v", pairing, err)
 	}
 }

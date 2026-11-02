@@ -3,8 +3,9 @@ status: active
 overview: >-
   Ship the darwin core as a Developer ID signed and notarized managed-machine
   CLI binary, with no .app bundle, no keychain-access-groups entitlement, and
-  no Secure Enclave wrap; store the daemon key in the login keychain with a
-  self-only ACL. Signing happens during `scripts/release prepare`, before the
+  no Secure Enclave wrap; store the daemon key in a dedicated file keychain
+  (`daemon.keychain-db`) with a self-only ACL. Signing happens during
+  `scripts/release prepare`, before the
   formula pin, in an approval-gated GitHub environment.
 related_prs: [440, 441, 451]
 related_issues: [442, 446]
@@ -20,31 +21,52 @@ notarized by Apple as a plain CLI binary — no `.app` bundle, no embedded
 provisioning profile, no `keychain-access-groups` entitlement, and no Secure
 Enclave key wrap.
 
-On macOS the daemon's 32-byte Ed25519 seed is stored in the login keychain
-through `Security.framework` in-process (`SecItemAdd`, `SecItemCopyMatching`,
+On macOS the daemon's 32-byte Ed25519 seed is stored in a dedicated file
+keychain at `~/.config/agent-machine/daemon.keychain-db` through
+`Security.framework` in-process (`SecKeychainCreate` / `SecKeychainOpen` /
+`SecKeychainUnlock`, then `SecItemAdd`, `SecItemCopyMatching`,
 `SecItemUpdate`, `SecItemDelete`) under service `ai.true-line.agent-bot-machine`
-and account `daemon.key`, with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`
-and a `SecAccessRef` ACL (`SecTrustedApplicationCreateFromPath(NULL, ...)` +
-`SecAccessCreate`) trusting only the signed daemon binary. There is no
-empty-password `daemon.keychain-db` fallback and no dual-format payload path;
-only `errSecItemNotFound` (`-25300`) is treated as absent, and every other
-status (including `-34018` `errSecMissingEntitlement` or an item whose ACL does
-not trust only the daemon binary) fails closed. On `Save`, `errSecDuplicateItem`
-checks the existing item's ACL first: if it already passes
-`verifyItemSelfOnlyACL`, `Save` updates its data in place via `SecItemUpdate`
-so a failure or crash can never delete a valid daemon key; only if the existing
-item fails `verifyItemSelfOnlyACL` (an untrusted pre-planted item) does `Save`
-delete and re-add with a fresh self-only ACL. Existing pre-keychain installs
-migrate once from an on-disk `daemon.key` into the login keychain item and then
-delete `daemon.key`; `daemon.keychain-db` files are never opened or imported.
+and account `daemon.key`, targeted with `kSecUseKeychain` so `SecItemAdd` never
+falls through to `login.keychain-db` or `System.keychain`. The item has a
+`SecAccessRef` ACL (`SecTrustedApplicationCreateFromPath(NULL, ...)` +
+`SecAccessCreate`) trusting only the signed daemon binary. `kSecAttrAccessible`
+is omitted: that Data Protection attribute on a file keychain makes
+`SecItemAdd` call Authorization Services and fail with OSStatus `-60008` when
+the prefix-owner account has no GUI session that can prompt. The dedicated
+keychain is created with an empty password (never typed, never displayed).
+Open unlocks it in-process with that empty password, disables keychain
+prompts, restores the previous default keychain so this file does not become
+the account default, and turns off lock-on-sleep. Only a missing
+keychain file or `errSecItemNotFound` (`-25300`) is treated as absent; every
+other status (including unlock failure or an item whose ACL does not trust
+only the daemon binary) fails closed, except an unsigned rebuild at the same
+executable path: that is a stale `SecTrustedApplication` hash, and `Load`
+rebinds the ACL to the current binary (or rotates the item if Darwin refuses
+the read). A trusted-app path that is not this executable still fails closed.
+On `Save`, `errSecDuplicateItem` checks
+the existing item's ACL first: if it already passes `verifyItemSelfOnlyACL`,
+`Save` updates its data in place via `SecItemUpdate` so a failure or crash can
+never delete a valid daemon key; only if the existing item fails
+`verifyItemSelfOnlyACL` (an untrusted pre-planted item) does `Save` delete and
+re-add with a fresh self-only ACL. Existing pre-keychain installs migrate once
+from an on-disk `daemon.key` into the dedicated keychain item and then delete
+`daemon.key`.
 
-**Login-keychain ACL threat model.** The self-only `SecAccessRef` ACL prevents
-silent reads or ACL changes by other processes running in the user session.
-Because the item lives in the login keychain (rather than the `.app`-only Data
-Protection Keychain / Secure Enclave), another local process can still trigger a
-macOS Keychain Access confirmation dialog and read the item if the logged-in
-user approves the prompt. Owner direction (#446) accepts this trade-off in
-order to ship a plain CLI binary with no `.app` bundle.
+The prefix-owner account (`admin`) does not have a usable login keychain: it
+is not a GUI login session, and a password reset leaves `login.keychain-db`
+locked or absent. Pairing therefore must not depend on that store. Owner
+direction (#446) still applies: no `.app` bundle, no Secure Enclave, no
+`keychain-access-groups`. The dedicated file keychain uses the same self-only
+ACL as the login-keychain design; it is created and unlocked in-process so
+the daemon can pair without a GUI keychain prompt.
+
+**Dedicated-keychain ACL threat model.** The self-only `SecAccessRef` ACL
+prevents silent reads or ACL changes by other processes running as the
+prefix owner. The keychain file is `0600` in a `0700` directory. Another local
+process running as that user can still trigger a macOS Keychain Access
+confirmation dialog and read the item if the logged-in user approves the
+prompt. Owner direction (#446) accepts this trade-off in order to ship a
+plain CLI binary with no `.app` bundle.
 
 Signing runs during the release PR so the formula still pins the darwin archive
 before the tag exists, and the pin names the signed archive.
@@ -97,12 +119,12 @@ the draft instead of creating a release.
 
 ## Acceptance
 
-- `go test ./internal/daemon` covers login-keychain round-trip (`Load`, `Save`,
-  in-place `SecItemUpdate` rotation, `Delete`), fail-closed behavior on
-  malformed keychain or disk items, one-time migration from legacy
-  `daemon.keychain-db` and `daemon.key` with deletion of the old copy after
-  `Save`, and the child-process seam proving key bytes never appear in any
-  child process's `argv` or `env`.
+- `go test ./internal/daemon` covers dedicated-keychain round-trip (`Load`,
+  `Save`, in-place `SecItemUpdate` rotation, `Delete`) including a HOME with
+  no login keychain, fail-closed behavior on malformed keychain or disk items,
+  one-time migration from legacy `daemon.key` into `daemon.keychain-db`, and
+  the child-process seam proving key bytes never appear in any child process's
+  `argv` or `env`.
 - `go test ./cmd/mm-release` covers repack and verify-signed refusals (changed
   code, wrong Team ID, data after the signature, extra or changed files, a
   changed other archive), and on darwin/arm64 proves a real `codesign` re-sign

@@ -149,9 +149,12 @@ func main() {
 				return false, 0
 			}
 			base := daemon.StateDir(home)
-			endpoint := filepath.Join(base, "daemon.sock")
-			if runtime.GOOS == "windows" {
-				endpoint = `\\.\pipe\agent-machine`
+			endpoint := daemon.ChannelSocket()
+			if endpoint == "" {
+				endpoint = filepath.Join(base, "daemon.sock")
+				if runtime.GOOS == "windows" {
+					endpoint = `\\.\pipe\agent-machine`
+				}
 			}
 			handled, res, err := daemon.TryUpdateForCaller(caller, endpoint, filepath.Join(base, "client.key"), "")
 			if !handled {

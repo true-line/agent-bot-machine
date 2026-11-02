@@ -153,11 +153,10 @@ func TestPrivateStateDirPermissionsAndNoUserAccess(t *testing.T) {
 		filepath.Join(dir, "peers", "terminal.pub"),
 	}
 	if runtime.GOOS == "darwin" {
-		for _, forbidden := range []string{"daemon.key", "daemon.keychain-db"} {
-			if _, err := os.Stat(filepath.Join(dir, forbidden)); !os.IsNotExist(err) {
-				t.Fatalf("expected no %s file on darwin, got err=%v", forbidden, err)
-			}
+		if _, err := os.Stat(filepath.Join(dir, "daemon.key")); !os.IsNotExist(err) {
+			t.Fatalf("expected no plaintext daemon.key on darwin, got err=%v", err)
 		}
+		files = append(files, filepath.Join(dir, "daemon.keychain-db"))
 	} else {
 		files = append(files, filepath.Join(dir, "daemon.key"))
 	}
@@ -302,8 +301,11 @@ func TestPurgeLegacySharedStateAndRefuseSymlink(t *testing.T) {
 	if err := purgeLegacySharedState(dir2, legacyShared, store); err != nil {
 		t.Fatalf("purgeLegacySharedState: %v", err)
 	}
-	if _, err := os.Lstat(legacyShared); !os.IsNotExist(err) {
-		t.Fatalf("expected legacyShared to be removed, got err=%v", err)
+	if _, err := os.Lstat(filepath.Join(legacyShared, "daemon.key")); !os.IsNotExist(err) {
+		t.Fatalf("expected leaked daemon.key to be removed, got err=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(legacyShared, "peers")); !os.IsNotExist(err) {
+		t.Fatalf("expected leaked peers to be removed, got err=%v", err)
 	}
 	if _, err := os.Lstat(dir2); !os.IsNotExist(err) {
 		t.Fatalf("expected legacy symlink to be removed, got err=%v", err)
