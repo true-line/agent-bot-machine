@@ -189,9 +189,8 @@ grep -Fq 'resource("local-bin").stage(legacy / "local-bin")' "$FIXTURE/Formula/m
 grep -Fq '(libexec / "scripts/update").write' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'exec "$(dirname "$0")/../legacy/scripts/update" "$@"' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'chmod 0755, libexec / "scripts/update"' "$FIXTURE/Formula/managed-machine.rb"
-grep -Fq 'prefix.install "AgentBotMachine.app"' "$FIXTURE/Formula/managed-machine.rb"
-grep -Fq 'bin.install_symlink prefix / "AgentBotMachine.app/Contents/MacOS/managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
-grep -Fq 'assert_predicate prefix/"AgentBotMachine.app/Contents/embedded.provisionprofile", :exist?' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'bin.install "managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'chmod 0755, bin / "managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq "sha256 \"$(signed_darwin_sha 9.9.9)\"" "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'cp "VERSION", legacy / "VERSION"' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'assert_match "[legacy] adopt", help_output' "$FIXTURE/Formula/managed-machine.rb"
@@ -199,8 +198,6 @@ grep -Fq 'assert_predicate libexec/"legacy/setup-hostname", :executable?' "$FIXT
 grep -Fq 'assert_predicate libexec/"scripts/update", :executable?' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip' "$FIXTURE/Formula/managed-machine.rb"
 for leftover in \
-    'bin.install "managed-machine"' \
-    'chmod 0755, bin / "managed-machine"' \
     'if File.exist?("legacy/bin/managed-machine")' \
     'if (libexec / "legacy").exist?' \
     '(libexec / "core")' \
@@ -478,7 +475,8 @@ run_release prepare v9.9.11 >"$TEST_DIR/prepare-911.out"
 grep -Fq '# Installed as bin/managed-machine; legacy Bash tree staged under libexec/legacy.' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq '(legacy / "bin").install "legacy/bin/managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'exec "$(dirname "$0")/../legacy/scripts/update" "$@"' "$FIXTURE/Formula/managed-machine.rb"
-grep -Fq 'prefix.install "AgentBotMachine.app"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'bin.install "managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'chmod 0755, bin / "managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq "sha256 \"$(signed_darwin_sha 9.9.11)\"" "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip' "$FIXTURE/Formula/managed-machine.rb"
 if grep -Fq '(libexec / "core").install' "$FIXTURE/Formula/managed-machine.rb"; then

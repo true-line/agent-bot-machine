@@ -113,7 +113,12 @@ func TestPrivateStateDirPermissionsAndNoUserAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(base) })
+	t.Cleanup(func() {
+		if store := defaultKeyStore(filepath.Join(StateDir(base), "daemon.key")); store != nil {
+			_ = store.Delete()
+		}
+		os.RemoveAll(base)
+	})
 	dir := StateDir(base)
 	if want := filepath.Join(base, ".config", "agent-machine"); dir != want {
 		t.Fatalf("StateDir(%q) = %q, want %q", base, dir, want)
@@ -148,10 +153,11 @@ func TestPrivateStateDirPermissionsAndNoUserAccess(t *testing.T) {
 		filepath.Join(dir, "peers", "terminal.pub"),
 	}
 	if runtime.GOOS == "darwin" {
-		if _, err := os.Stat(filepath.Join(dir, "daemon.key")); !os.IsNotExist(err) {
-			t.Fatalf("expected no plaintext daemon.key on darwin, got err=%v", err)
+		for _, forbidden := range []string{"daemon.key", "daemon.keychain-db"} {
+			if _, err := os.Stat(filepath.Join(dir, forbidden)); !os.IsNotExist(err) {
+				t.Fatalf("expected no %s file on darwin, got err=%v", forbidden, err)
+			}
 		}
-		files = append(files, filepath.Join(dir, "daemon.keychain-db"))
 	} else {
 		files = append(files, filepath.Join(dir, "daemon.key"))
 	}
@@ -249,7 +255,12 @@ func TestPurgeLegacySharedStateAndRefuseSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(base) })
+	t.Cleanup(func() {
+		if store := defaultKeyStore(filepath.Join(StateDir(base), "daemon.key")); store != nil {
+			_ = store.Delete()
+		}
+		os.RemoveAll(base)
+	})
 
 	// 1. Refuse an arbitrary symlinked state directory.
 	foreign := filepath.Join(base, "foreign")

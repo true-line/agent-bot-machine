@@ -22,11 +22,6 @@ TEXT kc_CFDataGetBytes_trampoline<>(SB),NOSPLIT,$0-0
 GLOBL	·kc_CFDataGetBytes_trampoline_addr(SB), RODATA, $8
 DATA	·kc_CFDataGetBytes_trampoline_addr(SB)/8, $kc_CFDataGetBytes_trampoline<>(SB)
 
-TEXT kc_CFNumberCreate_trampoline<>(SB),NOSPLIT,$0-0
-	JMP	kc_CFNumberCreate(SB)
-GLOBL	·kc_CFNumberCreate_trampoline_addr(SB), RODATA, $8
-DATA	·kc_CFNumberCreate_trampoline_addr(SB)/8, $kc_CFNumberCreate_trampoline<>(SB)
-
 TEXT kc_CFPropertyListCreateWithData_trampoline<>(SB),NOSPLIT,$0-0
 	JMP	kc_CFPropertyListCreateWithData(SB)
 GLOBL	·kc_CFPropertyListCreateWithData_trampoline_addr(SB), RODATA, $8
@@ -51,6 +46,16 @@ TEXT kc_CFArrayCreate_trampoline<>(SB),NOSPLIT,$0-0
 	JMP	kc_CFArrayCreate(SB)
 GLOBL	·kc_CFArrayCreate_trampoline_addr(SB), RODATA, $8
 DATA	·kc_CFArrayCreate_trampoline_addr(SB)/8, $kc_CFArrayCreate_trampoline<>(SB)
+
+TEXT kc_CFArrayGetCount_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_CFArrayGetCount(SB)
+GLOBL	·kc_CFArrayGetCount_trampoline_addr(SB), RODATA, $8
+DATA	·kc_CFArrayGetCount_trampoline_addr(SB)/8, $kc_CFArrayGetCount_trampoline<>(SB)
+
+TEXT kc_CFArrayGetValueAtIndex_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_CFArrayGetValueAtIndex(SB)
+GLOBL	·kc_CFArrayGetValueAtIndex_trampoline_addr(SB), RODATA, $8
+DATA	·kc_CFArrayGetValueAtIndex_trampoline_addr(SB)/8, $kc_CFArrayGetValueAtIndex_trampoline<>(SB)
 
 TEXT kc_CFRelease_trampoline<>(SB),NOSPLIT,$0-0
 	JMP	kc_CFRelease(SB)
@@ -77,42 +82,47 @@ TEXT kc_SecItemDelete_trampoline<>(SB),NOSPLIT,$0-0
 GLOBL	·kc_SecItemDelete_trampoline_addr(SB), RODATA, $8
 DATA	·kc_SecItemDelete_trampoline_addr(SB)/8, $kc_SecItemDelete_trampoline<>(SB)
 
-TEXT kc_SecKeyCreateRandomKey_trampoline<>(SB),NOSPLIT,$0-0
-	JMP	kc_SecKeyCreateRandomKey(SB)
-GLOBL	·kc_SecKeyCreateRandomKey_trampoline_addr(SB), RODATA, $8
-DATA	·kc_SecKeyCreateRandomKey_trampoline_addr(SB)/8, $kc_SecKeyCreateRandomKey_trampoline<>(SB)
+TEXT kc_SecTrustedApplicationCreateFromPath_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecTrustedApplicationCreateFromPath(SB)
+GLOBL	·kc_SecTrustedApplicationCreateFromPath_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecTrustedApplicationCreateFromPath_trampoline_addr(SB)/8, $kc_SecTrustedApplicationCreateFromPath_trampoline<>(SB)
 
-TEXT kc_SecKeyCopyPublicKey_trampoline<>(SB),NOSPLIT,$0-0
-	JMP	kc_SecKeyCopyPublicKey(SB)
-GLOBL	·kc_SecKeyCopyPublicKey_trampoline_addr(SB), RODATA, $8
-DATA	·kc_SecKeyCopyPublicKey_trampoline_addr(SB)/8, $kc_SecKeyCopyPublicKey_trampoline<>(SB)
+TEXT kc_SecTrustedApplicationValidateWithPath_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecTrustedApplicationValidateWithPath(SB)
+GLOBL	·kc_SecTrustedApplicationValidateWithPath_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecTrustedApplicationValidateWithPath_trampoline_addr(SB)/8, $kc_SecTrustedApplicationValidateWithPath_trampoline<>(SB)
 
-TEXT kc_SecKeyCreateEncryptedData_trampoline<>(SB),NOSPLIT,$0-0
-	JMP	kc_SecKeyCreateEncryptedData(SB)
-GLOBL	·kc_SecKeyCreateEncryptedData_trampoline_addr(SB), RODATA, $8
-DATA	·kc_SecKeyCreateEncryptedData_trampoline_addr(SB)/8, $kc_SecKeyCreateEncryptedData_trampoline<>(SB)
+TEXT kc_SecAccessCreate_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecAccessCreate(SB)
+GLOBL	·kc_SecAccessCreate_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecAccessCreate_trampoline_addr(SB)/8, $kc_SecAccessCreate_trampoline<>(SB)
 
-TEXT kc_SecKeyCreateDecryptedData_trampoline<>(SB),NOSPLIT,$0-0
-	JMP	kc_SecKeyCreateDecryptedData(SB)
-GLOBL	·kc_SecKeyCreateDecryptedData_trampoline_addr(SB), RODATA, $8
-DATA	·kc_SecKeyCreateDecryptedData_trampoline_addr(SB)/8, $kc_SecKeyCreateDecryptedData_trampoline<>(SB)
+TEXT kc_SecAccessCopyMatchingACLList_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecAccessCopyMatchingACLList(SB)
+GLOBL	·kc_SecAccessCopyMatchingACLList_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecAccessCopyMatchingACLList_trampoline_addr(SB)/8, $kc_SecAccessCopyMatchingACLList_trampoline<>(SB)
 
-TEXT kc_SecKeychainCreate_trampoline<>(SB),NOSPLIT,$0-0
-	JMP	kc_SecKeychainCreate(SB)
-GLOBL	·kc_SecKeychainCreate_trampoline_addr(SB), RODATA, $8
-DATA	·kc_SecKeychainCreate_trampoline_addr(SB)/8, $kc_SecKeychainCreate_trampoline<>(SB)
+TEXT kc_SecACLCopyContents_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecACLCopyContents(SB)
+GLOBL	·kc_SecACLCopyContents_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecACLCopyContents_trampoline_addr(SB)/8, $kc_SecACLCopyContents_trampoline<>(SB)
 
-TEXT kc_SecKeychainOpen_trampoline<>(SB),NOSPLIT,$0-0
-	JMP	kc_SecKeychainOpen(SB)
-GLOBL	·kc_SecKeychainOpen_trampoline_addr(SB), RODATA, $8
-DATA	·kc_SecKeychainOpen_trampoline_addr(SB)/8, $kc_SecKeychainOpen_trampoline<>(SB)
+TEXT kc_SecACLSetContents_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecACLSetContents(SB)
+GLOBL	·kc_SecACLSetContents_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecACLSetContents_trampoline_addr(SB)/8, $kc_SecACLSetContents_trampoline<>(SB)
 
-TEXT kc_SecKeychainUnlock_trampoline<>(SB),NOSPLIT,$0-0
-	JMP	kc_SecKeychainUnlock(SB)
-GLOBL	·kc_SecKeychainUnlock_trampoline_addr(SB), RODATA, $8
-DATA	·kc_SecKeychainUnlock_trampoline_addr(SB)/8, $kc_SecKeychainUnlock_trampoline<>(SB)
+TEXT kc_SecKeychainItemCopyAccess_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecKeychainItemCopyAccess(SB)
+GLOBL	·kc_SecKeychainItemCopyAccess_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecKeychainItemCopyAccess_trampoline_addr(SB)/8, $kc_SecKeychainItemCopyAccess_trampoline<>(SB)
 
-TEXT kc_SecKeychainDelete_trampoline<>(SB),NOSPLIT,$0-0
-	JMP	kc_SecKeychainDelete(SB)
-GLOBL	·kc_SecKeychainDelete_trampoline_addr(SB), RODATA, $8
-DATA	·kc_SecKeychainDelete_trampoline_addr(SB)/8, $kc_SecKeychainDelete_trampoline<>(SB)
+TEXT kc_SecKeychainItemCopyAttributesAndData_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecKeychainItemCopyAttributesAndData(SB)
+GLOBL	·kc_SecKeychainItemCopyAttributesAndData_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecKeychainItemCopyAttributesAndData_trampoline_addr(SB)/8, $kc_SecKeychainItemCopyAttributesAndData_trampoline<>(SB)
+
+TEXT kc_SecKeychainItemFreeContent_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	kc_SecKeychainItemFreeContent(SB)
+GLOBL	·kc_SecKeychainItemFreeContent_trampoline_addr(SB), RODATA, $8
+DATA	·kc_SecKeychainItemFreeContent_trampoline_addr(SB)/8, $kc_SecKeychainItemFreeContent_trampoline<>(SB)
