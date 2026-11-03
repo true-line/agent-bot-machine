@@ -169,11 +169,17 @@ func TestThinClientStatusFromOtherUID(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- Serve(ctx, ln, &Gate{Pairing: pairing, Dir: stateDir(admin)}, priv, func(net.Conn) (int, error) { return 502, nil }, Hooks{})
+		done <- Serve(ctx, ln, &Gate{Pairing: pairing, Dir: stateDir(admin)}, priv, func(net.Conn) (int, error) { return 502, nil }, Hooks{
+			Receipts: func() ([]byte, error) { return []byte("[]"), nil },
+		})
 	}()
 	handled, res, err := TryRPC(filepath.Join(channel, "daemon.sock"), filepath.Join(stateDir(user), "client.key"), "status", "")
 	if err != nil || !handled || !res.OK || res.State != "idle" {
 		t.Fatalf("handled %v res %#v err %v", handled, res, err)
+	}
+	handled, res, err = TryRPC(filepath.Join(channel, "daemon.sock"), filepath.Join(stateDir(user), "client.key"), "receipts", "")
+	if err != nil || !handled || !res.OK || res.State != "listed" || string(res.Body) != "[]" {
+		t.Fatalf("receipts handled %v res %#v err %v", handled, res, err)
 	}
 	cancel()
 	<-done

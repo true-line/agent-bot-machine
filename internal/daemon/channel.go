@@ -51,13 +51,31 @@ func EnrollDropDir() string {
 }
 
 func ensureEnrollDir(channel string) error {
-	if channel == "" || runtime.GOOS == "windows" {
+	if channel == "" {
 		return nil
 	}
 	dir := filepath.Join(channel, "enroll")
-	enrollMode := os.FileMode(0o733) | os.ModeSticky
+	enrollMode := os.FileMode(0o733)
+	if runtime.GOOS != "windows" {
+		enrollMode |= os.ModeSticky
+	}
 	if err := os.MkdirAll(dir, enrollMode); err != nil {
 		return err
 	}
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	return os.Chmod(dir, enrollMode)
+}
+
+// defaultEnrollPub is the drop pair --enroll reads when no path is given.
+func defaultEnrollPub(client string) string {
+	if client == "" {
+		client = "terminal"
+	}
+	dir := EnrollDropDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, client+".pub")
 }

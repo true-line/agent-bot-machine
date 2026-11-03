@@ -47,6 +47,14 @@ func TestDaemonInstallAndStatus(t *testing.T) {
 	if !ok || got != "installed" {
 		t.Fatalf("state %v", got)
 	}
+	res = run(owner(root), cli.Context{}, []string{"receipts"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	got, ok = res.Records[0].Get("state")
+	if !ok || got != "absent" {
+		t.Fatalf("receipts without daemon %v", got)
+	}
 	res = run(owner(root), cli.Context{}, []string{"uninstall"})
 	if res.Diagnostic != nil {
 		t.Fatal(res.Diagnostic.Message)
@@ -158,11 +166,7 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 	if pubPath == "" {
 		t.Fatalf("user pair path %v", res)
 	}
-	if runtime.GOOS == "windows" {
-		if filepath.Base(pubPath) != "agent-machine.client.pub" {
-			t.Fatalf("expected home-root pub on Windows, got %s", pubPath)
-		}
-	} else if filepath.Base(filepath.Dir(pubPath)) != "enroll" {
+	if filepath.Base(filepath.Dir(pubPath)) != "enroll" {
 		t.Fatalf("expected channel enroll drop, got %s", pubPath)
 	}
 	st, err := os.Stat(pubPath)
@@ -172,16 +176,32 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o644 {
 		t.Fatalf("client pub mode %v", st.Mode())
 	}
-	res = run(userDeps, cli.Context{}, []string{"pair", "--enroll", pubPath})
+	gotEnroll, ok := res.Records[0].Get("enroll")
+	if !ok || gotEnroll != "managed-machine daemon pair --enroll" {
+		t.Fatalf("user pair enroll hint %v", res)
+	}
+	if res.Human != "As the prefix owner run:\nmanaged-machine daemon pair --enroll\n" {
+		t.Fatalf("user pair human %q", res.Human)
+	}
+	res = run(userDeps, cli.Context{}, []string{"pair", "--enroll"})
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {
 		t.Fatalf("expected user enroll to be refused, got %#v", res.Diagnostic)
 	}
-	res = run(owner(root), cli.Context{}, []string{"pair", "--enroll", pubPath})
+	res = run(owner(root), cli.Context{}, []string{"pair", "--enroll"})
 	if res.Diagnostic != nil {
 		t.Fatal(res.Diagnostic.Message)
 	}
 	pairing, err = loadPairing(stateDir(root))
 	if err != nil || !pairing.allows(mustLoadPub(t, pubPath)) {
 		t.Fatalf("enrolled user key %v %v", pairing, err)
+	}
+}
+
+func TestDaemonPairEnrollMissingDrop(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENT_MACHINE_CHANNEL", filepath.Join(root, "channel"))
+	res := run(owner(root), cli.Context{}, []string{"pair", "--enroll"})
+	if res.Diagnostic == nil {
+		t.Fatal("expected missing enroll drop to fail")
 	}
 }

@@ -113,25 +113,29 @@ off for `SecItemAdd` yields `-25293`.
 - User `daemon status` against a running admin daemon reports
   `channel=signed` and a daemon state. That is the product proof for S1.
 
-### S2 — enroll UX (same repo, next PR)
+### S2 — enroll UX (same repo)
 
-`pair --enroll` with no path reads `EnrollDropDir()/terminal.pub`.
-`pair` as the user prints the exact admin enroll command. No
-`/Users/Shared` and no `chmod 777` in the documented path.
+`pair --enroll` with no path reads `EnrollDropDir()/<client>.pub`
+(`terminal.pub` or `agent-daemon.pub`). `pair` as the user writes that
+drop (unix sticky `1733`, Windows directory without sticky) and prints
+`managed-machine daemon pair --enroll`. A path still works. No
+`/Users/Shared` and no `chmod 777`.
 
-### S3 — keep the executor up (same repo)
+### S3 — keep the executor up (same repo; landed in P2)
 
 `daemon install` as the prefix owner writes and loads the LaunchAgent
-(or systemd user unit) so `daemon run` is not a foreground Terminal
-session. Agent accounts, root, and a foreign HOME stay refused. A cask
-whose published install needs elevation stays a human action.
+(KeepAlive, LimitLoadToSessionType Aqua/Background/StandardIO) or the
+systemd user unit so `daemon run` is not a foreground Terminal session.
+Agent accounts, root, and a foreign HOME stay refused. Windows writes
+the description and does not register a service.
 
 ### S4 — thin-client verbs that do work (same repo; machine-daemon P5/P6)
 
 From the user account, the paired thin client runs `status`, `receipts`,
-and `update` over the signed channel. `plan` / `apply` stay closed
+and `--update` over the signed channel. `plan` / `apply` stay closed
 except through agent-daemon once P7 exists. `--update` falls back to
-the legacy script only when no daemon is installed.
+the legacy script only when no daemon is installed, or when the daemon
+is paired but has no catalog (`MM_DAEMON_NOT_IN_CATALOG`).
 
 ### S5 — agent-bot is the control plane (other repos; P7/P8)
 
@@ -156,13 +160,12 @@ when agent-bot is not installed.
 5. Machine proof, as prefix owner then as user:
 
    ```sh
-   # admin
-   managed-machine daemon pair
-   managed-machine daemon run
-   # other tty, admin
-   managed-machine daemon pair --enroll /Users/<user>/agent-machine.client.pub
    # user
    managed-machine daemon pair
+   # admin
+   managed-machine daemon pair --enroll
+   managed-machine daemon install
+   # user
    managed-machine daemon status
    ```
 

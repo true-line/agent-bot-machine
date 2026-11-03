@@ -27,13 +27,14 @@ func Command(deps Deps) cli.Command {
 	return cli.Command{
 		Name:    "daemon",
 		Summary: "install and run the per-user agent-machine executor",
-		Usage: `managed-machine daemon run|install|uninstall|status|pair|unpair
-agent-machine daemon run|install|uninstall|status|pair|unpair
+		Usage: `managed-machine daemon run|install|uninstall|status|receipts|pair|unpair
+agent-machine daemon run|install|uninstall|status|receipts|pair|unpair
 
 install and uninstall write a per-user service unit for the prefix owner.
-pair mints a Terminal thin-client key in the caller's home. pair --enroll
-PATH installs that public key (or an agent-daemon key) into the prefix
-owner's peers/. status is a signed RPC when a client key and channel exist.
+pair mints a Terminal thin-client key in the caller's home and prints the
+prefix-owner enroll command. pair --enroll with no path reads the channel
+enroll drop; a path still works. --client selects terminal or agent-daemon.
+status and receipts are signed RPCs when a client key and channel exist.
 They refuse root, agent accounts, agent sessions, and a foreign home.
 The unit is a LaunchAgent, a systemd user unit, or a Windows service
 description. Nothing is registered with a system service manager.`,
@@ -45,23 +46,24 @@ description. Nothing is registered with a system service manager.`,
 
 func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	var verb, enroll, clientName string
+	var enrollSet bool
 	clientName = "terminal"
 	if d := command.Parse(args, command.Spec{
 		Positional:     &verb,
 		PositionalName: "daemon verb",
 		Values: map[string]command.Flag{
-			"--enroll": {Value: &enroll},
+			"--enroll": {Value: &enroll, Set: &enrollSet, Optional: true},
 			"--client": {Value: &clientName},
 		},
 	}); d != nil {
 		return cli.Result{Diagnostic: d}
 	}
 	switch verb {
-	case "run", "install", "uninstall", "status", "pair", "unpair":
+	case "run", "install", "uninstall", "status", "receipts", "pair", "unpair":
 	default:
-		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, uninstall, status, pair, or unpair")}
+		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, uninstall, status, receipts, pair, or unpair")}
 	}
-	if enroll != "" && verb != "pair" {
+	if enrollSet && verb != "pair" {
 		return cli.Result{Diagnostic: command.UsageErr("--enroll is only valid with pair")}
 	}
 	goos := deps.GOOS
@@ -69,14 +71,14 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		goos = hostOS()
 	}
 	caller, err := deps.caller()
-	if verb != "status" {
+	if verb != "status" && verb != "receipts" {
 		if err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
 		}
 		switch verb {
 		case "pair":
-			if enroll != "" {
+			if enrollSet {
 				if msg := caller.Refuse(); msg != "" {
 					d := diag.New(diag.DaemonCallerRefused, msg)
 					return cli.Result{Diagnostic: &d}
@@ -114,6 +116,16 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		key := filepath.Join(stateDir(root), "client.key")
 		if handled, res, rpcErr := TryRPC(ChannelSocket(), key, "status", ""); handled && rpcErr == nil && res.OK {
 			rec.Set("channel", "signed").Set("daemon", res.State)
+		}
+		return cli.Result{Records: []*output.Record{rec}}
+	case "receipts":
+		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "absent")
+		key := filepath.Join(stateDir(root), "client.key")
+		if handled, res, rpcErr := TryRPC(ChannelSocket(), key, "receipts", ""); handled && rpcErr == nil && res.OK {
+			rec.Set("channel", "signed").Set("state", res.State)
+			if len(res.Body) > 0 {
+				rec.Set("body", string(res.Body))
+			}
 		}
 		return cli.Result{Records: []*output.Record{rec}}
 	case "install":
@@ -156,13 +168,21 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "stopped")
 		return cli.Result{Records: []*output.Record{rec}}
 	case "pair":
-		if enroll != "" {
-			path, err := EnrollClient(root, clientName, enroll)
+		if enrollSet {
+			path := enroll
+			if path == "" {
+				path = defaultEnrollPub(clientName)
+			}
+			if path == "" {
+				d := diag.New(diag.DaemonCallerRefused, "no enroll drop; pass a public key path")
+				return cli.Result{Diagnostic: &d}
+			}
+			staged, err := EnrollClient(root, clientName, path)
 			if err != nil {
 				d := diag.New(diag.DaemonCallerRefused, err.Error())
 				return cli.Result{Diagnostic: &d}
 			}
-			rec := output.New().Set("service", "agent-machine").Set("client", clientName).Set("state", "paired").Set("path", path)
+			rec := output.New().Set("service", "agent-machine").Set("client", clientName).Set("state", "paired").Set("path", staged)
 			return cli.Result{Records: []*output.Record{rec}}
 		}
 		if caller.Refuse() == "" {
@@ -179,8 +199,9 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
 		}
-		rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "minted").Set("path", path)
-		return cli.Result{Records: []*output.Record{rec}}
+		hint := enrollHint(path)
+		rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "minted").Set("path", path).Set("enroll", hint)
+		return cli.Result{Records: []*output.Record{rec}, Human: "As the prefix owner run:\n" + hint + "\n"}
 	case "unpair":
 		if err := UnpairTerminal(root); err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
@@ -189,8 +210,16 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "revoked")
 		return cli.Result{Records: []*output.Record{rec}}
 	default:
-		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, uninstall, status, pair, or unpair")}
+		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, uninstall, status, receipts, pair, or unpair")}
 	}
+}
+
+func enrollHint(pubPath string) string {
+	cmd := "managed-machine daemon pair --enroll"
+	if pubPath == "" || filepath.Base(filepath.Dir(pubPath)) == "enroll" {
+		return cmd
+	}
+	return cmd + " " + pubPath
 }
 
 func (d Deps) caller() (Caller, error) {
