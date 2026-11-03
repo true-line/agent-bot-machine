@@ -61,9 +61,6 @@ func ListenChannel(dir string) (net.Listener, error) {
 	if err := os.Chmod(dir, 0o755); err != nil {
 		return nil, err
 	}
-	if err := ensureEnrollDir(dir); err != nil {
-		return nil, err
-	}
 	sock := filepath.Join(dir, "daemon.sock")
 	if err := os.Remove(sock); err != nil && !os.IsNotExist(err) {
 		return nil, err

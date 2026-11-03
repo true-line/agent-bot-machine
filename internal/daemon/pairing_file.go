@@ -8,9 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"syscall"
 )
 
 // pairingClients are the only live peers. terminal is the Terminal thin
@@ -116,60 +114,35 @@ func PairClient(root string) (string, error) {
 	if err := writePublicFile(filepath.Join(dir, "client.pub"), pub, 0o600); err != nil {
 		return "", err
 	}
-	// ~/.config is often 0700, so the enroll copy lives in the account home
-	// (0755) where the prefix owner can read it.
-	homePub := filepath.Join(root, "agent-machine.client.pub")
-	if err := writePublicFile(homePub, pub, 0o644); err != nil {
-		return "", err
-	}
 	if ch := ChannelDir(); ch != "" {
 		if src, err := os.ReadFile(filepath.Join(ch, "daemon.pub")); err == nil && len(src) == ed25519.PublicKeySize {
-			_ = writePublicFile(filepath.Join(dir, "daemon.pub"), ed25519.PublicKey(src), 0o600)
-		}
-		if runtime.GOOS != "windows" {
-			if err := ensureEnrollDir(ch); err == nil {
-				drop := filepath.Join(ch, "enroll", "terminal.pub")
-				if err := writePublicFile(drop, pub, 0o644); err == nil {
-					return drop, nil
-				}
+			if err := writePublicFile(filepath.Join(dir, "daemon.pub"), ed25519.PublicKey(src), 0o600); err != nil {
+				return "", err
 			}
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", err
 		}
 	}
-	return homePub, nil
+	return filepath.Join(dir, "client.pub"), nil
 }
 
-func loadPublicForEnroll(pubPath string) (ed25519.PublicKey, error) {
-	pub, err := loadPublic(pubPath)
-	if err == nil {
-		return pub, nil
-	}
-	if !isDenied(err) {
-		return nil, err
-	}
-	for _, alt := range enrollFallbacks(pubPath) {
-		if pub, altErr := loadPublic(alt); altErr == nil {
-			return pub, nil
-		}
-	}
-	return nil, err
+func publicFingerprint(pub ed25519.PublicKey) string {
+	sum := sha256.Sum256(pub)
+	return hex.EncodeToString(sum[:])
 }
 
-func enrollFallbacks(pubPath string) []string {
-	var out []string
-	if ch := ChannelDir(); ch != "" {
-		out = append(out, filepath.Join(ch, "enroll", "terminal.pub"))
+func parseEnrollKey(pubHex, fingerprint string) (ed25519.PublicKey, error) {
+	raw, err := hex.DecodeString(strings.TrimSpace(pubHex))
+	if err != nil || len(raw) != ed25519.PublicKeySize {
+		return nil, errors.New("--enroll needs a 32-byte Ed25519 public key as hex")
 	}
-	if filepath.Base(pubPath) == "client.pub" {
-		state := filepath.Dir(pubPath)
-		if filepath.Base(state) == "agent-machine" && filepath.Base(filepath.Dir(state)) == ".config" {
-			out = append(out, filepath.Join(filepath.Dir(filepath.Dir(state)), "agent-machine.client.pub"))
-		}
+	if strings.TrimSpace(fingerprint) == "" {
+		return nil, errors.New("--fingerprint is required")
 	}
-	return out
-}
-
-func isDenied(err error) bool {
-	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES)
+	if !strings.EqualFold(strings.TrimSpace(fingerprint), publicFingerprint(raw)) {
+		return nil, errors.New("fingerprint does not match the public key")
+	}
+	return ed25519.PublicKey(raw), nil
 }
 
 func writePublicFile(path string, pub ed25519.PublicKey, mode os.FileMode) error {
@@ -183,9 +156,10 @@ func writePublicFile(path string, pub ed25519.PublicKey, mode os.FileMode) error
 	return os.Chmod(path, mode)
 }
 
-// EnrollClient stages a client public key from pubPath into the daemon
-// peers directory. client is terminal or agent-daemon.
-func EnrollClient(root, client, pubPath string) (string, error) {
+// EnrollClient stages a client public key given as hex plus its SHA-256
+// fingerprint. The daemon never reads a path the user owns. client is
+// terminal or agent-daemon.
+func EnrollClient(root, client, pubHex, fingerprint string) (string, error) {
 	if client == "" {
 		client = "terminal"
 	}
@@ -199,7 +173,7 @@ func EnrollClient(root, client, pubPath string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("client must be terminal or agent-daemon")
 	}
-	pub, err := loadPublicForEnroll(pubPath)
+	pub, err := parseEnrollKey(pubHex, fingerprint)
 	if err != nil {
 		return "", err
 	}

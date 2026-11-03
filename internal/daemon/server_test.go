@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"os"
@@ -67,13 +68,8 @@ func TestListenChannelModes(t *testing.T) {
 	if sock.Mode().Perm() != 0o666 {
 		t.Fatalf("channel socket mode %o", sock.Mode().Perm())
 	}
-	enroll := filepath.Join(dir, "enroll")
-	info, err = os.Stat(enroll)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o733 || info.Mode()&os.ModeSticky == 0 {
-		t.Fatalf("enroll dir mode %v, want sticky 1733", info.Mode())
+	if _, err := os.Stat(filepath.Join(dir, "enroll")); !os.IsNotExist(err) {
+		t.Fatalf("channel must not create a shared enroll drop: %v", err)
 	}
 }
 
@@ -147,7 +143,11 @@ func TestThinClientStatusFromOtherUID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnrollClient(admin, "terminal", pubPath); err != nil {
+	pub, err := loadPublic(pubPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnrollClient(admin, "terminal", hex.EncodeToString(pub), publicFingerprint(pub)); err != nil {
 		t.Fatal(err)
 	}
 	priv, err := loadOrCreateKey(filepath.Join(stateDir(admin), "daemon.key"))
@@ -169,11 +169,17 @@ func TestThinClientStatusFromOtherUID(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- Serve(ctx, ln, &Gate{Pairing: pairing, Dir: stateDir(admin)}, priv, func(net.Conn) (int, error) { return 502, nil }, Hooks{})
+		done <- Serve(ctx, ln, &Gate{Pairing: pairing, Dir: stateDir(admin)}, priv, func(net.Conn) (int, error) { return 502, nil }, Hooks{
+			Receipts: func() ([]byte, error) { return []byte("[]"), nil },
+		})
 	}()
 	handled, res, err := TryRPC(filepath.Join(channel, "daemon.sock"), filepath.Join(stateDir(user), "client.key"), "status", "")
 	if err != nil || !handled || !res.OK || res.State != "idle" {
 		t.Fatalf("handled %v res %#v err %v", handled, res, err)
+	}
+	handled, res, err = TryRPC(filepath.Join(channel, "daemon.sock"), filepath.Join(stateDir(user), "client.key"), "receipts", "")
+	if err != nil || !handled || !res.OK || res.State != "listed" || string(res.Body) != "[]" {
+		t.Fatalf("receipts handled %v res %#v err %v", handled, res, err)
 	}
 	cancel()
 	<-done

@@ -39,25 +39,3 @@ func ChannelSocket() string {
 	}
 	return filepath.Join(dir, "daemon.sock")
 }
-
-// EnrollDropDir is the world-writable sticky drop on the channel. The
-// prefix owner creates it; a user writes <client>.pub there so enroll
-// does not need to read the user's 0700 state directory.
-func EnrollDropDir() string {
-	if ch := ChannelDir(); ch != "" {
-		return filepath.Join(ch, "enroll")
-	}
-	return ""
-}
-
-func ensureEnrollDir(channel string) error {
-	if channel == "" || runtime.GOOS == "windows" {
-		return nil
-	}
-	dir := filepath.Join(channel, "enroll")
-	enrollMode := os.FileMode(0o733) | os.ModeSticky
-	if err := os.MkdirAll(dir, enrollMode); err != nil {
-		return err
-	}
-	return os.Chmod(dir, enrollMode)
-}

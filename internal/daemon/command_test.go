@@ -2,9 +2,9 @@ package daemon
 
 import (
 	"crypto/ed25519"
-	"os"
+	"encoding/hex"
 	"path/filepath"
-	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/qwts/managed-machine/internal/cli"
@@ -46,6 +46,14 @@ func TestDaemonInstallAndStatus(t *testing.T) {
 	got, ok := res.Records[0].Get("state")
 	if !ok || got != "installed" {
 		t.Fatalf("state %v", got)
+	}
+	res = run(owner(root), cli.Context{}, []string{"receipts"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	got, ok = res.Records[0].Get("state")
+	if !ok || got != "absent" {
+		t.Fatalf("receipts without daemon %v", got)
 	}
 	res = run(owner(root), cli.Context{}, []string{"uninstall"})
 	if res.Diagnostic != nil {
@@ -155,33 +163,52 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 	}
 	rawPath, _ := res.Records[0].Get("path")
 	pubPath, _ := rawPath.(string)
-	if pubPath == "" {
-		t.Fatalf("user pair path %v", res)
+	if pubPath != filepath.Join(stateDir(userRoot), "client.pub") {
+		t.Fatalf("expected user client.pub, got %s", pubPath)
 	}
-	if runtime.GOOS == "windows" {
-		if filepath.Base(pubPath) != "agent-machine.client.pub" {
-			t.Fatalf("expected home-root pub on Windows, got %s", pubPath)
-		}
-	} else if filepath.Base(filepath.Dir(pubPath)) != "enroll" {
-		t.Fatalf("expected channel enroll drop, got %s", pubPath)
+	pub := mustLoadPub(t, pubPath)
+	pubHex := hex.EncodeToString(pub)
+	fp := publicFingerprint(pub)
+	wantHint := "managed-machine daemon pair --enroll " + pubHex + " --fingerprint " + fp
+	gotEnroll, ok := res.Records[0].Get("enroll")
+	if !ok || gotEnroll != wantHint {
+		t.Fatalf("user pair enroll hint %v", res)
 	}
-	st, err := os.Stat(pubPath)
-	if err != nil {
-		t.Fatalf("client pub %v", err)
+	if res.Human != "As the prefix owner run:\n"+wantHint+"\n" {
+		t.Fatalf("user pair human %q", res.Human)
 	}
-	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o644 {
-		t.Fatalf("client pub mode %v", st.Mode())
+	if got, _ := res.Records[0].Get("public"); got != pubHex {
+		t.Fatalf("user pair public %v", got)
 	}
-	res = run(userDeps, cli.Context{}, []string{"pair", "--enroll", pubPath})
+	if got, _ := res.Records[0].Get("fingerprint"); got != fp {
+		t.Fatalf("user pair fingerprint %v", got)
+	}
+	res = run(userDeps, cli.Context{}, []string{"pair", "--enroll", pubHex, "--fingerprint", fp})
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {
 		t.Fatalf("expected user enroll to be refused, got %#v", res.Diagnostic)
 	}
-	res = run(owner(root), cli.Context{}, []string{"pair", "--enroll", pubPath})
+	res = run(owner(root), cli.Context{}, []string{"pair", "--enroll", pubHex})
+	if res.Diagnostic == nil {
+		t.Fatal("expected enroll without fingerprint to fail")
+	}
+	res = run(owner(root), cli.Context{}, []string{"pair", "--enroll", pubHex, "--fingerprint", strings.Repeat("0", 64)})
+	if res.Diagnostic == nil {
+		t.Fatal("expected fingerprint mismatch to fail")
+	}
+	res = run(owner(root), cli.Context{}, []string{"pair", "--enroll", pubHex, "--fingerprint", fp})
 	if res.Diagnostic != nil {
 		t.Fatal(res.Diagnostic.Message)
 	}
 	pairing, err = loadPairing(stateDir(root))
-	if err != nil || !pairing.allows(mustLoadPub(t, pubPath)) {
+	if err != nil || !pairing.allows(pub) {
 		t.Fatalf("enrolled user key %v %v", pairing, err)
+	}
+}
+
+func TestDaemonPairEnrollRequiresKey(t *testing.T) {
+	root := t.TempDir()
+	res := run(owner(root), cli.Context{}, []string{"pair", "--enroll"})
+	if res.Diagnostic == nil {
+		t.Fatal("expected --enroll without a key to fail")
 	}
 }
