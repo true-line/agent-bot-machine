@@ -16,28 +16,31 @@ import (
 // Deps is the testable surface of daemon install, uninstall, run, and status.
 type Deps struct {
 	command.Deps
-	GOOS       string
-	Executable func() (string, error)
-	Caller     func() (Caller, error)
-	Root       func() (string, error)
-	Activate   func(path string) error
-	Deactivate func(path string) error
+	GOOS        string
+	Executable  func() (string, error)
+	Caller      func() (Caller, error)
+	Root        func() (string, error)
+	Activate    func(path string) error
+	Deactivate  func(path string) error
+	WaitHealthy func() error
 }
 
-// Command is `managed-machine daemon <run|install|uninstall|status|pair|unpair>`.
+// Command is `managed-machine daemon <run|install|start|stop|uninstall|status|receipts|pair|unpair>`.
 func Command(deps Deps) cli.Command {
 	return cli.Command{
 		Name:    "daemon",
 		Summary: "install and run the per-user agent-machine executor",
-		Usage: `managed-machine daemon run|install|uninstall|status|receipts|pair|unpair
-agent-machine daemon run|install|uninstall|status|receipts|pair|unpair
+		Usage: `managed-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpair
+agent-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpair
 
-install and uninstall write a per-user service unit for the prefix owner.
-pair mints a Terminal thin-client key in the caller's home and prints the
-prefix-owner enroll command with the public key and fingerprint.
-pair --enroll HEX --fingerprint HEX stages that key; --client selects
-terminal or agent-daemon. The daemon never reads a shared drop.
-status and receipts are signed RPCs when a client key and channel exist.
+install writes the per-user unit, loads it, and waits until the socket
+accepts. start does the same when the unit already exists. stop unloads it.
+install --user NAME pins the account that may auto-enroll as the terminal
+client. The user does not pair: the next human status mints client.key at
+home and the daemon adopts that pubkey from the unix-socket UID.
+pair --enroll HEX --fingerprint HEX remains for re-key and agent-daemon.
+status is running when the socket accepts, installed when only the unit
+file exists, and absent otherwise. channel=signed is the RPC proof.
 They refuse root, agent accounts, agent sessions, and a foreign home.
 The unit is a LaunchAgent, a systemd user unit, or a Windows service
 description. Nothing is registered with a system service manager.`,
@@ -48,8 +51,8 @@ description. Nothing is registered with a system service manager.`,
 }
 
 func run(deps Deps, ctx cli.Context, args []string) cli.Result {
-	var verb, enroll, fingerprint, clientName string
-	var enrollSet, fingerprintSet bool
+	var verb, enroll, fingerprint, clientName, userName string
+	var enrollSet, fingerprintSet, userSet bool
 	clientName = "terminal"
 	if d := command.Parse(args, command.Spec{
 		Positional:     &verb,
@@ -58,20 +61,24 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			"--enroll":      {Value: &enroll, Set: &enrollSet},
 			"--fingerprint": {Value: &fingerprint, Set: &fingerprintSet},
 			"--client":      {Value: &clientName},
+			"--user":        {Value: &userName, Set: &userSet},
 		},
 	}); d != nil {
 		return cli.Result{Diagnostic: d}
 	}
 	switch verb {
-	case "run", "install", "uninstall", "status", "receipts", "pair", "unpair":
+	case "run", "install", "start", "stop", "uninstall", "status", "receipts", "pair", "unpair":
 	default:
-		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, uninstall, status, receipts, pair, or unpair")}
+		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, start, stop, uninstall, status, receipts, pair, or unpair")}
 	}
 	if enrollSet && verb != "pair" {
 		return cli.Result{Diagnostic: command.UsageErr("--enroll is only valid with pair")}
 	}
 	if fingerprintSet && verb != "pair" {
 		return cli.Result{Diagnostic: command.UsageErr("--fingerprint is only valid with pair")}
+	}
+	if userSet && verb != "install" && verb != "start" {
+		return cli.Result{Diagnostic: command.UsageErr("--user is only valid with install or start")}
 	}
 	goos := deps.GOOS
 	if goos == "" {
@@ -115,20 +122,19 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
 		}
-		state := "absent"
-		if on {
-			state = "installed"
-		}
-		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", state).Set("os", goos)
+		sock := ChannelSocket()
+		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", serviceState(on, SocketListening(sock))).Set("os", goos)
 		key := filepath.Join(stateDir(root), "client.key")
-		if handled, res, rpcErr := TryRPC(ChannelSocket(), key, "status", ""); handled && rpcErr == nil && res.OK {
+		if handled, res, rpcErr := signedRPC(caller, sock, key, "status", ""); handled && rpcErr == nil && res.OK {
 			rec.Set("channel", "signed").Set("daemon", res.State)
 		}
 		return cli.Result{Records: []*output.Record{rec}}
 	case "receipts":
-		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "absent")
+		sock := ChannelSocket()
+		on, _ := Installed(goos, root)
+		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", serviceState(on, SocketListening(sock)))
 		key := filepath.Join(stateDir(root), "client.key")
-		handled, res, rpcErr := TryRPC(ChannelSocket(), key, "receipts", "")
+		handled, res, rpcErr := signedRPC(caller, sock, key, "receipts", "")
 		if !handled {
 			return cli.Result{Records: []*output.Record{rec}}
 		}
@@ -152,19 +158,16 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			rec.Set("body", string(res.Body))
 		}
 		return cli.Result{Records: []*output.Record{rec}}
-	case "install":
-		exec, err := deps.executable(ctx)
+	case "install", "start":
+		return ensureService(deps, ctx, goos, root, userName)
+	case "stop":
+		path, err := unitPath(goos, root)
 		if err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
 		}
-		path, err := Install(goos, root, exec, "")
-		if err != nil {
-			d := diag.New(diag.DaemonCallerRefused, err.Error())
-			return cli.Result{Diagnostic: &d}
-		}
-		if deps.Activate != nil {
-			if err := deps.Activate(path); err != nil {
+		if deps.Deactivate != nil {
+			if err := deps.Deactivate(path); err != nil {
 				d := diag.New(diag.DaemonCallerRefused, err.Error())
 				return cli.Result{Diagnostic: &d}
 			}
@@ -237,8 +240,43 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "revoked")
 		return cli.Result{Records: []*output.Record{rec}}
 	default:
-		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, uninstall, status, receipts, pair, or unpair")}
+		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, start, stop, uninstall, status, receipts, pair, or unpair")}
 	}
+}
+
+func ensureService(deps Deps, ctx cli.Context, goos, root, userName string) cli.Result {
+	exec, err := deps.executable(ctx)
+	if err != nil {
+		d := diag.New(diag.DaemonCallerRefused, err.Error())
+		return cli.Result{Diagnostic: &d}
+	}
+	path, err := Install(goos, root, exec, "")
+	if err != nil {
+		d := diag.New(diag.DaemonCallerRefused, err.Error())
+		return cli.Result{Diagnostic: &d}
+	}
+	if userName != "" {
+		if err := PinTerminalUser(root, userName); err != nil {
+			d := diag.New(diag.DaemonCallerRefused, err.Error())
+			return cli.Result{Diagnostic: &d}
+		}
+	}
+	if deps.Activate != nil {
+		if err := deps.Activate(path); err != nil {
+			d := diag.New(diag.DaemonCallerRefused, err.Error())
+			return cli.Result{Diagnostic: &d}
+		}
+	}
+	state := "installed"
+	if deps.WaitHealthy != nil {
+		if err := deps.WaitHealthy(); err != nil {
+			d := diag.New(diag.DaemonCallerRefused, err.Error())
+			return cli.Result{Diagnostic: &d}
+		}
+		state = "running"
+	}
+	rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", state).Set("path", path)
+	return cli.Result{Records: []*output.Record{rec}}
 }
 
 func enrollHint(pub ed25519.PublicKey, client string) string {

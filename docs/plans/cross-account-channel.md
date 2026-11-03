@@ -6,10 +6,11 @@ overview: >-
   pairing gate, and a thin-client enroll path that does not need the user's
   0700 ~/.config. Later slices finish install verbs, the LaunchAgent, the
   agent-bot client, and the hosted relay.
-related_prs: [455]
+related_prs: [455, 456, 457]
 related_issues:
   - true-line/agent-bot-machine#442
   - true-line/agent-bot-machine#446
+  - true-line/agent-bot-machine#458
 ---
 
 # Cross-account signed channel
@@ -70,14 +71,15 @@ Windows keeps the named pipe. Linux uses the same prefix `var/` layout.
 
 Two clients only: `terminal` and `agent-daemon`.
 
-1. User: `daemon pair` mints `client.key` in the user state dir and
-   prints the 32-byte public key as hex plus its SHA-256 fingerprint.
-2. Admin: `daemon pair --enroll HEX --fingerprint HEX`
-   (`--client terminal|agent-daemon`) stages `peers/<client>.*`. The
-   daemon never reads a path the user owns. A fingerprint mismatch is
-   refused. There is no shared drop and no path fallback.
-3. User: `daemon status` and `--update` dial `ChannelSocket()`, sign with
-   `client.key`, and accept a response only when `daemon.pub` verifies it.
+1. Admin: `daemon install [--user user]` writes the unit, loads it, and
+   waits until the socket accepts.
+2. User (next human command): mint `client.key` at home, `bootstrap` over
+   the socket; the daemon adopts that pubkey for the connecting UID and
+   returns `daemon.pub` in the reply. The client writes the pin. A missing
+   `client.key` repeats this and replaces `peers/terminal.pub` for that UID.
+3. After that, `daemon status` and `--update` sign with `client.key` and
+   accept a response only when the pinned `daemon.pub` verifies it.
+   `pair --enroll` remains for agent-daemon and a manual re-key.
 
 `Caller.Refuse()` still blocks `install` / `run` / `unpair` / `enroll` for
 a non-owner. `RefuseClient()` allows user `pair` and signed `status`.
@@ -113,27 +115,38 @@ off for `SecItemAdd` yields `-25293`.
 
 ### S2 — enroll UX (same repo)
 
-`pair` as the user prints `managed-machine daemon pair --enroll HEX
---fingerprint HEX`. `pair --enroll` requires that hex public key and
-fingerprint; `--client` selects `terminal` or `agent-daemon`. The
-daemon never reads a shared drop or a user-owned path. No
-`/Users/Shared` and no `chmod 777`.
+Happy path does not pair. `daemon install` as the prefix owner starts
+the executor. The next human thin-client call from the user account
+mints `client.key` in that home (admin cannot write there) and sends a
+signed `bootstrap` request. The daemon adopts that pubkey because the
+unix-socket UID is the terminal user (`install --user NAME` pins it;
+otherwise the first bootstrap pins the UID). The reply carries
+`daemon.pub` in the body; the client writes the pin next to
+`client.key`. Later calls are signed. If `client.key` disappears, the
+same handshake replaces `peers/terminal.pub` for that UID. Agent
+sessions do not mint a thin-client key. `pair --enroll HEX
+--fingerprint HEX` remains for re-key and `--client agent-daemon`. The
+daemon never reads a shared drop or a user-owned path.
 
-### S3 — keep the executor up (same repo; landed in P2)
+### S3 — keep the executor up (same repo)
 
-`daemon install` as the prefix owner writes and loads the LaunchAgent
-(KeepAlive, LimitLoadToSessionType Aqua/Background/StandardIO) or the
-systemd user unit so `daemon run` is not a foreground Terminal session.
-Agent accounts, root, and a foreign HOME stay refused. Windows writes
-the description and does not register a service.
+`daemon install` / `daemon start` as the prefix owner write the
+LaunchAgent (KeepAlive, LimitLoadToSessionType Aqua/Background/StandardIO)
+or the systemd user unit, load it without root, kickstart it, and wait
+until the socket accepts. A bootstrap "not found" is a failure.
+`daemon stop` unloads the unit. `daemon run` stays the foreground
+entry the unit execs. Agent accounts, root, and a foreign HOME stay
+refused. Windows writes the description and does not register a service.
 
 ### S4 — thin-client verbs that do work (same repo; machine-daemon P5/P6)
 
-From the user account, the paired thin client runs `status`, `receipts`,
-and `--update` over the signed channel. `plan` / `apply` stay closed
-except through agent-daemon once P7 exists. `--update` falls back to
-the legacy script only when no daemon is installed, or when the daemon
-is paired but has no catalog (`MM_DAEMON_NOT_IN_CATALOG`).
+`daemon status` is `running` when the socket accepts, `installed` when
+only the unit file exists, and `absent` otherwise. A signed RPC adds
+`channel=signed`. From the user account the thin client runs `status`,
+`receipts`, and `--update`. `plan` / `apply` stay closed except through
+agent-daemon once P7 exists. `--update` falls back to the legacy script
+only when no daemon is installed, or when the daemon is paired but has
+no catalog (`MM_DAEMON_NOT_IN_CATALOG`).
 
 ### S5 — agent-bot is the control plane (other repos; P7/P8)
 
@@ -158,16 +171,15 @@ when agent-bot is not installed.
 5. Machine proof, as prefix owner then as user:
 
    ```sh
-   # user
-   managed-machine daemon pair
-   # admin (paste HEX and fingerprint from the user command)
-   managed-machine daemon pair --enroll HEX --fingerprint HEX
-   managed-machine daemon install
-   # user
+   # admin
+   managed-machine daemon install --user user
+   launchctl print user/$(id -u)/dev.qwts.agent-machine
+   # user (no pair, no enroll paste)
    managed-machine daemon status
    ```
 
-   Expected user status: `channel=signed`.
+   Expected: launchctl `state = running`. User status `state=running`
+   and `channel=signed`.
 6. After S1 merges, open S2 from this file. Do not reopen the login
    keychain design. #442 Linux/Windows `daemon.key` and the parent-dir
    owner check stay on #442.

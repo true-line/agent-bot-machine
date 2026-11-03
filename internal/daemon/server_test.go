@@ -184,3 +184,70 @@ func TestThinClientStatusFromOtherUID(t *testing.T) {
 	cancel()
 	<-done
 }
+
+func TestThinClientBootstrapFromOtherUID(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket permissions are not the Windows pipe")
+	}
+	base, err := os.MkdirTemp("/tmp", "mm-boot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(base) })
+	admin := filepath.Join(base, "admin")
+	user := filepath.Join(base, "user")
+	channel := filepath.Join(base, "channel")
+	t.Setenv("AGENT_MACHINE_CHANNEL", channel)
+	if _, err := PairClient(user); err != nil {
+		t.Fatal(err)
+	}
+	priv, err := loadOrCreateKey(filepath.Join(stateDir(admin), "daemon.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeChannelPub(channel, priv); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := ListenChannel(channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, ln, &Gate{Dir: stateDir(admin)}, priv, func(net.Conn) (int, error) { return 502, nil }, Hooks{})
+	}()
+	caller := Caller{Username: "user", UID: 502, Home: user, RegisteredHome: user, PrefixOwner: "admin"}
+	sock := filepath.Join(channel, "daemon.sock")
+	key := filepath.Join(stateDir(user), "client.key")
+	if err := EnsureBootstrap(caller, sock, key); err != nil {
+		t.Fatal(err)
+	}
+	handled, res, err := TryRPC(sock, key, "status", "")
+	if err != nil || !handled || !res.OK || res.State != "idle" {
+		t.Fatalf("after bootstrap handled %v res %#v err %v", handled, res, err)
+	}
+	if err := os.Remove(key); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureBootstrap(caller, sock, key); err != nil {
+		t.Fatal(err)
+	}
+	handled, res, err = TryRPC(sock, key, "status", "")
+	if err != nil || !handled || !res.OK {
+		t.Fatalf("rekey handled %v res %#v err %v", handled, res, err)
+	}
+	agent := Caller{Username: "user", UID: 502, Home: user, RegisteredHome: user, PrefixOwner: "admin", Env: map[string]string{"CURSOR_AGENT": "1"}}
+	if err := os.Remove(key); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureBootstrap(agent, sock, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(key); !os.IsNotExist(err) {
+		t.Fatal("agent session minted a thin-client key")
+	}
+	cancel()
+	<-done
+}

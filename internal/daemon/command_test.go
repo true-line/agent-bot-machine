@@ -34,6 +34,7 @@ func owner(root string) Deps {
 }
 
 func TestDaemonInstallAndStatus(t *testing.T) {
+	t.Setenv("AGENT_MACHINE_CHANNEL", filepath.Join(t.TempDir(), "channel"))
 	root := t.TempDir()
 	res := run(owner(root), cli.Context{}, []string{"install"})
 	if res.Diagnostic != nil {
@@ -52,8 +53,8 @@ func TestDaemonInstallAndStatus(t *testing.T) {
 		t.Fatal(res.Diagnostic.Message)
 	}
 	got, ok = res.Records[0].Get("state")
-	if !ok || got != "absent" {
-		t.Fatalf("receipts without daemon %v", got)
+	if !ok || got != "installed" {
+		t.Fatalf("receipts with unit file and no socket %v", got)
 	}
 	res = run(owner(root), cli.Context{}, []string{"uninstall"})
 	if res.Diagnostic != nil {
@@ -77,6 +78,21 @@ func TestDaemonRefusesAgent(t *testing.T) {
 	res = run(deps, cli.Context{}, []string{"install"})
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {
 		t.Fatalf("non-owner diagnostic %#v", res.Diagnostic)
+	}
+}
+
+func TestInstallWaitHealthyIsRunning(t *testing.T) {
+	root := t.TempDir()
+	deps := owner(root)
+	deps.Activate = func(string) error { return nil }
+	deps.WaitHealthy = func() error { return nil }
+	res := run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	got, ok := res.Records[0].Get("state")
+	if !ok || got != "running" {
+		t.Fatalf("state %v", got)
 	}
 }
 
@@ -146,7 +162,7 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 		return Caller{Username: "user", UID: 502, Home: userRoot, RegisteredHome: userRoot, PrefixOwner: "admin"}, nil
 	}
 	userDeps.Root = func() (string, error) { return userRoot, nil }
-	for _, verb := range []string{"install", "uninstall", "run", "unpair"} {
+	for _, verb := range []string{"install", "start", "stop", "uninstall", "run", "unpair"} {
 		res := run(userDeps, cli.Context{}, []string{verb})
 		if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {
 			t.Fatalf("expected user %s to be refused, got %#v", verb, res.Diagnostic)

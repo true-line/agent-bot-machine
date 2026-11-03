@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const darwinServiceLabel = "dev.qwts.agent-machine"
+
 // A system LaunchDaemon, a systemd system unit, and a Windows service
 // registration all need a privilege this daemon does not have. The unit is
 // a per-user service of the prefix owner: a LaunchAgent, a systemd user
@@ -48,7 +50,7 @@ func darwinAgent(root, executable string) string {
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>dev.qwts.agent-machine</string>
+	<string>%s</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>%s</string>
@@ -72,7 +74,7 @@ func darwinAgent(root, executable string) string {
 	<true/>
 </dict>
 </plist>
-`, xmlEscape(executable), xmlEscape(root))
+`, darwinServiceLabel, xmlEscape(executable), xmlEscape(root))
 }
 
 func linuxUserUnit(executable, _ string) string {

@@ -3,6 +3,8 @@ package daemon
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -110,5 +112,40 @@ func TestStageKeepsLiveKey(t *testing.T) {
 	raw = signed(t, stagedPriv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "now"})
 	if _, id, _ := g.verify(7, raw); id != "" {
 		t.Fatalf("confirmed key refused: %s", id)
+	}
+}
+
+func TestGateBootstrapAdoptsAndReplaces(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(filepath.Join(dir, "peers"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pub, priv := keyPair(t)
+	now := time.Unix(1_700_000_000, 0)
+	g := &Gate{Dir: dir, Now: func() time.Time { return now }}
+	raw := signed(t, priv, Request{Verb: "bootstrap", Timestamp: now.Unix(), Nonce: "b1"})
+	if _, id, msg := g.verify(502, raw); id != "" {
+		t.Fatalf("bootstrap: %s %s", id, msg)
+	}
+	pairing, err := loadPairing(dir)
+	if err != nil || !pairing.allows(pub) {
+		t.Fatalf("adopted %v %v", pairing, err)
+	}
+	uid, ok, err := readTerminalUID(dir)
+	if err != nil || !ok || uid != 502 {
+		t.Fatalf("uid %d ok %v err %v", uid, ok, err)
+	}
+	other, otherPriv := keyPair(t)
+	raw = signed(t, otherPriv, Request{Verb: "bootstrap", Timestamp: now.Unix(), Nonce: "b2"})
+	if _, id, _ := g.verify(501, raw); id != diag.DaemonPeerRefused {
+		t.Fatalf("other uid: %s", id)
+	}
+	raw = signed(t, otherPriv, Request{Verb: "bootstrap", Timestamp: now.Unix(), Nonce: "b3"})
+	if _, id, msg := g.verify(502, raw); id != "" {
+		t.Fatalf("replace: %s %s", id, msg)
+	}
+	pairing, err = loadPairing(dir)
+	if err != nil || !pairing.allows(other) || pairing.allows(pub) {
+		t.Fatalf("replaced %v %v", pairing, err)
 	}
 }

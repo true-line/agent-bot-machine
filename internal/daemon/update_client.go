@@ -3,11 +3,15 @@ package daemon
 import (
 	"bufio"
 	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/qwts/managed-machine/internal/diag"
 )
 
 // TryUpdateForCaller refuses root, agent accounts, agent sessions, and a
@@ -78,12 +82,94 @@ func TryRPC(endpoint, keyPath, verb, name string) (bool, Response, error) {
 	}
 	pub, err := loadDaemonPub(keyPath)
 	if err != nil {
-		return true, Response{}, err
+		if pub, err = daemonPubFromBody(res.Body); err != nil {
+			return true, Response{}, err
+		}
 	}
 	if res.RequestNonce != nonce || !VerifyResponse(pub, res) {
 		return true, Response{}, errors.New("daemon response signature does not match")
 	}
+	if verb == "bootstrap" {
+		if err := writePublicFile(filepath.Join(filepath.Dir(keyPath), "daemon.pub"), pub, 0o600); err != nil {
+			return true, Response{}, err
+		}
+	}
 	return true, res, nil
+}
+
+func daemonPubFromBody(body json.RawMessage) (ed25519.PublicKey, error) {
+	var payload struct {
+		PublicKey string `json:"public_key"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	raw, err := hex.DecodeString(strings.TrimSpace(payload.PublicKey))
+	if err != nil || len(raw) != ed25519.PublicKeySize {
+		return nil, errors.New("daemon public key is missing from the bootstrap reply")
+	}
+	return ed25519.PublicKey(raw), nil
+}
+
+func humanThinClient(caller Caller) bool {
+	return caller.Refuse() != "" && caller.RefuseClient() == ""
+}
+
+// EnsureBootstrap mints a home-directory client key and enrolls it with the
+// daemon using the unix-socket UID. The prefix owner and agent sessions skip.
+func EnsureBootstrap(caller Caller, endpoint, keyPath string) error {
+	if !humanThinClient(caller) {
+		return nil
+	}
+	if endpoint == "" || keyPath == "" {
+		return nil
+	}
+	pub, err := mintClientKey(keyPath)
+	if err != nil {
+		return err
+	}
+	if err := writePublicFile(filepath.Join(filepath.Dir(keyPath), "client.pub"), pub, 0o600); err != nil {
+		return err
+	}
+	handled, res, err := TryRPC(endpoint, keyPath, "bootstrap", "")
+	if err != nil {
+		return err
+	}
+	if !handled {
+		return errors.New("daemon is not listening")
+	}
+	if !res.OK {
+		msg := res.Message
+		if msg == "" {
+			msg = res.Diagnostic
+		}
+		if msg == "" {
+			msg = "bootstrap refused"
+		}
+		return errors.New(msg)
+	}
+	return nil
+}
+
+func signedRPC(caller Caller, endpoint, keyPath, verb, name string) (bool, Response, error) {
+	handled, res, err := TryRPC(endpoint, keyPath, verb, name)
+	if !humanThinClient(caller) {
+		return handled, res, err
+	}
+	need := !handled
+	if handled && err == nil && !res.OK && res.Diagnostic == diag.DaemonUnknownKey {
+		need = true
+	}
+	if !need {
+		return handled, res, err
+	}
+	if berr := EnsureBootstrap(caller, endpoint, keyPath); berr != nil {
+		if handled {
+			return handled, res, err
+		}
+		return true, Response{}, berr
+	}
+	return TryRPC(endpoint, keyPath, verb, name)
 }
 
 func loadDaemonPub(keyPath string) (ed25519.PublicKey, error) {

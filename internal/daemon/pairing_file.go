@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -446,4 +448,116 @@ func pairingFromKeys(keys []ed25519.PublicKey) (Pairing, error) {
 	pairing.Live = live[0]
 	pairing.Extra = live[1:]
 	return pairing, nil
+}
+
+func terminalUIDPath(dir string) string {
+	return filepath.Join(dir, "terminal.uid")
+}
+
+func readTerminalUID(dir string) (int, bool, error) {
+	raw, err := os.ReadFile(terminalUIDPath(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	uid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || uid < 0 {
+		return 0, false, errors.New("terminal.uid is not a uid")
+	}
+	return uid, true, nil
+}
+
+func writeTerminalUID(dir string, uid int) error {
+	path := terminalUIDPath(dir)
+	_ = os.Remove(path)
+	if err := os.WriteFile(path, []byte(strconv.Itoa(uid)+"\n"), 0o600); err != nil {
+		return err
+	}
+	if err := stripDarwinACL(path); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
+}
+
+// PinTerminalUID records which local UID may auto-enroll as the terminal client.
+func PinTerminalUID(root string, uid int) error {
+	if uid <= 0 {
+		return errors.New("terminal uid must be a local user")
+	}
+	dir := stateDir(root)
+	if _, err := ensureStateDirAndPeers(dir); err != nil {
+		return err
+	}
+	return writeTerminalUID(dir, uid)
+}
+
+// PinTerminalUser looks up name and pins that account as the terminal client.
+func PinTerminalUser(root, name string) error {
+	u, err := user.Lookup(strings.TrimSpace(name))
+	if err != nil {
+		return fmt.Errorf("unknown user %q", name)
+	}
+	if agentAccount(u.Username) {
+		return errors.New("agent accounts cannot be the terminal client")
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil || uid <= 0 {
+		return fmt.Errorf("user %q has no uid", name)
+	}
+	return PinTerminalUID(root, uid)
+}
+
+func usernameForUID(uid int) (string, error) {
+	u, err := user.LookupId(strconv.Itoa(uid))
+	if err != nil {
+		return "", err
+	}
+	return u.Username, nil
+}
+
+// adoptTerminal writes peers/terminal.pub for the connecting UID. A pinned
+// terminal.uid must match; a missing pin is set to this UID. A revoked
+// terminal client stays revoked until the prefix owner enrolls again.
+func adoptTerminal(dir string, pub ed25519.PublicKey, uid int) error {
+	if uid <= 0 {
+		return errors.New("bootstrap caller is not a local user")
+	}
+	if name, err := usernameForUID(uid); err == nil && agentAccount(name) {
+		return errors.New("agent accounts cannot be the terminal client")
+	}
+	if len(pub) != ed25519.PublicKeySize {
+		return errors.New("bootstrap key is not a 32-byte Ed25519 public key")
+	}
+	peers, err := ensureStateDirAndPeers(dir)
+	if err != nil {
+		return err
+	}
+	if err := checkPairingFiles(peers); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(peers, "terminal.revoked")); err == nil {
+		return errors.New("terminal client is revoked")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	pinned, ok, err := readTerminalUID(dir)
+	if err != nil {
+		return err
+	}
+	if ok && pinned != uid {
+		return fmt.Errorf("terminal client is pinned to uid %d", pinned)
+	}
+	if !ok {
+		if err := writeTerminalUID(dir, uid); err != nil {
+			return err
+		}
+	}
+	if err := writePublicFile(filepath.Join(peers, "terminal.pub"), pub, 0o600); err != nil {
+		return err
+	}
+	_ = os.Remove(filepath.Join(peers, "terminal.next"))
+	_ = os.Remove(filepath.Join(peers, "terminal.confirm"))
+	return nil
 }
