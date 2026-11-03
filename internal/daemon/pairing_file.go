@@ -95,17 +95,23 @@ func PairTerminal(root string) (string, error) {
 	return filepath.Join(peers, "terminal.pub"), nil
 }
 
+// ensureClientStateDir creates the caller's state directory at 0700 before
+// a key is written. A fresh account has no ~/.config/agent-machine yet.
+func ensureClientStateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := stripDarwinACL(dir); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0o700)
+}
+
 // PairClient mints client.key and client.pub in the caller's state
 // directory. It does not write the daemon's peers/ — that is EnrollClient.
 func PairClient(root string) (string, error) {
 	dir := stateDir(root)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	if err := stripDarwinACL(dir); err != nil {
-		return "", err
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := ensureClientStateDir(dir); err != nil {
 		return "", err
 	}
 	clientKeyPath := filepath.Join(dir, "client.key")
@@ -536,6 +542,13 @@ func adoptTerminal(dir string, pub ed25519.PublicKey, uid int) error {
 	}
 	if err := checkPairingFiles(peers); err != nil {
 		return err
+	}
+	daemonPub, err := loadClientKey(peers, "agent-daemon")
+	if err != nil {
+		return err
+	}
+	if len(daemonPub) == ed25519.PublicKeySize && string(daemonPub) == string(pub) {
+		return errors.New("bootstrap cannot enroll the agent-daemon key")
 	}
 	if _, err := os.Stat(filepath.Join(peers, "terminal.revoked")); err == nil {
 		return errors.New("terminal client is revoked")

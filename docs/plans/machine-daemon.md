@@ -156,8 +156,10 @@ Peer identity is checked first and is never sufficient alone; every request
 must also carry a valid signature from a registered key. agent-daemon (the
 primary client) and the Terminal thin client both run in the user account
 and talk to the prefix-owner executor over this channel. The user does
-not pair: the next human thin-client call mints `client.key` at home and
-the daemon adopts that pubkey from the unix-socket UID. `pair --enroll`
+not pair: the next human thin-client call, including `--update` when the
+socket accepts, creates the state directory, mints `client.key` at home,
+and the daemon adopts that pubkey from the unix-socket UID. The enrolled
+agent-daemon key cannot bootstrap as the terminal client. `pair --enroll`
 remains for agent-daemon and a manual re-key. The thin client is the
 standalone fallback when agent-bot is not installed.
 

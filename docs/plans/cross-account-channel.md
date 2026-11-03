@@ -73,13 +73,18 @@ Two clients only: `terminal` and `agent-daemon`.
 
 1. Admin: `daemon install [--user user]` writes the unit, loads it, and
    waits until the socket accepts.
-2. User (next human command): mint `client.key` at home, `bootstrap` over
-   the socket; the daemon adopts that pubkey for the connecting UID and
-   returns `daemon.pub` in the reply. The client writes the pin. A missing
+2. User (next human command): create `~/.config/agent-machine` at `0700`
+   if it is missing, mint `client.key` there, and `bootstrap` over the
+   socket. The daemon adopts that pubkey for the connecting UID and
+   returns `daemon.pub` in the reply. The client writes the pin. A
+   bootstrap signed by the enrolled `agent-daemon` key is refused, so
+   that key is never copied onto `peers/terminal.pub`. A missing
    `client.key` repeats this and replaces `peers/terminal.pub` for that UID.
-3. After that, `daemon status` and `--update` sign with `client.key` and
-   accept a response only when the pinned `daemon.pub` verifies it.
-   `pair --enroll` remains for agent-daemon and a manual re-key.
+3. After that, `daemon status`, `receipts`, and `--update` sign with
+   `client.key` and accept a response only when the pinned `daemon.pub`
+   verifies it. The first `--update` enrolls when the socket accepts, and
+   stays unhandled when it does not. `pair --enroll` remains for
+   agent-daemon and a manual re-key.
 
 `Caller.Refuse()` still blocks `install` / `run` / `unpair` / `enroll` for
 a non-owner. `RefuseClient()` allows user `pair` and signed `status`.
@@ -117,8 +122,10 @@ off for `SecItemAdd` yields `-25293`.
 
 Happy path does not pair. `daemon install` as the prefix owner starts
 the executor. The next human thin-client call from the user account
-mints `client.key` in that home (admin cannot write there) and sends a
-signed `bootstrap` request. The daemon adopts that pubkey because the
+creates `~/.config/agent-machine` at `0700` when it is missing, mints
+`client.key` in that home (admin cannot write there), and sends a
+signed `bootstrap` request. A request signed by the enrolled
+`agent-daemon` key is refused. The daemon adopts a terminal pubkey because the
 unix-socket UID is the terminal user (`install --user NAME` pins it;
 otherwise the first bootstrap pins the UID). The reply carries
 `daemon.pub` in the body; the client writes the pin next to

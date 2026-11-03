@@ -20,7 +20,7 @@ func SocketListening(endpoint string) bool {
 	return true
 }
 
-// WaitListening polls until the socket accepts or d elapses.
+// WaitListening polls until the socket accepts or the duration elapses.
 func WaitListening(endpoint string, d time.Duration) error {
 	if d <= 0 {
 		d = healthyWait

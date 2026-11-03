@@ -21,6 +21,14 @@ func TryUpdateForCaller(caller Caller, endpoint, keyPath, flavor string) (bool, 
 	if caller.RefuseClient() != "" {
 		return false, Response{}, nil
 	}
+	// A listening daemon enrolls the human thin client before the signed
+	// update. A closed socket stays unhandled so --update can use the
+	// legacy script.
+	if humanThinClient(caller) && SocketListening(endpoint) {
+		if err := EnsureBootstrap(caller, endpoint, keyPath); err != nil {
+			return true, Response{}, err
+		}
+	}
 	return TryUpdate(endpoint, keyPath, flavor)
 }
 
@@ -123,6 +131,9 @@ func EnsureBootstrap(caller Caller, endpoint, keyPath string) error {
 	}
 	if endpoint == "" || keyPath == "" {
 		return nil
+	}
+	if err := ensureClientStateDir(filepath.Dir(keyPath)); err != nil {
+		return err
 	}
 	pub, err := mintClientKey(keyPath)
 	if err != nil {
