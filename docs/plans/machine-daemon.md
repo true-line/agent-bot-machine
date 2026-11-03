@@ -148,7 +148,7 @@ a name exists.
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | Service | per-user LaunchAgent of the prefix owner. A system LaunchDaemon needs root, which this daemon does not have | systemd user unit, `NoNewPrivileges=yes`, `ProtectSystem=strict`. A system unit needs root | service description written for the developer account and not registered. Registering a Windows service needs an elevation this daemon does not have |
-| Channel | Unix socket in the Homebrew prefix `var/agent-machine` (`0755` / `0666`). Secrets stay in the prefix owner's `~/.config/agent-machine` (`0700`). `daemon.pub` is published next to the socket as `0644`. `enroll/` is `1733` so a user can drop `terminal.pub` without opening their 0700 state dir. | Unix socket in the Linuxbrew prefix `var/agent-machine`, same modes | Named pipe, DACL for that account only |
+| Channel | Unix socket in the Homebrew prefix `var/agent-machine` (`0755` / `0666`). Secrets stay in the prefix owner's `~/.config/agent-machine` (`0700`). `daemon.pub` is published next to the socket as `0644`. The user prints a public key and fingerprint; `pair --enroll HEX --fingerprint HEX` stages it. No shared drop. | Unix socket in the Linuxbrew prefix `var/agent-machine`, same modes | Named pipe, DACL for that account only |
 | Peer identity | `getpeereid` must succeed (local process). The pairing key authorizes; the UID does not have to match the daemon account. | `SO_PEERCRED`, same rule | named-pipe client process token SID, which must match the daemon process |
 | Scope | Homebrew prefix, `/Applications` (admin group) | Homebrew/Linuxbrew or user prefixes | winget user scope, user prefixes |
 
@@ -156,7 +156,8 @@ Peer identity is checked first and is never sufficient alone; every request
 must also carry a valid signature from a registered key. agent-daemon (the
 primary client) and the Terminal thin client both run in the user account
 and talk to the prefix-owner executor over this channel. `daemon pair` in
-the user account mints `client.key`; `daemon pair --enroll` as the prefix
+the user account mints `client.key` and prints the public key plus
+fingerprint; `daemon pair --enroll HEX --fingerprint HEX` as the prefix
 owner installs that public key (or `--client agent-daemon`). The thin
 client is the standalone fallback when agent-bot is not installed.
 

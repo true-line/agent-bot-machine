@@ -36,7 +36,7 @@ Three things made that impossible on this machine and are the S1 fix:
 |---|---|---|
 | `daemon pair` as admin: OSStatus `-60008` / “A keychain cannot be found” | Login keychain is absent or locked for a non-GUI prefix-owner account. `kSecAttrAccessible` on a file keychain also prompts Authorization Services. | Dedicated `daemon.keychain-db` created and unlocked in-process with an empty password (never typed). No Data Protection attribute. Self-only ACL. Default keychain is restored after open. |
 | Rebuild then `daemon run`: OSStatus `-2147415734` | Unsigned rebuild changes the binary hash; Darwin refuses `SecTrustedApplicationValidateWithPath`. | `Load` rebinds the ACL to the same path, or rotates the item if Darwin refuses the read. A different trusted-app path still fails closed. |
-| User cannot reach a paired admin daemon | Socket was `0600` in a `0700` home; Gate required the daemon UID; `~/.config` is `0700` so admin cannot read `client.pub`. | Channel in prefix `var/agent-machine` (`0755`/`0666`), `daemon.pub` `0644`, `enroll/` `1733`. Gate accepts any local UID whose signature is a live pairing key. `PairClient` writes `$HOME/agent-machine.client.pub` and `enroll/terminal.pub`. |
+| User cannot reach a paired admin daemon | Socket was `0600` in a `0700` home; Gate required the daemon UID; `~/.config` is `0700` so admin cannot read `client.pub`. | Channel in prefix `var/agent-machine` (`0755`/`0666`), `daemon.pub` `0644`. Gate accepts any local UID whose signature is a live pairing key. `PairClient` mints `client.key` in the user state dir and prints the public key plus fingerprint for the prefix owner to enroll. |
 
 S1 does not install software, does not start a LaunchAgent, and does not
 talk to agent-bot. Those are S2–S5.
@@ -48,7 +48,7 @@ flowchart LR
   userTerm["user: thin client"] -->|"signed RPC"| ch
   agentBot["user: agent-bot / P7"] -->|"signed RPC"| ch
   subgraph prefixOwner [admin / prefix owner]
-    ch["var/agent-machine socket + daemon.pub + enroll/"]
+    ch["var/agent-machine socket + daemon.pub"]
     exec["agent-machine daemon"]
     keys["~/.config/agent-machine 0700"]
   end
@@ -62,9 +62,7 @@ flowchart LR
 |---|---|---|---|
 | `~admin/.config/agent-machine` | prefix owner | `0700` | `daemon.keychain-db`, `peers/*`, private seed after migrate |
 | `$HOMEBREW_PREFIX/var/agent-machine` | prefix owner | `0755` | `daemon.sock` `0666`, `daemon.pub` `0644` |
-| `$HOMEBREW_PREFIX/var/agent-machine/enroll` | prefix owner | `1733` (Go `0o733\|os.ModeSticky`; `os.Chmod(0o1733)` does not set sticky) | `terminal.pub` / `agent-daemon.pub` drops |
-| `~user/.config/agent-machine` | user | `0700` | `client.key` |
-| `~user/agent-machine.client.pub` | user | `0644` | readable drop when `~/.config` is `0700` |
+| `~user/.config/agent-machine` | user | `0700` | `client.key`, `client.pub` |
 
 Windows keeps the named pipe. Linux uses the same prefix `var/` layout.
 
@@ -72,12 +70,12 @@ Windows keeps the named pipe. Linux uses the same prefix `var/` layout.
 
 Two clients only: `terminal` and `agent-daemon`.
 
-1. User: `daemon pair` mints `client.key`, writes the home-root pub, and
-   tries `enroll/terminal.pub`.
-2. Admin: `daemon pair --enroll PATH` (`--client terminal|agent-daemon`)
-   stages `peers/<client>.*`. `PATH` may be the home-root pub, the enroll
-   drop, or any readable 32-byte pub. On `EACCES` the command falls back
-   to those drops (`loadPublicForEnroll`).
+1. User: `daemon pair` mints `client.key` in the user state dir and
+   prints the 32-byte public key as hex plus its SHA-256 fingerprint.
+2. Admin: `daemon pair --enroll HEX --fingerprint HEX`
+   (`--client terminal|agent-daemon`) stages `peers/<client>.*`. The
+   daemon never reads a path the user owns. A fingerprint mismatch is
+   refused. There is no shared drop and no path fallback.
 3. User: `daemon status` and `--update` dial `ChannelSocket()`, sign with
    `client.key`, and accept a response only when `daemon.pub` verifies it.
 
@@ -106,19 +104,19 @@ off for `SecItemAdd` yields `-25293`.
 - Admin `daemon pair` writes the dedicated keychain item and
   `daemon.pub` next to the socket. A second unsigned rebuild of the same
   path still loads.
-- User `daemon pair` returns a readable drop
-  (`enroll/terminal.pub` on unix, `$HOME/agent-machine.client.pub` on
-  Windows — there is no unix enroll dir next to the named pipe).
-- Admin `daemon pair --enroll` of that drop stages `peers/terminal.*`.
+- User `daemon pair` prints the public key and fingerprint. It does not
+  write into the channel directory.
+- Admin `daemon pair --enroll HEX --fingerprint HEX` stages
+  `peers/terminal.*`.
 - User `daemon status` against a running admin daemon reports
   `channel=signed` and a daemon state. That is the product proof for S1.
 
 ### S2 — enroll UX (same repo)
 
-`pair --enroll` with no path reads `EnrollDropDir()/<client>.pub`
-(`terminal.pub` or `agent-daemon.pub`). `pair` as the user writes that
-drop (unix sticky `1733`, Windows directory without sticky) and prints
-`managed-machine daemon pair --enroll`. A path still works. No
+`pair` as the user prints `managed-machine daemon pair --enroll HEX
+--fingerprint HEX`. `pair --enroll` requires that hex public key and
+fingerprint; `--client` selects `terminal` or `agent-daemon`. The
+daemon never reads a shared drop or a user-owned path. No
 `/Users/Shared` and no `chmod 777`.
 
 ### S3 — keep the executor up (same repo; landed in P2)
@@ -162,8 +160,8 @@ when agent-bot is not installed.
    ```sh
    # user
    managed-machine daemon pair
-   # admin
-   managed-machine daemon pair --enroll
+   # admin (paste HEX and fingerprint from the user command)
+   managed-machine daemon pair --enroll HEX --fingerprint HEX
    managed-machine daemon install
    # user
    managed-machine daemon status

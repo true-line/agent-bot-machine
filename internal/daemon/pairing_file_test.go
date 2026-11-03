@@ -22,23 +22,26 @@ func peerPath(t *testing.T, dir, client, suffix string) string {
 	return filepath.Join(peers, client+suffix)
 }
 
-func TestEnrollReadsHomeDropWhenStateDirDenied(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root can read a 0700 directory")
-	}
+func TestEnrollClientTakesHexAndFingerprint(t *testing.T) {
 	userHome := t.TempDir()
 	adminHome := t.TempDir()
-	t.Setenv("AGENT_MACHINE_CHANNEL", filepath.Join(t.TempDir(), "channel"))
 	pubPath, err := PairClient(userHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	hidden := filepath.Join(stateDir(userHome), "client.pub")
-	if err := os.Chmod(stateDir(userHome), 0o700); err != nil {
+	pub, err := loadPublic(pubPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnrollClient(adminHome, "terminal", hidden); err != nil {
-		t.Fatalf("enroll hidden path: %v (drop %s)", err, pubPath)
+	if _, err := EnrollClient(adminHome, "terminal", hex.EncodeToString(pub), strings.Repeat("0", 64)); err == nil {
+		t.Fatal("expected fingerprint mismatch")
+	}
+	if _, err := EnrollClient(adminHome, "terminal", hex.EncodeToString(pub), publicFingerprint(pub)); err != nil {
+		t.Fatal(err)
+	}
+	pairing, err := loadPairing(stateDir(adminHome))
+	if err != nil || !pairing.allows(pub) {
+		t.Fatalf("enrolled %v %v", pairing, err)
 	}
 }
 
