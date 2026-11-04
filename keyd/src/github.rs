@@ -6,7 +6,7 @@ use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use serde_json::{json, Value};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::grant::{Grant, KeyScope};
 use crate::store::Credential;
@@ -23,23 +23,23 @@ pub struct Minted {
 }
 
 /// In-memory installation tokens. A process restart mints again. Nothing here
-/// is written to disk.
+/// is written to disk. `inflight` is the set of keys a caller is minting, so
+/// a second caller for the same key waits instead of posting again.
 #[derive(Default)]
 pub struct TokenCache {
     entries: HashMap<String, (Minted, u64)>,
+    inflight: HashSet<String>,
 }
 
 impl TokenCache {
-    pub fn get(&self, key: &str, now: u64) -> Option<Minted> {
-        let (minted, at) = self.entries.get(key)?;
-        if now >= at.saturating_add(TOKEN_REUSE_SECONDS) {
-            return None;
-        }
-        let exp = expiry_unix(&minted.expires_at)?;
-        if now >= exp {
-            return None;
-        }
-        Some(minted.clone())
+    /// Drops entries that are past the reuse window or GitHub's expiry, then
+    /// returns a live one.
+    pub fn get(&mut self, key: &str, now: u64) -> Option<Minted> {
+        self.entries.retain(|_, (minted, at)| {
+            now < at.saturating_add(TOKEN_REUSE_SECONDS)
+                && expiry_unix(&minted.expires_at).is_some_and(|exp| now < exp)
+        });
+        self.entries.get(key).map(|(minted, _)| minted.clone())
     }
 
     pub fn insert(&mut self, key: String, minted: &Minted, now: u64) {
@@ -47,22 +47,37 @@ impl TokenCache {
             self.entries.insert(key, (minted.clone(), now));
         }
     }
+
+    /// Marks `key` as being minted. False means another caller already is.
+    pub fn start(&mut self, key: &str) -> bool {
+        if !self.inflight.insert(key.to_owned()) {
+            return false;
+        }
+        true
+    }
+
+    pub fn finish(&mut self, key: &str) {
+        self.inflight.remove(key);
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 /// Souls that share an App-level key share a token. A soul key does not.
-pub fn cache_key(grant: &Grant, scope: KeyScope) -> String {
+/// `app_id` is the GitHub App id of the credential actually used, so replacing
+/// that credential with a different App does not reuse the old token.
+/// `installation_id` is the installation the token was minted for.
+pub fn cache_key(grant: &Grant, scope: KeyScope, app_id: &str, installation_id: u64) -> String {
     let (scope_name, soul) = match scope {
         KeyScope::Soul => ("soul", grant.agent_id.as_str()),
         KeyScope::App => ("app", ""),
     };
     format!(
-        "{scope_name}\n{soul}\n{}\n{}\n{}\n{}",
+        "{scope_name}\n{soul}\n{app_id}\n{}\n{}\n{installation_id}\n{}",
         grant.app,
         grant.api_base.trim_end_matches('/'),
-        grant
-            .installation_id
-            .map(|id| id.to_string())
-            .unwrap_or_default(),
         grant.owner.as_deref().unwrap_or("").to_ascii_lowercase(),
     )
 }
@@ -90,11 +105,32 @@ fn expiry_unix(value: &str) -> Option<u64> {
     if !(1..=12).contains(&month) || hour > 23 || min > 59 || sec > 59 {
         return None;
     }
+    let dim = days_in_month(year, month)?;
+    if day < 1 || day > dim {
+        return None;
+    }
     let days = civil_days(year, month, day)?;
     Some(days * 86400 + hour * 3600 + min * 60 + sec)
 }
 
-/// Days since 1970-01-01 (Howard Hinnant's civil calendar).
+fn days_in_month(year: u64, month: u64) -> Option<u64> {
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    Some(match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if leap {
+                29
+            } else {
+                28
+            }
+        }
+        _ => return None,
+    })
+}
+
+/// Days since 1970-01-01 (Howard Hinnant's civil calendar). `day` is 1-based
+/// and already checked against the month.
 fn civil_days(year: u64, month: u64, day: u64) -> Option<u64> {
     let y = year as i32;
     let m = month as u32;
@@ -286,27 +322,48 @@ fn pick_installation(installations: &Value, owner: Option<&str>) -> Result<u64, 
     }
 }
 
+/// The installation a grant mints against: the one it names, or the one
+/// `pick_installation` selects from GitHub.
+pub fn resolve_installation(
+    http: &dyn Http,
+    credential: &Credential,
+    grant: &Grant,
+    now: u64,
+) -> Result<u64, String> {
+    if let Some(id) = grant.installation_id {
+        return Ok(id);
+    }
+    let jwt = app_jwt(credential, now)?;
+    let base = grant.api_base.trim_end_matches('/');
+    let (status, body) = http.request("GET", &format!("{base}/app/installations"), &jwt)?;
+    if status != 200 {
+        return Err(format!(
+            "GET /app/installations -> {status}: {}",
+            github_message(&body)
+        ));
+    }
+    pick_installation(&body, grant.owner.as_deref())
+}
+
 pub fn mint(
     http: &dyn Http,
     credential: &Credential,
     grant: &Grant,
     now: u64,
 ) -> Result<Minted, String> {
+    let installation_id = resolve_installation(http, credential, grant, now)?;
+    mint_resolved(http, credential, grant, installation_id, now)
+}
+
+pub fn mint_resolved(
+    http: &dyn Http,
+    credential: &Credential,
+    grant: &Grant,
+    installation_id: u64,
+    now: u64,
+) -> Result<Minted, String> {
     let jwt = app_jwt(credential, now)?;
     let base = grant.api_base.trim_end_matches('/');
-    let installation_id = match grant.installation_id {
-        Some(id) => id,
-        None => {
-            let (status, body) = http.request("GET", &format!("{base}/app/installations"), &jwt)?;
-            if status != 200 {
-                return Err(format!(
-                    "GET /app/installations -> {status}: {}",
-                    github_message(&body)
-                ));
-            }
-            pick_installation(&body, grant.owner.as_deref())?
-        }
-    };
     let (status, body) = http.request(
         "POST",
         &format!("{base}/app/installations/{installation_id}/access_tokens"),
@@ -526,8 +583,12 @@ pub mod tests {
         assert_eq!(expiry_unix("1970-01-01T00:00:00Z"), Some(0));
         assert_eq!(expiry_unix("2026-10-03T22:00:00Z"), Some(1_791_064_800));
         assert_eq!(expiry_unix("2026-10-03T22:00:00+00:00"), None);
+        assert_eq!(expiry_unix("2026-04-31T00:00:00Z"), None);
+        assert_eq!(expiry_unix("2026-02-00T00:00:00Z"), None);
+        assert_eq!(expiry_unix("2025-02-29T00:00:00Z"), None);
+        assert!(expiry_unix("2024-02-29T00:00:00Z").is_some());
         let grant: Grant = serde_json::from_value(payload("credential", 1_000)).unwrap();
-        let key = cache_key(&grant, KeyScope::Soul);
+        let key = cache_key(&grant, KeyScope::Soul, "42", 7);
         let minted = Minted {
             token: "ghs_one".into(),
             expires_at: "2099-01-01T00:00:00Z".into(),
@@ -540,7 +601,6 @@ pub mod tests {
             cache.get(&key, at + TOKEN_REUSE_SECONDS - 1).unwrap().token,
             "ghs_one"
         );
-        assert!(cache.get(&key, at + TOKEN_REUSE_SECONDS).is_none());
         let expired = Minted {
             token: "ghs_old".into(),
             expires_at: "2020-01-01T00:00:00Z".into(),
@@ -548,9 +608,15 @@ pub mod tests {
         };
         cache.insert(key.clone(), &expired, at);
         assert_eq!(cache.get(&key, at).unwrap().token, "ghs_one");
-        let app = cache_key(&grant, KeyScope::App);
+        assert_eq!(cache.len(), 1);
+        assert!(cache.get(&key, at + TOKEN_REUSE_SECONDS).is_none());
+        assert_eq!(cache.len(), 0, "a spent entry is dropped, not retained");
+        let app = cache_key(&grant, KeyScope::App, "42", 7);
+        let other_app = cache_key(&grant, KeyScope::Soul, "99", 7);
+        let other_install = cache_key(&grant, KeyScope::Soul, "42", 8);
         assert_ne!(app, key);
-        assert!(cache.get(&app, at).is_none());
+        assert_ne!(other_app, key);
+        assert_ne!(other_install, key);
     }
 
     #[cfg(target_os = "macos")]

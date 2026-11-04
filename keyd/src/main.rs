@@ -35,7 +35,7 @@ mod store;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 const USAGE: &str = "usage: agent-bot-keyd serve [--state-dir DIR] [--keychain FILE] | mcp [--state-dir DIR] | presence-key [--keychain FILE] | --version";
 
@@ -101,6 +101,7 @@ fn serve(options: &Options, paths: &paths::Paths) -> Result<(), String> {
         audit: audit::Audit::to(paths.audit.clone()),
         replay: Mutex::default(),
         tokens: Mutex::default(),
+        token_wait: Condvar::new(),
         owner_lock: Mutex::default(),
         now: server::unix_now,
     });

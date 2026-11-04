@@ -25,7 +25,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use crate::audit::{Audit, Receipt};
 use crate::consent::{Consent, Refusal};
@@ -50,6 +50,7 @@ pub struct Keyd {
     pub audit: Audit,
     pub replay: Mutex<Replay>,
     pub tokens: Mutex<TokenCache>,
+    pub token_wait: Condvar,
     pub owner_lock: Mutex<()>,
     pub now: fn() -> u64,
 }
@@ -250,18 +251,49 @@ impl Keyd {
                 return tool_text(error, true);
             }
         };
-        let key = github::cache_key(&grant, scope);
-        if let Some(minted) = self.tokens.lock().unwrap().get(&key, now) {
-            receipt("granted", Some("cached"));
-            return minted_result(name, &grant, &minted);
+        let installation_id =
+            match github::resolve_installation(self.http.as_ref(), &credential, &grant, now) {
+                Ok(id) => id,
+                Err(error) => {
+                    receipt("failed", Some(&error));
+                    return tool_text(error, true);
+                }
+            };
+        let key = github::cache_key(&grant, scope, &credential.app_id, installation_id);
+        loop {
+            let mut cache = self.tokens.lock().unwrap();
+            if let Some(minted) = cache.get(&key, now) {
+                drop(cache);
+                receipt("granted", Some("cached"));
+                return minted_result(name, &grant, &minted);
+            }
+            if cache.start(&key) {
+                drop(cache);
+                break;
+            }
+            let _waiting = self.token_wait.wait(cache).unwrap();
         }
-        match github::mint(self.http.as_ref(), &credential, &grant, now) {
+        match github::mint_resolved(
+            self.http.as_ref(),
+            &credential,
+            &grant,
+            installation_id,
+            now,
+        ) {
             Ok(minted) => {
-                self.tokens.lock().unwrap().insert(key, &minted, now);
+                let mut cache = self.tokens.lock().unwrap();
+                cache.insert(key.clone(), &minted, now);
+                cache.finish(&key);
+                drop(cache);
+                self.token_wait.notify_all();
                 receipt("granted", granted);
                 minted_result(name, &grant, &minted)
             }
             Err(error) => {
+                let mut cache = self.tokens.lock().unwrap();
+                cache.finish(&key);
+                drop(cache);
+                self.token_wait.notify_all();
                 receipt("failed", Some(&error));
                 tool_text(error, true)
             }
@@ -876,6 +908,7 @@ mod tests {
             audit: Audit::none(),
             replay: Mutex::default(),
             tokens: Mutex::default(),
+            token_wait: Condvar::new(),
             owner_lock: Mutex::default(),
             now: || NOW,
         }
@@ -968,6 +1001,7 @@ mod tests {
             audit: Audit::none(),
             replay: Mutex::default(),
             tokens: Mutex::default(),
+            token_wait: Condvar::new(),
             owner_lock: Mutex::default(),
             now: || NOW,
         };
@@ -994,6 +1028,81 @@ mod tests {
             again["content"][0]["text"],
             "username=x-access-token\npassword=ghs_test\n"
         );
+        let posts = http
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "POST")
+            .count();
+        assert_eq!(posts, 1);
+    }
+
+    struct HoldPost {
+        inner: Arc<GitHub>,
+    }
+
+    impl Http for HoldPost {
+        fn request(&self, method: &str, url: &str, bearer: &str) -> Result<(u16, Value), String> {
+            if method == "POST" {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            self.inner.request(method, url, bearer)
+        }
+    }
+
+    #[test]
+    fn two_callers_share_one_mint() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let mut scripted = GitHub::new(json!([{
+            "id": 7,
+            "account": { "login": "qwts" }
+        }]));
+        scripted.expires_at = "2099-01-01T00:00:00Z".into();
+        let http = Arc::new(scripted);
+        let keyd = Arc::new(Keyd {
+            store: Store::new(Box::<Memory>::default()),
+            http: Box::new(HoldPost {
+                inner: Arc::clone(&http),
+            }),
+            consent: Box::new(Consenting::new(true)),
+            audit: Audit::none(),
+            replay: Mutex::default(),
+            tokens: Mutex::default(),
+            token_wait: Condvar::new(),
+            owner_lock: Mutex::default(),
+            now: || NOW,
+        });
+        let (pem, _) = test_key_pem();
+        import(&keyd, &pem);
+        let left = Arc::clone(&keyd);
+        let right = Arc::clone(&keyd);
+        let a = thread::spawn(move || {
+            call(
+                &left,
+                "credential",
+                json!({}),
+                Some(sign(&signing_key(), &payload("credential", NOW))),
+            )
+        });
+        let b = thread::spawn(move || {
+            call(
+                &right,
+                "credential",
+                json!({}),
+                Some(sign(&signing_key(), &{
+                    let mut body = payload("credential", NOW);
+                    body["nonce"] = json!("nonce-concurrent-mint-0123456789ab");
+                    body
+                })),
+            )
+        });
+        let a = a.join().unwrap();
+        let b = b.join().unwrap();
+        assert_eq!(a["structuredContent"]["token"], "ghs_test");
+        assert_eq!(b["structuredContent"]["token"], "ghs_test");
         let posts = http
             .calls
             .lock()
