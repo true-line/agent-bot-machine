@@ -123,7 +123,11 @@ Before minting, keyd checks the grant:
 - `apiBase` is https;
 - the nonce has not been used.
 
-keyd then mints for the grant's soul and App, and only for them.
+keyd then mints for the grant's soul and App, and only for them. The
+installation token stays in memory and is returned again for 45 minutes, or
+until GitHub's `expires_at`, whichever comes first. A different App, key
+scope, soul key, API base, installation, or owner does not share it. The
+cache is not written to disk or the audit log, and a restart mints again.
 
 The daemon checks policy before it signs a grant:
 

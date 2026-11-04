@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::audit::{Audit, Receipt};
 use crate::consent::{Consent, Refusal};
-use crate::github::{self, Http};
+use crate::github::{self, Http, TokenCache};
 use crate::grant::{self, KeyScope, Replay};
 use crate::ids::{is_agent_id, is_app_slug};
 use crate::paths::Paths;
@@ -49,6 +49,7 @@ pub struct Keyd {
     pub consent: Box<dyn Consent>,
     pub audit: Audit,
     pub replay: Mutex<Replay>,
+    pub tokens: Mutex<TokenCache>,
     pub owner_lock: Mutex<()>,
     pub now: fn() -> u64,
 }
@@ -70,6 +71,24 @@ fn failure(id: &Value, code: i64, message: &str) -> Value {
 
 fn tool_text(text: String, is_error: bool) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
+}
+
+fn minted_result(name: &str, grant: &grant::Grant, minted: &github::Minted) -> Value {
+    if name == "git_credential" {
+        return tool_text(
+            format!("username=x-access-token\npassword={}\n", minted.token),
+            false,
+        );
+    }
+    let body = json!({
+        "app": grant.app,
+        "token": minted.token,
+        "expires_at": minted.expires_at,
+        "installation_id": minted.installation_id,
+    });
+    let mut result = tool_text(body.to_string(), false);
+    result["structuredContent"] = body;
+    result
 }
 
 fn tools() -> Value {
@@ -231,24 +250,16 @@ impl Keyd {
                 return tool_text(error, true);
             }
         };
+        let key = github::cache_key(&grant, scope);
+        if let Some(minted) = self.tokens.lock().unwrap().get(&key, now) {
+            receipt("granted", Some("cached"));
+            return minted_result(name, &grant, &minted);
+        }
         match github::mint(self.http.as_ref(), &credential, &grant, now) {
             Ok(minted) => {
+                self.tokens.lock().unwrap().insert(key, &minted, now);
                 receipt("granted", granted);
-                if name == "git_credential" {
-                    return tool_text(
-                        format!("username=x-access-token\npassword={}\n", minted.token),
-                        false,
-                    );
-                }
-                let grant_json = json!({
-                    "app": grant.app,
-                    "token": minted.token,
-                    "expires_at": minted.expires_at,
-                    "installation_id": minted.installation_id,
-                });
-                let mut result = tool_text(grant_json.to_string(), false);
-                result["structuredContent"] = grant_json;
-                result
+                minted_result(name, &grant, &minted)
             }
             Err(error) => {
                 receipt("failed", Some(&error));
@@ -864,6 +875,7 @@ mod tests {
             consent: Box::new(Consenting::new(approve)),
             audit: Audit::none(),
             replay: Mutex::default(),
+            tokens: Mutex::default(),
             owner_lock: Mutex::default(),
             now: || NOW,
         }
@@ -937,6 +949,59 @@ mod tests {
         assert_eq!(result["structuredContent"]["installation_id"], 7);
         let text = result.to_string();
         assert!(!text.contains("PRIVATE KEY") && !text.contains(&pem[40..80]));
+    }
+
+    #[test]
+    fn reuses_one_installation_token_across_grants() {
+        use std::sync::Arc;
+
+        let mut scripted = GitHub::new(json!([{
+            "id": 7,
+            "account": { "login": "qwts" }
+        }]));
+        scripted.expires_at = "2099-01-01T00:00:00Z".into();
+        let http = Arc::new(scripted);
+        let keyd = Keyd {
+            store: Store::new(Box::<Memory>::default()),
+            http: Box::new(Arc::clone(&http)),
+            consent: Box::new(Consenting::new(true)),
+            audit: Audit::none(),
+            replay: Mutex::default(),
+            tokens: Mutex::default(),
+            owner_lock: Mutex::default(),
+            now: || NOW,
+        };
+        let (pem, _) = test_key_pem();
+        import(&keyd, &pem);
+        let first = call(
+            &keyd,
+            "credential",
+            json!({}),
+            Some(sign(&signing_key(), &payload("credential", NOW))),
+        );
+        let again = call(
+            &keyd,
+            "git_credential",
+            json!({ "protocol": "https", "host": "github.com" }),
+            Some(sign(&signing_key(), &{
+                let mut body = payload("git_credential", NOW);
+                body["nonce"] = json!("nonce-second-credential-0123456789");
+                body
+            })),
+        );
+        assert_eq!(first["structuredContent"]["token"], "ghs_test");
+        assert_eq!(
+            again["content"][0]["text"],
+            "username=x-access-token\npassword=ghs_test\n"
+        );
+        let posts = http
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "POST")
+            .count();
+        assert_eq!(posts, 1);
     }
 
     #[test]

@@ -6,13 +6,107 @@ use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use serde_json::{json, Value};
 
-use crate::grant::Grant;
+use std::collections::HashMap;
+
+use crate::grant::{Grant, KeyScope};
 use crate::store::Credential;
 
+/// How long one installation token is handed out again. GitHub's token lasts
+/// an hour; stopping at 45 minutes keeps a reused token inside that lifetime.
+pub const TOKEN_REUSE_SECONDS: u64 = 45 * 60;
+
+#[derive(Clone)]
 pub struct Minted {
     pub token: String,
     pub expires_at: String,
     pub installation_id: u64,
+}
+
+/// In-memory installation tokens. A process restart mints again. Nothing here
+/// is written to disk.
+#[derive(Default)]
+pub struct TokenCache {
+    entries: HashMap<String, (Minted, u64)>,
+}
+
+impl TokenCache {
+    pub fn get(&self, key: &str, now: u64) -> Option<Minted> {
+        let (minted, at) = self.entries.get(key)?;
+        if now >= at.saturating_add(TOKEN_REUSE_SECONDS) {
+            return None;
+        }
+        let exp = expiry_unix(&minted.expires_at)?;
+        if now >= exp {
+            return None;
+        }
+        Some(minted.clone())
+    }
+
+    pub fn insert(&mut self, key: String, minted: &Minted, now: u64) {
+        if expiry_unix(&minted.expires_at).is_some_and(|exp| now < exp) {
+            self.entries.insert(key, (minted.clone(), now));
+        }
+    }
+}
+
+/// Souls that share an App-level key share a token. A soul key does not.
+pub fn cache_key(grant: &Grant, scope: KeyScope) -> String {
+    let (scope_name, soul) = match scope {
+        KeyScope::Soul => ("soul", grant.agent_id.as_str()),
+        KeyScope::App => ("app", ""),
+    };
+    format!(
+        "{scope_name}\n{soul}\n{}\n{}\n{}\n{}",
+        grant.app,
+        grant.api_base.trim_end_matches('/'),
+        grant
+            .installation_id
+            .map(|id| id.to_string())
+            .unwrap_or_default(),
+        grant.owner.as_deref().unwrap_or("").to_ascii_lowercase(),
+    )
+}
+
+/// `YYYY-MM-DDTHH:MM:SSZ` as seconds since 1970-01-01. Anything else is not reusable.
+fn expiry_unix(value: &str) -> Option<u64> {
+    let b = value.as_bytes();
+    if b.len() != 20
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || b[10] != b'T'
+        || b[13] != b':'
+        || b[16] != b':'
+        || b[19] != b'Z'
+    {
+        return None;
+    }
+    let n = |i: usize| (b[i] as u64).checked_sub(b'0' as u64).filter(|d| *d < 10);
+    let year = n(0)? * 1000 + n(1)? * 100 + n(2)? * 10 + n(3)?;
+    let month = n(5)? * 10 + n(6)?;
+    let day = n(8)? * 10 + n(9)?;
+    let hour = n(11)? * 10 + n(12)?;
+    let min = n(14)? * 10 + n(15)?;
+    let sec = n(17)? * 10 + n(18)?;
+    if !(1..=12).contains(&month) || hour > 23 || min > 59 || sec > 59 {
+        return None;
+    }
+    let days = civil_days(year, month, day)?;
+    Some(days * 86400 + hour * 3600 + min * 60 + sec)
+}
+
+/// Days since 1970-01-01 (Howard Hinnant's civil calendar).
+fn civil_days(year: u64, month: u64, day: u64) -> Option<u64> {
+    let y = year as i32;
+    let m = month as u32;
+    let d = day as u32;
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u32;
+    let mp = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era as i64 * 146097 + doe as i64 - 719468;
+    u64::try_from(days).ok()
 }
 
 pub trait Http: Send + Sync {
@@ -310,6 +404,7 @@ pub mod tests {
     pub struct Scripted {
         pub calls: Mutex<Vec<(String, String)>>,
         pub installations: Value,
+        pub expires_at: String,
     }
 
     impl Scripted {
@@ -317,6 +412,7 @@ pub mod tests {
             Self {
                 calls: Mutex::default(),
                 installations,
+                expires_at: "2026-10-03T22:00:00Z".into(),
             }
         }
     }
@@ -330,8 +426,14 @@ pub mod tests {
             }
             Ok((
                 201,
-                json!({ "token": "ghs_test", "expires_at": "2026-10-03T22:00:00Z" }),
+                json!({ "token": "ghs_test", "expires_at": self.expires_at }),
             ))
+        }
+    }
+
+    impl Http for std::sync::Arc<Scripted> {
+        fn request(&self, method: &str, url: &str, bearer: &str) -> Result<(u16, Value), String> {
+            Scripted::request(self, method, url, bearer)
         }
     }
 
@@ -417,6 +519,38 @@ pub mod tests {
             rsa_der("-----BEGIN EC PRIVATE KEY-----\nAAAA\n-----END EC PRIVATE KEY-----").is_err()
         );
         assert!(rsa_der("not a key").is_err());
+    }
+
+    #[test]
+    fn reuses_a_token_for_45_minutes_and_not_past_expiry() {
+        assert_eq!(expiry_unix("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(expiry_unix("2026-10-03T22:00:00Z"), Some(1_791_064_800));
+        assert_eq!(expiry_unix("2026-10-03T22:00:00+00:00"), None);
+        let grant: Grant = serde_json::from_value(payload("credential", 1_000)).unwrap();
+        let key = cache_key(&grant, KeyScope::Soul);
+        let minted = Minted {
+            token: "ghs_one".into(),
+            expires_at: "2099-01-01T00:00:00Z".into(),
+            installation_id: 7,
+        };
+        let mut cache = TokenCache::default();
+        let at = 1_800_000_000;
+        cache.insert(key.clone(), &minted, at);
+        assert_eq!(
+            cache.get(&key, at + TOKEN_REUSE_SECONDS - 1).unwrap().token,
+            "ghs_one"
+        );
+        assert!(cache.get(&key, at + TOKEN_REUSE_SECONDS).is_none());
+        let expired = Minted {
+            token: "ghs_old".into(),
+            expires_at: "2020-01-01T00:00:00Z".into(),
+            installation_id: 7,
+        };
+        cache.insert(key.clone(), &expired, at);
+        assert_eq!(cache.get(&key, at).unwrap().token, "ghs_one");
+        let app = cache_key(&grant, KeyScope::App);
+        assert_ne!(app, key);
+        assert!(cache.get(&app, at).is_none());
     }
 
     #[cfg(target_os = "macos")]

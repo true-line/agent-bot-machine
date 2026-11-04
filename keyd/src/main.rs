@@ -100,6 +100,7 @@ fn serve(options: &Options, paths: &paths::Paths) -> Result<(), String> {
         consent: Box::new(consent::DeviceOwner),
         audit: audit::Audit::to(paths.audit.clone()),
         replay: Mutex::default(),
+        tokens: Mutex::default(),
         owner_lock: Mutex::default(),
         now: server::unix_now,
     });
