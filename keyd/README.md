@@ -123,7 +123,16 @@ Before minting, keyd checks the grant:
 - `apiBase` is https;
 - the nonce has not been used.
 
-keyd then mints for the grant's soul and App, and only for them.
+keyd then mints for the grant's soul and App, and only for them. The
+installation token stays in memory and is returned again for 45 minutes, or
+until GitHub's `expires_at`, whichever comes first. The cache key includes
+the credential's GitHub App id and the resolved installation id. A grant
+that does not name an installation resolves it before the cache is read, so
+a replaced installation is not served the previous token. A different App,
+key scope, soul key, API base, installation, or owner does not share a
+token. Stale entries are dropped on lookup. Two callers for the same key
+share one mint. The cache is not written to disk or the audit log, and a
+restart mints again.
 
 The daemon checks policy before it signs a grant:
 
