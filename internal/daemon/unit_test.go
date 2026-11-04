@@ -63,6 +63,44 @@ func TestUnitPath(t *testing.T) {
 	}
 }
 
+func TestKeydBinaryRefusesGeniusBar(t *testing.T) {
+	if _, err := KeydBinary("/Applications/GeniusBar.app/Contents/MacOS/agent-machine"); err == nil {
+		t.Fatal("GeniusBar path accepted")
+	}
+	bin, err := KeydBinary("/opt/homebrew/bin/agent-machine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bin != "/opt/homebrew/bin/agent-bot-keyd" {
+		t.Fatal(bin)
+	}
+}
+
+func TestInstallKeydWritesAgentMachineUnit(t *testing.T) {
+	root := t.TempDir()
+	binDir := t.TempDir()
+	exec := filepath.Join(binDir, "agent-machine")
+	keyd := filepath.Join(binDir, "agent-bot-keyd")
+	if err := os.WriteFile(exec, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyd, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path, err := InstallKeyd("darwin", root, exec, filepath.Join(root, ".local", "state", "agent-bot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if !strings.Contains(text, keyd) || strings.Contains(text, "GeniusBar.app") {
+		t.Fatal(text)
+	}
+}
+
 func TestDarwinAgentIncludesBackgroundSessionAndHome(t *testing.T) {
 	body := darwinAgent("/Users/admin", "/opt/homebrew/bin/agent-machine")
 	for _, want := range []string{"<string>Background</string>", "<string>Aqua</string>", "<key>HOME</key>", "<string>/Users/admin</string>"} {

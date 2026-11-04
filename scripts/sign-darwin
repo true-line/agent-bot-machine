@@ -33,21 +33,32 @@ archive="managed-machine_${version}_darwin_arm64.tar.gz"
 (cd "$root" && go run ./cmd/mm-release verify -dist "$unsigned")
 tar -xzf "$unsigned/$archive" -C "$tree"
 
+if [[ ! -x "$tree/agent-bot-keyd" ]]; then
+    cargo build --release --manifest-path "$root/keyd/Cargo.toml"
+    cp "$root/keyd/target/release/agent-bot-keyd" "$tree/agent-bot-keyd"
+    chmod 0755 "$tree/agent-bot-keyd"
+fi
+
 identity="$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" \
     | awk -v t="($team)" '/"Developer ID Application: / && index($0, t) { print $2; exit }')"
 [[ "$identity" =~ ^[0-9A-F]{40}$ ]] || { echo "Error: no Developer ID Application identity for $team in $SIGN_KEYCHAIN" >&2; exit 1; }
 
 codesign --force --timestamp --options runtime --keychain "$SIGN_KEYCHAIN" \
     -s "$identity" -i "$signing_id" "$tree/managed-machine"
+codesign --force --timestamp --options runtime --keychain "$SIGN_KEYCHAIN" \
+    -s "$identity" -i "ai.true-line.agent-bot-keyd" "$tree/agent-bot-keyd"
 
 codesign --verify --strict --verbose=2 "$tree/managed-machine"
+codesign --verify --strict --verbose=2 "$tree/agent-bot-keyd"
 details="$(codesign -dv --verbose=2 "$tree/managed-machine" 2>&1)"
 grep -Fq "Authority=Developer ID Application: " <<<"$details"
 grep -Fqx "TeamIdentifier=$team" <<<"$details"
 grep -Fqx "Identifier=$signing_id" <<<"$details"
 grep -Fq "flags=0x10000(runtime)" <<<"$details"
 
-ditto -c -k "$tree/managed-machine" "$work/cli.zip"
+mkdir -p "$work/payload"
+cp "$tree/managed-machine" "$tree/agent-bot-keyd" "$work/payload/"
+ditto -c -k "$work/payload" "$work/cli.zip"
 result="$(xcrun notarytool submit "$work/cli.zip" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" \
     --issuer "$NOTARY_ISSUER_ID" --wait --timeout 30m --output-format json)"
 status="$(plutil -extract status raw -o - - <<<"$result")"

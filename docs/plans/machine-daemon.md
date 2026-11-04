@@ -85,8 +85,9 @@ and comms.
 9. **Mutual key registration and signed requests.** The two daemons register
    keys with each other and sign their requests, so an impostor is refused even
    when it runs under an allowed account. Keys are held and registered through
-   existing agent-bot infrastructure (agent-bot-keyd and/or
-   agents.true-line.ai).
+   agent-bot-keyd, whose source lives in this repo at `keyd/`, and/or
+   agents.true-line.ai. agent-machine ships and supervises keyd. GeniusBar
+   does not.
 
 ## Target
 

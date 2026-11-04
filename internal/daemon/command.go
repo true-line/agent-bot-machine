@@ -255,6 +255,17 @@ func ensureService(deps Deps, ctx cli.Context, goos, root, userName string) cli.
 		d := diag.New(diag.DaemonCallerRefused, err.Error())
 		return cli.Result{Diagnostic: &d}
 	}
+	keydUnit, err := InstallKeyd(goos, root, exec, filepath.Join(root, ".local", "state", "agent-bot"))
+	if err != nil {
+		d := diag.New(diag.DaemonCallerRefused, err.Error())
+		return cli.Result{Diagnostic: &d}
+	}
+	if keydUnit != "" && deps.Activate != nil {
+		if err := deps.Activate(keydUnit); err != nil {
+			d := diag.New(diag.DaemonCallerRefused, err.Error())
+			return cli.Result{Diagnostic: &d}
+		}
+	}
 	if userName != "" {
 		if err := PinTerminalUser(root, userName); err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
