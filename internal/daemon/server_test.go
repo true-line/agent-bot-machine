@@ -3,12 +3,14 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -183,4 +185,108 @@ func TestThinClientStatusFromOtherUID(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+func TestThinClientBootstrapFromOtherUID(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket permissions are not the Windows pipe")
+	}
+	base, err := os.MkdirTemp("/tmp", "mm-boot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(base) })
+	admin := filepath.Join(base, "admin")
+	user := filepath.Join(base, "user")
+	channel := filepath.Join(base, "channel")
+	t.Setenv("AGENT_MACHINE_CHANNEL", channel)
+	if err := os.MkdirAll(stateDir(admin), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	priv, err := loadOrCreateKey(filepath.Join(stateDir(admin), "daemon.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeChannelPub(channel, priv); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := ListenChannel(channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, ln, &Gate{Dir: stateDir(admin)}, priv, func(net.Conn) (int, error) { return 502, nil }, Hooks{
+			Update: func(string, string, string, string) (string, string) { return "ok", "" },
+		})
+	}()
+	caller := Caller{Username: "user", UID: 502, Home: user, RegisteredHome: user, PrefixOwner: "admin"}
+	sock := filepath.Join(channel, "daemon.sock")
+	if err := WaitListening(sock, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(stateDir(user), "client.key")
+	if _, err := os.Stat(filepath.Dir(key)); !os.IsNotExist(err) {
+		t.Fatal("user state dir should not exist before the first thin-client call")
+	}
+	handled, res, err := TryUpdateForCaller(caller, sock, key, "")
+	if err != nil || !handled || !res.OK || res.State != "updated" {
+		t.Fatalf("first update handled %v res %#v err %v", handled, res, err)
+	}
+	info, err := os.Stat(filepath.Dir(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("state dir mode %o", info.Mode().Perm())
+	}
+	if err := EnsureBootstrap(caller, sock, key); err != nil {
+		t.Fatal(err)
+	}
+	handled, res, err = TryRPC(sock, key, "status", "")
+	if err != nil || !handled || !res.OK || res.State != "idle" {
+		t.Fatalf("after bootstrap handled %v res %#v err %v", handled, res, err)
+	}
+	if err := os.Remove(key); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureBootstrap(caller, sock, key); err != nil {
+		t.Fatal(err)
+	}
+	handled, res, err = TryRPC(sock, key, "status", "")
+	if err != nil || !handled || !res.OK {
+		t.Fatalf("rekey handled %v res %#v err %v", handled, res, err)
+	}
+	agent := Caller{Username: "user", UID: 502, Home: user, RegisteredHome: user, PrefixOwner: "admin", Env: map[string]string{"CURSOR_AGENT": "1"}}
+	if err := os.Remove(key); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureBootstrap(agent, sock, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(key); !os.IsNotExist(err) {
+		t.Fatal("agent session minted a thin-client key")
+	}
+	cancel()
+	<-done
+}
+
+func TestAdoptTerminalRejectsAgentDaemonKey(t *testing.T) {
+	root := t.TempDir()
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnrollClient(root, "agent-daemon", hex.EncodeToString(pub), publicFingerprint(pub)); err != nil {
+		t.Fatal(err)
+	}
+	err = adoptTerminal(stateDir(root), pub, 502)
+	if err == nil || !strings.Contains(err.Error(), "agent-daemon") {
+		t.Fatalf("adopt err %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(stateDir(root), "peers", "terminal.pub")); !os.IsNotExist(statErr) {
+		t.Fatalf("terminal.pub err %v", statErr)
+	}
 }

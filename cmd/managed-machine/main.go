@@ -134,6 +134,9 @@ func main() {
 				Deactivate: func(path string) error {
 					return daemon.DeactivateUserService(runtime.GOOS, path)
 				},
+				WaitHealthy: func() error {
+					return daemon.WaitListening(daemon.ChannelSocket(), 0)
+				},
 			}),
 		},
 		Stdout: os.Stdout,

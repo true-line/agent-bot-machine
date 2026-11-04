@@ -5,12 +5,15 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	"github.com/qwts/managed-machine/internal/diag"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/qwts/managed-machine/internal/diag"
 )
 
 // Serve accepts one JSON line per connection, checks the peer and the
@@ -51,6 +54,8 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 		requestNonce = req.Nonce
 		if id != "" {
 			res = refused(id, msg)
+		} else if req.Verb == "bootstrap" {
+			res = bootstrapReply(priv)
 		} else {
 			res = hooks.reply(req)
 		}
@@ -147,6 +152,23 @@ func (h Hooks) reply(req Request) Response {
 	default:
 		return refused(diag.DaemonUnimplemented, req.Verb+" is not served yet")
 	}
+}
+
+func bootstrapReply(priv ed25519.PrivateKey) Response {
+	if priv == nil {
+		return refused(diag.DaemonStatusFailed, "daemon key is missing")
+	}
+	pub, ok := priv.Public().(ed25519.PublicKey)
+	if !ok {
+		return refused(diag.DaemonStatusFailed, "daemon key is not ed25519")
+	}
+	body, err := json.Marshal(struct {
+		PublicKey string `json:"public_key"`
+	}{PublicKey: hex.EncodeToString(pub)})
+	if err != nil {
+		return refused(diag.DaemonStatusFailed, "daemon public key could not be encoded")
+	}
+	return Response{OK: true, State: "enrolled", Body: body}
 }
 
 func responsePayload(res Response) []byte {

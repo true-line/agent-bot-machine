@@ -122,16 +122,6 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if err != nil || len(pub) != ed25519.PublicKeySize {
 		return req, diag.DaemonUnknownKey, "request key is not a known pairing"
 	}
-	if g.Dir != "" {
-		pairing, err := loadPairing(g.Dir)
-		if err != nil {
-			return req, diag.DaemonUnknownKey, "pairing state could not be read: " + err.Error()
-		}
-		g.Pairing = pairing
-	}
-	if !g.Pairing.allows(ed25519.PublicKey(pub)) {
-		return req, diag.DaemonUnknownKey, "request key is not the live pairing"
-	}
 	sig, err := base64.StdEncoding.DecodeString(req.Signature)
 	if err != nil || !ed25519.Verify(ed25519.PublicKey(pub), canonical(req), sig) {
 		return req, diag.DaemonTampered, "request signature does not match"
@@ -155,13 +145,32 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	}
 	g.seen[req.Nonce] = struct{}{}
 	if !knownVerb(req.Verb) {
-		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog"
-	}
-	if g.Pairing.isTerminal(ed25519.PublicKey(pub)) && !terminalVerb(req.Verb) {
-		return req, diag.DaemonUnknownKey, "the terminal client key is only for update, status, and receipts"
+		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, bootstrap"
 	}
 	if id, msg := catalogFields(req, raw); id != "" {
 		return req, id, msg
+	}
+	if req.Verb == "bootstrap" {
+		if g.Dir == "" {
+			return req, diag.DaemonPeerRefused, "bootstrap needs daemon state"
+		}
+		if err := adoptTerminal(g.Dir, ed25519.PublicKey(pub), peerUID); err != nil {
+			return req, diag.DaemonPeerRefused, err.Error()
+		}
+		return req, "", ""
+	}
+	if g.Dir != "" {
+		pairing, err := loadPairing(g.Dir)
+		if err != nil {
+			return req, diag.DaemonUnknownKey, "pairing state could not be read: " + err.Error()
+		}
+		g.Pairing = pairing
+	}
+	if !g.Pairing.allows(ed25519.PublicKey(pub)) {
+		return req, diag.DaemonUnknownKey, "request key is not the live pairing"
+	}
+	if g.Pairing.isTerminal(ed25519.PublicKey(pub)) && !terminalVerb(req.Verb) {
+		return req, diag.DaemonUnknownKey, "the terminal client key is only for update, status, and receipts"
 	}
 	return req, "", ""
 }
@@ -177,7 +186,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog":
+	case "status", "receipts", "plan", "apply", "update", "catalog", "bootstrap":
 		return true
 	default:
 		return false
