@@ -64,14 +64,16 @@ func TestUnitPath(t *testing.T) {
 }
 
 func TestKeydBinaryRefusesGeniusBar(t *testing.T) {
-	if _, err := KeydBinary("/Applications/GeniusBar.app/Contents/MacOS/agent-machine"); err == nil {
+	genius := filepath.Join("/Applications", "GeniusBar.app", "Contents", "MacOS", "agent-machine")
+	if _, err := KeydBinary(genius); err == nil {
 		t.Fatal("GeniusBar path accepted")
 	}
-	bin, err := KeydBinary("/opt/homebrew/bin/agent-machine")
+	exec := filepath.Join("/opt", "homebrew", "bin", "agent-machine")
+	bin, err := KeydBinary(exec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bin != "/opt/homebrew/bin/agent-bot-keyd" {
+	if bin != filepath.Join("/opt", "homebrew", "bin", "agent-bot-keyd") {
 		t.Fatal(bin)
 	}
 }
