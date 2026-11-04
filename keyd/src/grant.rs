@@ -86,6 +86,13 @@ impl Replay {
     }
 }
 
+fn allowed_api_base(base: &str) -> bool {
+    let Some(rest) = base.strip_prefix("https://api.github.com") else {
+        return false;
+    };
+    rest.is_empty() || rest == "/"
+}
+
 fn nonce_ok(nonce: &str) -> bool {
     (16..=64).contains(&nonce.len())
         && nonce
@@ -139,10 +146,10 @@ pub fn verify(
     {
         return Err("grant has expired");
     }
-    if !grant.api_base.starts_with("https://") || grant.api_base.len() > 200 {
+    if !allowed_api_base(&grant.api_base) {
         return Err("grant names an invalid GitHub API");
     }
-    if grant.tool == "git_credential" && grant.host.as_deref().is_none_or(str::is_empty) {
+    if grant.tool == "git_credential" && grant.host.as_deref() != Some("github.com") {
         return Err("grant names no GitHub host");
     }
     if !nonce_ok(&grant.nonce) || !replay.spend(&grant.nonce, grant.exp, now) {
@@ -305,6 +312,19 @@ pub mod tests {
         assert_eq!(
             verify(
                 &sign(&key, &plain),
+                "credential",
+                &pinned,
+                1000,
+                &mut replay
+            ),
+            Err("grant names an invalid GitHub API")
+        );
+        let mut lookalike = payload("credential", 1000);
+        lookalike["apiBase"] = json!("https://api.github.com.example");
+        lookalike["nonce"] = json!("lookalike-host-0123456789");
+        assert_eq!(
+            verify(
+                &sign(&key, &lookalike),
                 "credential",
                 &pinned,
                 1000,

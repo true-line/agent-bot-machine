@@ -373,19 +373,19 @@ pub mod keychain {
             acl: SecACLRef,
             apps: *mut CFArrayRef,
             description: *mut CFStringRef,
-            prompt: *mut u16,
+            prompt: *mut u32,
         ) -> i32;
         fn SecACLSetContents(
             acl: SecACLRef,
             apps: CFArrayRef,
             description: CFStringRef,
-            prompt: u16,
+            prompt: u32,
         ) -> i32;
         fn SecACLCreateWithSimpleContents(
             access: SecAccessRef,
             apps: CFArrayRef,
             description: CFStringRef,
-            prompt: u16,
+            prompt: u32,
             acl: *mut SecACLRef,
         ) -> i32;
         fn SecACLUpdateAuthorizations(acl: SecACLRef, authorizations: CFArrayRef) -> i32;
@@ -473,7 +473,7 @@ pub mod keychain {
     fn entry_names_only_keyd(acl: SecACLRef, keyd: &[u8]) -> bool {
         let mut apps: CFArrayRef = std::ptr::null();
         let mut description: CFStringRef = std::ptr::null();
-        let mut prompt: u16 = 0;
+        let mut prompt: u32 = 0;
         // SAFETY: a live entry and valid out-pointers.
         if unsafe { SecACLCopyContents(acl, &mut apps, &mut description, &mut prompt) } != 0 {
             return false;

@@ -30,12 +30,13 @@ func activateDarwin(path string, uid int) error {
 	user := fmt.Sprintf("user/%d", uid)
 	_ = launchctl("bootout", gui, path)
 	_ = launchctl("bootout", user, path)
+	label := unitServiceLabel(path)
 	if err := launchctl("bootstrap", gui, path); err == nil {
-		return launchctl("kickstart", "-k", gui+"/"+darwinServiceLabel)
+		return launchctl("kickstart", "-k", gui+"/"+label)
 	} else {
 		guiErr := err
 		if err := launchctl("bootstrap", user, path); err == nil {
-			return launchctl("kickstart", "-k", user+"/"+darwinServiceLabel)
+			return launchctl("kickstart", "-k", user+"/"+label)
 		} else {
 			return fmt.Errorf("launchctl bootstrap failed (gui: %v; user: %v)", guiErr, err)
 		}
@@ -63,6 +64,30 @@ func DeactivateUserService(goos, path string) error {
 	default:
 		return nil
 	}
+}
+
+func unitServiceLabel(path string) string {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return darwinServiceLabel
+	}
+	text := string(body)
+	const key = "<key>Label</key>"
+	i := strings.Index(text, key)
+	if i < 0 {
+		return darwinServiceLabel
+	}
+	rest := text[i+len(key):]
+	start := strings.Index(rest, "<string>")
+	end := strings.Index(rest, "</string>")
+	if start < 0 || end < start {
+		return darwinServiceLabel
+	}
+	label := strings.TrimSpace(rest[start+len("<string>") : end])
+	if label == "" {
+		return darwinServiceLabel
+	}
+	return label
 }
 
 func launchctl(args ...string) error {

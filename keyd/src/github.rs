@@ -93,6 +93,11 @@ fn pkcs8_inner(der: &[u8]) -> Option<Vec<u8>> {
     Some(der[key..key_end].to_vec())
 }
 
+#[cfg(not(target_os = "macos"))]
+fn sign_rs256(_der: &[u8], _input: &[u8]) -> Result<Vec<u8>, String> {
+    Err("RSA signing requires macOS".into())
+}
+
 #[cfg(target_os = "macos")]
 fn sign_rs256(der: &[u8], input: &[u8]) -> Result<Vec<u8>, String> {
     use core_foundation::base::TCFType;

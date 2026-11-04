@@ -33,11 +33,9 @@ archive="managed-machine_${version}_darwin_arm64.tar.gz"
 (cd "$root" && go run ./cmd/mm-release verify -dist "$unsigned")
 tar -xzf "$unsigned/$archive" -C "$tree"
 
-if [[ ! -x "$tree/agent-bot-keyd" ]]; then
-    cargo build --release --manifest-path "$root/keyd/Cargo.toml"
-    cp "$root/keyd/target/release/agent-bot-keyd" "$tree/agent-bot-keyd"
-    chmod 0755 "$tree/agent-bot-keyd"
-fi
+(cd "$root/keyd" && cargo build --release --locked)
+cp "$root/keyd/target/release/agent-bot-keyd" "$tree/agent-bot-keyd"
+chmod 0755 "$tree/agent-bot-keyd"
 
 identity="$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" \
     | awk -v t="($team)" '/"Developer ID Application: / && index($0, t) { print $2; exit }')"

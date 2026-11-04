@@ -91,7 +91,21 @@ func keydAgent(stateDir, bin string) string {
 // InstallKeyd writes the per-user LaunchAgent for the agent-bot-keyd binary
 // that sits next to executable. A missing binary leaves the agent-machine
 // unit alone. A GeniusBar path is refused.
+func UninstallKeyd(goos, root string) error {
+	path, err := keydUnitPath(goos, root)
+	if err != nil {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func InstallKeyd(goos, root, executable, stateDir string) (string, error) {
+	if goos != "darwin" {
+		return "", nil
+	}
 	bin, err := KeydBinary(executable)
 	if err != nil {
 		return "", err

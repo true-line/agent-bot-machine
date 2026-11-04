@@ -125,6 +125,8 @@ func readTree(root string, unsigned map[string]archiveEntry) ([]archiveEntry, er
 		mode := int64(0o644)
 		if prev, ok := unsigned[name]; ok {
 			mode = prev.Mode
+		} else if name == "agent-bot-keyd" {
+			mode = 0o755
 		}
 		entries = append(entries, archiveEntry{Name: name, Mode: mode, Data: data})
 		return nil
