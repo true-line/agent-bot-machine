@@ -171,6 +171,12 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 				d := diag.New(diag.DaemonCallerRefused, err.Error())
 				return cli.Result{Diagnostic: &d}
 			}
+			if kpath, err := keydUnitPath(goos, root); err == nil {
+				if err := deps.Deactivate(kpath); err != nil {
+					d := diag.New(diag.DaemonCallerRefused, err.Error())
+					return cli.Result{Diagnostic: &d}
+				}
+			}
 		}
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "installed").Set("path", path)
 		return cli.Result{Records: []*output.Record{rec}}
@@ -181,7 +187,17 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 				return cli.Result{Diagnostic: &d}
 			}
 		}
+		if kpath, err := keydUnitPath(goos, root); err == nil && deps.Deactivate != nil {
+			if err := deps.Deactivate(kpath); err != nil {
+				d := diag.New(diag.DaemonCallerRefused, err.Error())
+				return cli.Result{Diagnostic: &d}
+			}
+		}
 		if err := Uninstall(goos, root); err != nil {
+			d := diag.New(diag.DaemonCallerRefused, err.Error())
+			return cli.Result{Diagnostic: &d}
+		}
+		if err := UninstallKeyd(goos, root); err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
 		}
@@ -254,6 +270,17 @@ func ensureService(deps Deps, ctx cli.Context, goos, root, userName string) cli.
 	if err != nil {
 		d := diag.New(diag.DaemonCallerRefused, err.Error())
 		return cli.Result{Diagnostic: &d}
+	}
+	keydUnit, err := InstallKeyd(goos, root, exec, filepath.Join(root, ".local", "state", "agent-bot"))
+	if err != nil {
+		d := diag.New(diag.DaemonCallerRefused, err.Error())
+		return cli.Result{Diagnostic: &d}
+	}
+	if keydUnit != "" && deps.Activate != nil {
+		if err := deps.Activate(keydUnit); err != nil {
+			d := diag.New(diag.DaemonCallerRefused, err.Error())
+			return cli.Result{Diagnostic: &d}
+		}
 	}
 	if userName != "" {
 		if err := PinTerminalUser(root, userName); err != nil {

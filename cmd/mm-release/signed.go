@@ -125,6 +125,8 @@ func readTree(root string, unsigned map[string]archiveEntry) ([]archiveEntry, er
 		mode := int64(0o644)
 		if prev, ok := unsigned[name]; ok {
 			mode = prev.Mode
+		} else if name == "agent-bot-keyd" {
+			mode = 0o755
 		}
 		entries = append(entries, archiveEntry{Name: name, Mode: mode, Data: data})
 		return nil
@@ -215,7 +217,7 @@ func compareSignedDarwin(unsigned, signed map[string]archiveEntry, team string) 
 		if s.Mode != u.Mode {
 			return fmt.Errorf("%s: mode %#o, want %#o", name, s.Mode, u.Mode)
 		}
-		if name == "managed-machine" {
+		if name == "managed-machine" || name == "agent-bot-keyd" {
 			if err := machoEqualIgnoringSignature(u.Data, s.Data, team); err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
@@ -225,9 +227,15 @@ func compareSignedDarwin(unsigned, signed map[string]archiveEntry, team string) 
 			return fmt.Errorf("%s differs from the deterministic build", name)
 		}
 	}
-	for name := range signed {
-		if _, ok := unsigned[name]; !ok {
+	for name, s := range signed {
+		if _, ok := unsigned[name]; ok {
+			continue
+		}
+		if name != "agent-bot-keyd" {
 			return fmt.Errorf("signed archive adds unexpected file %s", name)
+		}
+		if err := machoTeam(s.Data, team); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
 	return nil
@@ -335,6 +343,17 @@ func readMachoSignatureFields(b []byte) (machoSignatureFields, error) {
 		return out, errors.New("code signature is not the end of the file")
 	}
 	return out, nil
+}
+
+func machoTeam(signed []byte, team string) error {
+	s, err := readMachoSignatureFields(signed)
+	if err != nil {
+		return err
+	}
+	if !bytes.Contains(signed[s.dataoff:], []byte(team)) {
+		return fmt.Errorf("signature does not name Team ID %s", team)
+	}
+	return nil
 }
 
 func machoEqualIgnoringSignature(unsigned, signed []byte, team string) error {

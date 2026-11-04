@@ -95,6 +95,10 @@ class ManagedMachine < Formula
     resource("core").stage do
       bin.install "managed-machine"
       chmod 0755, bin / "managed-machine"
+      if File.exist?("agent-bot-keyd")
+        bin.install "agent-bot-keyd"
+        chmod 0755, bin / "agent-bot-keyd"
+      end
     end
     bin.install_symlink "managed-machine" => "agent-machine"
 
