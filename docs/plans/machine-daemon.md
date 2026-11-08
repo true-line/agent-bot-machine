@@ -44,6 +44,14 @@ and is not performed until this plan is reviewed. P7 is the client inside
 agent-daemon. agent-machine is not a fourth component beside identity, soul,
 and comms.
 
+**Platform names.** agent-daemon is HQ, the agent-bot-daemon repository
+([D1](https://github.com/true-line/agent-bot-daemon/blob/main/docs/daemon-plugin-split.md#101-decisions)). It runs in its own `_agent-bot-hq` account (D6)
+and hosts the comms and Soul runtime plugins. Its identity authority is HQ
+core, not an agent-bot-identity plugin
+([PDR-0027](https://github.com/true-line/agent-bot-platform/blob/main/docs/04-decisions/PDR-0027-hq-identity-authority-lives-in-agent-bot-daemon.md)).
+The [repository catalog](https://github.com/true-line/agent-bot-platform/blob/main/docs/03-architecture/repository-catalog.md) is the
+charter for each repository.
+
 ## Decisions (owner, 2026-10-29)
 
 1. **Platforms.** macOS, Linux and Windows are all in scope from the first
@@ -65,7 +73,9 @@ and comms.
 4. **One client.** Only agent-daemon, on the same machine, talks to
    agent-machine. The caller inside agent-daemon is the P7 client. Remote
    requests are MCP calls through agents.true-line.ai, relayed to that
-   machine's agent-daemon. Local agents also go through agent-daemon, via
+   machine's agent-daemon, which authorizes each one before it signs a
+   request on the channel: relays and the identity service get no execution
+   channel (platform R2). Local agents also go through agent-daemon, via
    agent-bot-cli.
 5. **Agents may install** pinned catalog items, not only read status. The
    control plane publishes the admin catalog, signed. agent-machine installs
@@ -379,19 +389,23 @@ client accepts the response only when `daemon.pub` verifies it; on Windows
 the client dials the named pipe; the `legacy/scripts/update` re-exec rule is
 preserved.
 
-### P7: client inside agent-daemon (agent-bot-identity)
+### P7: client inside agent-daemon (agent-bot-daemon)
 
-The client only. agent-machine stays the executor in its own repository.
+The client only. agent-machine stays the executor in its own repository. The
+client is HQ core in agent-bot-daemon (PDR-0027) and runs in `_agent-bot-hq`
+(D6); see S5 and S6 in [cross-account-channel.md](cross-account-channel.md).
 
 Acceptance: agent-daemon routes and MCP tools that forward the closed verbs
-over the signed local channel, pairing through agent-bot-keyd, and receipts
-on the agent-daemon side. No installer and no catalog executor in this phase.
+over the signed local channel, pairing directly with agent-machine (key
+custody and signing are in agent-bot-machine, not keyd, per D4), and
+receipts on the agent-daemon side. No installer and no catalog executor in
+this phase.
 
 ### P8: hosted relay and key attestation (true-line/agent-bot, Grok)
 
 Acceptance: MCP requests to agents.true-line.ai are relayed to the machine's
-agent-daemon, which forwards them to agent-machine; both daemon keys are
-attested against the enrolled device, and the pairing is visible and
+agent-daemon, which authorizes each one (R2) and forwards it to
+agent-machine; both daemon keys are attested against the enrolled device, and the pairing is visible and
 revocable on `/devices/manage`. Filed as true-line/agent-bot#66.
 qwts/agent-bot-identity#1256 is closed. The catalog signing key is not pinned
 from disk. It has to arrive on this pairing, and a present `catalog.json`
@@ -417,9 +431,9 @@ stay refused. A present `catalog.json` stays refused.
 - Cross-account channel and Darwin dedicated keychain: S1 in
   [cross-account-channel.md](cross-account-channel.md). Remaining product
   slices (enroll UX, LaunchAgent, thin-client update, P7/P8) stay there.
-- Key registration through agent-bot-keyd, agents.true-line.ai, or both, and
-  which is authoritative. Proposed: keyd in P3/P7, server attestation added in
-  P8.
+- Key registration: settled by D4. Key custody and signing are in
+  agent-bot-machine, so P7 pairs HQ with agent-machine directly and keyd is
+  not in the path. Server attestation is added in P8.
 - Windows service account: the shipped unit is per-user. The Windows service
   XML is written and not registered, because registration needs elevation.
 - Linux prefix owner when Homebrew is absent. Closed: there is no prefix
