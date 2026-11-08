@@ -5,7 +5,8 @@ overview: >-
   local channel: dedicated Darwin keychain, shared socket, any-local-UID
   pairing gate, and a thin-client enroll path that does not need the user's
   0700 ~/.config. Later slices finish install verbs, the LaunchAgent, the
-  agent-bot client, and the hosted relay.
+  HQ (agent-bot-daemon) client in its own account, and remote requests
+  through HQ.
 related_prs: [455, 456, 457]
 related_issues:
   - true-line/agent-bot-machine#442
@@ -17,20 +18,37 @@ related_issues:
 
 Companion to [machine-daemon.md](machine-daemon.md) (P3–P8) and
 [macos-signing.md](macos-signing.md). This file is the product path: admin
-runs the executor; user and agent-bot are the clients. Pairing admin to
-itself is not the product.
+runs the executor; the owner's thin client in `user` and HQ
+(agent-bot-daemon) in its own `_agent-bot-hq` account are the clients.
+Pairing admin to itself is not the product.
+
+The platform is the source of truth for who holds what
+([catalog](https://github.com/true-line/agent-bot-platform/blob/main/docs/03-architecture/repository-catalog.md),
+[trust domains](https://github.com/true-line/agent-bot-platform/blob/main/docs/03-architecture/trust-domains-and-profiles.md),
+[agent-bot-daemon D4 and D6](https://github.com/true-line/agent-bot-daemon/blob/main/docs/daemon-plugin-split.md#101-decisions),
+[PDR-0027](https://github.com/true-line/agent-bot-platform/blob/main/docs/04-decisions/PDR-0027-hq-identity-authority-lives-in-agent-bot-daemon.md)):
+
+- agent-machine, in `admin`, holds host-side credentials at rest and the
+  signed policy, and verifies the owner's Secure Enclave presence signature
+  on privileged requests (D4).
+- HQ is agent-bot-daemon (D1). It runs in `_agent-bot-hq` on macOS and
+  `agent-bot-hq` on Linux, an account agent-bot-machine creates, separate
+  from `admin` and from `user` (D6). Its identity authority is HQ core, not
+  an agent-bot-identity plugin (PDR-0027).
 
 Owner direction (2026-11-02):
 
 1. agent-machine talks to agent-bot over a signed protected channel. The
-   intended path is every request through agent-bot.
+   intended path is every request through agent-bot. (Here agent-bot is
+   HQ, agent-bot-daemon, per D1.)
 2. A thin client still has to work from the user account when only
    agent-machine is installed, under the same signed-channel rules.
 
 ## Intent
 
 The prefix-owner account (`admin`, uid 501) owns Homebrew and runs the
-daemon. The daily account (`user`, uid 502) and agent-bot must call it.
+daemon. The owner's daily account (`user`, uid 502) and HQ, in
+`_agent-bot-hq`, must call it.
 Three things made that impossible on this machine and are the S1 fix:
 
 | Failure | Cause | Fix in S1 |
@@ -47,7 +65,7 @@ talk to agent-bot. Those are S2–S5.
 ```mermaid
 flowchart LR
   userTerm["user: thin client"] -->|"signed RPC"| ch
-  agentBot["user: agent-bot / P7"] -->|"signed RPC"| ch
+  hq["_agent-bot-hq: HQ (agent-bot-daemon) / P7"] -->|"signed RPC"| ch
   subgraph prefixOwner [admin / prefix owner]
     ch["var/agent-machine socket + daemon.pub"]
     exec["agent-machine daemon"]
@@ -63,13 +81,24 @@ flowchart LR
 |---|---|---|---|
 | `~admin/.config/agent-machine` | prefix owner | `0700` | `daemon.keychain-db`, `peers/*`, private seed after migrate |
 | `$HOMEBREW_PREFIX/var/agent-machine` | prefix owner | `0755` | `daemon.sock` `0666`, `daemon.pub` `0644` |
-| `~user/.config/agent-machine` | user | `0700` | `client.key`, `client.pub` |
+| `~user/.config/agent-machine` | user | `0700` | `terminal` `client.key`, `client.pub` |
+| `~_agent-bot-hq/.config/agent-machine` | HQ account | `0700` | `agent-daemon` `client.key`, `client.pub`, pinned `daemon.pub` |
 
-Windows keeps the named pipe. Linux uses the same prefix `var/` layout.
+Windows keeps the named pipe. Linux uses the same prefix `var/` layout, with
+HQ in `agent-bot-hq`. Neither members nor the owner's `user` account can read
+the `agent-daemon` key (D6).
+
+**Until `_agent-bot-hq` exists.** Today's agent-bot daemon still runs in
+`user` and keeps the `agent-daemon` key there. That is D4's stated residual
+risk: any `user` process can use the key for routine brokered requests
+(status, receipts), never for a raw secret, and privileged and policy
+requests stay out of reach because they need the presence signature. Moving
+HQ into its own account (S6) closes it.
 
 ### Pairing
 
-Two clients only: `terminal` and `agent-daemon`.
+Two clients only: `terminal` (the owner, in `user`) and `agent-daemon`
+(HQ, in `_agent-bot-hq`).
 
 1. Admin: `daemon install [--user user]` writes the unit, loads it, and
    waits until the socket accepts.
@@ -157,11 +186,25 @@ no catalog (`MM_DAEMON_NOT_IN_CATALOG`).
 
 ### S5 — agent-bot is the control plane (other repos; P7/P8)
 
-P7: agent-daemon client in agent-bot-identity, pairing through
-agent-bot-keyd, same channel rules. P8: MCP `machine_request` /
-`machine_result` / `machine_status` relay through agents.true-line.ai
-(true-line/agent-bot#66, #71). The thin client remains the fallback
-when agent-bot is not installed.
+P7: the `agent-daemon` client is part of HQ core in agent-bot-daemon
+(PDR-0027), running in `_agent-bot-hq`. It pairs with agent-machine directly
+over this channel, under the same rules. Key custody and signing move from
+keyd into agent-bot-machine (D4), so pairing does not go through
+agent-bot-keyd. Privileged and policy requests also carry the owner's
+presence signature, which agent-machine verifies (D4). P8: MCP
+`machine_request` / `machine_result` / `machine_status` from
+agents.true-line.ai (true-line/agent-bot#66, #71) reach agent-machine only
+through HQ. HQ authorizes each request and alone signs it on this channel;
+the identity service and relays get no execution channel
+([R2](https://github.com/true-line/agent-bot-platform/blob/main/docs/02-requirements/product-requirements.md#r2-control-stays-local)).
+The thin client remains the fallback when HQ is not installed.
+
+### S6 — HQ account (this repo, D6)
+
+agent-bot-machine creates the HQ role account, `_agent-bot-hq` on macOS and
+`agent-bot-hq` on Linux, separate from `admin` and from `user`. HQ's
+`agent-daemon` key moves there, and the `user` copy is retired. Members and
+the owner's account cannot read HQ's store or key.
 
 ## Replay
 
