@@ -22,6 +22,29 @@ func peerPath(t *testing.T, dir, client, suffix string) string {
 	return filepath.Join(peers, client+suffix)
 }
 
+func TestEnrollClientTakesHexAndFingerprint(t *testing.T) {
+	userHome := t.TempDir()
+	adminHome := t.TempDir()
+	pubPath, err := PairClient(userHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := loadPublic(pubPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnrollClient(adminHome, "terminal", hex.EncodeToString(pub), strings.Repeat("0", 64)); err == nil {
+		t.Fatal("expected fingerprint mismatch")
+	}
+	if _, err := EnrollClient(adminHome, "terminal", hex.EncodeToString(pub), publicFingerprint(pub)); err != nil {
+		t.Fatal(err)
+	}
+	pairing, err := loadPairing(stateDir(adminHome))
+	if err != nil || !pairing.allows(pub) {
+		t.Fatalf("enrolled %v %v", pairing, err)
+	}
+}
+
 func TestLoadPairingKeepsLiveUntilConfirm(t *testing.T) {
 	dir := t.TempDir()
 	livePub, _, err := ed25519.GenerateKey(nil)

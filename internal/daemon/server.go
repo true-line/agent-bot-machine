@@ -5,12 +5,15 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	"github.com/qwts/managed-machine/internal/diag"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/qwts/managed-machine/internal/diag"
 )
 
 // Serve accepts one JSON line per connection, checks the peer and the
@@ -51,6 +54,8 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 		requestNonce = req.Nonce
 		if id != "" {
 			res = refused(id, msg)
+		} else if req.Verb == "bootstrap" {
+			res = bootstrapReply(priv)
 		} else {
 			res = hooks.reply(req)
 		}
@@ -74,13 +79,16 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 // catalog plan and apply actions. A nil function keeps the previous
 // placeholder for status and refuses the other verbs.
 type Hooks struct {
-	Status    func() (string, []byte, error)
-	Receipts  func() ([]byte, error)
-	Plan      func(name, option, target string) (string, string)
-	Apply     func(planID, name, option, target, soul, harness, session string) string
-	Update    func(name, soul, harness, session string) (string, string)
-	Catalog   func(req Request) (string, string, string)
-	OnReceipt func()
+	Status   func() (string, []byte, error)
+	Receipts func() ([]byte, error)
+	Plan     func(name, option, target string) (string, string)
+	Apply    func(planID, name, option, target, soul, harness, session string) string
+	Update   func(name, soul, harness, session string) (string, string)
+	Catalog  func(req Request) (string, string, string)
+	// ApproveMembers records the approval of a member accounts plan and
+	// returns the approval as the response body. It runs nothing.
+	ApproveMembers func(planID, digest string) ([]byte, string, string)
+	OnReceipt      func()
 }
 
 func (h Hooks) reply(req Request) Response {
@@ -144,9 +152,35 @@ func (h Hooks) reply(req Request) Response {
 			return refused(diagID, message)
 		}
 		return Response{OK: true, State: state, Message: message}
+	case approveMembersVerb:
+		if h.ApproveMembers == nil {
+			return refused(diag.DaemonUnimplemented, "approve-members is not served yet")
+		}
+		body, diagID, message := h.ApproveMembers(req.PlanID, req.PlanDigest)
+		if diagID != "" {
+			return refused(diagID, message)
+		}
+		return Response{OK: true, State: "approved", Message: req.PlanID, Body: body}
 	default:
 		return refused(diag.DaemonUnimplemented, req.Verb+" is not served yet")
 	}
+}
+
+func bootstrapReply(priv ed25519.PrivateKey) Response {
+	if priv == nil {
+		return refused(diag.DaemonStatusFailed, "daemon key is missing")
+	}
+	pub, ok := priv.Public().(ed25519.PublicKey)
+	if !ok {
+		return refused(diag.DaemonStatusFailed, "daemon key is not ed25519")
+	}
+	body, err := json.Marshal(struct {
+		PublicKey string `json:"public_key"`
+	}{PublicKey: hex.EncodeToString(pub)})
+	if err != nil {
+		return refused(diag.DaemonStatusFailed, "daemon public key could not be encoded")
+	}
+	return Response{OK: true, State: "enrolled", Body: body}
 }
 
 func responsePayload(res Response) []byte {

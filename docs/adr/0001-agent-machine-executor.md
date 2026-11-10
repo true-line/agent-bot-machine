@@ -50,11 +50,15 @@ it is confirmed. The daemon reads the pairing files before each request, so
 `peers/<client>.revoked` drops that client's key without a restart. The
 other client stays live.
 
-The verbs are `status`, `receipts`, `plan`, `apply`, `update`, and `catalog`.
+The verbs are `status`, `receipts`, `plan`, `apply`, `update`, `catalog`,
+and `approve-members`. `approve-members` records a plan ID and digest for
+the member accounts provisioner and starts no process
+([member-accounts.md](../plans/member-accounts.md)).
 There is no shell verb and no SSH verb. Requests carry identifiers only.
 Unknown fields, unknown names, undeclared options, and undeclared targets are
 refused before a process starts. `catalog_key`, `floor`, and `envelope` are
-declared only on `catalog`.
+declared only on `catalog`. `plan_digest` is declared only on
+`approve-members`.
 
 The control plane publishes the admin catalog. The signing key does not live
 next to the catalog. A present `catalog.json` is refused and the daemon does

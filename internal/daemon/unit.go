@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const darwinServiceLabel = "dev.qwts.agent-machine"
+
 // A system LaunchDaemon, a systemd system unit, and a Windows service
 // registration all need a privilege this daemon does not have. The unit is
 // a per-user service of the prefix owner: a LaunchAgent, a systemd user
@@ -42,13 +44,108 @@ func unitBody(goos, root, executable, username string) (string, error) {
 	}
 }
 
+// KeydBinary is the agent-bot-keyd program shipped beside the agent-machine
+// executable. A path inside GeniusBar.app is never that program.
+func KeydBinary(executable string) (string, error) {
+	exec := strings.TrimSpace(executable)
+	if exec == "" {
+		return "", fmt.Errorf("daemon executable is required")
+	}
+	bin := filepath.Join(filepath.Dir(exec), "agent-bot-keyd")
+	if strings.Contains(bin, "GeniusBar.app") {
+		return "", fmt.Errorf("agent-bot-keyd must ship with agent-machine, not GeniusBar")
+	}
+	return bin, nil
+}
+
+func keydUnitPath(goos, root string) (string, error) {
+	if goos != "darwin" {
+		return "", fmt.Errorf("agent-bot-keyd runs only on darwin")
+	}
+	return filepath.Join(root, "Library", "LaunchAgents", "dev.qwts.agent-bot.keyd.plist"), nil
+}
+
+func keydAgent(stateDir, bin string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.qwts.agent-bot.keyd</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>%s</string>
+		<string>serve</string>
+		<string>--state-dir</string>
+		<string>%s</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+</dict>
+</plist>
+`, xmlEscape(bin), xmlEscape(stateDir))
+}
+
+// InstallKeyd writes the per-user LaunchAgent for the agent-bot-keyd binary
+// that sits next to executable. A missing binary leaves the agent-machine
+// unit alone. A GeniusBar path is refused.
+func UninstallKeyd(goos, root string) error {
+	path, err := keydUnitPath(goos, root)
+	if err != nil {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func InstallKeyd(goos, root, executable, stateDir string) (string, error) {
+	if goos != "darwin" {
+		return "", nil
+	}
+	bin, err := KeydBinary(executable)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(bin); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	path, err := keydUnitPath(goos, root)
+	if err != nil {
+		return "", err
+	}
+	body := keydAgent(stateDir, bin)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
+	existing, readErr := os.ReadFile(path)
+	if readErr == nil && string(existing) == body {
+		return path, nil
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	return path, nil
+}
+
 func darwinAgent(root, executable string) string {
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>dev.qwts.agent-machine</string>
+	<string>%s</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>%s</string>
@@ -72,7 +169,7 @@ func darwinAgent(root, executable string) string {
 	<true/>
 </dict>
 </plist>
-`, xmlEscape(executable), xmlEscape(root))
+`, darwinServiceLabel, xmlEscape(executable), xmlEscape(root))
 }
 
 func linuxUserUnit(executable, _ string) string {

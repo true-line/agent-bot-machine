@@ -48,20 +48,24 @@ func loadOrCreateKeyWithStore(path string, store keyStore) (ed25519.PrivateKey, 
 		// before removing the on-disk file, so upgrading from a pre-keychain
 		// version preserves the daemon's identity.
 		diskSeed, rerr := os.ReadFile(path)
-		if rerr == nil && len(diskSeed) == ed25519.SeedSize {
+		if rerr == nil {
 			defer zeroBytes(diskSeed)
+			if len(diskSeed) != ed25519.SeedSize {
+				return nil, fmt.Errorf("daemon key file %s has invalid length %d", path, len(diskSeed))
+			}
 			if err := store.Save(diskSeed); err != nil {
 				return nil, err
 			}
-			_ = os.Remove(path)
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return nil, err
+			}
 			priv := ed25519.NewKeyFromSeed(diskSeed)
 			if err := writeDaemonPub(path, priv); err != nil {
 				return nil, err
 			}
 			return priv, nil
 		}
-		zeroBytes(diskSeed)
-		if rerr != nil && !os.IsNotExist(rerr) {
+		if !os.IsNotExist(rerr) {
 			return nil, rerr
 		}
 		_, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -137,11 +141,15 @@ func writeDaemonPub(keyPath string, priv ed25519.PrivateKey) error {
 	return os.Chmod(pubPath, 0o600)
 }
 
+var runKeyHelperCmd = func(name string, args ...string) error {
+	return exec.Command(name, args...).Run()
+}
+
 func stripDarwinACL(path string) error {
 	if runtime.GOOS != "darwin" {
 		return nil
 	}
-	return exec.Command("/bin/chmod", "-N", path).Run()
+	return runKeyHelperCmd("/bin/chmod", "-N", path)
 }
 
 func verifyPrivateDir(path string) error {
@@ -161,10 +169,11 @@ func verifyPrivateDir(path string) error {
 	return verifyDirOwner(path, info)
 }
 
-// purgeLegacySharedState removes an exposed <prefix>/var/agent-machine
-// directory from v0.11.2/v0.11.3, unlinks a ~/.config/agent-machine symlink
-// that pointed at it, and rotates daemon.key, client.key, and peers/ because
-// the shared directory was readable by other local accounts.
+// purgeLegacySharedState removes leaked secrets from <prefix>/var/agent-machine
+// (v0.11.2/v0.11.3 stored keys there), unlinks a ~/.config/agent-machine
+// symlink that pointed at it, and rotates daemon.key, client.key, and peers/
+// because those files were readable by other local accounts. The directory
+// itself stays: it is the cross-account channel (socket + daemon.pub).
 func purgeLegacySharedState(dir, legacySharedDir string, store keyStore) error {
 	rotated := false
 	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
@@ -183,10 +192,21 @@ func purgeLegacySharedState(dir, legacySharedDir string, store keyStore) error {
 	}
 	if legacySharedDir != "" {
 		if _, err := os.Lstat(legacySharedDir); err == nil {
-			if err := os.RemoveAll(legacySharedDir); err != nil {
-				return err
+			leaked := false
+			for _, name := range []string{"daemon.key", "client.key", "daemon.keychain-db", "peers"} {
+				p := filepath.Join(legacySharedDir, name)
+				if _, err := os.Lstat(p); err == nil {
+					leaked = true
+					if err := os.RemoveAll(p); err != nil {
+						return err
+					}
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
 			}
-			rotated = true
+			if leaked {
+				rotated = true
+			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -211,7 +231,7 @@ func loadPublic(path string) (ed25519.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(b) != ed25519.SeedSize {
+	if len(b) != ed25519.PublicKeySize {
 		return nil, os.ErrInvalid
 	}
 	return ed25519.PublicKey(b), nil

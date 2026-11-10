@@ -50,3 +50,32 @@ func Listen(dir string) (net.Listener, error) {
 	}
 	return ln, nil
 }
+
+// ListenChannel opens the cross-account socket. The directory is 0755 and
+// the socket is 0666 so a paired user or agent-daemon can connect. Secrets
+// never live here; authorization is the pairing key.
+func ListenChannel(dir string) (net.Listener, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		return nil, err
+	}
+	sock := filepath.Join(dir, "daemon.sock")
+	if err := os.Remove(sock); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		return nil, err
+	}
+	if err := stripDarwinACL(sock); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	if err := os.Chmod(sock, 0o666); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	return ln, nil
+}

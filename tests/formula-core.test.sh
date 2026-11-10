@@ -86,12 +86,12 @@ fi
 # formula or a prepared collapsed D3-only formula) and assert all D4/S8 D3
 # requirements.
 verify_formula_structure() {
-    local target_formula="$1" target_version="$2" want_layout="${3:-any}"
-    python3 - "$target_formula" "$target_version" "$want_layout" <<'PY'
+    local target_formula="$1" target_version="$2"
+    python3 - "$target_formula" "$target_version" <<'PY'
 import re
 import sys
 
-formula_path, version, want_layout = sys.argv[1], sys.argv[2], sys.argv[3]
+formula_path, version = sys.argv[1], sys.argv[2]
 with open(formula_path, encoding="utf-8") as fh:
     text = fh.read()
 lines = text.splitlines()
@@ -187,30 +187,6 @@ else:
     inverted_install = install_block
     pre_p01_install = None
 
-# The core binary is either installed bare into bin (formulas pinning an
-# archive without the bundle) or linked into the signed AgentBotMachine.app
-# (formulas written by `scripts/release prepare` since the bundle shipped).
-bare_core = (
-    'bin.install "managed-machine"',
-    'chmod 0755, bin / "managed-machine"',
-)
-bundle_core = (
-    'prefix.install "AgentBotMachine.app"',
-    'bin.install_symlink prefix / "AgentBotMachine.app/Contents/MacOS/managed-machine"',
-)
-is_bundle = bundle_core[0] in inverted_install
-if want_layout == "bundle" and not is_bundle:
-    raise SystemExit(f"{formula_path} must install the signed AgentBotMachine.app bundle")
-for snippet in (bundle_core if is_bundle else bare_core):
-    if snippet not in inverted_install:
-        raise SystemExit(f"inverted install branch missing {snippet!r}")
-if is_bundle:
-    for snippet in bare_core:
-        if snippet in inverted_install:
-            raise SystemExit(f"bundle install block still contains {snippet!r}")
-    if 'assert_predicate prefix/"AgentBotMachine.app/Contents/embedded.provisionprofile", :exist?' not in text:
-        raise SystemExit("bundle formula test do must assert the embedded provisioning profile")
-
 for snippet in (
     'legacy = libexec / "legacy"',
     'legacy.mkpath',
@@ -229,6 +205,8 @@ for snippet in (
     'chmod 0755, libexec / "scripts/update"',
     'bin.mkpath',
     'resource("core").stage',
+    'bin.install "managed-machine"',
+    'chmod 0755, bin / "managed-machine"',
     'bin.install_symlink "managed-machine" => "agent-machine"',
     'cp "VERSION", legacy / "VERSION"',
     'libexec.install "VERSION"',
@@ -316,7 +294,7 @@ PY
 }
 
 verify_formula_structure "$ROOT/Formula/managed-machine.rb" "$VERSION"
-verify_formula_structure "$FORMULA" "$VERSION" bundle
+verify_formula_structure "$FORMULA" "$VERSION"
 
 # Exercise `def install` and `test do` in Ruby for both the repository's
 # current formula (covering both branches while the guard exists) and the
@@ -383,11 +361,6 @@ class StubResource
     else
       Dir.mktmpdir("core-stage") do |dir|
         FileUtils.cp(@core_bin, File.join(dir, "managed-machine"))
-        contents = File.join(dir, "AgentBotMachine.app", "Contents")
-        FileUtils.mkdir_p(File.join(contents, "MacOS"))
-        FileUtils.cp(@core_bin, File.join(contents, "MacOS", "managed-machine"))
-        File.write(File.join(contents, "Info.plist"), "<plist/>\n")
-        File.write(File.join(contents, "embedded.provisionprofile"), "profile\n")
         Dir.chdir(dir) { yield }
       end
     end

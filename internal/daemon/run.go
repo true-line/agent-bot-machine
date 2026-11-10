@@ -2,13 +2,14 @@ package daemon
 
 import (
 	"context"
+	"crypto/ed25519"
+	"fmt"
+	"net"
 	"os"
 	"os/user"
 	"path/filepath"
 	"runtime"
 	"time"
-
-	"fmt"
 
 	"github.com/qwts/managed-machine/internal/provider"
 	"github.com/qwts/managed-machine/internal/provider/appcopy"
@@ -30,6 +31,35 @@ func StateDir(root string) string {
 
 func stateDir(root string) string {
 	return filepath.Join(root, ".config", "agent-machine")
+}
+
+func listenForRun(state string) (net.Listener, error) {
+	if runtime.GOOS == "windows" {
+		return Listen(state)
+	}
+	if ch := ChannelDir(); ch != "" {
+		return ListenChannel(ch)
+	}
+	return Listen(state)
+}
+
+func writeChannelPub(dir string, priv ed25519.PrivateKey) error {
+	pub, ok := priv.Public().(ed25519.PublicKey)
+	if !ok {
+		return fmt.Errorf("daemon key is not ed25519")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "daemon.pub")
+	_ = os.Remove(path)
+	if err := os.WriteFile(path, pub, 0o644); err != nil {
+		return err
+	}
+	if err := stripDarwinACL(path); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o644)
 }
 
 func defaultLegacySharedDir(root string) string {
@@ -134,25 +164,29 @@ func Run(ctx context.Context, root string) error {
 	if err := purgeLegacySharedState(dir, defaultLegacySharedDir(root), defaultKeyStore(filepath.Join(dir, "daemon.key"))); err != nil {
 		return err
 	}
-	ln, err := Listen(dir)
-	if err != nil {
-		return err
-	}
 	if _, err := ensureStateDirAndPeers(dir); err != nil {
-		ln.Close()
 		return err
 	}
 	priv, err := loadOrCreateKey(filepath.Join(dir, "daemon.key"))
 	if err != nil {
-		ln.Close()
 		return err
+	}
+	ln, err := listenForRun(dir)
+	if err != nil {
+		return err
+	}
+	if ch := ChannelDir(); ch != "" && runtime.GOOS != "windows" {
+		if err := writeChannelPub(ch, priv); err != nil {
+			ln.Close()
+			return err
+		}
 	}
 	pairing, err := loadPairing(dir)
 	if err != nil {
 		ln.Close()
 		return err
 	}
-	gate := &Gate{Pairing: pairing, Dir: dir, PeerUID: ownerPeerID()}
+	gate := &Gate{Pairing: pairing, Dir: dir}
 	catalog, err := loadPinnedCatalog(dir)
 	if err != nil {
 		ln.Close()
@@ -196,6 +230,9 @@ func Run(ctx context.Context, root string) error {
 		Apply:    planner.Apply,
 		Update:   planner.Update,
 		Catalog:  func(req Request) (string, string, string) { return session.accept(dir, req) },
+		ApproveMembers: func(planID, digest string) ([]byte, string, string) {
+			return approveMembers(runtime.GOOS, dir, planID, digest, time.Now())
+		},
 		OnReceipt: func() {
 			if _, body, err := statusBody(dir); err == nil {
 				_ = writeDigest(filepath.Join(dir, "status-digest.json"), body, priv)

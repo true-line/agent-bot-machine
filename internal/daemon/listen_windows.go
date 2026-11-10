@@ -23,6 +23,12 @@ func Listen(dir string) (net.Listener, error) {
 	return &pipeListener{name: pipeName}, nil
 }
 
+// ListenChannel is the named pipe on Windows. Cross-account DACL is not
+// opened here; the unix channel is the product path.
+func ListenChannel(dir string) (net.Listener, error) {
+	return Listen(dir)
+}
+
 type pipeListener struct {
 	name   string
 	mu     sync.Mutex

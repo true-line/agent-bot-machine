@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"errors"
 	"fmt"
@@ -14,19 +15,18 @@ import (
 )
 
 const (
-	keychainService          = "ai.true-line.agent-bot-machine"
-	keychainAccount          = "daemon.key"
-	keychainAccessGroup      = "Z5DM34QS5U.ai.true-line.agent-bot-machine"
-	enclaveWrapTag           = "ai.true-line.agent-bot-machine.wrap"
-	eciesAlgorithm           = "algid:encrypt:ECIES:ECDH:KDFX963:SHA256:AESGCM"
-	errSecItemNotFound       = -25300
-	errSecDuplicateItem      = -25299
-	errSecMissingEntitlement = -34018
-	errSecNotAvailable       = -25291
-	errSecUnimplemented      = -4
-	kCFStringEncodingUTF8    = 0x08000100
-	rtldDefault              = ^uintptr(1) // RTLD_DEFAULT (-2) on Darwin
+	keychainService       = "ai.true-line.agent-bot-machine"
+	keychainAccount       = "daemon.key"
+	errSecItemNotFound    = -25300
+	errSecDuplicateItem   = -25299
+	kCFStringEncodingUTF8 = 0x08000100
+	rtldDefault           = ^uintptr(1) // RTLD_DEFAULT (-2) on Darwin
 )
+
+// errStaleBinaryACL means the item still trusts this executable's path but
+// not the current bytes (an unsigned rebuild at the same path). Load may
+// rebind the ACL to this binary. A different path still fails closed.
+var errStaleBinaryACL = errors.New("keychain item ACL trusts this path but not this binary")
 
 // Implemented in the runtime package (runtime/sys_darwin.go).
 func syscall_syscall(fn, a1, a2, a3 uintptr) (r1, r2 uintptr, err syscall.Errno)
@@ -39,65 +39,89 @@ func syscall_syscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err s
 //go:cgo_import_dynamic kc_CFDataCreate CFDataCreate "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
 //go:cgo_import_dynamic kc_CFDataGetLength CFDataGetLength "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
 //go:cgo_import_dynamic kc_CFDataGetBytes CFDataGetBytes "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
-//go:cgo_import_dynamic kc_CFNumberCreate CFNumberCreate "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
 //go:cgo_import_dynamic kc_CFPropertyListCreateWithData CFPropertyListCreateWithData "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
 //go:cgo_import_dynamic kc_CFStringCreateWithBytes CFStringCreateWithBytes "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
 //go:cgo_import_dynamic kc_CFDictionaryCreateMutable CFDictionaryCreateMutable "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
 //go:cgo_import_dynamic kc_CFDictionarySetValue CFDictionarySetValue "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
 //go:cgo_import_dynamic kc_CFArrayCreate CFArrayCreate "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+//go:cgo_import_dynamic kc_CFArrayGetCount CFArrayGetCount "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+//go:cgo_import_dynamic kc_CFArrayGetValueAtIndex CFArrayGetValueAtIndex "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
 //go:cgo_import_dynamic kc_CFRelease CFRelease "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
 //go:cgo_import_dynamic kc_SecItemCopyMatching SecItemCopyMatching "/System/Library/Frameworks/Security.framework/Versions/A/Security"
 //go:cgo_import_dynamic kc_SecItemAdd SecItemAdd "/System/Library/Frameworks/Security.framework/Versions/A/Security"
 //go:cgo_import_dynamic kc_SecItemUpdate SecItemUpdate "/System/Library/Frameworks/Security.framework/Versions/A/Security"
 //go:cgo_import_dynamic kc_SecItemDelete SecItemDelete "/System/Library/Frameworks/Security.framework/Versions/A/Security"
-//go:cgo_import_dynamic kc_SecKeyCreateRandomKey SecKeyCreateRandomKey "/System/Library/Frameworks/Security.framework/Versions/A/Security"
-//go:cgo_import_dynamic kc_SecKeyCopyPublicKey SecKeyCopyPublicKey "/System/Library/Frameworks/Security.framework/Versions/A/Security"
-//go:cgo_import_dynamic kc_SecKeyCreateEncryptedData SecKeyCreateEncryptedData "/System/Library/Frameworks/Security.framework/Versions/A/Security"
-//go:cgo_import_dynamic kc_SecKeyCreateDecryptedData SecKeyCreateDecryptedData "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecTrustedApplicationCreateFromPath SecTrustedApplicationCreateFromPath "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecTrustedApplicationValidateWithPath SecTrustedApplicationValidateWithPath "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecTrustedApplicationCopyData SecTrustedApplicationCopyData "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecAccessCreate SecAccessCreate "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecAccessCopyMatchingACLList SecAccessCopyMatchingACLList "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecACLCopyContents SecACLCopyContents "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecACLSetContents SecACLSetContents "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecKeychainItemCopyAccess SecKeychainItemCopyAccess "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecKeychainItemCopyAttributesAndData SecKeychainItemCopyAttributesAndData "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecKeychainItemFreeContent SecKeychainItemFreeContent "/System/Library/Frameworks/Security.framework/Versions/A/Security"
 //go:cgo_import_dynamic kc_SecKeychainCreate SecKeychainCreate "/System/Library/Frameworks/Security.framework/Versions/A/Security"
 //go:cgo_import_dynamic kc_SecKeychainOpen SecKeychainOpen "/System/Library/Frameworks/Security.framework/Versions/A/Security"
 //go:cgo_import_dynamic kc_SecKeychainUnlock SecKeychainUnlock "/System/Library/Frameworks/Security.framework/Versions/A/Security"
-//go:cgo_import_dynamic kc_SecKeychainDelete SecKeychainDelete "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecKeychainSetUserInteractionAllowed SecKeychainSetUserInteractionAllowed "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecKeychainCopyDefault SecKeychainCopyDefault "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecKeychainSetDefault SecKeychainSetDefault "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecKeychainGetStatus SecKeychainGetStatus "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+//go:cgo_import_dynamic kc_SecKeychainSetSettings SecKeychainSetSettings "/System/Library/Frameworks/Security.framework/Versions/A/Security"
 
 var (
-	kc_dlsym_trampoline_addr                        uintptr
-	kc_CFDataCreate_trampoline_addr                 uintptr
-	kc_CFDataGetLength_trampoline_addr              uintptr
-	kc_CFDataGetBytes_trampoline_addr               uintptr
-	kc_CFNumberCreate_trampoline_addr               uintptr
-	kc_CFPropertyListCreateWithData_trampoline_addr uintptr
-	kc_CFStringCreateWithBytes_trampoline_addr      uintptr
-	kc_CFDictionaryCreateMutable_trampoline_addr    uintptr
-	kc_CFDictionarySetValue_trampoline_addr         uintptr
-	kc_CFArrayCreate_trampoline_addr                uintptr
-	kc_CFRelease_trampoline_addr                    uintptr
-	kc_SecItemCopyMatching_trampoline_addr          uintptr
-	kc_SecItemAdd_trampoline_addr                   uintptr
-	kc_SecItemUpdate_trampoline_addr                uintptr
-	kc_SecItemDelete_trampoline_addr                uintptr
-	kc_SecKeyCreateRandomKey_trampoline_addr        uintptr
-	kc_SecKeyCopyPublicKey_trampoline_addr          uintptr
-	kc_SecKeyCreateEncryptedData_trampoline_addr    uintptr
-	kc_SecKeyCreateDecryptedData_trampoline_addr    uintptr
-	kc_SecKeychainCreate_trampoline_addr            uintptr
-	kc_SecKeychainOpen_trampoline_addr              uintptr
-	kc_SecKeychainUnlock_trampoline_addr            uintptr
-	kc_SecKeychainDelete_trampoline_addr            uintptr
+	kc_dlsym_trampoline_addr                                 uintptr
+	kc_CFDataCreate_trampoline_addr                          uintptr
+	kc_CFDataGetLength_trampoline_addr                       uintptr
+	kc_CFDataGetBytes_trampoline_addr                        uintptr
+	kc_CFPropertyListCreateWithData_trampoline_addr          uintptr
+	kc_CFStringCreateWithBytes_trampoline_addr               uintptr
+	kc_CFDictionaryCreateMutable_trampoline_addr             uintptr
+	kc_CFDictionarySetValue_trampoline_addr                  uintptr
+	kc_CFArrayCreate_trampoline_addr                         uintptr
+	kc_CFArrayGetCount_trampoline_addr                       uintptr
+	kc_CFArrayGetValueAtIndex_trampoline_addr                uintptr
+	kc_CFRelease_trampoline_addr                             uintptr
+	kc_SecItemCopyMatching_trampoline_addr                   uintptr
+	kc_SecItemAdd_trampoline_addr                            uintptr
+	kc_SecItemUpdate_trampoline_addr                         uintptr
+	kc_SecItemDelete_trampoline_addr                         uintptr
+	kc_SecTrustedApplicationCreateFromPath_trampoline_addr   uintptr
+	kc_SecTrustedApplicationValidateWithPath_trampoline_addr uintptr
+	kc_SecTrustedApplicationCopyData_trampoline_addr         uintptr
+	kc_SecAccessCreate_trampoline_addr                       uintptr
+	kc_SecAccessCopyMatchingACLList_trampoline_addr          uintptr
+	kc_SecACLCopyContents_trampoline_addr                    uintptr
+	kc_SecACLSetContents_trampoline_addr                     uintptr
+	kc_SecKeychainItemCopyAccess_trampoline_addr             uintptr
+	kc_SecKeychainItemCopyAttributesAndData_trampoline_addr  uintptr
+	kc_SecKeychainItemFreeContent_trampoline_addr            uintptr
+	kc_SecKeychainCreate_trampoline_addr                     uintptr
+	kc_SecKeychainOpen_trampoline_addr                       uintptr
+	kc_SecKeychainUnlock_trampoline_addr                     uintptr
+	kc_SecKeychainSetUserInteractionAllowed_trampoline_addr  uintptr
+	kc_SecKeychainCopyDefault_trampoline_addr                uintptr
+	kc_SecKeychainSetDefault_trampoline_addr                 uintptr
+	kc_SecKeychainGetStatus_trampoline_addr                  uintptr
+	kc_SecKeychainSetSettings_trampoline_addr                uintptr
 )
+
+const kSecUnlockStateStatus = 1
+
+type secKeychainSettings struct {
+	version         uint32
+	lockOnSleep     uint8
+	useLockInterval uint8
+	_               uint16
+	lockInterval    uint32
+}
 
 func cfSymAddr(name string) uintptr {
 	b := append([]byte(name), 0)
 	p := unsafe.Pointer(unsafe.SliceData(b))
 	r1, _, _ := syscall_syscall(kc_dlsym_trampoline_addr, rtldDefault, uintptr(p), 0)
 	runtime.KeepAlive(b)
-	return r1
-}
-
-func cfInt32(v int32) uintptr {
-	val := v
-	const kCFNumberSInt32Type = 3
-	r1, _, _ := syscall_syscall(kc_CFNumberCreate_trampoline_addr, 0, kCFNumberSInt32Type, uintptr(unsafe.Pointer(&val)))
-	runtime.KeepAlive(&val)
 	return r1
 }
 
@@ -137,6 +161,19 @@ func cfDataBytes(ref uintptr) []byte {
 	return out
 }
 
+func cfArrayCount(arr uintptr) int {
+	if arr == 0 {
+		return 0
+	}
+	r1, _, _ := syscall_syscall(kc_CFArrayGetCount_trampoline_addr, arr, 0, 0)
+	return int(r1)
+}
+
+func cfArrayGet(arr uintptr, idx int) uintptr {
+	r1, _, _ := syscall_syscall(kc_CFArrayGetValueAtIndex_trampoline_addr, arr, uintptr(idx), 0)
+	return r1
+}
+
 func cfRelease(ref uintptr) {
 	if ref != 0 {
 		syscall_syscall(kc_CFRelease_trampoline_addr, ref, 0, 0)
@@ -162,145 +199,298 @@ func releaseAll(refs []uintptr) {
 	}
 }
 
+// createSelfOnlyAccess builds a SecAccessRef whose ACL trusts only the calling
+// executable (SecTrustedApplicationCreateFromPath(NULL, ...)). For a Developer
+// ID signed binary, macOS binds the trusted application to its code signing
+// designated requirement (identifier + Developer ID Team ID).
+func createSelfOnlyAccess(label string) (uintptr, error) {
+	var selfApp uintptr
+	r1, _, _ := syscall_syscall(kc_SecTrustedApplicationCreateFromPath_trampoline_addr, 0, uintptr(unsafe.Pointer(&selfApp)), 0)
+	if status := int32(r1); status != 0 || selfApp == 0 {
+		return 0, fmt.Errorf("SecTrustedApplicationCreateFromPath failed: OSStatus %d", int32(r1))
+	}
+	defer cfRelease(selfApp)
+	items := [1]uintptr{selfApp}
+	arrCB := cfSymAddr("kCFTypeArrayCallBacks")
+	trustedList, _, _ := syscall_syscall6(kc_CFArrayCreate_trampoline_addr, 0, uintptr(unsafe.Pointer(&items[0])), 1, arrCB, 0, 0)
+	runtime.KeepAlive(items)
+	if trustedList == 0 {
+		return 0, errors.New("CFArrayCreate for trusted application list returned nil")
+	}
+	defer cfRelease(trustedList)
+	desc := cfString(label)
+	defer cfRelease(desc)
+	var accessRef uintptr
+	r2, _, _ := syscall_syscall(kc_SecAccessCreate_trampoline_addr, desc, trustedList, uintptr(unsafe.Pointer(&accessRef)))
+	if status := int32(r2); status != 0 || accessRef == 0 {
+		return 0, fmt.Errorf("SecAccessCreate failed: OSStatus %d", int32(r2))
+	}
+	return accessRef, nil
+}
+
+// verifyItemSelfOnlyACL inspects a SecKeychainItemRef's SecAccessRef before its
+// secret data is read and verifies that:
+//   - ACLAuthorizationDecrypt and ACLAuthorizationExportClear each have exactly
+//     one ACL entry whose trusted application list is non-NULL (rejecting an
+//     "allow all applications" -A ACL), has length 1, and validates against the
+//     calling executable (SecTrustedApplicationValidateWithPath(app, NULL) == 0).
+//   - ACLAuthorizationChangeACL has an empty trusted application list so no
+//     process can silently alter the item's ACL.
+func verifyItemSelfOnlyACL(itemRef uintptr) error {
+	var accessRef uintptr
+	r1, _, _ := syscall_syscall(kc_SecKeychainItemCopyAccess_trampoline_addr, itemRef, uintptr(unsafe.Pointer(&accessRef)), 0)
+	if status := int32(r1); status != 0 || accessRef == 0 {
+		return fmt.Errorf("SecKeychainItemCopyAccess failed: OSStatus %d", int32(r1))
+	}
+	defer cfRelease(accessRef)
+
+	for _, authTag := range []string{"ACLAuthorizationDecrypt", "ACLAuthorizationExportClear"} {
+		tagRef := cfString(authTag)
+		aclList, _, _ := syscall_syscall(kc_SecAccessCopyMatchingACLList_trampoline_addr, accessRef, tagRef, 0)
+		cfRelease(tagRef)
+		if aclList == 0 {
+			return fmt.Errorf("keychain item missing %s ACL", authTag)
+		}
+		if n := cfArrayCount(aclList); n != 1 {
+			cfRelease(aclList)
+			return fmt.Errorf("keychain item has %d %s ACL entries, want 1", n, authTag)
+		}
+		acl := cfArrayGet(aclList, 0)
+		var appList, desc uintptr
+		var prompt uint16
+		r2, _, _ := syscall_syscall6(kc_SecACLCopyContents_trampoline_addr, acl, uintptr(unsafe.Pointer(&appList)), uintptr(unsafe.Pointer(&desc)), uintptr(unsafe.Pointer(&prompt)), 0, 0)
+		cfRelease(aclList)
+		if desc != 0 {
+			cfRelease(desc)
+		}
+		if status := int32(r2); status != 0 {
+			if appList != 0 {
+				cfRelease(appList)
+			}
+			return fmt.Errorf("SecACLCopyContents(%s) failed: OSStatus %d", authTag, status)
+		}
+		if appList == 0 {
+			return fmt.Errorf("keychain item %s ACL allows all applications (unrestricted)", authTag)
+		}
+		if n := cfArrayCount(appList); n != 1 {
+			cfRelease(appList)
+			return fmt.Errorf("keychain item %s ACL trusts %d applications, want 1", authTag, n)
+		}
+		app := cfArrayGet(appList, 0)
+		rv, _, _ := syscall_syscall(kc_SecTrustedApplicationValidateWithPath_trampoline_addr, app, 0, 0)
+		vstatus := int32(rv)
+		samePath := trustedAppMatchesExecutable(app)
+		cfRelease(appList)
+		if vstatus != 0 {
+			if samePath {
+				return fmt.Errorf("%w (%s): OSStatus %d", errStaleBinaryACL, authTag, vstatus)
+			}
+			return fmt.Errorf("keychain item %s ACL does not trust only this binary: OSStatus %d", authTag, vstatus)
+		}
+	}
+
+	chgTag := cfString("ACLAuthorizationChangeACL")
+	chgList, _, _ := syscall_syscall(kc_SecAccessCopyMatchingACLList_trampoline_addr, accessRef, chgTag, 0)
+	cfRelease(chgTag)
+	if chgList == 0 {
+		return errors.New("keychain item missing ACLAuthorizationChangeACL entry")
+	}
+	defer cfRelease(chgList)
+	if n := cfArrayCount(chgList); n != 1 {
+		return fmt.Errorf("keychain item has %d ACLAuthorizationChangeACL entries, want 1", n)
+	}
+	var chgApps, chgDesc uintptr
+	var chgPrompt uint16
+	rc, _, _ := syscall_syscall6(kc_SecACLCopyContents_trampoline_addr, cfArrayGet(chgList, 0), uintptr(unsafe.Pointer(&chgApps)), uintptr(unsafe.Pointer(&chgDesc)), uintptr(unsafe.Pointer(&chgPrompt)), 0, 0)
+	if chgDesc != 0 {
+		cfRelease(chgDesc)
+	}
+	if chgApps != 0 {
+		defer cfRelease(chgApps)
+	}
+	if status := int32(rc); status != 0 {
+		return fmt.Errorf("SecACLCopyContents(ACLAuthorizationChangeACL) failed: OSStatus %d", status)
+	}
+	if chgApps == 0 || cfArrayCount(chgApps) != 0 {
+		return errors.New("keychain item ACLAuthorizationChangeACL is not restricted")
+	}
+	return nil
+}
+
+func currentExecutablePath() (string, error) {
+	p, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved, nil
+	}
+	return filepath.Clean(p), nil
+}
+
+func trustedAppPath(app uintptr) (string, error) {
+	var data uintptr
+	r1, _, _ := syscall_syscall(kc_SecTrustedApplicationCopyData_trampoline_addr, app, uintptr(unsafe.Pointer(&data)), 0)
+	if status := int32(r1); status != 0 || data == 0 {
+		return "", fmt.Errorf("SecTrustedApplicationCopyData failed: OSStatus %d", int32(r1))
+	}
+	defer cfRelease(data)
+	return pathFromTrustedAppData(cfDataBytes(data))
+}
+
+func pathFromTrustedAppData(b []byte) (string, error) {
+	i := bytes.IndexByte(b, '/')
+	if i < 0 {
+		return "", errors.New("trusted application data has no path")
+	}
+	rest := b[i:]
+	if n := bytes.IndexByte(rest, 0); n >= 0 {
+		rest = rest[:n]
+	}
+	p := string(rest)
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("trusted application path %q is not absolute", p)
+	}
+	return filepath.Clean(p), nil
+}
+
+func trustedAppMatchesExecutable(app uintptr) bool {
+	trusted, err := trustedAppPath(app)
+	if err != nil {
+		return false
+	}
+	self, err := currentExecutablePath()
+	if err != nil {
+		return false
+	}
+	if resolved, err := filepath.EvalSymlinks(trusted); err == nil {
+		trusted = resolved
+	}
+	return trusted == self
+}
+
+func readKeychainItemBytes(itemRef uintptr) ([]byte, error) {
+	var length uint32
+	var dataPtr *byte
+	r1, _, _ := syscall_syscall6(
+		kc_SecKeychainItemCopyAttributesAndData_trampoline_addr,
+		itemRef,
+		0,
+		0,
+		0,
+		uintptr(unsafe.Pointer(&length)),
+		uintptr(unsafe.Pointer(&dataPtr)),
+	)
+	if status := int32(r1); status != 0 {
+		return nil, fmt.Errorf("SecKeychainItemCopyAttributesAndData failed: OSStatus %d", status)
+	}
+	if dataPtr == nil {
+		return nil, errors.New("SecKeychainItemCopyAttributesAndData returned nil data")
+	}
+	defer syscall_syscall(kc_SecKeychainItemFreeContent_trampoline_addr, 0, uintptr(unsafe.Pointer(dataPtr)), 0)
+	src := unsafe.Slice(dataPtr, int(length))
+	out := append([]byte(nil), src...)
+	zeroBytes(src)
+	return out, nil
+}
+
+var (
+	// testKeychainAccountOverride is nil in production builds; tests in
+	// keychain_darwin_test.go set it so unit tests use an isolated test account
+	// name without touching the host's live daemon.key keychain item.
+	testKeychainAccountOverride func(cleanPath string) string
+
+	// secItemAddHook is nil in production builds; tests set it to inject a
+	// failure on the second SecItemAdd call during duplicate replacement.
+	secItemAddHook func(attrs uintptr) (int32, bool)
+)
+
+func callSecItemAdd(attrs uintptr) int32 {
+	if secItemAddHook != nil {
+		if st, ok := secItemAddHook(attrs); ok {
+			return st
+		}
+	}
+	r1, _, _ := syscall_syscall(kc_SecItemAdd_trampoline_addr, attrs, 0, 0)
+	return int32(r1)
+}
+
+// darwinKeychainStore stores the daemon's 32-byte Ed25519 seed in a dedicated
+// file keychain next to daemon state (daemon.keychain-db). The prefix-owner
+// account has no usable login keychain, so Save never asks securityd for
+// login.keychain-db or System.keychain. The item carries a self-only
+// SecAccessRef ACL. kSecAttrAccessible is omitted: that Data Protection
+// attribute on a file keychain makes SecItemAdd call Authorization Services
+// and fail with OSStatus -60008 when no GUI session can prompt.
 type darwinKeychainStore struct {
 	service      string
 	account      string
-	accessGroup  string
 	keychainPath string
 }
 
-// defaultKeyStore always returns a darwinKeychainStore on macOS so no path on
-// Darwin ever falls back to a plaintext daemon.key file on disk.
+// defaultKeyStore returns a darwinKeychainStore backed by a dedicated file
+// keychain beside the would-be daemon.key path.
 func defaultKeyStore(path string) keyStore {
-	dir := filepath.Dir(filepath.Clean(path))
+	clean := filepath.Clean(path)
+	acct := keychainAccount
+	if testKeychainAccountOverride != nil {
+		if a := testKeychainAccountOverride(clean); a != "" {
+			acct = a
+		}
+	}
 	return darwinKeychainStore{
 		service:      keychainService,
-		account:      keychainAccount,
-		accessGroup:  keychainAccessGroup,
-		keychainPath: filepath.Join(dir, "daemon.keychain-db"),
+		account:      acct,
+		keychainPath: filepath.Join(filepath.Dir(clean), "daemon.keychain-db"),
 	}
 }
 
-// lookupOrCreateEnclaveKey looks up or generates a P-256 key inside the
-// Apple Secure Enclave (kSecAttrTokenIDSecureEnclave) under the Data
-// Protection Keychain access group to wrap/unwrap the Ed25519 seed.
-func (s darwinKeychainStore) lookupOrCreateEnclaveKey(create bool) (uintptr, error) {
-	query := cfNewDict()
-	kClass := cfString("class")
-	vClass := cfString("keys")
-	kType := cfString("type")
-	vType := cfString("73") // kSecAttrKeyTypeECSECPrimeRandom
-	kKcls := cfString("kcls")
-	vKcls := cfString("1") // kSecAttrKeyClassPrivate
-	kTag := cfString("atag")
-	vTag := cfData([]byte(enclaveWrapTag))
-	kNleg := cfString("nleg")
-	vTrue := cfTrue()
-	kAgrp := cfString("agrp")
-	vAgrp := cfString(s.accessGroup)
-	kRetRef := cfString("r_Ref")
-	refs := []uintptr{query, kClass, vClass, kType, vType, kKcls, vKcls, kTag, vTag, kNleg, vTrue, kAgrp, vAgrp, kRetRef}
-	defer releaseAll(refs)
-
-	cfDictSet(query, kClass, vClass)
-	cfDictSet(query, kType, vType)
-	cfDictSet(query, kKcls, vKcls)
-	cfDictSet(query, kTag, vTag)
-	cfDictSet(query, kNleg, vTrue)
-	cfDictSet(query, kAgrp, vAgrp)
-	cfDictSet(query, kRetRef, vTrue)
-
-	var keyRef uintptr
-	r1, _, _ := syscall_syscall(kc_SecItemCopyMatching_trampoline_addr, query, uintptr(unsafe.Pointer(&keyRef)), 0)
-	status := int32(r1)
-	if status == 0 && keyRef != 0 {
-		return keyRef, nil
-	}
-	if status != errSecItemNotFound || !create {
-		return 0, fmt.Errorf("Secure Enclave key lookup failed: OSStatus %d", status)
-	}
-
-	privAttrs := cfNewDict()
-	kPerm := cfString("perm")
-	kPdmn := cfString("pdmn")
-	vPdmn := cfString("cku") // kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-	cfDictSet(privAttrs, kPerm, vTrue)
-	cfDictSet(privAttrs, kTag, vTag)
-	cfDictSet(privAttrs, kPdmn, vPdmn)
-
-	attrs := cfNewDict()
-	kBsiz := cfString("bsiz")
-	vBsiz := cfInt32(256)
-	kTkid := cfString("tkid")
-	vTkid := cfString("com.apple.setoken")
-	kPriv := cfString("private")
-	refs = append(refs, privAttrs, kPerm, kPdmn, vPdmn, attrs, kBsiz, vBsiz, kTkid, vTkid, kPriv)
-
-	cfDictSet(attrs, kType, vType)
-	cfDictSet(attrs, kBsiz, vBsiz)
-	cfDictSet(attrs, kTkid, vTkid)
-	cfDictSet(attrs, kNleg, vTrue)
-	cfDictSet(attrs, kAgrp, vAgrp)
-	cfDictSet(attrs, kPriv, privAttrs)
-
-	var errRef uintptr
-	newKey, _, _ := syscall_syscall(kc_SecKeyCreateRandomKey_trampoline_addr, attrs, uintptr(unsafe.Pointer(&errRef)), 0)
-	if errRef != 0 {
-		cfRelease(errRef)
-	}
-	if newKey == 0 {
-		return 0, fmt.Errorf("SecKeyCreateRandomKey in Secure Enclave failed")
-	}
-	return newKey, nil
+func disableKeychainPrompts() {
+	syscall_syscall(kc_SecKeychainSetUserInteractionAllowed_trampoline_addr, 0, 0, 0)
 }
 
-func (s darwinKeychainStore) wrapWithEnclave(seed []byte) ([]byte, bool) {
-	privKey, err := s.lookupOrCreateEnclaveKey(true)
-	if err != nil || privKey == 0 {
-		return nil, false
+func copyDefaultKeychain() uintptr {
+	var def uintptr
+	r1, _, _ := syscall_syscall(kc_SecKeychainCopyDefault_trampoline_addr, uintptr(unsafe.Pointer(&def)), 0, 0)
+	if int32(r1) != 0 {
+		return 0
 	}
-	defer cfRelease(privKey)
-	pubKey, _, _ := syscall_syscall(kc_SecKeyCopyPublicKey_trampoline_addr, privKey, 0, 0)
-	if pubKey == 0 {
-		return nil, false
-	}
-	defer cfRelease(pubKey)
-	alg := cfString(eciesAlgorithm)
-	defer cfRelease(alg)
-	plainRef := cfData(seed)
-	defer cfRelease(plainRef)
-	var errRef uintptr
-	cipherRef, _, _ := syscall_syscall6(kc_SecKeyCreateEncryptedData_trampoline_addr, pubKey, alg, plainRef, uintptr(unsafe.Pointer(&errRef)), 0, 0)
-	if errRef != 0 {
-		cfRelease(errRef)
-	}
-	if cipherRef == 0 {
-		return nil, false
-	}
-	defer cfRelease(cipherRef)
-	return cfDataBytes(cipherRef), true
+	return def
 }
 
-func (s darwinKeychainStore) unwrapWithEnclave(ciphertext []byte) ([]byte, error) {
-	privKey, err := s.lookupOrCreateEnclaveKey(false)
-	if err != nil || privKey == 0 {
-		return nil, fmt.Errorf("Secure Enclave wrapping key unavailable: %w", err)
+func restoreDefaultKeychain(prev uintptr) {
+	if prev == 0 {
+		return
 	}
-	defer cfRelease(privKey)
-	alg := cfString(eciesAlgorithm)
-	defer cfRelease(alg)
-	cipherRef := cfData(ciphertext)
-	defer cfRelease(cipherRef)
-	var errRef uintptr
-	plainRef, _, _ := syscall_syscall6(kc_SecKeyCreateDecryptedData_trampoline_addr, privKey, alg, cipherRef, uintptr(unsafe.Pointer(&errRef)), 0, 0)
-	if errRef != 0 {
-		cfRelease(errRef)
+	syscall_syscall(kc_SecKeychainSetDefault_trampoline_addr, prev, 0, 0)
+	cfRelease(prev)
+}
+
+func configureDedicatedKeychain(kc uintptr) {
+	settings := secKeychainSettings{version: 1, lockOnSleep: 0, useLockInterval: 0, lockInterval: 0}
+	syscall_syscall(kc_SecKeychainSetSettings_trampoline_addr, kc, uintptr(unsafe.Pointer(&settings)), 0)
+	runtime.KeepAlive(settings)
+}
+
+func unlockDedicatedKeychain(kc uintptr) error {
+	var status uint32
+	rg, _, _ := syscall_syscall(kc_SecKeychainGetStatus_trampoline_addr, kc, uintptr(unsafe.Pointer(&status)), 0)
+	if int32(rg) == 0 && status&kSecUnlockStateStatus != 0 {
+		return nil
 	}
-	if plainRef == 0 {
-		return nil, fmt.Errorf("SecKeyCreateDecryptedData failed")
+	disableKeychainPrompts()
+	defer syscall_syscall(kc_SecKeychainSetUserInteractionAllowed_trampoline_addr, 1, 0, 0)
+	empty := [1]byte{0}
+	r2, _, _ := syscall_syscall6(kc_SecKeychainUnlock_trampoline_addr, kc, 0, uintptr(unsafe.Pointer(&empty[0])), 1, 0, 0)
+	runtime.KeepAlive(empty)
+	if st := int32(r2); st != 0 {
+		rg, _, _ = syscall_syscall(kc_SecKeychainGetStatus_trampoline_addr, kc, uintptr(unsafe.Pointer(&status)), 0)
+		if int32(rg) == 0 && status&kSecUnlockStateStatus != 0 {
+			return nil
+		}
+		return fmt.Errorf("SecKeychainUnlock failed: OSStatus %d (password is empty — do not type one)", st)
 	}
-	defer cfRelease(plainRef)
-	return cfDataBytes(plainRef), nil
+	return nil
 }
 
 func (s darwinKeychainStore) openDedicatedKeychain(create bool) (uintptr, uintptr, error) {
@@ -315,6 +505,8 @@ func (s darwinKeychainStore) openDedicatedKeychain(create bool) (uintptr, uintpt
 		_ = stripDarwinACL(dir)
 		_ = os.Chmod(dir, 0o700)
 	}
+	prevDefault := copyDefaultKeychain()
+	defer restoreDefaultKeychain(prevDefault)
 	cpath := append([]byte(s.keychainPath), 0)
 	p := unsafe.Pointer(unsafe.SliceData(cpath))
 	empty := [1]byte{0}
@@ -327,7 +519,7 @@ func (s darwinKeychainStore) openDedicatedKeychain(create bool) (uintptr, uintpt
 		r1, _, _ := syscall_syscall6(kc_SecKeychainCreate_trampoline_addr, uintptr(p), 0, uintptr(ep), 0, 0, uintptr(unsafe.Pointer(&kc)))
 		runtime.KeepAlive(cpath)
 		runtime.KeepAlive(empty)
-		if status := int32(r1); status != 0 {
+		if status := int32(r1); status != 0 || kc == 0 {
 			return 0, 0, fmt.Errorf("SecKeychainCreate failed: OSStatus %d", status)
 		}
 		_ = stripDarwinACL(s.keychainPath)
@@ -337,44 +529,26 @@ func (s darwinKeychainStore) openDedicatedKeychain(create bool) (uintptr, uintpt
 	} else {
 		r1, _, _ := syscall_syscall(kc_SecKeychainOpen_trampoline_addr, uintptr(p), uintptr(unsafe.Pointer(&kc)), 0)
 		runtime.KeepAlive(cpath)
-		if status := int32(r1); status != 0 {
+		if status := int32(r1); status != 0 || kc == 0 {
 			return 0, 0, fmt.Errorf("SecKeychainOpen failed: OSStatus %d", status)
 		}
-		r2, _, _ := syscall_syscall6(kc_SecKeychainUnlock_trampoline_addr, kc, 0, uintptr(ep), 1, 0, 0)
-		runtime.KeepAlive(empty)
-		if status := int32(r2); status != 0 {
+		if err := unlockDedicatedKeychain(kc); err != nil {
 			cfRelease(kc)
-			return 0, 0, fmt.Errorf("SecKeychainUnlock failed: OSStatus %d", status)
+			return 0, 0, err
 		}
 	}
 	items := [1]uintptr{kc}
 	arrCB := cfSymAddr("kCFTypeArrayCallBacks")
 	searchList, _, _ := syscall_syscall6(kc_CFArrayCreate_trampoline_addr, 0, uintptr(unsafe.Pointer(&items[0])), 1, arrCB, 0, 0)
 	runtime.KeepAlive(items)
+	if searchList == 0 {
+		cfRelease(kc)
+		return 0, 0, errors.New("CFArrayCreate for dedicated keychain search list returned nil")
+	}
 	return kc, searchList, nil
 }
 
-func (s darwinKeychainStore) dataProtectionQuery() (uintptr, []uintptr) {
-	dict := cfNewDict()
-	kClass := cfString("class")
-	vClass := cfString("genp")
-	kSvc := cfString("svce")
-	vSvc := cfString(s.service)
-	kAcct := cfString("acct")
-	vAcct := cfString(s.account)
-	kNleg := cfString("nleg")
-	vTrue := cfTrue()
-	kAgrp := cfString("agrp")
-	vAgrp := cfString(s.accessGroup)
-	cfDictSet(dict, kClass, vClass)
-	cfDictSet(dict, kSvc, vSvc)
-	cfDictSet(dict, kAcct, vAcct)
-	cfDictSet(dict, kNleg, vTrue)
-	cfDictSet(dict, kAgrp, vAgrp)
-	return dict, []uintptr{dict, kClass, vClass, kSvc, vSvc, kAcct, vAcct, kNleg, vTrue, kAgrp, vAgrp}
-}
-
-func (s darwinKeychainStore) dedicatedQuery(kc, searchList uintptr, includeUseKeychain bool) (uintptr, []uintptr) {
+func (s darwinKeychainStore) itemQuery(kc, searchList uintptr, useKeychain bool) (uintptr, []uintptr) {
 	dict := cfNewDict()
 	kClass := cfString("class")
 	vClass := cfString("genp")
@@ -383,12 +557,12 @@ func (s darwinKeychainStore) dedicatedQuery(kc, searchList uintptr, includeUseKe
 	kAcct := cfString("acct")
 	vAcct := cfString(s.account)
 	kSearch := cfString("m_SearchList")
-	refs := []uintptr{dict, kClass, vClass, kSvc, vSvc, kAcct, vAcct, kSearch}
 	cfDictSet(dict, kClass, vClass)
 	cfDictSet(dict, kSvc, vSvc)
 	cfDictSet(dict, kAcct, vAcct)
 	cfDictSet(dict, kSearch, searchList)
-	if includeUseKeychain && kc != 0 {
+	refs := []uintptr{dict, kClass, vClass, kSvc, vSvc, kAcct, vAcct, kSearch}
+	if useKeychain && kc != 0 {
 		kUse := cfString("u_Keychain")
 		refs = append(refs, kUse)
 		cfDictSet(dict, kUse, kc)
@@ -396,118 +570,134 @@ func (s darwinKeychainStore) dedicatedQuery(kc, searchList uintptr, includeUseKe
 	return dict, refs
 }
 
-// Load reads the Ed25519 seed in-process via SecItemCopyMatching. It tries the
-// Data Protection Keychain (and Secure Enclave unwrap when wrapped) first, and
-// uses the dedicated admin keychain only when Data Protection Keychain returns
-// errSecMissingEntitlement (-34018) on an un-provisioned build. Only
-// errSecItemNotFound (-25300) returns (nil, false, nil); any other error fails
-// closed without rotating the key.
-func (s darwinKeychainStore) Load() ([]byte, bool, error) {
-	dpQuery, dpRefs := s.dataProtectionQuery()
-	kRet := cfString("r_Data")
-	vTrue := cfTrue()
-	kLim := cfString("m_Limit")
-	vLim := cfString("m_LimitOne")
-	dpRefs = append(dpRefs, kRet, vTrue, kLim, vLim)
-	cfDictSet(dpQuery, kRet, vTrue)
-	cfDictSet(dpQuery, kLim, vLim)
-	var result uintptr
-	r1, _, _ := syscall_syscall(kc_SecItemCopyMatching_trampoline_addr, dpQuery, uintptr(unsafe.Pointer(&result)), 0)
-	releaseAll(dpRefs)
-	status := int32(r1)
-	if status == 0 {
-		defer cfRelease(result)
-		raw := cfDataBytes(result)
-		return s.decodePayload(raw)
-	}
-	if status != errSecItemNotFound && status != errSecMissingEntitlement {
-		return nil, false, fmt.Errorf("keychain SecItemCopyMatching failed: OSStatus %d", status)
-	}
+func (s darwinKeychainStore) copyItemRef() (uintptr, int32, error) {
 	kc, searchList, err := s.openDedicatedKeychain(false)
 	if err != nil {
-		return nil, false, err
+		return 0, 0, err
 	}
 	if kc == 0 {
-		return nil, false, nil
+		return 0, errSecItemNotFound, nil
 	}
 	defer cfRelease(kc)
 	defer cfRelease(searchList)
-	q, refs := s.dedicatedQuery(kc, searchList, false)
-	kRet2 := cfString("r_Data")
-	vTrue2 := cfTrue()
-	kLim2 := cfString("m_Limit")
-	vLim2 := cfString("m_LimitOne")
-	refs = append(refs, kRet2, vTrue2, kLim2, vLim2)
-	defer releaseAll(refs)
-	cfDictSet(q, kRet2, vTrue2)
-	cfDictSet(q, kLim2, vLim2)
-	var res2 uintptr
-	r2, _, _ := syscall_syscall(kc_SecItemCopyMatching_trampoline_addr, q, uintptr(unsafe.Pointer(&res2)), 0)
-	st2 := int32(r2)
-	if st2 == errSecItemNotFound {
-		return nil, false, nil
-	}
-	if st2 != 0 {
-		return nil, false, fmt.Errorf("dedicated keychain SecItemCopyMatching failed: OSStatus %d", st2)
-	}
-	defer cfRelease(res2)
-	raw := cfDataBytes(res2)
-	return s.decodePayload(raw)
+	query, refs := s.itemQuery(kc, searchList, false)
+	kRetRef := cfString("r_Ref")
+	vTrue := cfTrue()
+	kLim := cfString("m_Limit")
+	vLim := cfString("m_LimitOne")
+	refs = append(refs, kRetRef, vTrue, kLim, vLim)
+	cfDictSet(query, kRetRef, vTrue)
+	cfDictSet(query, kLim, vLim)
+	var itemRef uintptr
+	r1, _, _ := syscall_syscall(kc_SecItemCopyMatching_trampoline_addr, query, uintptr(unsafe.Pointer(&itemRef)), 0)
+	releaseAll(refs)
+	return itemRef, int32(r1), nil
 }
 
-func (s darwinKeychainStore) decodePayload(raw []byte) ([]byte, bool, error) {
-	if len(raw) == ed25519.SeedSize {
-		return raw, true, nil
+// Load reads the 32-byte Ed25519 seed from the dedicated keychain in-process
+// via SecItemCopyMatching, verifying the item's SecAccessRef ACL trusts only
+// this binary before reading its secret bytes. Only a missing keychain file
+// or errSecItemNotFound (-25300) is treated as absent; every other OSStatus
+// (locked keychain or an untrusted ACL) fails closed with an error.
+func (s darwinKeychainStore) Load() ([]byte, bool, error) {
+	itemRef, status, err := s.copyItemRef()
+	if err != nil {
+		return nil, false, err
 	}
-	if len(raw) > 4 && string(raw[:4]) == "SEW1" {
-		defer zeroBytes(raw)
-		seed, err := s.unwrapWithEnclave(raw[4:])
+	if status == 0 {
+		if itemRef == 0 {
+			return nil, false, errors.New("keychain SecItemCopyMatching returned nil item reference")
+		}
+		aclErr := verifyItemSelfOnlyACL(itemRef)
+		if aclErr != nil && !errors.Is(aclErr, errStaleBinaryACL) {
+			cfRelease(itemRef)
+			return nil, false, aclErr
+		}
+		raw, err := readKeychainItemBytes(itemRef)
+		cfRelease(itemRef)
 		if err != nil {
+			if errors.Is(aclErr, errStaleBinaryACL) {
+				if derr := s.Delete(); derr != nil {
+					return nil, false, fmt.Errorf("stale binary ACL and rotate failed: %v (read: %v)", derr, err)
+				}
+				return nil, false, nil
+			}
 			return nil, false, err
 		}
-		if len(seed) != ed25519.SeedSize {
-			zeroBytes(seed)
-			return nil, false, fmt.Errorf("unwrapped seed has invalid length %d", len(seed))
+		if len(raw) != ed25519.SeedSize {
+			zeroBytes(raw)
+			return nil, false, fmt.Errorf("keychain item has invalid length %d", len(raw))
 		}
-		return seed, true, nil
+		if errors.Is(aclErr, errStaleBinaryACL) {
+			if err := s.Save(raw); err != nil {
+				zeroBytes(raw)
+				return nil, false, err
+			}
+		}
+		return raw, true, nil
 	}
-	zeroBytes(raw)
-	return nil, false, fmt.Errorf("keychain item has invalid length %d", len(raw))
+	if status != errSecItemNotFound {
+		return nil, false, fmt.Errorf("keychain SecItemCopyMatching failed: OSStatus %d", status)
+	}
+	return nil, false, nil
 }
 
-// Save stores the 32-byte Ed25519 seed in-process, wrapping it with a Secure
-// Enclave P-256 key when available, setting
-// kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, and updating in place with
-// SecItemUpdate when an item already exists so a failed write never loses the
-// previous key.
+// Save stores the 32-byte Ed25519 seed in the dedicated keychain with a
+// SecAccessRef ACL trusting only the daemon binary. It targets that keychain
+// with kSecUseKeychain so SecItemAdd never falls through to the login or
+// System keychain.
+//
+// On errSecDuplicateItem:
+//   - If the existing item already passes verifyItemSelfOnlyACL, Save updates
+//     its data in place via SecItemUpdate so a failure or crash can never delete
+//     a valid existing daemon key.
+//   - Only if the existing item fails verifyItemSelfOnlyACL (an untrusted
+//     pre-planted item) does Save delete it and re-add with a fresh self-only
+//     SecAccessRef.
 func (s darwinKeychainStore) Save(seed []byte) error {
 	if len(seed) != ed25519.SeedSize {
 		return os.ErrInvalid
 	}
-	payload := seed
-	if wrapped, ok := s.wrapWithEnclave(seed); ok {
-		payload = append([]byte("SEW1"), wrapped...)
-		defer zeroBytes(payload)
+	kc, searchList, err := s.openDedicatedKeychain(true)
+	if err != nil {
+		return err
 	}
-	dpAttrs, dpRefs := s.dataProtectionQuery()
-	kPdmn := cfString("pdmn")
-	vPdmn := cfString("cku") // kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+	defer cfRelease(kc)
+	defer cfRelease(searchList)
+	access, err := createSelfOnlyAccess(s.service)
+	if err != nil {
+		return err
+	}
+	attrs, refs := s.itemQuery(kc, searchList, true)
+	kAcc := cfString("acls")
 	kData := cfString("v_Data")
-	vData := cfData(payload)
-	dpRefs = append(dpRefs, kPdmn, vPdmn, kData, vData)
-	cfDictSet(dpAttrs, kPdmn, vPdmn)
-	cfDictSet(dpAttrs, kData, vData)
-	r1, _, _ := syscall_syscall(kc_SecItemAdd_trampoline_addr, dpAttrs, 0, 0)
-	releaseAll(dpRefs)
-	status := int32(r1)
+	vData := cfData(seed)
+	refs = append(refs, access, kAcc, kData, vData)
+	defer releaseAll(refs)
+	cfDictSet(attrs, kAcc, access)
+	cfDictSet(attrs, kData, vData)
+	status := callSecItemAdd(attrs)
 	if status == 0 {
 		return nil
 	}
-	if status == errSecDuplicateItem {
-		matchQ, mRefs := s.dataProtectionQuery()
+	if status != errSecDuplicateItem {
+		return fmt.Errorf("keychain SecItemAdd failed: OSStatus %d", status)
+	}
+
+	itemRef, lstatus, err := s.copyItemRef()
+	if err != nil {
+		return err
+	}
+	if lstatus != 0 || itemRef == 0 {
+		return fmt.Errorf("keychain duplicate item lookup failed: OSStatus %d", lstatus)
+	}
+	aclErr := verifyItemSelfOnlyACL(itemRef)
+	cfRelease(itemRef)
+	if aclErr == nil {
+		matchQ, mRefs := s.itemQuery(kc, searchList, false)
 		upd := cfNewDict()
 		ukData := cfString("v_Data")
-		uvData := cfData(payload)
+		uvData := cfData(seed)
 		mRefs = append(mRefs, upd, ukData, uvData)
 		cfDictSet(upd, ukData, uvData)
 		ru, _, _ := syscall_syscall(kc_SecItemUpdate_trampoline_addr, matchQ, upd, 0)
@@ -517,67 +707,36 @@ func (s darwinKeychainStore) Save(seed []byte) error {
 		}
 		return nil
 	}
-	if status != errSecMissingEntitlement {
-		return fmt.Errorf("keychain SecItemAdd failed: OSStatus %d", status)
-	}
 
-	kc, searchList, err := s.openDedicatedKeychain(true)
-	if err != nil {
+	if err := s.deleteIn(kc, searchList); err != nil {
 		return err
 	}
-	defer cfRelease(kc)
-	defer cfRelease(searchList)
-	q, refs := s.dedicatedQuery(kc, searchList, true)
-	kPdmn2 := cfString("pdmn")
-	vPdmn2 := cfString("cku")
-	kData2 := cfString("v_Data")
-	vData2 := cfData(payload)
-	refs = append(refs, kPdmn2, vPdmn2, kData2, vData2)
-	cfDictSet(q, kPdmn2, vPdmn2)
-	cfDictSet(q, kData2, vData2)
-	r2, _, _ := syscall_syscall(kc_SecItemAdd_trampoline_addr, q, 0, 0)
+	if status = callSecItemAdd(attrs); status != 0 {
+		return fmt.Errorf("keychain SecItemAdd after replacing untrusted item failed: OSStatus %d", status)
+	}
+	return nil
+}
+
+func (s darwinKeychainStore) deleteIn(kc, searchList uintptr) error {
+	query, refs := s.itemQuery(kc, searchList, false)
+	r1, _, _ := syscall_syscall(kc_SecItemDelete_trampoline_addr, query, 0, 0)
 	releaseAll(refs)
-	st2 := int32(r2)
-	if st2 == 0 {
-		return nil
+	status := int32(r1)
+	if status != 0 && status != errSecItemNotFound {
+		return fmt.Errorf("keychain SecItemDelete failed: OSStatus %d", status)
 	}
-	if st2 == errSecDuplicateItem {
-		matchQ, mRefs := s.dedicatedQuery(kc, searchList, false)
-		upd := cfNewDict()
-		ukData := cfString("v_Data")
-		uvData := cfData(payload)
-		mRefs = append(mRefs, upd, ukData, uvData)
-		cfDictSet(upd, ukData, uvData)
-		ru, _, _ := syscall_syscall(kc_SecItemUpdate_trampoline_addr, matchQ, upd, 0)
-		releaseAll(mRefs)
-		if ust := int32(ru); ust != 0 {
-			return fmt.Errorf("dedicated keychain SecItemUpdate failed: OSStatus %d", ust)
-		}
-		return nil
-	}
-	return fmt.Errorf("dedicated keychain SecItemAdd failed: OSStatus %d", st2)
+	return nil
 }
 
 func (s darwinKeychainStore) Delete() error {
-	dpQuery, dpRefs := s.dataProtectionQuery()
-	r1, _, _ := syscall_syscall(kc_SecItemDelete_trampoline_addr, dpQuery, 0, 0)
-	releaseAll(dpRefs)
-	status := int32(r1)
-	if status != 0 && status != errSecItemNotFound && status != errSecMissingEntitlement {
-		return fmt.Errorf("keychain SecItemDelete failed: OSStatus %d", status)
-	}
 	kc, searchList, err := s.openDedicatedKeychain(false)
-	if err != nil || kc == 0 {
+	if err != nil {
 		return err
+	}
+	if kc == 0 {
+		return nil
 	}
 	defer cfRelease(kc)
 	defer cfRelease(searchList)
-	q, refs := s.dedicatedQuery(kc, searchList, false)
-	r2, _, _ := syscall_syscall(kc_SecItemDelete_trampoline_addr, q, 0, 0)
-	releaseAll(refs)
-	st2 := int32(r2)
-	if st2 != 0 && st2 != errSecItemNotFound {
-		return fmt.Errorf("dedicated keychain SecItemDelete failed: OSStatus %d", st2)
-	}
-	return nil
+	return s.deleteIn(kc, searchList)
 }

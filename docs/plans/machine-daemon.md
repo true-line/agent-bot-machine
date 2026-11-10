@@ -7,6 +7,8 @@ overview: >-
   plane and the only client.
 related_prs: [386, 395, 396, 397, 398, 399, 400, 401, 402, 403, 404, 405, 406, 408, 409, 410, 411, 413, 414, 415, 416, 417, 418, 419, 420, 421, 422, 423, 424, 426, 427, 429]
 related_issues:
+  - true-line/agent-bot-machine#442
+  - true-line/agent-bot-machine#446
   - qwts/managed-machine#387
   - qwts/managed-machine#388
   - qwts/managed-machine#389
@@ -42,6 +44,14 @@ and is not performed until this plan is reviewed. P7 is the client inside
 agent-daemon. agent-machine is not a fourth component beside identity, soul,
 and comms.
 
+**Platform names.** agent-daemon is HQ, the agent-bot-daemon repository
+([D1](https://github.com/true-line/agent-bot-daemon/blob/main/docs/daemon-plugin-split.md#101-decisions)). It runs in its own `_agent-bot-hq` account (D6)
+and hosts the comms and Soul runtime plugins. Its identity authority is HQ
+core, not an agent-bot-identity plugin
+([PDR-0027](https://github.com/true-line/agent-bot-platform/blob/main/docs/04-decisions/PDR-0027-hq-identity-authority-lives-in-agent-bot-daemon.md)).
+The [repository catalog](https://github.com/true-line/agent-bot-platform/blob/main/docs/03-architecture/repository-catalog.md) is the
+charter for each repository.
+
 ## Decisions (owner, 2026-10-29)
 
 1. **Platforms.** macOS, Linux and Windows are all in scope from the first
@@ -63,7 +73,9 @@ and comms.
 4. **One client.** Only agent-daemon, on the same machine, talks to
    agent-machine. The caller inside agent-daemon is the P7 client. Remote
    requests are MCP calls through agents.true-line.ai, relayed to that
-   machine's agent-daemon. Local agents also go through agent-daemon, via
+   machine's agent-daemon, which authorizes each one before it signs a
+   request on the channel: relays and the identity service get no execution
+   channel (platform R2). Local agents also go through agent-daemon, via
    agent-bot-cli.
 5. **Agents may install** pinned catalog items, not only read status. The
    control plane publishes the admin catalog, signed. agent-machine installs
@@ -83,8 +95,9 @@ and comms.
 9. **Mutual key registration and signed requests.** The two daemons register
    keys with each other and sign their requests, so an impostor is refused even
    when it runs under an allowed account. Keys are held and registered through
-   existing agent-bot infrastructure (agent-bot-keyd and/or
-   agents.true-line.ai).
+   agent-bot-keyd, whose source lives in this repo at `keyd/`, and/or
+   agents.true-line.ai. agent-machine ships and supervises keyd. GeniusBar
+   does not.
 
 ## Target
 
@@ -133,6 +146,14 @@ flowchart LR
 - `apply <plan-id>`: only a saved plan ID (ADR-0012).
 - `update`: re-run the declared flavor.
 - `catalog`: accept a signed catalog envelope from the paired agent-daemon.
+- `approve-members`: record the owner's approval of one member accounts
+  plan ([member-accounts.md](member-accounts.md)). The request carries
+  `plan_id` and `plan_digest` and nothing else, and both are in the signed
+  payload. The daemon writes the approval under
+  `members/approvals/<plan-id>.json` in its state directory, good for 10
+  minutes, and runs nothing. It is Linux only, and the terminal pairing key
+  cannot send it. This is not an approval gate on a daemon verb (decision
+  3): it is the record a separate root command checks before it acts.
 
 Anything else is refused with `MM_DAEMON_VERB_UNKNOWN` or
 `MM_DAEMON_NOT_IN_CATALOG`. There is no command-execution verb and no SSH
@@ -146,18 +167,29 @@ a name exists.
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | Service | per-user LaunchAgent of the prefix owner. A system LaunchDaemon needs root, which this daemon does not have | systemd user unit, `NoNewPrivileges=yes`, `ProtectSystem=strict`. A system unit needs root | service description written for the developer account and not registered. Registering a Windows service needs an elevation this daemon does not have |
-| Channel | Unix socket, directory `0700` | Unix socket, directory `0700` | Named pipe, DACL for that account only |
-| Peer identity | `getpeereid` | `SO_PEERCRED` | named-pipe client process token SID, which must match the daemon process |
+| Channel | Unix socket in the Homebrew prefix `var/agent-machine` (`0755` / `0666`). Secrets stay in the prefix owner's `~/.config/agent-machine` (`0700`). `daemon.pub` is published next to the socket as `0644`. The user auto-enrolls on first use; `pair --enroll` is for agent-daemon and re-key. No shared drop. | Unix socket in the Linuxbrew prefix `var/agent-machine`, same modes | Named pipe, DACL for that account only |
+| Peer identity | `getpeereid` must succeed (local process). The pairing key authorizes; the UID does not have to match the daemon account. | `SO_PEERCRED`, same rule | named-pipe client process token SID, which must match the daemon process |
 | Scope | Homebrew prefix, `/Applications` (admin group) | Homebrew/Linuxbrew or user prefixes | winget user scope, user prefixes |
 
 Peer identity is checked first and is never sufficient alone; every request
-must also carry a valid signature from a registered key.
+must also carry a valid signature from a registered key. agent-daemon (the
+primary client) and the Terminal thin client both run in the user account
+and talk to the prefix-owner executor over this channel. The user does
+not pair: the next human thin-client call, including `--update` when the
+socket accepts, creates the state directory, mints `client.key` at home,
+and the daemon adopts that pubkey from the unix-socket UID. The enrolled
+agent-daemon key cannot bootstrap as the terminal client. `pair --enroll`
+remains for agent-daemon and a manual re-key. The thin client is the
+standalone fallback when agent-bot is not installed.
 
 ### Pairing and signing
 
 - Each side holds its own Ed25519 keypair; private keys never leave their
   holder (agent-bot's side is held by agent-bot-keyd). The two exchange public
-  keys; there is no shared secret.
+  keys; there is no shared secret. On Darwin the daemon seed lives in
+  `~/.config/agent-machine/daemon.keychain-db`, created and unlocked
+  in-process with a self-only ACL; it does not use the login keychain (the
+  prefix-owner account has none that pairing can open).
 - Each request is signed over the verb, its catalog identifiers, the
   originating soul and harness, a timestamp and a single-use nonce. The daemon
   refuses a bad signature, an unknown key, a stale timestamp and a replayed
@@ -191,8 +223,9 @@ must also carry a valid signature from a registered key.
   `HOME`/`USERPROFILE`, a fixed `PATH`, and no inherited `HOMEBREW_*`,
   `npm_config_*` or `UV_*` variables. Arguments come only from the catalog;
   no shell is involved.
-- Socket or pipe and state directory are owned by the daemon account
-  (`0700`/`0600`).
+- State directory is owned by the daemon account (`0700`/`0600`). The
+  channel socket lives in the package-manager prefix `var/agent-machine`
+  (`0755`/`0666`) with `daemon.pub` at `0644`.
 - Receipts record the account an operation ran as and who asked (soul, agent,
   harness, or the Terminal client) and a nullable `session_id`. Receipts, digests and manifests never hold
   command output or secrets.
@@ -335,11 +368,12 @@ format (bounded JSON lines modelled on `mm-extension-1`), and the P0 table.
 
 ### P2: service lifecycle (managed-machine)
 
-`managed-machine daemon run|install|uninstall|status|pair|unpair` writes a per-user
-service unit: a LaunchAgent, a systemd user unit, or a Windows service
-description that is not registered, and `pair`/`unpair` manage the Terminal
-`--update` client key (`client.key` and `peers/terminal.*`). A system service
-manager needs root, which this daemon does not have.
+`managed-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpair`
+writes a per-user service unit: a LaunchAgent, a systemd user unit, or a
+Windows service description that is not registered. `install`/`start` load
+the unit and wait until the socket accepts. The Terminal client auto-enrolls
+on first use (`client.key` at home, `peers/terminal.*` on the daemon). A
+system service manager needs root, which this daemon does not have.
 
 Acceptance: install and uninstall are idempotent, run from the owner's account,
 and refuse agent accounts, root/SYSTEM, foreign-HOME callers, and a caller
@@ -353,9 +387,9 @@ pairing, nonce and timestamp checks, signed responses, staged re-registration,
 revocation.
 
 Acceptance tests: a correctly signed request from the registered key is
-accepted; refused are an unsigned request, an unknown key, a tampered request,
-a stale timestamp, a replayed nonce, and an unregistered process under the same
-account; re-registration keeps the old key until the new one is confirmed;
+accepted from any local UID; refused are an unsigned request, an unknown key, a tampered request,
+a stale timestamp, a replayed nonce, and a caller whose local identity could
+not be established; re-registration keeps the old key until the new one is confirmed;
 writing `peers/<client>.revoked` while the daemon is running refuses the
 next request from that key, the other client stays live, and a confirmed
 replacement is accepted without a restart.
@@ -406,25 +440,31 @@ executable is on the daemon's fixed PATH. The daemon does not install them.
 ### P6: update and the Terminal thin client (managed-machine)
 
 Acceptance: the `update` verb re-runs the declared flavor; `managed-machine
---update` is a paired thin client of the daemon and falls back to the legacy
-path when no daemon is installed; each request uses a fresh nonce and sets
-harness to `terminal` so the receipt names the Terminal client; the client
-accepts the response only when `daemon.pub` verifies it; on Windows the client
-dials the named pipe; the `legacy/scripts/update` re-exec rule is preserved.
+--update` is a paired thin client of the daemon, run from the user account
+under the same signed-channel rules as agent-daemon, and falls back to the
+legacy path when no daemon is installed; each request uses a fresh nonce and
+sets harness to `terminal` so the receipt names the Terminal client; the
+client accepts the response only when `daemon.pub` verifies it; on Windows
+the client dials the named pipe; the `legacy/scripts/update` re-exec rule is
+preserved.
 
-### P7: client inside agent-daemon (agent-bot-identity)
+### P7: client inside agent-daemon (agent-bot-daemon)
 
-The client only. agent-machine stays the executor in its own repository.
+The client only. agent-machine stays the executor in its own repository. The
+client is HQ core in agent-bot-daemon (PDR-0027) and runs in `_agent-bot-hq`
+(D6); see S5 and S6 in [cross-account-channel.md](cross-account-channel.md).
 
 Acceptance: agent-daemon routes and MCP tools that forward the closed verbs
-over the signed local channel, pairing through agent-bot-keyd, and receipts
-on the agent-daemon side. No installer and no catalog executor in this phase.
+over the signed local channel, pairing directly with agent-machine (key
+custody and signing are in agent-bot-machine, not keyd, per D4), and
+receipts on the agent-daemon side. No installer and no catalog executor in
+this phase.
 
 ### P8: hosted relay and key attestation (true-line/agent-bot, Grok)
 
 Acceptance: MCP requests to agents.true-line.ai are relayed to the machine's
-agent-daemon, which forwards them to agent-machine; both daemon keys are
-attested against the enrolled device, and the pairing is visible and
+agent-daemon, which authorizes each one (R2) and forwards it to
+agent-machine; both daemon keys are attested against the enrolled device, and the pairing is visible and
 revocable on `/devices/manage`. Filed as true-line/agent-bot#66.
 qwts/agent-bot-identity#1256 is closed. The catalog signing key is not pinned
 from disk. It has to arrive on this pairing, and a present `catalog.json`
@@ -447,9 +487,12 @@ stay refused. A present `catalog.json` stays refused.
 
 ## Still open
 
-- Key registration through agent-bot-keyd, agents.true-line.ai, or both, and
-  which is authoritative. Proposed: keyd in P3/P7, server attestation added in
-  P8.
+- Cross-account channel and Darwin dedicated keychain: S1 in
+  [cross-account-channel.md](cross-account-channel.md). Remaining product
+  slices (enroll UX, LaunchAgent, thin-client update, P7/P8) stay there.
+- Key registration: settled by D4. Key custody and signing are in
+  agent-bot-machine, so P7 pairs HQ with agent-machine directly and keyd is
+  not in the path. Server attestation is added in P8.
 - Windows service account: the shipped unit is per-user. The Windows service
   XML is written and not registered, because registration needs elevation.
 - Linux prefix owner when Homebrew is absent. Closed: there is no prefix
@@ -467,7 +510,8 @@ stay refused. A present `catalog.json` stays refused.
 
 ## Replay
 
-Open this plan plus `AGENTS.md`, `docs/go-core.md` and
+Open this plan plus `docs/plans/cross-account-channel.md`,
+`docs/plans/macos-signing.md`, `AGENTS.md`, `docs/go-core.md` and
 `docs/plans/README.md`. Sources: managed-machine-config `AGENTS.md`;
 managed-machine-documentation v1 spec, output and diagnostics contract, and
 ADR-0012, ADR-0014, ADR-0016, ADR-0017; agent-bot-identity `agent-daemon.mjs`,

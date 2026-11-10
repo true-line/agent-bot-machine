@@ -22,6 +22,7 @@ import (
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/fleet"
 	"github.com/qwts/managed-machine/internal/install"
+	"github.com/qwts/managed-machine/internal/members"
 	"github.com/qwts/managed-machine/internal/provider"
 	"github.com/qwts/managed-machine/internal/provider/appcopy"
 	"github.com/qwts/managed-machine/internal/provider/archive"
@@ -122,6 +123,16 @@ func main() {
 					Client:   nil,
 				},
 			}),
+			members.Command(members.Deps{
+				Deps: command.Deps{
+					Getenv:   getenv,
+					GOOS:     runtime.GOOS,
+					StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, getenv) },
+					Username: func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
+					Now:      time.Now,
+				},
+				ApplyDeps: members.ApplyDeps{DaemonState: membersDaemonState},
+			}),
 			daemon.Command(daemon.Deps{
 				GOOS: runtime.GOOS,
 				Caller: func() (daemon.Caller, error) {
@@ -133,6 +144,9 @@ func main() {
 				},
 				Deactivate: func(path string) error {
 					return daemon.DeactivateUserService(runtime.GOOS, path)
+				},
+				WaitHealthy: func() error {
+					return daemon.WaitListening(daemon.ChannelSocket(), 0)
 				},
 			}),
 		},
@@ -149,9 +163,12 @@ func main() {
 				return false, 0
 			}
 			base := daemon.StateDir(home)
-			endpoint := filepath.Join(base, "daemon.sock")
-			if runtime.GOOS == "windows" {
-				endpoint = `\\.\pipe\agent-machine`
+			endpoint := daemon.ChannelSocket()
+			if endpoint == "" {
+				endpoint = filepath.Join(base, "daemon.sock")
+				if runtime.GOOS == "windows" {
+					endpoint = `\\.\pipe\agent-machine`
+				}
 			}
 			handled, res, err := daemon.TryUpdateForCaller(caller, endpoint, filepath.Join(base, "client.key"), "")
 			if !handled {
@@ -181,6 +198,24 @@ func main() {
 		},
 	}
 	os.Exit(app.Run(os.Args[1:]))
+}
+
+// membersDaemonState locates agent-machine's state directory for members
+// apply, which runs as root. The daemon runs in the account that owns the
+// Homebrew prefix; where there is no prefix, in the owner's own account.
+func membersDaemonState(owner, home string) (string, string, error) {
+	prefixOwner, err := daemon.PrefixOwner(brewPrefix(runtime.GOOS + "/" + runtime.GOARCH))
+	if err != nil {
+		return "", "", err
+	}
+	if prefixOwner == "" || prefixOwner == owner {
+		return daemon.StateDir(home), owner, nil
+	}
+	u, err := user.Lookup(prefixOwner)
+	if err != nil {
+		return "", "", err
+	}
+	return daemon.StateDir(u.HomeDir), u.Username, nil
 }
 
 func currentCaller(environ []string) (daemon.Caller, error) {
