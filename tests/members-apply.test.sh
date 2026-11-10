@@ -82,15 +82,18 @@ untouched() {
     sudo test ! -e "$DIR" || fail "$DIR exists after a refused apply"
 }
 
-# The whole sudoers configuration parses. On failure, show what visudo said.
+# The installed rule parses as part of the whole sudoers configuration.
+# `visudo -c` exits non-zero on GitHub's runner before anything is changed
+# (/etc/sudoers.d/runner has mode 0640 there), so the check is that visudo
+# reports this rule as parsed, not its exit status.
 sudoers_ok() {
     local out
-    if out="$(sudo visudo -c 2>&1)"; then return 0; fi
+    out="$(sudo visudo -c 2>&1 || true)"
+    if grep -qx "$RULE: parsed OK" <<<"$out"; then return 0; fi
     echo "$out" >&2
     sudo cat "$RULE" >&2 || true
     return 1
 }
-sudoers_ok || fail "visudo -c fails on the runner before anything is changed"
 
 sudo useradd --create-home --user-group --shell /usr/sbin/nologin "$HQ"
 
