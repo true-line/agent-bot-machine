@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -80,7 +81,8 @@ func TestPlanSavesThePlanAndReportsItsDigest(t *testing.T) {
 	if got, _ := rebuilt.Digest(); got != digest {
 		t.Errorf("a rebuild from the saved request has digest %s, want %v", got, digest)
 	}
-	if fi, _ := os.Stat(file); fi.Mode().Perm() != 0o600 {
+	// Windows has no Unix mode bits; the command itself is Linux only.
+	if fi, _ := os.Stat(file); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("plan file mode %o", fi.Mode().Perm())
 	}
 }
