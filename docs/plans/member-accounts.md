@@ -2,7 +2,7 @@
 name: member-accounts
 status: active
 overview: On Linux, create one OS account per Soul member, the broker endpoint directories HQ verifies, and the rule that lets the HQ account start members. Nothing runs as root until the owner has approved the exact plan in the local web UI.
-related_prs: [471, 472, 473, 474]
+related_prs: [471, 472, 473, 474, 476]
 ---
 
 # Member accounts, endpoint directories and the launch rule

@@ -7,7 +7,7 @@ overview: >-
   0700 ~/.config. Later slices finish install verbs, the LaunchAgent, the
   HQ (agent-bot-daemon) client in its own account, and remote requests
   through HQ.
-related_prs: [455, 456, 457]
+related_prs: [455, 456, 457, 476]
 related_issues:
   - true-line/agent-bot-machine#442
   - true-line/agent-bot-machine#446
