@@ -25,7 +25,8 @@ type fakeUV struct {
 	user    map[string]string            // the tools of the current user
 	roots   map[string]map[string]string // the tools of a custom root, by its tool directory
 	failOn  string
-	lie     bool // the install exits 0 but installs nothing
+	lie     bool              // the install exits 0 but installs nothing
+	pythons map[string]string // the major.minor each installed tool runs on
 	calls   []string
 	envs    [][]string
 }
@@ -52,7 +53,7 @@ func (f *fakeUV) run(_ context.Context, path string, args, env []string) (Result
 	switch {
 	case len(args) == 1 && args[0] == "--version":
 		return Result{Stdout: []byte("uv " + f.version + " (0a1b2c3d 2026-01-01)\n")}, nil
-	case len(args) == 2 && args[0] == "tool" && args[1] == "list":
+	case (len(args) == 2 || len(args) == 3 && args[2] == "--show-python") && args[0] == "tool" && args[1] == "list":
 		tools := f.tools(env)
 		if len(tools) == 0 {
 			return Result{Stdout: []byte("No tools installed\n")}, nil
@@ -64,6 +65,14 @@ func (f *fakeUV) run(_ context.Context, path string, args, env []string) (Result
 		sort.Strings(names)
 		var b strings.Builder
 		for _, name := range names {
+			if len(args) == 3 {
+				py := f.pythons[name]
+				if py == "" {
+					py = "3.13"
+				}
+				fmt.Fprintf(&b, "%s v%s [CPython %s.1]\n- %s\n", name, tools[name], py, name)
+				continue
+			}
 			fmt.Fprintf(&b, "%s v%s\n- %s\n", name, tools[name], name)
 		}
 		return Result{Stdout: []byte(b.String())}, nil
@@ -77,6 +86,15 @@ func (f *fakeUV) run(_ context.Context, path string, args, env []string) (Result
 		}
 		if !f.lie {
 			f.tools(env)[name] = version
+			if f.pythons == nil {
+				f.pythons = map[string]string{}
+			}
+			f.pythons[name] = ""
+			for i := range args[:len(args)-1] {
+				if args[i] == "--python" {
+					f.pythons[name] = args[i+1]
+				}
+			}
 		}
 		return Result{}, nil
 	}
@@ -487,5 +505,163 @@ func TestRealAccessChecks(t *testing.T) {
 	}
 	if !writable(filepath.Join(dir, "absent")) {
 		t.Error("the nearest existing ancestor of a missing directory is not writable")
+	}
+}
+
+// pinnedIndex serves the latest release of mistral-vibe and the per-release
+// metadata of every published version.
+func pinnedIndex(t *testing.T, latest string, published ...string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/pypi/"), "/json")
+		name, version, pinned := strings.Cut(path, "/")
+		if name != "mistral-vibe" {
+			http.NotFound(w, r)
+			return
+		}
+		if !pinned {
+			version = latest
+		} else if !contains(published, version) {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprintf(w, `{"info":{"name":%q,"version":%q}}`, name, version)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func contains(list []string, v string) bool {
+	for _, s := range list {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPinnedVersionAndPythonReachTheInstall(t *testing.T) {
+	p, f := fixture(t)
+	srv := pinnedIndex(t, "3.0.0", "2.25.8", "3.0.0")
+	p.IndexBase, p.Client = srv.URL, srv.Client()
+	res, err := p.Plan(context.Background(), Request{Software: "mistral-vibe", Target: "user",
+		Options: map[string]string{"tool": "mistral-vibe", "version": "2.25.8", "python": "3.12"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := res.Operations[0]
+	if res.Version != "2.25.8" || op.Params["version"] != "2.25.8" || op.Params["python"] != "3.12" || len(op.Params) != 3 {
+		t.Fatalf("plan: %+v %+v", res, op)
+	}
+	st, err := p.Step(op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev, err := st.Apply(context.Background())
+	if err != nil || ev["command"] != "uv tool install --python 3.12 mistral-vibe==2.25.8" {
+		t.Fatalf("apply: %v %v", ev, err)
+	}
+	if ev, err := st.Verify(context.Background()); err != nil || ev["version"] != "2.25.8" {
+		t.Fatalf("verify: %v %v", ev, err)
+	}
+	if f.user["mistral-vibe"] != "2.25.8" {
+		t.Fatalf("installed %v", f.user)
+	}
+}
+
+func TestPinnedVersionMustBePublished(t *testing.T) {
+	p, f := fixture(t)
+	srv := pinnedIndex(t, "3.0.0", "3.0.0")
+	p.IndexBase, p.Client = srv.URL, srv.Client()
+	_, err := p.Plan(context.Background(), Request{Software: "mistral-vibe", Target: "user",
+		Options: map[string]string{"tool": "mistral-vibe", "version": "2.25.8"}})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unpublished pin: %v", err)
+	}
+	for _, call := range f.calls {
+		if strings.HasPrefix(call, "tool install") {
+			t.Fatalf("installed: %s", call)
+		}
+	}
+}
+
+func TestPinnedVersionRejectsAnIndexThatAnswersAnotherRelease(t *testing.T) {
+	p, _ := fixture(t)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"info":{"name":"mistral-vibe","version":"3.0.0"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	p.IndexBase, p.Client = srv.URL, srv.Client()
+	_, err := p.Plan(context.Background(), Request{Software: "mistral-vibe", Target: "user",
+		Options: map[string]string{"tool": "mistral-vibe", "version": "2.25.8"}})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("substituted release: %v", err)
+	}
+}
+
+func TestPinnedValuesAreChecked(t *testing.T) {
+	p, _ := fixture(t)
+	for _, opts := range []map[string]string{
+		{"tool": "ruff", "version": ""},
+		{"tool": "ruff", "version": "latest"},
+		{"tool": "ruff", "version": ">=0.7"},
+		{"tool": "ruff", "version": "0.7.4 --pre"},
+		{"tool": "ruff", "python": ""},
+		{"tool": "ruff", "python": "/usr/bin/python3"},
+		{"tool": "ruff", "python": "2.7"},
+		{"tool": "ruff", "python": "3.12 --system"},
+	} {
+		if _, err := p.Plan(context.Background(), Request{Software: "ruff", Target: "user", Options: opts}); !errors.Is(err, ErrUnsupported) {
+			t.Errorf("%v accepted: %v", opts, err)
+		}
+	}
+	for _, bad := range []plan.Operation{
+		{ID: "1", Provider: Name, Action: ActionCreate, Target: "user", Params: map[string]string{"package": "ruff", "version": "0.7.4", "python": "/usr/bin/python3"}},
+		{ID: "1", Provider: Name, Action: ActionCreate, Target: "user", Params: map[string]string{"package": "ruff", "version": "0.7.4", "python": ""}},
+	} {
+		if _, err := p.Step(bad); err == nil {
+			t.Errorf("an unexpected operation was accepted: %+v", bad)
+		}
+	}
+	root := filepath.Join(t.TempDir(), "root")
+	if _, err := p.Step(plan.Operation{ID: "1", Provider: Name, Action: ActionCreate, Target: "custom:" + root,
+		Params: map[string]string{"package": "ruff", "version": "0.7.4", "python": "3.12", "root": root}}); err != nil {
+		t.Errorf("a custom root with a python pin: %v", err)
+	}
+}
+
+func TestPythonPinReinstallsAToolOnAnotherInterpreter(t *testing.T) {
+	p, f := fixture(t)
+	srv := pinnedIndex(t, "3.0.0", "2.25.8")
+	p.IndexBase, p.Client = srv.URL, srv.Client()
+	f.user["mistral-vibe"] = "2.25.8"
+	f.pythons = map[string]string{"mistral-vibe": "3.15"}
+	req := Request{Software: "mistral-vibe", Target: "user",
+		Options: map[string]string{"tool": "mistral-vibe", "version": "2.25.8", "python": "3.12"}}
+	res, err := p.Plan(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Installed || len(res.Operations) != 1 || res.Operations[0].Action != ActionUpdate {
+		t.Fatalf("plan on the wrong interpreter: %+v", res)
+	}
+	st, err := p.Step(res.Operations[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev, err := st.Apply(context.Background()); err != nil || ev["command"] != "uv tool install --force --python 3.12 mistral-vibe==2.25.8" {
+		t.Fatalf("apply: %v %v", ev, err)
+	}
+	if ev, err := st.Verify(context.Background()); err != nil || ev["command"] != "uv tool list --show-python" {
+		t.Fatalf("verify: %v %v", ev, err)
+	}
+	res, err = p.Plan(context.Background(), req)
+	if err != nil || !res.Installed {
+		t.Fatalf("plan on the pinned interpreter: %+v %v", res, err)
+	}
+	f.lie = true
+	f.pythons["mistral-vibe"] = "3.15"
+	if _, err := st.Verify(context.Background()); err == nil {
+		t.Fatal("verify accepted the wrong interpreter")
 	}
 }
