@@ -104,6 +104,10 @@ shared="$("$MM" members plan --hq-account "$ME" --members "$A" | sed -n 2p)"
 [ "$(jq -r .kind <<<"$shared")" = "hq-account" ] || fail "the first step is not the HQ account: $shared"
 [ "$(jq -r .action <<<"$shared")" = "none" ] || fail "a shared HQ account is not left alone: $shared"
 grep -q "not a dedicated account" <<<"$shared" || fail "a shared HQ account is not named as shared: $shared"
+grep -q "Recommended: plan without --hq-account" <<<"$shared" || fail "a shared HQ account carries no recommendation: $shared"
+head="$("$MM" members plan --hq-account "$ME" --members "$A" | sed -n 1p)"
+[ "$(jq -r .hq_account_dedicated <<<"$head")" = "false" ] || fail "a shared HQ account is reported as dedicated: $head"
+jq -e '.advice | test("agent-bot-hq")' <<<"$head" >/dev/null || fail "the plan gives no advice for a shared HQ account: $head"
 ok "the owner's own account as HQ is left alone and the plan says it is shared"
 
 # --- plan changes nothing and its digest is stable ---------------------------
@@ -150,6 +154,7 @@ ok "an agent session above sudo is refused and uses no approval"
 approve "$PLAN_ID" "$PLAN_DIGEST"
 sudo "$MM" members apply "$PLAN_ID" >"$WORK/apply.jsonl"
 [ "$(head -n 1 "$WORK/apply.jsonl" | jq -r .applied)" = "true" ] || fail "apply did not report applied"
+[ "$(head -n 1 "$WORK/apply.jsonl" | jq -r .hq_account_dedicated)" = "true" ] || fail "a created HQ account is not reported as dedicated"
 ok "an approved apply ran"
 
 # The HQ account: a locked service account whose home nobody else can enter.

@@ -2,7 +2,7 @@
 name: member-accounts
 status: active
 overview: On Linux, create one OS account per Soul member, the broker endpoint directories HQ verifies, and the rule that lets the HQ account start members. Nothing runs as root until the owner has approved the exact plan in the local web UI.
-related_prs: [471, 472, 473, 474, 476]
+related_prs: [471, 472, 473, 474, 476, 478]
 ---
 
 # Member accounts, endpoint directories and the launch rule
@@ -119,7 +119,7 @@ reported, never deleted by this tool: a member's home may hold work.
 **Step 1, the plan** (`internal/members`):
 
 ```sh
-managed-machine members plan --hq-account <account> (--hq-config <path> | --members <a,b,...>) [--dir <path>]
+managed-machine members plan [--hq-account <account>] (--hq-config <path> | --members <a,b,...>) [--dir <path>]
 ```
 
 - `--hq-config` reads `members.accounts` and `members.dir` from HQ's
@@ -158,6 +158,12 @@ managed-machine members plan --hq-account <account> (--hq-config <path> | --memb
   `not a dedicated account` and why, so that is what the owner approves.
   HQ's state is then only as private as that account, and HQ reports
   `managed-cooperative`.
+- **The owner is steered to the dedicated account.** `--hq-account` defaults
+  to `agent-bot-hq`, so a plan that names no account creates and uses the
+  dedicated one. A plan or apply on a shared account reports
+  `hq_account_dedicated: false` and an `advice` line saying what every
+  process in that account can then do and to plan again without
+  `--hq-account`. The same recommendation is in the step the owner approves.
 - uid 0 is refused. A member that shares the HQ account's uid is refused.
 - The plan version is 2. A plan saved by an older build has another digest
   and cannot be approved.

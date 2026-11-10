@@ -19,10 +19,14 @@ import (
 
 // Paths and names fixed by the specification.
 const (
-	DefaultDir   = "/run/agent-bot-hq/members"
-	TmpfilesPath = "/etc/tmpfiles.d/agent-bot-hq-members.conf"
-	SudoersPath  = "/etc/sudoers.d/agent-bot-hq-members"
-	HomeBase     = "/home"
+	DefaultDir = "/run/agent-bot-hq/members"
+	// DefaultHQAccount is the dedicated account HQ runs in on Linux (D6). A
+	// plan that names no account uses it, so the dedicated account is what
+	// an owner gets without asking.
+	DefaultHQAccount = "agent-bot-hq"
+	TmpfilesPath     = "/etc/tmpfiles.d/agent-bot-hq-members.conf"
+	SudoersPath      = "/etc/sudoers.d/agent-bot-hq-members"
+	HomeBase         = "/home"
 	// HQHomeBase is where a new HQ account's home goes: it is a service
 	// account, and its home is HQ's state, not a person's files.
 	HQHomeBase   = "/var/lib"
@@ -324,7 +328,7 @@ func hqAccountStep(in Input, h Host, uids map[int]string) (Step, error) {
 		// No group and no mode: nothing about this account is checked or
 		// changed at apply.
 		return Step{Kind: KindHQAccount, Target: name, Action: ActionNone,
-			Detail: fmt.Sprintf("exists and is not a dedicated account (%s); it is left as it is, and HQ's state is only as private as this account", strings.Join(why, "; "))}, nil
+			Detail: fmt.Sprintf("exists and is not a dedicated account (%s); it is left as it is, and HQ's state is only as private as this account. %s", strings.Join(why, "; "), sharedAdvice(name))}, nil
 	}
 	home, ok, err := h.Lstat(a.Home)
 	if err != nil {
@@ -340,6 +344,26 @@ func hqAccountStep(in Input, h Host, uids map[int]string) (Step, error) {
 		want.Detail = fmt.Sprintf("exists; dedicated; home %s has mode %04o and is set to 0700; its password is checked at apply", a.Home, home.Mode&0o7777)
 	}
 	return want, nil
+}
+
+// sharedAdvice is what an owner is told when HQ would run in an account
+// that is not dedicated to it.
+func sharedAdvice(name string) string {
+	if name == DefaultHQAccount {
+		return "Recommended: take " + name + " out of every other group and give it a private group of its own name, then plan again"
+	}
+	return "Recommended: plan without --hq-account, which creates and uses the dedicated account " + DefaultHQAccount
+}
+
+// SharedHQAdvice returns the recommendation for a plan whose HQ account is
+// not dedicated, or "" when it is dedicated or will be created.
+func (p Plan) SharedHQAdvice() string {
+	for _, s := range p.Steps {
+		if s.Kind == KindHQAccount && s.Action == ActionNone && s.Mode == "" {
+			return "HQ account " + s.Target + " is not a dedicated account: every process in it can read HQ's state and start members. " + sharedAdvice(s.Target)
+		}
+	}
+	return ""
 }
 
 func accountStep(name string, h Host, uids map[int]string) (Step, error) {
