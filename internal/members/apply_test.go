@@ -28,7 +28,11 @@ type fakeRoot struct {
 }
 
 func newRoot(h *fakeHost) *fakeRoot {
-	return &fakeRoot{h: h, shadow: map[string]string{}, receipts: map[string]Receipt{}, nextUID: 2000}
+	r := &fakeRoot{h: h, shadow: map[string]string{}, receipts: map[string]Receipt{}, nextUID: 2000}
+	if _, ok := h.accounts["agent-bot-hq"]; ok {
+		r.shadow["agent-bot-hq"] = "!"
+	}
+	return r
 }
 
 func (r *fakeRoot) PasswordField(a string) (string, bool, error) {
@@ -48,6 +52,17 @@ func (r *fakeRoot) CreateAccount(name string) error {
 	r.nextUID++
 	r.h.accounts[name] = member(name, r.nextUID)
 	r.h.entries["/home/"+name] = Entry{Dir: true, Mode: 0o700, Owner: name, Group: name}
+	r.shadow[name] = "!"
+	return nil
+}
+
+func (r *fakeRoot) CreateHQAccount(name string) error {
+	r.log = append(r.log, "useradd --system "+name)
+	r.nextUID++
+	a := member(name, r.nextUID)
+	a.Home = HQHomeBase + "/" + name
+	r.h.accounts[name] = a
+	r.h.entries[a.Home] = Entry{Dir: true, Mode: 0o700, Owner: name, Group: name}
 	r.shadow[name] = "!"
 	return nil
 }
@@ -337,7 +352,46 @@ func TestApplyNeedsAMatchingUnexpiredApproval(t *testing.T) {
 	}
 }
 
+func TestApplyCreatesTheHQAccountBeforeAnythingThatNamesIt(t *testing.T) {
+	h := bare()
+	delete(h.accounts, "agent-bot-hq")
+	delete(h.entries, "/var/lib/agent-bot-hq")
+	w := newWorld(h)
+	p := w.planned(t, applyID)
+	w.approved(t, applyID, p)
+	if res := w.apply(applyID); res.Diagnostic != nil {
+		t.Fatalf("diagnostic: %+v", res.Diagnostic)
+	}
+	if len(w.r.log) == 0 || w.r.log[0] != "useradd --system agent-bot-hq" {
+		t.Fatalf("steps:\n%s", strings.Join(w.r.log, "\n"))
+	}
+	if a := h.accounts["agent-bot-hq"]; a.Home != "/var/lib/agent-bot-hq" {
+		t.Fatalf("HQ account = %+v", a)
+	}
+	if rc := w.r.receipts[applyID]; rc.Result != "applied" || rc.Changes != 7 {
+		t.Fatalf("receipt %+v", rc)
+	}
+}
+
 func TestApplyChecksWhatOnlyRootCanSee(t *testing.T) {
+	t.Run("dedicated HQ account with a password", func(t *testing.T) {
+		w := newWorld(bare())
+		w.r.shadow["agent-bot-hq"] = "$6$salt$hash"
+		w.approved(t, applyID, w.planned(t, applyID))
+		wantRefused(t, w, w.apply(applyID), diag.MembersAccountRefused)
+	})
+	t.Run("shared HQ account keeps its password", func(t *testing.T) {
+		h := bare()
+		a := h.accounts["agent-bot-hq"]
+		a.Groups = append(a.Groups, "sudo")
+		h.accounts["agent-bot-hq"] = a
+		w := newWorld(h)
+		w.r.shadow["agent-bot-hq"] = "$6$salt$hash"
+		w.approved(t, applyID, w.planned(t, applyID))
+		if res := w.apply(applyID); res.Diagnostic != nil {
+			t.Fatalf("diagnostic: %+v", res.Diagnostic)
+		}
+	})
 	t.Run("member with a password", func(t *testing.T) {
 		w := newWorld(provisioned())
 		w.r.shadow["abm-lead"], w.r.shadow["abm-spec"] = "!", "$6$salt$hash"

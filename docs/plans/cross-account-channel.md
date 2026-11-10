@@ -206,6 +206,25 @@ agent-bot-machine creates the HQ role account, `_agent-bot-hq` on macOS and
 `agent-daemon` key moves there, and the `user` copy is retired. Members and
 the owner's account cannot read HQ's store or key.
 
+**As built, Linux** ([#475](https://github.com/true-line/agent-bot-machine/issues/475)).
+`managed-machine members plan --hq-account agent-bot-hq ...` plans the
+account as its first step when it is missing, and the approved
+`sudo managed-machine members apply` creates it: a locked service account
+with a private group, shell `nologin` and home `/var/lib/agent-bot-hq` at
+0700. It uses the plan, approval and root apply of
+[member-accounts.md](member-accounts.md); there is no separate verb. An
+account that already exists is verified or, when it is a person's account,
+left alone and named as shared in the plan.
+
+Still to come:
+
+- macOS: `_agent-bot-hq`, with HQ plan row 29.
+- HQ itself moves into the account, mints its `agent-daemon` key there,
+  pairs with `pair --enroll ... --client agent-daemon`, and the copy in
+  `user` is retired. That is agent-bot-hq's change.
+- agent-machine accepts the `agent-daemon` key only from the HQ account's
+  uid, as it already binds the terminal key to the terminal user.
+
 ## Replay
 
 1. Read this plan, [machine-daemon.md](machine-daemon.md),

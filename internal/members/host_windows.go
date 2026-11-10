@@ -21,6 +21,7 @@ type OSRoot struct{}
 func (OSRoot) PasswordField(string) (string, bool, error)     { return "", false, errUnsupported }
 func (OSRoot) ReadSudoers() (string, bool, error)             { return "", false, errUnsupported }
 func (OSRoot) CreateAccount(string) error                     { return errUnsupported }
+func (OSRoot) CreateHQAccount(string) error                   { return errUnsupported }
 func (OSRoot) SetMode(string, uint32) error                   { return errUnsupported }
 func (OSRoot) EnsureDir(string, string, string, uint32) error { return errUnsupported }
 func (OSRoot) RemoveDir(string) error                         { return errUnsupported }
