@@ -93,11 +93,11 @@ func TestTheRuleNamesOnlyTheHQAccountAndTheListedMembers(t *testing.T) {
 		"Runas_Alias ABHQ_MEMBERS = abm-lead, abm-spec\n" +
 		"Defaults:agent-bot-hq env_reset, !setenv\n" +
 		"Defaults:agent-bot-hq env_keep = \"AGENT_BOT_SOULS_SOCKET AGENT_BOT_SOULS_MEMBER_TOKEN AGENT_BOT_SOULS_MEMBER_ID AGENT_BOT_SOULS_ROLE AGENT_BOT_SOULS_BROKER\"\n" +
-		"agent-bot-hq ALL = (ABHQ_MEMBERS) NOPASSWD: ALL\n"
+		"agent-bot-hq ALL = (ABHQ_MEMBERS) NOPASSWD: NOSETENV: ALL\n"
 	if got := Sudoers(in); got != want {
 		t.Fatalf("sudoers:\n%s\nwant:\n%s", got, want)
 	}
-	for _, forbidden := range []string{"root", "SETENV:", "%", "ALL : ALL", "(ALL"} {
+	for _, forbidden := range []string{"root", " SETENV:", "%", "ALL : ALL", "(ALL"} {
 		if strings.Contains(strings.TrimPrefix(Sudoers(in), header), forbidden) {
 			t.Errorf("the rule contains %q", forbidden)
 		}

@@ -60,7 +60,7 @@ func TestPlanSavesThePlanAndReportsItsDigest(t *testing.T) {
 	}
 	// The owner is shown the exact rule.
 	rule, _ := res.Records[7].Get("content")
-	if !strings.Contains(rule.(string), "agent-bot-hq ALL = (ABHQ_MEMBERS) NOPASSWD: ALL") {
+	if !strings.Contains(rule.(string), "agent-bot-hq ALL = (ABHQ_MEMBERS) NOPASSWD: NOSETENV: ALL") {
 		t.Errorf("the sudoers record does not carry the rule: %v", rule)
 	}
 

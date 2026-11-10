@@ -173,6 +173,16 @@ const (
 	MembersPathRefused = "MM_MEMBERS_PATH_REFUSED"
 	// The host could not be read or the plan could not be saved.
 	MembersPlanFailed = "MM_MEMBERS_PLAN_FAILED"
+	// Added with members apply. Apply was not started with sudo from the
+	// owner's account.
+	MembersRootRequired = "MM_MEMBERS_ROOT_REQUIRED"
+	// An agent account or an agent session asked for the apply.
+	MembersCallerRefused = "MM_MEMBERS_CALLER_REFUSED"
+	// No approval allows this apply: none, expired, already used, held in a
+	// file someone else could write, or for another digest.
+	MembersNotApproved = "MM_MEMBERS_NOT_APPROVED"
+	// A step failed, or the host is not as planned after the apply.
+	MembersApplyFailed = "MM_MEMBERS_APPLY_FAILED"
 )
 
 var registry = map[string]int{
@@ -181,6 +191,10 @@ var registry = map[string]int{
 	MembersAccountRefused:       ExitFailure,
 	MembersPathRefused:          ExitFailure,
 	MembersPlanFailed:           ExitFailure,
+	MembersRootRequired:         ExitFailure,
+	MembersCallerRefused:        ExitFailure,
+	MembersNotApproved:          ExitFailure,
+	MembersApplyFailed:          ExitFailure,
 	Usage:                       ExitUsage,
 	SoftwareUnknownName:         ExitUsage,
 	SoftwareUnknownProvider:     ExitUsage,

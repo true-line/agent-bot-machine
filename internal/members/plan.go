@@ -384,7 +384,9 @@ func Tmpfiles(in Input) string {
 
 // Sudoers is the launch rule: the HQ account, and nobody else, may run a
 // command as a listed member account, and as no other account. It names no
-// group target and grants no SETENV; the environment is reset to EnvKeep.
+// group target; the environment is reset to EnvKeep. NOSETENV is written
+// out because sudo implies SETENV for a rule whose command is ALL, which
+// would let the HQ account pass any variable on the command line.
 func Sudoers(in Input) string {
 	var b strings.Builder
 	b.WriteString(header)
@@ -395,7 +397,7 @@ func Sudoers(in Input) string {
 	fmt.Fprintf(&b, "Runas_Alias ABHQ_MEMBERS = %s\n", strings.Join(in.Members, ", "))
 	fmt.Fprintf(&b, "Defaults:%s env_reset, !setenv\n", in.HQAccount)
 	fmt.Fprintf(&b, "Defaults:%s env_keep = \"%s\"\n", in.HQAccount, strings.Join(EnvKeep, " "))
-	fmt.Fprintf(&b, "%s ALL = (ABHQ_MEMBERS) NOPASSWD: ALL\n", in.HQAccount)
+	fmt.Fprintf(&b, "%s ALL = (ABHQ_MEMBERS) NOPASSWD: NOSETENV: ALL\n", in.HQAccount)
 	return b.String()
 }
 
