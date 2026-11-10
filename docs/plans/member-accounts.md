@@ -2,7 +2,7 @@
 name: member-accounts
 status: active
 overview: On Linux, create one OS account per Soul member, the broker endpoint directories HQ verifies, and the rule that lets the HQ account start members. Nothing runs as root until the owner has approved the exact plan in the local web UI.
-related_prs: [471, 472, 473, 474]
+related_prs: [471, 472, 473, 474, 476]
 ---
 
 # Member accounts, endpoint directories and the launch rule
@@ -28,8 +28,9 @@ The owner decided:
   in the local web UI. For this slice that is the Approvals tab of the local
   web UI in agent-bot-identity. The hosted website does not approve or run it.
 
-This depends on S6 in [cross-account-channel.md](cross-account-channel.md)
-(the HQ account). Until S6 lands, the tests name a throwaway HQ account.
+The same plan creates the HQ account when it does not exist. That is S6 in
+[cross-account-channel.md](cross-account-channel.md), issue
+[#475](https://github.com/true-line/agent-bot-machine/issues/475).
 
 ## Target
 
@@ -42,6 +43,7 @@ For an HQ account `H` and each listed member account `M`:
 
 | Thing                                       | Owner, group, mode                      | Notes                                                                                                                                                                                             |
 | ------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Account `H`, when it does not exist         | its own private group, no other members | A service account: no password, shell `nologin`, in no other group. Home `/var/lib/H` at 0700, which is HQ's state                                                                                |
 | Account `M`                                 | its own private group, no other members | No password, no login shell beyond what a member needs, not in `sudo`, `admin` or `H`'s group. Home at 0700                                                                                       |
 | `/run/agent-bot-hq/members/`                | `H` or root, 0755                       | Not writable by group or others                                                                                                                                                                   |
 | `/run/agent-bot-hq/members/M/`              | `H`, group of `M`, 2750                 | HQ creates `broker.sock` inside, 0660                                                                                                                                                             |
@@ -138,6 +140,27 @@ managed-machine members plan --hq-account <account> (--hq-config <path> | --memb
 - Diagnostics: `MM_MEMBERS_UNSUPPORTED`, `MM_MEMBERS_LIST_INVALID`,
   `MM_MEMBERS_ACCOUNT_REFUSED`, `MM_MEMBERS_PATH_REFUSED`,
   `MM_MEMBERS_PLAN_FAILED`.
+
+**The HQ account** (`internal/members`, S6):
+
+- The first step of every plan has kind `hq-account`.
+- **Missing:** the step is `create`. Apply runs
+  `useradd --system --create-home --home-dir /var/lib/<account> --user-group --shell /usr/sbin/nologin`,
+  sets the home to 0700, and fails unless the new account is locked. It comes
+  before the member accounts, so the directories, the tmpfiles entry and the
+  launch rule never name an account that does not exist.
+- **Exists and is dedicated** (a private group of its own name, nobody else
+  in it, no other group): it is verified like a member account. Its home
+  must be its own directory and is repaired to 0700; a password, an empty
+  one or no shadow entry is `MM_MEMBERS_ACCOUNT_REFUSED` at apply.
+- **Exists and is shared** (the owner's own account, where HQ runs until it
+  moves): it is accepted and left exactly as it is. The step says
+  `not a dedicated account` and why, so that is what the owner approves.
+  HQ's state is then only as private as that account, and HQ reports
+  `managed-cooperative`.
+- uid 0 is refused. A member that shares the HQ account's uid is refused.
+- The plan version is 2. A plan saved by an older build has another digest
+  and cannot be approved.
 
 **Step 2, the approval record** (`internal/daemon`, `internal/members`):
 
@@ -246,6 +269,10 @@ On real accounts in CI (Linux), as in agent-bot-hq's member accounts step:
 - `apply` without an approval, with an expired or used approval, with an
   approval file a non-owner can write, or after the host changed, runs
   nothing and says which.
+- A plan on a host with no HQ account creates it first. After the apply it
+  is a locked service account in no other group; its home is 0700 and
+  neither the owner nor a member can enter it. The owner's own account named
+  as the HQ account is left alone and the plan says it is shared.
 - After an approved apply: HQ's layout check passes; the HQ account can start
   a process as a member account and cannot start one as root or as an
   unlisted account; a member account cannot use the rule; a member cannot

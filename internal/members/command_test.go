@@ -55,11 +55,11 @@ func TestPlanSavesThePlanAndReportsItsDigest(t *testing.T) {
 	if applied, _ := head.Get("applied"); applied != false {
 		t.Errorf("applied = %v", applied)
 	}
-	if len(res.Records) != 8 {
-		t.Fatalf("%d records, want the summary and 7 steps", len(res.Records))
+	if len(res.Records) != 9 {
+		t.Fatalf("%d records, want the summary and 8 steps", len(res.Records))
 	}
 	// The owner is shown the exact rule.
-	rule, _ := res.Records[7].Get("content")
+	rule, _ := res.Records[8].Get("content")
 	if !strings.Contains(rule.(string), "agent-bot-hq ALL = (ABHQ_MEMBERS) NOPASSWD: NOSETENV: ALL") {
 		t.Errorf("the sudoers record does not carry the rule: %v", rule)
 	}
@@ -120,7 +120,11 @@ func TestPlanRefusals(t *testing.T) {
 		"an unreadable config":  {on(target.LinuxAMD64), []string{"plan", "--hq-account", "agent-bot-hq", "--hq-config", "/nowhere.json"}, bare, diag.MembersListInvalid},
 		"a bad member name":     {on(target.LinuxAMD64), []string{"plan", "--hq-account", "agent-bot-hq", "--members", "abm-a;reboot"}, bare, diag.MembersListInvalid},
 		"the invoker as member": {on(target.LinuxAMD64), []string{"plan", "--hq-account", "agent-bot-hq", "--members", "owner"}, bare, diag.MembersListInvalid},
-		"no HQ account on host": {on(target.LinuxAMD64), []string{"plan", "--hq-account", "nobody-hq", "--members", "abm-a"}, bare, diag.MembersAccountRefused},
+		"a root HQ account": {on(target.LinuxAMD64), []string{"plan", "--hq-account", "toor", "--members", "abm-a"}, func() *fakeHost {
+			h := bare()
+			h.accounts["toor"] = Account{Name: "toor", UID: 0}
+			return h
+		}, diag.MembersAccountRefused},
 		"a member already in sudo": {on(target.LinuxAMD64), []string{"plan", "--hq-account", "agent-bot-hq", "--members", "abm-lead,abm-spec"}, func() *fakeHost {
 			h := provisioned()
 			a := h.accounts["abm-lead"]

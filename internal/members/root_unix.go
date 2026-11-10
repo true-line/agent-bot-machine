@@ -85,6 +85,16 @@ func (OSRoot) CreateAccount(name string) error {
 	return os.Chmod(home, 0o700)
 }
 
+// CreateHQAccount implements Root. A system account gets a uid below the
+// range of people's accounts and no password aging.
+func (OSRoot) CreateHQAccount(name string) error {
+	home := filepath.Join(HQHomeBase, name)
+	if err := runProgram(useraddPath, "--system", "--create-home", "--home-dir", home, "--user-group", "--shell", NoLoginShell, name); err != nil {
+		return err
+	}
+	return os.Chmod(home, 0o700)
+}
+
 func isDir(p string) error {
 	fi, err := os.Lstat(p)
 	if err != nil {

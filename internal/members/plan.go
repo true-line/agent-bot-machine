@@ -23,10 +23,13 @@ const (
 	TmpfilesPath = "/etc/tmpfiles.d/agent-bot-hq-members.conf"
 	SudoersPath  = "/etc/sudoers.d/agent-bot-hq-members"
 	HomeBase     = "/home"
+	// HQHomeBase is where a new HQ account's home goes: it is a service
+	// account, and its home is HQ's state, not a person's files.
+	HQHomeBase   = "/var/lib"
 	NoLoginShell = "/usr/sbin/nologin"
 	// PlanVersion is part of the digest: a change to what a plan means
 	// invalidates every approval made before it.
-	PlanVersion = 1
+	PlanVersion = 2
 )
 
 // EnvKeep is the fixed environment allowlist of the launch rule. HQ passes a
@@ -58,7 +61,9 @@ const (
 
 // Step kinds.
 const (
-	KindAccount   = "account"
+	KindAccount = "account"
+	// KindHQAccount is the account HQ runs in (cross-account-channel.md, S6).
+	KindHQAccount = "hq-account"
 	KindDirectory = "directory"
 	KindFile      = "file"
 )
@@ -191,22 +196,18 @@ func Build(in Input, h Host) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	hq, ok, err := h.Account(in.HQAccount)
-	if err != nil {
-		return Plan{}, err
-	}
-	if !ok {
-		return Plan{}, refuse(RefusedAccount, "HQ account %s does not exist; it is created first (cross-account-channel.md, S6)", in.HQAccount)
-	}
-	if hq.UID == 0 {
-		return Plan{}, refuse(RefusedAccount, "HQ account %s is root", in.HQAccount)
-	}
 	p := Plan{Version: PlanVersion, HQAccount: in.HQAccount, Dir: in.Dir, Members: in.Members, Steps: []Step{}}
 	if p.Members == nil {
 		p.Members = []string{}
 	}
 
-	uids := map[int]string{hq.UID: hq.Name}
+	// The HQ account comes first: the directories and the rule name it.
+	uids := map[int]string{}
+	hq, err := hqAccountStep(in, h, uids)
+	if err != nil {
+		return Plan{}, err
+	}
+	p.Steps = append(p.Steps, hq)
 	for _, m := range in.Members {
 		step, err := accountStep(m, h, uids)
 		if err != nil {
@@ -265,6 +266,82 @@ func Build(in Input, h Host) (Plan, error) {
 	return p, nil
 }
 
+// sharing returns who else is in an account's primary group and which other
+// groups the account is in. Both are empty for a private account.
+func sharing(a Account) (others, extra []string) {
+	for _, u := range append(append([]string(nil), a.GroupMembers...), a.PrimaryUsers...) {
+		if u != a.Name {
+			others = append(others, u)
+		}
+	}
+	for _, g := range a.Groups {
+		if g != a.Group {
+			extra = append(extra, g)
+		}
+	}
+	sort.Strings(others)
+	sort.Strings(extra)
+	return others, extra
+}
+
+// hqAccountStep plans the account HQ runs in. A missing one is created as a
+// locked service account. One that exists is never changed beyond its home's
+// mode. An existing account that is not private (the owner's own account,
+// where HQ runs until it moves) is accepted and the step says so, because
+// that is what the owner then approves: HQ's state is only as private as
+// that account.
+func hqAccountStep(in Input, h Host, uids map[int]string) (Step, error) {
+	name := in.HQAccount
+	want := Step{Kind: KindHQAccount, Target: name, Group: name, Mode: "0700"}
+	a, ok, err := h.Account(name)
+	if err != nil {
+		return Step{}, err
+	}
+	if !ok {
+		if name == in.Invoker {
+			return Step{}, refuse(RefusedAccount, "HQ account %s is the account running this command and has no account record", name)
+		}
+		want.Action = ActionCreate
+		want.Detail = fmt.Sprintf("service account, home %s, shell %s, private group, no password, no other groups", path.Join(HQHomeBase, name), NoLoginShell)
+		return want, nil
+	}
+	if a.UID == 0 {
+		return Step{}, refuse(RefusedAccount, "HQ account %s is root", name)
+	}
+	uids[a.UID] = name
+	others, extra := sharing(a)
+	var why []string
+	if a.Group != name {
+		why = append(why, "primary group "+a.Group)
+	}
+	if len(others) > 0 {
+		why = append(why, "its group also has "+strings.Join(others, ", "))
+	}
+	if len(extra) > 0 {
+		why = append(why, "also in "+strings.Join(extra, ", "))
+	}
+	if len(why) > 0 {
+		// No group and no mode: nothing about this account is checked or
+		// changed at apply.
+		return Step{Kind: KindHQAccount, Target: name, Action: ActionNone,
+			Detail: fmt.Sprintf("exists and is not a dedicated account (%s); it is left as it is, and HQ's state is only as private as this account", strings.Join(why, "; "))}, nil
+	}
+	home, ok, err := h.Lstat(a.Home)
+	if err != nil {
+		return Step{}, err
+	}
+	if !ok || !home.Dir || home.Owner != name {
+		return Step{}, refuse(RefusedAccount, "HQ account %s's home %s is missing or not its own directory", name, a.Home)
+	}
+	want.Action = ActionNone
+	want.Detail = fmt.Sprintf("exists; dedicated; home %s; its password is checked at apply", a.Home)
+	if home.Mode&0o7777 != 0o700 {
+		want.Action = ActionRepair
+		want.Detail = fmt.Sprintf("exists; dedicated; home %s has mode %04o and is set to 0700; its password is checked at apply", a.Home, home.Mode&0o7777)
+	}
+	return want, nil
+}
+
 func accountStep(name string, h Host, uids map[int]string) (Step, error) {
 	want := Step{Kind: KindAccount, Target: name, Group: name, Mode: "0700",
 		Detail: fmt.Sprintf("home %s, shell %s, private group, no password, no other groups", path.Join(HomeBase, name), NoLoginShell)}
@@ -277,18 +354,7 @@ func accountStep(name string, h Host, uids map[int]string) (Step, error) {
 		return want, nil
 	}
 	// An account that exists is verified, never adopted and never changed.
-	var others []string
-	for _, u := range append(append([]string(nil), a.GroupMembers...), a.PrimaryUsers...) {
-		if u != name {
-			others = append(others, u)
-		}
-	}
-	var extra []string
-	for _, g := range a.Groups {
-		if g != a.Group {
-			extra = append(extra, g)
-		}
-	}
+	others, extra := sharing(a)
 	switch {
 	case a.UID == 0:
 		return Step{}, refuse(RefusedAccount, "member account %s is root", name)
@@ -297,10 +363,8 @@ func accountStep(name string, h Host, uids map[int]string) (Step, error) {
 	case a.Group != name:
 		return Step{}, refuse(RefusedAccount, "member account %s has primary group %s, not a private group of its own name", name, a.Group)
 	case len(others) > 0:
-		sort.Strings(others)
 		return Step{}, refuse(RefusedAccount, "member account %s's group also has %s; it must be private", name, strings.Join(others, ", "))
 	case len(extra) > 0:
-		sort.Strings(extra)
 		return Step{}, refuse(RefusedAccount, "member account %s is also in %s; a member is in no other group", name, strings.Join(extra, ", "))
 	}
 	uids[a.UID] = name

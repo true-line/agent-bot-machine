@@ -26,11 +26,13 @@ func member(name string, uid int) Account {
 	return Account{Name: name, UID: uid, GID: uid, Group: name, PrimaryUsers: []string{name}, Groups: []string{name}, Home: "/home/" + name, Shell: NoLoginShell}
 }
 
-// bare is a host with the HQ account and nothing else.
+// bare is a host with a dedicated HQ account and nothing else.
 func bare() *fakeHost {
 	return &fakeHost{
-		accounts: map[string]Account{"agent-bot-hq": {Name: "agent-bot-hq", UID: 900, GID: 900, Group: "agent-bot-hq"}},
-		entries:  map[string]Entry{}, files: map[string]string{}, lists: map[string][]string{},
+		accounts: map[string]Account{"agent-bot-hq": {Name: "agent-bot-hq", UID: 900, GID: 900, Group: "agent-bot-hq",
+			PrimaryUsers: []string{"agent-bot-hq"}, Groups: []string{"agent-bot-hq"}, Home: "/var/lib/agent-bot-hq", Shell: NoLoginShell}},
+		entries: map[string]Entry{"/var/lib/agent-bot-hq": {Dir: true, Mode: 0o700, Owner: "agent-bot-hq", Group: "agent-bot-hq"}},
+		files:   map[string]string{}, lists: map[string][]string{},
 	}
 }
 
@@ -66,6 +68,7 @@ func TestPlanOnABareHostCreatesEverythingInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := strings.Join([]string{
+		"hq-account agent-bot-hq none",
 		"account abm-lead create",
 		"account abm-spec create",
 		"directory /run/agent-bot-hq/members create",
@@ -81,7 +84,7 @@ func TestPlanOnABareHostCreatesEverythingInOrder(t *testing.T) {
 		t.Errorf("changes = %d, want 6", p.Changes())
 	}
 	// The endpoint directory is exactly what agent-bot-hq verifies.
-	d := p.Steps[3]
+	d := p.Steps[4]
 	if d.Owner != "agent-bot-hq" || d.Group != "abm-lead" || d.Mode != "2750" {
 		t.Errorf("endpoint directory = %+v", d)
 	}
@@ -195,6 +198,66 @@ func TestAMemberTakenOffTheListLosesItsDirectoryAndRuleButKeepsItsAccount(t *tes
 	}
 }
 
+func hqStep(t *testing.T, h *fakeHost, in Input) Step {
+	t.Helper()
+	p, err := Build(in, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Steps[0].Kind != KindHQAccount {
+		t.Fatalf("the first step is %+v, want the HQ account", p.Steps[0])
+	}
+	return p.Steps[0]
+}
+
+func TestAMissingHQAccountIsCreatedFirstAsAServiceAccount(t *testing.T) {
+	h := bare()
+	delete(h.accounts, "agent-bot-hq")
+	delete(h.entries, "/var/lib/agent-bot-hq")
+	s := hqStep(t, h, request)
+	if s.Action != ActionCreate || s.Group != "agent-bot-hq" || s.Mode != "0700" || !strings.Contains(s.Detail, "home /var/lib/agent-bot-hq") {
+		t.Fatalf("step = %+v", s)
+	}
+	// A missing account cannot be the one running the plan.
+	in := request
+	in.Invoker = "agent-bot-hq"
+	var r *Refusal
+	if _, err := Build(in, h); !errors.As(err, &r) || r.Code != RefusedAccount {
+		t.Fatalf("err = %v, want an account refusal", err)
+	}
+}
+
+func TestADedicatedHQAccountIsVerifiedAndItsHomeRepaired(t *testing.T) {
+	h := bare()
+	if s := hqStep(t, h, request); s.Action != ActionNone || s.Mode != "0700" || !strings.Contains(s.Detail, "dedicated") {
+		t.Fatalf("step = %+v", s)
+	}
+	e := h.entries["/var/lib/agent-bot-hq"]
+	e.Mode = 0o755
+	h.entries["/var/lib/agent-bot-hq"] = e
+	if s := hqStep(t, h, request); s.Action != ActionRepair || !strings.Contains(s.Detail, "0755") {
+		t.Fatalf("step = %+v", s)
+	}
+}
+
+// Until HQ moves, it runs in the owner's own account. That account is
+// accepted, left alone, and the step the owner approves says what it is.
+func TestASharedHQAccountIsAcceptedAndNamedAsShared(t *testing.T) {
+	for name, a := range map[string]Account{
+		"in other groups":     {Name: "owner", UID: 1000, Group: "owner", PrimaryUsers: []string{"owner"}, Groups: []string{"owner", "sudo"}, Home: "/home/owner"},
+		"a shared primary":    {Name: "owner", UID: 1000, Group: "users", Groups: []string{"users"}, Home: "/home/owner"},
+		"others in its group": {Name: "owner", UID: 1000, Group: "owner", GroupMembers: []string{"guest"}, Groups: []string{"owner"}, Home: "/home/owner"},
+	} {
+		h := bare()
+		h.accounts["owner"] = a
+		in := Input{HQAccount: "owner", Members: []string{"abm-lead"}, Invoker: "owner"}
+		s := hqStep(t, h, in)
+		if s.Action != ActionNone || s.Mode != "" || s.Group != "" || !strings.Contains(s.Detail, "not a dedicated account") {
+			t.Errorf("%s: step = %+v", name, s)
+		}
+	}
+}
+
 func TestRefusals(t *testing.T) {
 	for name, tc := range map[string]struct {
 		in     Input
@@ -202,15 +265,20 @@ func TestRefusals(t *testing.T) {
 		code   string
 		says   string
 	}{
-		"a name that is not an account name": {in: Input{HQAccount: "agent-bot-hq", Members: []string{"Abm Lead"}}, code: RefusedList, says: "not an account name"},
-		"a name that would inject a rule":    {in: Input{HQAccount: "agent-bot-hq", Members: []string{"abm,ALL"}}, code: RefusedList, says: "not an account name"},
-		"a member listed twice":              {in: Input{HQAccount: "agent-bot-hq", Members: []string{"abm-a", "abm-a"}}, code: RefusedList, says: "twice"},
-		"the HQ account as a member":         {in: Input{HQAccount: "agent-bot-hq", Members: []string{"agent-bot-hq"}}, code: RefusedList, says: "HQ account"},
-		"root as a member":                   {in: Input{HQAccount: "agent-bot-hq", Members: []string{"root"}}, code: RefusedList, says: "root"},
-		"the invoking account as a member":   {in: Input{HQAccount: "agent-bot-hq", Members: []string{"owner"}, Invoker: "owner"}, code: RefusedList, says: "running this command"},
-		"a directory that is not clean":      {in: Input{HQAccount: "agent-bot-hq", Dir: "/run/../etc"}, code: RefusedList, says: "clean absolute path"},
-		"a directory with a space":           {in: Input{HQAccount: "agent-bot-hq", Dir: "/run/a b"}, code: RefusedList, says: "clean absolute path"},
-		"no HQ account":                      {in: request, change: func(h *fakeHost) { delete(h.accounts, "agent-bot-hq") }, code: RefusedAccount, says: "does not exist"},
+		"a name that is not an account name":      {in: Input{HQAccount: "agent-bot-hq", Members: []string{"Abm Lead"}}, code: RefusedList, says: "not an account name"},
+		"a name that would inject a rule":         {in: Input{HQAccount: "agent-bot-hq", Members: []string{"abm,ALL"}}, code: RefusedList, says: "not an account name"},
+		"a member listed twice":                   {in: Input{HQAccount: "agent-bot-hq", Members: []string{"abm-a", "abm-a"}}, code: RefusedList, says: "twice"},
+		"the HQ account as a member":              {in: Input{HQAccount: "agent-bot-hq", Members: []string{"agent-bot-hq"}}, code: RefusedList, says: "HQ account"},
+		"root as a member":                        {in: Input{HQAccount: "agent-bot-hq", Members: []string{"root"}}, code: RefusedList, says: "root"},
+		"the invoking account as a member":        {in: Input{HQAccount: "agent-bot-hq", Members: []string{"owner"}, Invoker: "owner"}, code: RefusedList, says: "running this command"},
+		"a directory that is not clean":           {in: Input{HQAccount: "agent-bot-hq", Dir: "/run/../etc"}, code: RefusedList, says: "clean absolute path"},
+		"a directory with a space":                {in: Input{HQAccount: "agent-bot-hq", Dir: "/run/a b"}, code: RefusedList, says: "clean absolute path"},
+		"a dedicated HQ account without its home": {in: request, change: func(h *fakeHost) { delete(h.entries, "/var/lib/agent-bot-hq") }, code: RefusedAccount, says: "missing or not its own directory"},
+		"a member with the HQ account's uid": {in: request, change: func(h *fakeHost) {
+			a := h.accounts["abm-lead"]
+			a.UID = 900
+			h.accounts["abm-lead"] = a
+		}, code: RefusedAccount, says: "shares uid"},
 		"an HQ account that is root": {in: request, change: func(h *fakeHost) {
 			h.accounts["agent-bot-hq"] = Account{Name: "agent-bot-hq", UID: 0}
 		}, code: RefusedAccount, says: "is root"},

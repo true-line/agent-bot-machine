@@ -22,6 +22,9 @@ type Root interface {
 	// CreateAccount creates a locked account with a private group, home
 	// HomeBase/<name> at 0700 and shell NoLoginShell.
 	CreateAccount(name string) error
+	// CreateHQAccount creates the locked service account HQ runs in, with a
+	// private group, home HQHomeBase/<name> at 0700 and shell NoLoginShell.
+	CreateHQAccount(name string) error
 	// SetMode sets the mode of an existing directory.
 	SetMode(p string, mode uint32) error
 	// EnsureDir creates p if it is missing and sets its owner, group and mode.
@@ -50,7 +53,16 @@ func locked(field string) bool {
 // is one this tool wrote. It changes nothing.
 func Precheck(p Plan, r Root) error {
 	for _, s := range p.Steps {
-		if s.Kind != KindAccount || s.Action == ActionCreate {
+		what := "member"
+		switch {
+		case s.Action == ActionCreate:
+			continue
+		case s.Kind == KindAccount:
+		case s.Kind == KindHQAccount && s.Mode != "":
+			// A dedicated HQ account. One that is shared carries no mode
+			// and is left alone: it is a person's account and has a password.
+			what = "HQ"
+		default:
 			continue
 		}
 		field, ok, err := r.PasswordField(s.Target)
@@ -58,10 +70,10 @@ func Precheck(p Plan, r Root) error {
 			return err
 		}
 		if !ok {
-			return refuse(RefusedAccount, "member account %s has no shadow entry, so its password cannot be checked", s.Target)
+			return refuse(RefusedAccount, "%s account %s has no shadow entry, so its password cannot be checked", what, s.Target)
 		}
 		if !locked(field) {
-			return refuse(RefusedAccount, "member account %s has a password or an empty one; a member account is locked", s.Target)
+			return refuse(RefusedAccount, "%s account %s has a password or an empty one; a dedicated account is locked", what, s.Target)
 		}
 	}
 	have, ok, err := r.ReadSudoers()
@@ -108,10 +120,14 @@ func applyStep(s Step, h Host, r Root) error {
 		return fmt.Errorf("mode %q is not octal", s.Mode)
 	}
 	switch s.Kind {
-	case KindAccount:
+	case KindAccount, KindHQAccount:
 		switch s.Action {
 		case ActionCreate:
-			if err := r.CreateAccount(s.Target); err != nil {
+			create := r.CreateAccount
+			if s.Kind == KindHQAccount {
+				create = r.CreateHQAccount
+			}
+			if err := create(s.Target); err != nil {
 				return err
 			}
 			field, ok, err := r.PasswordField(s.Target)

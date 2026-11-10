@@ -78,6 +78,7 @@ refused() {
 
 untouched() {
     ! getent passwd "$A" >/dev/null || fail "$A exists after a refused apply"
+    ! getent passwd "$HQ" >/dev/null || fail "$HQ exists after a refused apply"
     sudo test ! -e "$RULE" || fail "$RULE exists after a refused apply"
     sudo test ! -e "$DIR" || fail "$DIR exists after a refused apply"
 }
@@ -95,7 +96,15 @@ sudoers_ok() {
     return 1
 }
 
-sudo useradd --create-home --user-group --shell /usr/sbin/nologin "$HQ"
+# The HQ account does not exist yet: the plan creates it (S6).
+! getent passwd "$HQ" >/dev/null || fail "$HQ exists before the test"
+
+# --- an account that is not dedicated is accepted and named as such ----------
+shared="$("$MM" members plan --hq-account "$ME" --members "$A" | sed -n 2p)"
+[ "$(jq -r .kind <<<"$shared")" = "hq-account" ] || fail "the first step is not the HQ account: $shared"
+[ "$(jq -r .action <<<"$shared")" = "none" ] || fail "a shared HQ account is not left alone: $shared"
+grep -q "not a dedicated account" <<<"$shared" || fail "a shared HQ account is not named as shared: $shared"
+ok "the owner's own account as HQ is left alone and the plan says it is shared"
 
 # --- plan changes nothing and its digest is stable ---------------------------
 plan "$A,$B"
@@ -143,6 +152,17 @@ sudo "$MM" members apply "$PLAN_ID" >"$WORK/apply.jsonl"
 [ "$(head -n 1 "$WORK/apply.jsonl" | jq -r .applied)" = "true" ] || fail "apply did not report applied"
 ok "an approved apply ran"
 
+# The HQ account: a locked service account whose home nobody else can enter.
+HQ_HOME="/var/lib/$HQ"
+[ "$(getent passwd "$HQ" | cut -d: -f6,7)" = "$HQ_HOME:/usr/sbin/nologin" ] || fail "$HQ is $(getent passwd "$HQ")"
+[ "$(sudo stat -c '%U %G %a' "$HQ_HOME")" = "$HQ $HQ 700" ] || fail "$HQ_HOME is $(sudo stat -c '%U %G %a' "$HQ_HOME")"
+[ "$(id -Gn "$HQ")" = "$HQ" ] || fail "$HQ is in groups: $(id -Gn "$HQ")"
+[ "$(id -u "$HQ")" -lt 1000 ] || fail "$HQ has uid $(id -u "$HQ"), not a service account's"
+sudo grep -q "^$HQ:[!*]" /etc/shadow || fail "$HQ is not locked"
+! ls "$HQ_HOME" 2>/dev/null || fail "the owner can enter the HQ account's home"
+sudo -u "$HQ" test -w "$HQ_HOME" || fail "the HQ account cannot write its own home"
+ok "the HQ account was created as a locked service account with a private home"
+
 [ "$(stat -c '%U %G %a' "$DIR")" = "root root 755" ] || fail "$DIR is $(stat -c '%U %G %a' "$DIR")"
 for m in "$A" "$B"; do
     [ "$(sudo stat -c '%U %G %a' "$DIR/$m")" = "$HQ $m 2750" ] || fail "$DIR/$m is $(sudo stat -c '%U %G %a' "$DIR/$m")"
@@ -169,6 +189,7 @@ as_hq() { sudo -u "$HQ" "$@"; }
 ! sudo -u "$A" sudo -n -u "$B" /usr/bin/true 2>/dev/null || fail "a member can use the rule"
 ! sudo -u "$A" ls "$DIR/$B" 2>/dev/null || fail "a member can enter another member's endpoint directory"
 ! sudo -u "$A" ls "/home/$B" 2>/dev/null || fail "a member can enter another member's home"
+! sudo -u "$A" ls "$HQ_HOME" 2>/dev/null || fail "a member can enter the HQ account's home"
 sudo -u "$A" ls "$DIR/$A" >/dev/null || fail "a member cannot enter its own endpoint directory"
 envout="$(as_hq env AGENT_BOT_SOULS_ROLE=lead LEAKED=1 sudo -n -u "$A" /usr/bin/env)"
 grep -q '^AGENT_BOT_SOULS_ROLE=lead$' <<<"$envout" || fail "an allowed variable did not reach the member"

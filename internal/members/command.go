@@ -38,9 +38,10 @@ func Command(deps Deps) cli.Command {
 const usage = `Usage: managed-machine members plan --hq-account <account> (--hq-config <path> | --members <a,b,...>) [--dir <path>]
        sudo managed-machine members apply <plan-id>
 
-Plan one OS account per Soul member, the broker endpoint directories HQ
-verifies, the tmpfiles entry that recreates them at boot, and the sudoers
-rule that lets the HQ account start members (docs/plans/member-accounts.md).
+Plan the account HQ runs in, one OS account per Soul member, the broker
+endpoint directories HQ verifies, the tmpfiles entry that recreates them at
+boot, and the sudoers rule that lets the HQ account start members
+(docs/plans/member-accounts.md).
 
 plan reads the host and changes nothing. It saves the plan and prints its
 plan_id and plan_digest. Linux only.
@@ -53,7 +54,8 @@ option skips the approval. An agent account or session is refused.
 
 Options
 -h, --help              Show this usage and read nothing
---hq-account <account>  The account HQ runs in
+--hq-account <account>  The account HQ runs in. It is created as a locked
+                        service account when it does not exist
 --hq-config <path>      Read the member accounts and directory from HQ's
                         config.json (members.accounts, members.dir)
 --members <a,b,...>     Name the member accounts directly
