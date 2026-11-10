@@ -146,6 +146,14 @@ flowchart LR
 - `apply <plan-id>`: only a saved plan ID (ADR-0012).
 - `update`: re-run the declared flavor.
 - `catalog`: accept a signed catalog envelope from the paired agent-daemon.
+- `approve-members`: record the owner's approval of one member accounts
+  plan ([member-accounts.md](member-accounts.md)). The request carries
+  `plan_id` and `plan_digest` and nothing else, and both are in the signed
+  payload. The daemon writes the approval under
+  `members/approvals/<plan-id>.json` in its state directory, good for 10
+  minutes, and runs nothing. It is Linux only, and the terminal pairing key
+  cannot send it. This is not an approval gate on a daemon verb (decision
+  3): it is the record a separate root command checks before it acts.
 
 Anything else is refused with `MM_DAEMON_VERB_UNKNOWN` or
 `MM_DAEMON_NOT_IN_CATALOG`. There is no command-execution verb and no SSH

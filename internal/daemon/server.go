@@ -79,13 +79,16 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 // catalog plan and apply actions. A nil function keeps the previous
 // placeholder for status and refuses the other verbs.
 type Hooks struct {
-	Status    func() (string, []byte, error)
-	Receipts  func() ([]byte, error)
-	Plan      func(name, option, target string) (string, string)
-	Apply     func(planID, name, option, target, soul, harness, session string) string
-	Update    func(name, soul, harness, session string) (string, string)
-	Catalog   func(req Request) (string, string, string)
-	OnReceipt func()
+	Status   func() (string, []byte, error)
+	Receipts func() ([]byte, error)
+	Plan     func(name, option, target string) (string, string)
+	Apply    func(planID, name, option, target, soul, harness, session string) string
+	Update   func(name, soul, harness, session string) (string, string)
+	Catalog  func(req Request) (string, string, string)
+	// ApproveMembers records the approval of a member accounts plan and
+	// returns the approval as the response body. It runs nothing.
+	ApproveMembers func(planID, digest string) ([]byte, string, string)
+	OnReceipt      func()
 }
 
 func (h Hooks) reply(req Request) Response {
@@ -149,6 +152,15 @@ func (h Hooks) reply(req Request) Response {
 			return refused(diagID, message)
 		}
 		return Response{OK: true, State: state, Message: message}
+	case approveMembersVerb:
+		if h.ApproveMembers == nil {
+			return refused(diag.DaemonUnimplemented, "approve-members is not served yet")
+		}
+		body, diagID, message := h.ApproveMembers(req.PlanID, req.PlanDigest)
+		if diagID != "" {
+			return refused(diagID, message)
+		}
+		return Response{OK: true, State: "approved", Message: req.PlanID, Body: body}
 	default:
 		return refused(diag.DaemonUnimplemented, req.Verb+" is not served yet")
 	}
