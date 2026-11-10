@@ -82,6 +82,16 @@ untouched() {
     sudo test ! -e "$DIR" || fail "$DIR exists after a refused apply"
 }
 
+# The whole sudoers configuration parses. On failure, show what visudo said.
+sudoers_ok() {
+    local out
+    if out="$(sudo visudo -c 2>&1)"; then return 0; fi
+    echo "$out" >&2
+    sudo cat "$RULE" >&2 || true
+    return 1
+}
+sudoers_ok || fail "visudo -c fails on the runner before anything is changed"
+
 sudo useradd --create-home --user-group --shell /usr/sbin/nologin "$HQ"
 
 # --- plan changes nothing and its digest is stable ---------------------------
@@ -139,7 +149,7 @@ for m in "$A" "$B"; do
 done
 [ "$(sudo stat -c '%U %G %a' "$RULE")" = "root root 440" ] || fail "$RULE is $(sudo stat -c '%U %G %a' "$RULE")"
 [ "$(stat -c '%U %G %a' /etc/tmpfiles.d/agent-bot-hq-members.conf)" = "root root 644" ] || fail "the tmpfiles entry has the wrong owner or mode"
-sudo visudo -c >/dev/null || fail "visudo -c fails after the apply"
+sudoers_ok || fail "visudo -c fails after the apply"
 sudo systemd-tmpfiles --create /etc/tmpfiles.d/agent-bot-hq-members.conf || fail "the tmpfiles entry is not accepted"
 [ "$(sudo stat -c '%U %G %a' "$DIR/$A")" = "$HQ $A 2750" ] || fail "tmpfiles changed $DIR/$A"
 [ "$(sudo jq -r .result "/var/lib/managed-machine/members/receipts/$PLAN_ID.json")" = "applied" ] || fail "no applied receipt"
@@ -185,7 +195,7 @@ getent passwd "$B" >/dev/null || fail "the removed member's account was deleted"
 sudo test -d "/home/$B" || fail "the removed member's home was deleted"
 ! as_hq sudo -n -u "$B" /usr/bin/true 2>/dev/null || fail "the HQ account can still run as the removed member"
 [ "$(as_hq sudo -n -u "$A" /usr/bin/id -un)" = "$A" ] || fail "the remaining member was lost"
-sudo visudo -c >/dev/null || fail "visudo -c fails after the removal"
+sudoers_ok || fail "visudo -c fails after the removal"
 ok "a removed member loses its rule and directory; its account and home stay"
 
 echo "members-apply: all checks passed"
