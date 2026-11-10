@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -117,10 +118,15 @@ func (r *fakeRoot) Finish(id string, raw []byte) error {
 
 const (
 	applyID     = "plan-20261110T040000Z-abcd"
-	ownerPlans  = "/home/owner/.local/share/managed-machine/members/plans/"
 	machineDir  = "/home/machine/.config/agent-machine"
 	applyMoment = "2026-11-10T04:05:00Z"
 )
+
+// planFile is where members plan saves a plan for the owner, spelled with
+// the separator of the system the test runs on.
+func planFile(id string) string {
+	return filepath.Join("/home/owner", ".local", "share", "managed-machine", "members", "plans", id+".json")
+}
 
 // world is a host, a root and the dependencies of one apply.
 type world struct {
@@ -168,7 +174,7 @@ func (w *world) planned(t *testing.T, id string) Plan {
 	}
 	digest, _ := p.Digest()
 	raw, _ := json.Marshal(Saved{PlanID: id, PlanDigest: digest, Plan: p})
-	w.h.files[ownerPlans+id+".json"] = string(raw)
+	w.h.files[planFile(id)] = string(raw)
 	return p
 }
 
@@ -281,9 +287,9 @@ func TestApplyNeedsAMatchingUnexpiredApproval(t *testing.T) {
 		edit func(*world)
 		want string
 	}{
-		{"no plan", func(w *world) { delete(w.h.files, ownerPlans+applyID+".json") }, diag.MembersPlanFailed},
+		{"no plan", func(w *world) { delete(w.h.files, planFile(applyID)) }, diag.MembersPlanFailed},
 		{"plan for another id", func(w *world) {
-			w.h.files[ownerPlans+applyID+".json"] = strings.Replace(w.h.files[ownerPlans+applyID+".json"], applyID, "plan-20261110T040000Z-ffff", 1)
+			w.h.files[planFile(applyID)] = strings.Replace(w.h.files[planFile(applyID)], applyID, "plan-20261110T040000Z-ffff", 1)
 		}, diag.MembersPlanFailed},
 		{"no approval", func(w *world) { delete(w.h.entries, approval); delete(w.h.files, approval) }, diag.MembersNotApproved},
 		{"expired", func(w *world) { w.now = w.now.Add(5 * time.Minute) }, diag.MembersNotApproved},
@@ -314,7 +320,7 @@ func TestApplyNeedsAMatchingUnexpiredApproval(t *testing.T) {
 			w.h.entries[DefaultDir] = Entry{Dir: true, Mode: 0o777, Owner: "root", Group: "root"}
 		}, diag.MembersNotApproved},
 		{"request changed after approval", func(w *world) {
-			w.h.files[ownerPlans+applyID+".json"] = strings.Replace(w.h.files[ownerPlans+applyID+".json"], `"abm-spec"`, `"abm-evil"`, 1)
+			w.h.files[planFile(applyID)] = strings.Replace(w.h.files[planFile(applyID)], `"abm-spec"`, `"abm-evil"`, 1)
 		}, diag.MembersNotApproved},
 	}
 	for _, tc := range cases {

@@ -60,7 +60,8 @@ approve() {
 # plan <members> sets PLAN_ID, PLAN_DIGEST and PLAN_CHANGES.
 plan() {
     local out
-    out="$("$MM" members plan --hq-account "$HQ" --members "$1" | head -n 1)"
+    out="$("$MM" members plan --hq-account "$HQ" --members "$1")"
+    out="${out%%$'\n'*}"
     PLAN_ID="$(jq -r .plan_id <<<"$out")"
     PLAN_DIGEST="$(jq -r .plan_digest <<<"$out")"
     PLAN_CHANGES="$(jq -r .changes <<<"$out")"
