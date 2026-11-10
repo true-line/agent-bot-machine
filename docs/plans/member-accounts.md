@@ -2,7 +2,7 @@
 name: member-accounts
 status: active
 overview: On Linux, create one OS account per Soul member, the broker endpoint directories HQ verifies, and the rule that lets the HQ account start members. Nothing runs as root until the owner has approved the exact plan in the local web UI.
-related_prs: [471, 472, 473]
+related_prs: [471, 472, 473, 474]
 ---
 
 # Member accounts, endpoint directories and the launch rule
@@ -164,8 +164,73 @@ managed-machine members plan --hq-account <account> (--hq-config <path> | --memb
 - Another OS refuses with `MM_MEMBERS_UNSUPPORTED` and writes nothing.
 - It writes no receipt. A receipt belongs to the apply.
 
-Step 3 (`members apply`) and the proposal in the local web UI are not built.
-Nothing sends `approve-members` yet.
+**Step 3, the apply** (`internal/members`):
+
+```sh
+sudo managed-machine members apply <plan-id>
+```
+
+It takes a plan ID and nothing else. The checks run in this order, and each
+refusal comes before any change:
+
+1. **The caller.** Linux, effective uid 0 and a `SUDO_UID` that is not 0,
+   or `MM_MEMBERS_ROOT_REQUIRED`: a root login has no owner behind it. The
+   account that ran sudo is the owner. An agent account, an agent marker in
+   the environment, or an agent marker in the environment of any process
+   above sudo (read from `/proc`) is `MM_MEMBERS_CALLER_REFUSED`. sudo
+   resets the environment of the command, so the ancestors are where a
+   session started from an agent still shows.
+2. **The plan.** Read from the owner's state directory,
+   `~owner/.local/share/managed-machine/members/plans/`. Only its request
+   (HQ account, directory, members) is used; the plan is built again from
+   the host. A plan saved under a custom `XDG_DATA_HOME` is not found:
+   sudo does not carry that variable, and apply does not trust it.
+3. **The approval.** Read from agent-machine's state directory: the home of
+   the Homebrew prefix owner, or the owner's own home where there is no
+   prefix. The approvals directory and the file must be owned by that
+   account, writable by nobody else, and the file a regular file. It must
+   name this plan ID, be unexpired, and carry the digest of the plan just
+   rebuilt. Anything else is `MM_MEMBERS_NOT_APPROVED`.
+4. **What only root can read.** An existing member account must be locked:
+   a shadow field starting with `!` or `*`. A password, an empty field or
+   no entry is `MM_MEMBERS_ACCOUNT_REFUSED`. A launch rule already at
+   `/etc/sudoers.d/agent-bot-hq-members` that this tool did not write is
+   `MM_MEMBERS_PATH_REFUSED`.
+5. **One apply per approval.** The receipt is created, exclusively, at
+   `/var/lib/managed-machine/members/receipts/<plan-id>.json` before the
+   first change. If it exists, the approval was used. The receipt is in a
+   root-owned directory so no other account can remove it and reuse the
+   approval. This replaces "marks the approval used": apply writes nothing
+   into a directory another account controls.
+
+Then the steps run in plan order: accounts, directories, the tmpfiles entry,
+and the launch rule last.
+
+- Accounts: `/usr/sbin/useradd --create-home --home-dir /home/<m>
+  --user-group --shell /usr/sbin/nologin <m>`, then the home is set to 0700
+  and the account is checked to be locked. Programs are named by absolute
+  path and run with a fixed environment.
+- Directories: created, then owner and group, then mode, because changing
+  the owner clears the setgid bit.
+- Files: written to a dot-named temporary file beside the target, which
+  sudo skips, then renamed. The launch rule is checked with
+  `/usr/sbin/visudo -c -f` on the temporary file first; a rule that fails
+  is removed and never installed.
+- After the last step the plan is built once more. Any remaining change is
+  `MM_MEMBERS_APPLY_FAILED`. A failed apply leaves earlier steps in place,
+  says which step stopped it, and records `failed` in the receipt.
+
+The CI job `member accounts (real accounts)` runs
+`tests/members-apply.test.sh` on a GitHub-hosted Linux runner with real
+accounts, sudo and visudo. It covers the acceptance list below except three
+lines: HQ's own layout check (that code is in agent-bot-hq; the script
+asserts the same owners, groups and modes), a deliberately broken rule
+(covered by a Go test with an injected failure, because the tool cannot be
+made to generate one), and `approve-members` itself (Go tests in
+`internal/daemon`; the script writes the approval file in the same form).
+
+The proposal in the local web UI is not built. Nothing sends
+`approve-members` yet.
 
 ## Acceptance
 

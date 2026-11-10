@@ -98,6 +98,7 @@ managed-machine config [name] [--available|--status|--check|--plan|--apply] [--f
 managed-machine status [--section software|config|flavor|fleet [name]] [--global|--user|--custom <path>] [--json|--human]
 managed-machine fleet [owner] [--keys|--access|--refresh|--plan|--apply|--check|--publish|--unpublish <fp>] [--owner <id>] [--key <path>] [--label <text>] [--from-plan <id|path>] [--user] [--json|--human]
 managed-machine members plan --hq-account <account> (--hq-config <path> | --members <a,b,...>) [--dir <path>] [--json|--human]
+sudo managed-machine members apply <plan-id> [--json|--human]
 managed-machine skill [name] [--kind <kind>] [--bundle <bundle>] [--search <term>] [--version <v>] [--next <h>] [--json|--human] | skill path [--json|--human]
 managed-machine platform [--json|--human]
 managed-machine version [--json|--human]

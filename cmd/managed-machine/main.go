@@ -131,6 +131,7 @@ func main() {
 					Username: func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
 					Now:      time.Now,
 				},
+				ApplyDeps: members.ApplyDeps{DaemonState: membersDaemonState},
 			}),
 			daemon.Command(daemon.Deps{
 				GOOS: runtime.GOOS,
@@ -197,6 +198,24 @@ func main() {
 		},
 	}
 	os.Exit(app.Run(os.Args[1:]))
+}
+
+// membersDaemonState locates agent-machine's state directory for members
+// apply, which runs as root. The daemon runs in the account that owns the
+// Homebrew prefix; where there is no prefix, in the owner's own account.
+func membersDaemonState(owner, home string) (string, string, error) {
+	prefixOwner, err := daemon.PrefixOwner(brewPrefix(runtime.GOOS + "/" + runtime.GOARCH))
+	if err != nil {
+		return "", "", err
+	}
+	if prefixOwner == "" || prefixOwner == owner {
+		return daemon.StateDir(home), owner, nil
+	}
+	u, err := user.Lookup(prefixOwner)
+	if err != nil {
+		return "", "", err
+	}
+	return daemon.StateDir(u.HomeDir), u.Username, nil
 }
 
 func currentCaller(environ []string) (daemon.Caller, error) {

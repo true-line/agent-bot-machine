@@ -22,27 +22,34 @@ type Deps struct {
 	Host func() Host
 	// ReadFile reads the HQ configuration. When nil, os.ReadFile is used.
 	ReadFile func(string) ([]byte, error)
+	ApplyDeps
 }
 
 // Command is `managed-machine members`.
 func Command(deps Deps) cli.Command {
 	return cli.Command{
 		Name:    "members",
-		Summary: "Plan the Linux accounts, endpoint directories and launch rule for Soul members",
+		Summary: "Plan and apply the Linux accounts, endpoint directories and launch rule for Soul members",
 		Usage:   usage,
 		Run:     func(ctx cli.Context, args []string) cli.Result { return run(deps, ctx, args) },
 	}
 }
 
 const usage = `Usage: managed-machine members plan --hq-account <account> (--hq-config <path> | --members <a,b,...>) [--dir <path>]
+       sudo managed-machine members apply <plan-id>
 
 Plan one OS account per Soul member, the broker endpoint directories HQ
 verifies, the tmpfiles entry that recreates them at boot, and the sudoers
 rule that lets the HQ account start members (docs/plans/member-accounts.md).
 
 plan reads the host and changes nothing. It saves the plan and prints its
-plan_id and plan_digest. Nothing is applied until the owner has approved
-that digest; applying is a separate step that needs root. Linux only.
+plan_id and plan_digest. Linux only.
+
+apply needs root and an approval. The owner approves the plan's digest in
+the local web UI, then runs apply with sudo in their own terminal within
+ten minutes. apply builds the plan again from the host and runs only when
+its digest is the approved one. It takes a plan id and nothing else; no
+option skips the approval. An agent account or session is refused.
 
 Options
 -h, --help              Show this usage and read nothing
@@ -96,8 +103,11 @@ func fromConfig(raw []byte) (dir string, members []string, err error) {
 }
 
 func run(deps Deps, ctx cli.Context, args []string) cli.Result {
+	if len(args) > 0 && args[0] == "apply" {
+		return runApply(deps, ctx, args[1:])
+	}
 	if len(args) == 0 || args[0] != "plan" {
-		return cli.Result{Diagnostic: command.UsageErr("members takes one action: plan")}
+		return cli.Result{Diagnostic: command.UsageErr("members takes one action: plan or apply")}
 	}
 	var hqAccount, hqConfigPath, list, dir string
 	var hasList, hasDir bool
