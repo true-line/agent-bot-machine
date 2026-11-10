@@ -221,6 +221,8 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		Set("members", strings.Join(p.Members, ",")).
 		Set("changes", p.Changes()).
 		Set("applied", true).
+		Set("hq_account_dedicated", p.SharedHQAdvice() == "").
+		SetOptional("advice", p.SharedHQAdvice()).
 		Set("receipt", ReceiptPath(planID))}
 	for _, s := range p.Steps {
 		records = append(records, output.New().

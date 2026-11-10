@@ -112,7 +112,6 @@ func TestPlanRefusals(t *testing.T) {
 		"Windows":               {on(target.WindowsAMD64), []string{"plan", "--hq-account", "agent-bot-hq", "--members", "abm-a"}, bare, diag.MembersUnsupported},
 		"no action":             {on(target.LinuxAMD64), nil, bare, diag.Usage},
 		"apply is not built":    {on(target.LinuxAMD64), []string{"apply", "plan-1"}, bare, diag.Usage},
-		"no HQ account named":   {on(target.LinuxAMD64), []string{"plan", "--members", "abm-a"}, bare, diag.Usage},
 		"no list":               {on(target.LinuxAMD64), []string{"plan", "--hq-account", "agent-bot-hq"}, bare, diag.Usage},
 		"two lists":             {on(target.LinuxAMD64), []string{"plan", "--hq-account", "agent-bot-hq", "--members", "abm-a", "--hq-config", "/etc/hq/config.json"}, bare, diag.Usage},
 		"--dir with a config":   {on(target.LinuxAMD64), []string{"plan", "--hq-account", "agent-bot-hq", "--hq-config", "/etc/hq/config.json", "--dir", "/run/x"}, bare, diag.Usage},
@@ -170,5 +169,58 @@ func TestAnEmptyListIsAPlanThatGrantsNothing(t *testing.T) {
 	}
 	if removed != 2 {
 		t.Errorf("%d directories removed, want 2", removed)
+	}
+}
+
+func TestPlanDefaultsToTheDedicatedHQAccount(t *testing.T) {
+	h := bare()
+	delete(h.accounts, "agent-bot-hq")
+	delete(h.entries, "/var/lib/agent-bot-hq")
+	d, _ := deps(t, h)
+	res := Command(d).Run(on(target.LinuxAMD64), []string{"plan", "--members", "abm-lead"})
+	if res.Diagnostic != nil {
+		t.Fatalf("diagnostic: %+v", res.Diagnostic)
+	}
+	head := res.Records[0]
+	if hq, _ := head.Get("hq_account"); hq != DefaultHQAccount {
+		t.Errorf("hq_account = %v", hq)
+	}
+	if dedicated, _ := head.Get("hq_account_dedicated"); dedicated != true {
+		t.Errorf("hq_account_dedicated = %v", dedicated)
+	}
+	if _, ok := head.Get("advice"); ok {
+		t.Error("a dedicated account carries advice")
+	}
+	if kind, _ := res.Records[1].Get("kind"); kind != KindHQAccount {
+		t.Errorf("the first step is %v", kind)
+	}
+	if action, _ := res.Records[1].Get("action"); action != ActionCreate {
+		t.Errorf("the HQ account step is %v", action)
+	}
+}
+
+// Naming the owner's own account works, and the plan pushes back.
+func TestPlanAdvisesAgainstASharedHQAccount(t *testing.T) {
+	h := bare()
+	h.accounts["owner"] = Account{Name: "owner", UID: 1000, Group: "owner", PrimaryUsers: []string{"owner"}, Groups: []string{"owner", "sudo"}, Home: "/home/owner"}
+	d, _ := deps(t, h)
+	res := Command(d).Run(on(target.LinuxAMD64), []string{"plan", "--hq-account", "owner", "--members", "abm-lead"})
+	if res.Diagnostic != nil {
+		t.Fatalf("diagnostic: %+v", res.Diagnostic)
+	}
+	head := res.Records[0]
+	if dedicated, _ := head.Get("hq_account_dedicated"); dedicated != false {
+		t.Errorf("hq_account_dedicated = %v", dedicated)
+	}
+	advice, _ := head.Get("advice")
+	text, _ := advice.(string)
+	for _, want := range []string{"owner is not a dedicated account", "plan without --hq-account", DefaultHQAccount} {
+		if !strings.Contains(text, want) {
+			t.Errorf("advice %q does not mention %q", text, want)
+		}
+	}
+	detail, _ := res.Records[1].Get("detail")
+	if s, _ := detail.(string); !strings.Contains(s, "Recommended: plan without --hq-account") {
+		t.Errorf("the step the owner approves carries no recommendation: %v", detail)
 	}
 }

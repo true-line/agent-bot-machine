@@ -35,7 +35,7 @@ func Command(deps Deps) cli.Command {
 	}
 }
 
-const usage = `Usage: managed-machine members plan --hq-account <account> (--hq-config <path> | --members <a,b,...>) [--dir <path>]
+const usage = `Usage: managed-machine members plan [--hq-account <account>] (--hq-config <path> | --members <a,b,...>) [--dir <path>]
        sudo managed-machine members apply <plan-id>
 
 Plan the account HQ runs in, one OS account per Soul member, the broker
@@ -54,8 +54,10 @@ option skips the approval. An agent account or session is refused.
 
 Options
 -h, --help              Show this usage and read nothing
---hq-account <account>  The account HQ runs in. It is created as a locked
-                        service account when it does not exist
+--hq-account <account>  The account HQ runs in (default ` + DefaultHQAccount + `). It is
+                        created as a locked service account when it does not
+                        exist. Naming your own account works but is not
+                        recommended: the plan says it is not dedicated
 --hq-config <path>      Read the member accounts and directory from HQ's
                         config.json (members.accounts, members.dir)
 --members <a,b,...>     Name the member accounts directly
@@ -123,9 +125,10 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}); d != nil {
 		return cli.Result{Diagnostic: d}
 	}
+	if hqAccount == "" {
+		hqAccount = DefaultHQAccount
+	}
 	switch {
-	case hqAccount == "":
-		return cli.Result{Diagnostic: command.UsageErr("members plan needs --hq-account")}
 	case (hqConfigPath != "") == hasList:
 		return cli.Result{Diagnostic: command.UsageErr("members plan needs exactly one of --hq-config and --members")}
 	case hqConfigPath != "" && hasDir:
@@ -202,7 +205,9 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		Set("dir", plan.Dir).
 		Set("members", strings.Join(plan.Members, ",")).
 		Set("changes", plan.Changes()).
-		Set("applied", false)}
+		Set("applied", false).
+		Set("hq_account_dedicated", plan.SharedHQAdvice() == "").
+		SetOptional("advice", plan.SharedHQAdvice())}
 	for _, s := range plan.Steps {
 		records = append(records, output.New().
 			Set("kind", s.Kind).
