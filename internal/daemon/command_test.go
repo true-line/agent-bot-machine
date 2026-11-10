@@ -1,8 +1,11 @@
 package daemon
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -226,5 +229,102 @@ func TestDaemonPairEnrollRequiresKey(t *testing.T) {
 	res := run(owner(root), cli.Context{}, []string{"pair", "--enroll"})
 	if res.Diagnostic == nil {
 		t.Fatal("expected --enroll without a key to fail")
+	}
+}
+
+func TestFailedActivationLeavesNoUnitBehind(t *testing.T) {
+	t.Setenv("AGENT_MACHINE_CHANNEL", filepath.Join(t.TempDir(), "channel"))
+	root := t.TempDir()
+	deps := owner(root)
+	deps.GOOS = "linux"
+	deps.Activate = func(string) error {
+		return errors.New("Failed to connect to bus: No medium found")
+	}
+	res := run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed {
+		t.Fatalf("diagnostic %#v", res.Diagnostic)
+	}
+	if !strings.Contains(res.Diagnostic.Message, "No medium found") {
+		t.Fatalf("message %q", res.Diagnostic.Message)
+	}
+	res = run(deps, cli.Context{}, []string{"status"})
+	if got, _ := res.Records[0].Get("state"); got != "absent" {
+		t.Fatalf("status after a refused activation: %v", got)
+	}
+	if kpath, err := keydUnitPath("linux", root); err == nil {
+		if _, err := os.Stat(kpath); !os.IsNotExist(err) {
+			t.Fatalf("keyd unit left behind after a refused activation: %v", err)
+		}
+	}
+}
+
+func TestFailedActivationRestoresThePreviousUnit(t *testing.T) {
+	root := t.TempDir()
+	deps := owner(root)
+	deps.GOOS = "linux"
+	path, err := unitPath("linux", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := []byte("[Service]\nExecStart=/old/managed-machine daemon run\n")
+	if err := os.WriteFile(path, old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps.Activate = func(unit string) error {
+		if unit == path {
+			return errors.New("unit refused")
+		}
+		return nil
+	}
+	var reloadSaw []byte
+	deps.Reload = func() error {
+		reloadSaw, _ = os.ReadFile(path)
+		return nil
+	}
+	res := run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed {
+		t.Fatalf("diagnostic %#v", res.Diagnostic)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, old) {
+		t.Fatalf("unit after a refused activation: %q %v", got, err)
+	}
+	if !bytes.Equal(reloadSaw, old) {
+		t.Fatalf("service manager was not reloaded with the restored unit: %q", reloadSaw)
+	}
+}
+
+func TestServiceFailureIsNotACallerRefusal(t *testing.T) {
+	root := t.TempDir()
+	deps := owner(root)
+	deps.Deactivate = func(string) error { return errors.New("launchctl: input/output error") }
+	for _, verb := range []string{"stop", "uninstall"} {
+		res := run(deps, cli.Context{}, []string{verb})
+		if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed {
+			t.Fatalf("%s diagnostic %#v", verb, res.Diagnostic)
+		}
+	}
+	deps = owner(root)
+	deps.Activate = func(string) error { return nil }
+	deps.WaitHealthy = func() error { return errors.New("socket never accepted") }
+	res := run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed {
+		t.Fatalf("unhealthy install diagnostic %#v", res.Diagnostic)
+	}
+}
+
+func TestFailedReloadAfterRestoreIsReported(t *testing.T) {
+	root := t.TempDir()
+	deps := owner(root)
+	deps.GOOS = "linux"
+	deps.Activate = func(string) error { return errors.New("enable refused") }
+	deps.Reload = func() error { return errors.New("reload refused") }
+	res := run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed ||
+		!strings.Contains(res.Diagnostic.Message, "enable refused") || !strings.Contains(res.Diagnostic.Message, "reload refused") {
+		t.Fatalf("diagnostic %#v", res.Diagnostic)
 	}
 }

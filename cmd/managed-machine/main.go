@@ -145,6 +145,9 @@ func main() {
 				Deactivate: func(path string) error {
 					return daemon.DeactivateUserService(runtime.GOOS, path)
 				},
+				Reload: func() error {
+					return daemon.ReloadUserService(runtime.GOOS)
+				},
 				WaitHealthy: func() error {
 					return daemon.WaitListening(daemon.ChannelSocket(), 0)
 				},
