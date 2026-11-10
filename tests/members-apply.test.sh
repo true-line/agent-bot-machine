@@ -174,6 +174,7 @@ envout="$(as_hq env AGENT_BOT_SOULS_ROLE=lead LEAKED=1 sudo -n -u "$A" /usr/bin/
 grep -q '^AGENT_BOT_SOULS_ROLE=lead$' <<<"$envout" || fail "an allowed variable did not reach the member"
 ! grep -q '^LEAKED=' <<<"$envout" || fail "a variable outside the allowlist reached the member"
 ! as_hq sudo -n -u "$A" LEAKED=1 /usr/bin/env 2>/dev/null | grep -q '^LEAKED=' || fail "the HQ account can set a variable on the command line"
+! as_hq env LEAKED=1 sudo -n -E -u "$A" /usr/bin/env 2>/dev/null | grep -q '^LEAKED=' || fail "the HQ account can keep its whole environment with -E"
 ok "the HQ account starts members and nothing else; members are separated"
 
 # --- one apply per approval; a second plan is a no-op ------------------------

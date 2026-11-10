@@ -203,6 +203,12 @@ refusal comes before any change:
    approval. This replaces "marks the approval used": apply writes nothing
    into a directory another account controls.
 
+**The launch rule says `NOSETENV`.** sudo implies `SETENV` for a rule whose
+command is `ALL`, whatever `Defaults !setenv` says. The first run on real
+accounts showed the HQ account passing a variable on the command line. The
+rule is now `H ALL = (ABHQ_MEMBERS) NOPASSWD: NOSETENV: ALL`, and the CI job
+checks that a variable outside the allowlist is refused both ways.
+
 Then the steps run in plan order: accounts, directories, the tmpfiles entry,
 and the launch rule last.
 
