@@ -417,3 +417,71 @@ func TestRealAccessChecks(t *testing.T) {
 		t.Error("a missing directory is writable")
 	}
 }
+
+func TestPinnedVersionIsPlannedAndInstalled(t *testing.T) {
+	f := newFixture(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/typescript/latest":
+			fmt.Fprint(w, `{"name":"typescript","version":"5.4.5"}`)
+		case "/typescript/5.3.3":
+			fmt.Fprint(w, `{"name":"typescript","version":"5.3.3"}`)
+		case "/typescript/5.0.0":
+			fmt.Fprint(w, `{"name":"typescript","version":"5.4.5"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	f.provider.Registry = srv.URL
+	plan := func(version string) (*Resolution, error) {
+		return f.provider.Plan(context.Background(), Request{Software: "typescript", Target: "user",
+			Options: map[string]string{"package": "typescript", "version": version}})
+	}
+	res, err := plan("5.3.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Version != "5.3.3" || res.Operations[0].Params["version"] != "5.3.3" {
+		t.Fatalf("plan: %+v", res)
+	}
+	st, err := f.provider.Step(res.Operations[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.fake.installed["typescript"] != "5.3.3" {
+		t.Fatalf("installed %v", f.fake.installed)
+	}
+	for _, v := range []string{"4.9.9", "5.0.0"} {
+		if _, err := plan(v); err == nil {
+			t.Errorf("pin %s was planned", v)
+		}
+	}
+	for _, v := range []string{"", "latest", "^5.3.3", "5.3", "5.3.3 --force"} {
+		if _, err := plan(v); !errors.Is(err, ErrUnsupported) {
+			t.Errorf("version %q: %v", v, err)
+		}
+	}
+}
+
+func TestLookPathFindsTheWindowsShimWithoutAnExecuteBit(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "npm.cmd"), []byte("@echo off\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "npm"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := func() []string { return []string{"PATH=" + dir} }
+	win := &Provider{GOOS: "windows", Environ: env}
+	if got, err := win.lookPathIn("npm"); err != nil || got != filepath.Join(dir, "npm.cmd") {
+		t.Fatalf("windows: %q %v", got, err)
+	}
+	unix := &Provider{GOOS: "linux", Environ: env}
+	if got, err := unix.lookPathIn("npm"); err == nil {
+		t.Fatalf("linux found a file without an execute bit: %q", got)
+	}
+}

@@ -515,7 +515,10 @@ target:
    files exist in `dist/`.
 2. `archive-layout` (all five targets per D3, D10): verifies the runner's own
    archive contains only `managed-machine` (or `managed-machine.exe`, mode
-   `0755`) and `LICENSE` (mode `0644`) in sorted order with mtime
+   `0755`) and `LICENSE` (mode `0644`) in sorted order — on darwin preceded
+   by `AgentBotMachine.app/Contents/Info.plist` (`0644`) and
+   `AgentBotMachine.app/Contents/MacOS/managed-machine` (`0755`, the same
+   binary) — with mtime
    `1980-01-01T00:00:00Z`, uid/gid 0 and empty user/group names, and extracts
    the binary into a harness directory.
 3. `version` (all five targets per D2, D10): runs `managed-machine --version`

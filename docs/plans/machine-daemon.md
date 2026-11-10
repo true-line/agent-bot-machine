@@ -308,7 +308,53 @@ installing. No catalog cask has a `pkg` artifact.
 
 `config/<name>` (aider, claude, codex, commandcode, grok-build, grokbot, kilocode, muse, muse-app, opencode, roocode, zsh) are scripts too. The daemon applies config only through the Go config providers.
 
-Linux and Windows were not checked on a real machine. This catalog has no winget rows. `signed-cask` and `vendor-dmg` are macOS-only.
+This catalog has no winget rows. `signed-cask` and `vendor-dmg` are macOS-only.
+
+#### Linux check (2026-11-02, Ubuntu 24.04 x86_64)
+
+Prefix owner: a dedicated account with no sudo rights and no supplementary
+groups, owning `/home/linuxbrew/.linuxbrew` (created by a person, the one
+root step). A shim first on its PATH logged any `sudo`, `su`, `doas` or
+`pkexec`. Rows were installed for real with the providers' commands, then the
+daemon's apply path (fixed PATH, production providers) installed ripgrep,
+`@github/copilot` pinned to 1.0.104 (below latest), and mistral-vibe 2.25.8
+with `python` 3.12, and refused an unpinned npm row before any process start.
+
+| Result | Rows |
+|---|---|
+| Installs as the prefix owner with no elevation | All 7 `brew-formula` rows (x86_64_linux bottles, no `post_install`): qwen (`qwen-code`), minikube, taplo, ripgrep, fd, ast-grep, uv. npm rows into `~/.local` with `--ignore-scripts`: commandcode, copilot, cline, pi, deepseek. `uv-tool` mistral-vibe with `python` 3.12. |
+| Not checked | `mcode`: its package name is only in the private catalog. |
+| Not offered on Linux | `signed-cask`, `vendor-dmg` (macOS-only); `official-cli`, `opencode`, `devin` (remote scripts). |
+
+No elevation was attempted, and nothing under the prefix or the owner's home
+belonged to another account afterwards. Without the `python` pin uv chose
+CPython 3.15, `pydantic-core` had no wheel, and the source build failed.
+
+Found during this check and fixed with it: the daemon dropped the catalog's
+npm/uv `version`, so the providers installed the registry's latest, and a
+pinned npm/uv row was misread as an app-copy recipe and refused. The daemon
+now passes the pin and the uv `python` pin, and refuses an unpinned npm/uv row.
+
+#### Windows check (2026-11-02, Windows Server 2025 x86_64)
+
+Prefix owner: a new local account in `Users` only (not `Administrators`,
+Medium integrity) on a GitHub-hosted `windows-latest` VM, run 41379375467.
+Node 22 was the administrator install under `C:\Program Files\nodejs`. Only
+`npm` and `uv-tool` rows apply; the catalog has no winget rows.
+
+| Result | Rows |
+|---|---|
+| Installs as the prefix owner with no elevation | npm into `%APPDATA%\npm` with `--ignore-scripts`: commandcode, copilot, cline, pi, deepseek. `uv-tool` mistral-vibe 2.25.8 with `python` 3.12. Daemon apply path: copilot pinned to 1.0.104 and mistral-vibe 2.25.8. |
+| Not checked | `mcode` (package name only in the private catalog). |
+| Not offered on Windows | `signed-cask`, `vendor-dmg`, `brew-formula`; `official-cli`, `opencode`, `devin` (scripts). |
+
+Nothing under the account's npm prefix or `.local` belonged to another
+account afterwards. Found and fixed with it: the daemon's fixed PATH
+(`WindowsApps;System32`) held neither npm nor uv, and the npm provider
+required a Unix execute bit that Windows files never carry. The fixed PATH
+is now `WindowsApps`, `WinGet\Links`, `C:\Program Files\nodejs`, `System32`.
+WinGet is not registered for a new account on Windows Server, so no winget
+row was exercised.
 
 ### P1: ADR (managed-machine-documentation)
 
@@ -370,8 +416,13 @@ the paired channel. The daemon does not pin `catalog.pub` and does not write
 1 is refused. Deleting a pin or a version record does not make a disk catalog
 acceptable. Missing `catalog.json` is an empty catalog. A brew row carries
 its formula token. Apply passes that token to the brew provider. An npm row
-carries a package token and a uv row carries a tool token. Apply passes that
-token and does not pass the request option. A brew cask row carries its
+carries a package token and a uv row carries a tool token, and both carry the
+pinned `version`; a uv row may carry `python` (CPython 3 major.minor). Apply
+passes the token and the pins and does not pass the request option. The
+provider plans exactly the pinned release, which the registry must publish,
+never its latest. A uv tool at the pin on another Python is reinstalled on
+the pinned one and verified with `uv tool list --show-python`. An npm or uv row without a pin, or `python` on another
+provider, is refused before a process starts. A brew cask row carries its
 cask token, app name, Team ID, url hosts, and homepage hosts. An app-copy
 (`vendor-dmg`) row carries its url, sha256, url hosts, app name, Team ID,
 version, and format. A winget row carries its `package_id` and never runs
