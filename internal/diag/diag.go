@@ -161,9 +161,26 @@ const (
 	DaemonProviderMissing = "MM_DAEMON_PROVIDER_MISSING"
 	DaemonStatusFailed    = "MM_DAEMON_STATUS_FAILED"
 	DaemonUnimplemented   = "MM_DAEMON_UNIMPLEMENTED"
+	// Added with member accounts (docs/plans/member-accounts.md, #470).
+	// The host is not Linux.
+	MembersUnsupported = "MM_MEMBERS_UNSUPPORTED"
+	// The member list or the HQ configuration naming it is not valid.
+	MembersListInvalid = "MM_MEMBERS_LIST_INVALID"
+	// An account exists in a form the plan will not adopt, or the HQ
+	// account does not exist.
+	MembersAccountRefused = "MM_MEMBERS_ACCOUNT_REFUSED"
+	// A path the plan needs is held by something it did not create.
+	MembersPathRefused = "MM_MEMBERS_PATH_REFUSED"
+	// The host could not be read or the plan could not be saved.
+	MembersPlanFailed = "MM_MEMBERS_PLAN_FAILED"
 )
 
 var registry = map[string]int{
+	MembersUnsupported:          ExitFailure,
+	MembersListInvalid:          ExitUsage,
+	MembersAccountRefused:       ExitFailure,
+	MembersPathRefused:          ExitFailure,
+	MembersPlanFailed:           ExitFailure,
 	Usage:                       ExitUsage,
 	SoftwareUnknownName:         ExitUsage,
 	SoftwareUnknownProvider:     ExitUsage,

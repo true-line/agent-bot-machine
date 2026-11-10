@@ -22,6 +22,7 @@ import (
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/fleet"
 	"github.com/qwts/managed-machine/internal/install"
+	"github.com/qwts/managed-machine/internal/members"
 	"github.com/qwts/managed-machine/internal/provider"
 	"github.com/qwts/managed-machine/internal/provider/appcopy"
 	"github.com/qwts/managed-machine/internal/provider/archive"
@@ -120,6 +121,15 @@ func main() {
 					Username: func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
 					Now:      time.Now,
 					Client:   nil,
+				},
+			}),
+			members.Command(members.Deps{
+				Deps: command.Deps{
+					Getenv:   getenv,
+					GOOS:     runtime.GOOS,
+					StateDir: func() (string, error) { return statedir.Path(runtime.GOOS, getenv) },
+					Username: func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
+					Now:      time.Now,
 				},
 			}),
 			daemon.Command(daemon.Deps{

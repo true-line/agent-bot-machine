@@ -2,7 +2,7 @@
 name: member-accounts
 status: active
 overview: On Linux, create one OS account per Soul member, the broker endpoint directories HQ verifies, and the rule that lets the HQ account start members. Nothing runs as root until the owner has approved the exact plan in the local web UI.
-related_prs: []
+related_prs: [471]
 ---
 
 # Member accounts, endpoint directories and the launch rule
@@ -111,6 +111,35 @@ reported, never deleted by this tool: a member's home may hold work.
 | Account names                               | `abm-<name>`, at most 32 characters, matching `^[a-z_][a-z0-9_-]{0,31}$`, which is what HQ accepts                        |
 | One list for both sides                     | HQ's `members.accounts` config names the accounts. `members plan` reads that file, so the provisioner and HQ cannot drift |
 | A graphical prompt instead of terminal sudo | Not now. `pkexec` can be added later without changing the plan, the approval or the digest                                |
+
+## As built
+
+**Step 1, the plan** (`internal/members`):
+
+```sh
+managed-machine members plan --hq-account <account> (--hq-config <path> | --members <a,b,...>) [--dir <path>]
+```
+
+- `--hq-config` reads `members.accounts` and `members.dir` from HQ's
+  `config.json`. `--members` names the accounts directly.
+- The first record carries `plan_id`, `plan_digest`, `changes` and
+  `applied: false`. One record follows per step, with the exact content of
+  each file.
+- Step actions are `create`, `repair`, `remove`, `none` and `write`.
+- **The sudoers step is always `write`.** `/etc/sudoers.d` is closed to
+  everyone but root, so a plan made without privilege cannot see what is
+  there. A step that depended on it would give root's rebuild a different
+  digest and no apply could ever match. Apply checks the existing file
+  itself, as root.
+- An account that already exists is verified, never changed. Its password
+  can only be read as root, so that check is at apply.
+- New accounts get home `/home/<account>` and shell `/usr/sbin/nologin`.
+  `sudo -u` runs a command directly, so a member needs no login shell.
+- Diagnostics: `MM_MEMBERS_UNSUPPORTED`, `MM_MEMBERS_LIST_INVALID`,
+  `MM_MEMBERS_ACCOUNT_REFUSED`, `MM_MEMBERS_PATH_REFUSED`,
+  `MM_MEMBERS_PLAN_FAILED`.
+
+Steps 2 and 3 (`approve-members` and `members apply`) are not built.
 
 ## Acceptance
 
