@@ -2,7 +2,7 @@
 name: member-accounts
 status: active
 overview: On Linux, create one OS account per Soul member, the broker endpoint directories HQ verifies, and the rule that lets the HQ account start members. Nothing runs as root until the owner has approved the exact plan in the local web UI.
-related_prs: [471]
+related_prs: [471, 472]
 ---
 
 # Member accounts, endpoint directories and the launch rule
@@ -139,7 +139,33 @@ managed-machine members plan --hq-account <account> (--hq-config <path> | --memb
   `MM_MEMBERS_ACCOUNT_REFUSED`, `MM_MEMBERS_PATH_REFUSED`,
   `MM_MEMBERS_PLAN_FAILED`.
 
-Steps 2 and 3 (`approve-members` and `members apply`) are not built.
+**Step 2, the approval record** (`internal/daemon`, `internal/members`):
+
+- `approve-members` is a verb of agent-machine. The request carries
+  `plan_id` and `plan_digest`; any other field is `MM_DAEMON_UNDECLARED`,
+  and so is `plan_digest` on any other verb, even empty or null. The digest
+  is in the signed payload, as the two lines `plan_digest` and its value
+  after the nonce. A request without it signs exactly as before.
+- `plan_id` must be a plan ID and `plan_digest` 64 lowercase hex characters.
+  The plan ID becomes a file name, so nothing else reaches the disk.
+- The daemon writes `members/approvals/<plan-id>.json` in its state
+  directory (directory `0700`, file `0600`): `plan_id`, `plan_digest`,
+  `approved_at`, `expires_at`. The response has state `approved` and the
+  same four fields as its body. A second approval of one plan replaces the
+  first. Expired and unreadable approval files are removed on each write.
+- **The daemon does not read the plan.** The plan file is private to the
+  account that made it, which is usually not the daemon's account. So the
+  daemon cannot refuse an unknown plan ID. An approval for a plan that does
+  not exist is inert: apply finds no plan and runs nothing. The acceptance
+  line below is corrected to match.
+- Only the paired agent-daemon key can send it. The terminal key is refused
+  with `MM_DAEMON_UNKNOWN_KEY`, as for every verb but `update`, `status` and
+  `receipts`.
+- Another OS refuses with `MM_MEMBERS_UNSUPPORTED` and writes nothing.
+- It writes no receipt. A receipt belongs to the apply.
+
+Step 3 (`members apply`) and the proposal in the local web UI are not built.
+Nothing sends `approve-members` yet.
 
 ## Acceptance
 
@@ -156,8 +182,9 @@ On real accounts in CI (Linux), as in agent-bot-hq's member accounts step:
 - A second approved apply on the same host is a no-op.
 - `visudo -c` passes, and a deliberately broken rule is never installed.
 - An agent account or session is refused before anything is read.
-- `approve-members` with a bad signature, an unknown plan ID or extra fields
-  is refused like any other verb.
+- `approve-members` with a bad signature, a malformed plan ID or digest, or
+  extra fields is refused like any other verb. `apply` with an approval for
+  a plan ID it has no plan for runs nothing.
 
 ## Replay
 

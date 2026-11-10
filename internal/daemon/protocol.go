@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/diag"
+	"github.com/qwts/managed-machine/internal/members"
 )
 
 const maxMessage = 64 << 10
@@ -24,6 +25,7 @@ type Request struct {
 	Option     string           `json:"option,omitempty"`
 	Target     string           `json:"target,omitempty"`
 	PlanID     string           `json:"plan_id,omitempty"`
+	PlanDigest string           `json:"plan_digest,omitempty"`
 	Soul       string           `json:"soul,omitempty"`
 	Harness    string           `json:"harness,omitempty"`
 	SessionID  string           `json:"session_id,omitempty"`
@@ -145,9 +147,12 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	}
 	g.seen[req.Nonce] = struct{}{}
 	if !knownVerb(req.Verb) {
-		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, bootstrap"
+		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, approve-members, bootstrap"
 	}
 	if id, msg := catalogFields(req, raw); id != "" {
+		return req, id, msg
+	}
+	if id, msg := membersFields(req, raw); id != "" {
 		return req, id, msg
 	}
 	if req.Verb == "bootstrap" {
@@ -186,7 +191,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", approveMembersVerb, "bootstrap":
 		return true
 	default:
 		return false
@@ -204,7 +209,7 @@ func catalogFields(req Request, raw []byte) (string, string) {
 		}
 		return "", ""
 	}
-	if req.Name != "" || req.Option != "" || req.Target != "" || req.PlanID != "" || req.Soul != "" || req.Harness != "" || req.SessionID != "" {
+	if req.Name != "" || req.Option != "" || req.Target != "" || req.PlanID != "" || req.PlanDigest != "" || req.Soul != "" || req.Harness != "" || req.SessionID != "" {
 		return diag.DaemonUndeclared, "catalog accepts only catalog_key, floor, and envelope"
 	}
 	if req.CatalogKey == nil {
@@ -214,16 +219,43 @@ func catalogFields(req Request, raw []byte) (string, string) {
 }
 
 func hasRawCatalogKey(raw []byte) bool {
+	return hasRawField(raw, "catalog_key", "floor", "envelope")
+}
+
+func hasRawField(raw []byte, keys ...string) bool {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return false
 	}
-	for _, k := range []string{"catalog_key", "floor", "envelope"} {
+	for _, k := range keys {
 		if _, ok := fields[k]; ok {
 			return true
 		}
 	}
 	return false
+}
+
+// approveMembersVerb records the owner's approval of one member accounts
+// plan (docs/plans/member-accounts.md). It runs nothing.
+const approveMembersVerb = "approve-members"
+
+// membersFields refuses plan_digest on any other verb, including an empty
+// or null value, and refuses everything but plan_id and plan_digest on
+// approve-members. Both identifiers must have their fixed forms.
+func membersFields(req Request, raw []byte) (string, string) {
+	if req.Verb != approveMembersVerb {
+		if req.PlanDigest != "" || hasRawField(raw, "plan_digest") {
+			return diag.DaemonUndeclared, "plan_digest is not declared on this verb"
+		}
+		return "", ""
+	}
+	if req.Name != "" || req.Option != "" || req.Target != "" || req.Soul != "" || req.Harness != "" || req.SessionID != "" {
+		return diag.DaemonUndeclared, "approve-members accepts only plan_id and plan_digest"
+	}
+	if !members.ValidApproval(req.PlanID, req.PlanDigest) {
+		return diag.DaemonUndeclared, "approve-members needs a plan id and a sha-256 plan digest"
+	}
+	return "", ""
 }
 
 func canonical(r Request) []byte {
@@ -233,6 +265,9 @@ func canonical(r Request) []byte {
 	}
 	if r.CatalogKey != nil || r.Floor != nil || r.Envelope != nil {
 		parts = append(parts, catalogCanonical(r))
+	}
+	if r.PlanDigest != "" {
+		parts = append(parts, "plan_digest", r.PlanDigest)
 	}
 	return []byte(strings.Join(parts, "\n"))
 }

@@ -230,6 +230,9 @@ func Run(ctx context.Context, root string) error {
 		Apply:    planner.Apply,
 		Update:   planner.Update,
 		Catalog:  func(req Request) (string, string, string) { return session.accept(dir, req) },
+		ApproveMembers: func(planID, digest string) ([]byte, string, string) {
+			return approveMembers(runtime.GOOS, dir, planID, digest, time.Now())
+		},
 		OnReceipt: func() {
 			if _, body, err := statusBody(dir); err == nil {
 				_ = writeDigest(filepath.Join(dir, "status-digest.json"), body, priv)
