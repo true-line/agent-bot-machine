@@ -375,6 +375,12 @@ the unit and wait until the socket accepts. The Terminal client auto-enrolls
 on first use (`client.key` at home, `peers/terminal.*` on the daemon). A
 system service manager needs root, which this daemon does not have.
 
+A refused caller gets `MM_DAEMON_CALLER_REFUSED`; any other lifecycle failure
+gets `MM_DAEMON_SERVICE_FAILED`. When the service manager refuses the unit
+(no user bus, a launchctl error), install restores the previous unit files (the
+daemon's and, on Linux, keyd's) or removes the new ones and, on Linux, reloads systemd so it drops the refused
+unit. `daemon status` does not report a unit that is not loaded.
+
 Acceptance: install and uninstall are idempotent, run from the owner's account,
 and refuse agent accounts, root/SYSTEM, foreign-HOME callers, and a caller
 that does not own the shared prefix when that prefix exists; the AGENTS.md

@@ -43,6 +43,16 @@ func activateDarwin(path string, uid int) error {
 	}
 }
 
+// ReloadUserService makes systemd reread user units, so a unit file that
+// install restored or removed replaces whatever an earlier daemon-reload
+// loaded. launchd reads the plist only at bootstrap, so darwin needs nothing.
+func ReloadUserService(goos string) error {
+	if goos == "linux" {
+		return systemctl("daemon-reload")
+	}
+	return nil
+}
+
 // DeactivateUserService unloads the per-user unit. A unit that is not
 // loaded is success.
 func DeactivateUserService(goos, path string) error {
