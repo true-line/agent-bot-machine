@@ -199,7 +199,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if err != nil {
 		return failure(diag.MembersPlanFailed, "cannot make a plan id: %v", err)
 	}
-	state, err := deps.ResolveStateDir("linux")
+	state, err := deps.ResolveStateDir(usernameOS(platform))
 	if err != nil {
 		return failure(diag.MembersPlanFailed, "cannot locate the state directory: %v", err)
 	}

@@ -127,7 +127,7 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 
 	// The plan the owner saved. It is the owner's file and is trusted for
 	// nothing: only its request is read, and the plan is built again.
-	state, err := statedir.Path("linux", func(k string) string {
+	state, err := statedir.Path(usernameOS(platform), func(k string) string {
 		if k == "HOME" {
 			return home
 		}
