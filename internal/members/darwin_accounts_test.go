@@ -43,7 +43,7 @@ func TestDarwinIDsAndGroups(t *testing.T) {
 	if _, err := freeDarwinID(full, nil); err == nil {
 		t.Fatal("a full id range gave an id")
 	}
-	for name, want := range map[string]bool{"everyone": true, "localaccounts": true, "com.apple.sharepoint.group.1": true, "staff": false, "admin": false, "_agent-bot-hq": false} {
+	for name, want := range map[string]bool{"everyone": true, "localaccounts": true, "_lpoperator": true, "com.apple.sharepoint.group.1": true, "staff": false, "admin": false, "_agent-bot-hq": false} {
 		if darwinAutomaticGroup(name) != want {
 			t.Errorf("automatic %s", name)
 		}

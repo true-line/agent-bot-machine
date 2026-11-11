@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"regexp"
 	"sort"
 	"strconv"
@@ -106,7 +107,8 @@ func dsclList(path, attr string) (map[string]string, error) {
 // Being in one says nothing about who an account shares with.
 func darwinAutomaticGroup(name string) bool {
 	switch name {
-	case "everyone", "localaccounts", "netaccounts":
+	case "everyone", "localaccounts", "netaccounts", "_lpoperator":
+		// _lpoperator nests localaccounts and netaccounts.
 		return true
 	}
 	return strings.HasPrefix(name, "com.apple.")
@@ -115,9 +117,21 @@ func darwinAutomaticGroup(name string) bool {
 // darwinSharing fills in who shares an account's primary group, which
 // other groups it is in, and its shell.
 func darwinSharing(a *Account) error {
+	// A group that even the nobody account is in holds every account, by
+	// name or through a nested group, whatever it is called.
+	everyones := map[string]bool{}
+	if nobody, err := user.Lookup("nobody"); err == nil {
+		if ids, err := nobody.GroupIds(); err == nil {
+			for _, id := range ids {
+				if g, err := user.LookupGroupId(id); err == nil {
+					everyones[g.Name] = true
+				}
+			}
+		}
+	}
 	var groups []string
 	for _, g := range a.Groups {
-		if !darwinAutomaticGroup(g) {
+		if !darwinAutomaticGroup(g) && !everyones[g] {
 			groups = append(groups, g)
 		}
 	}

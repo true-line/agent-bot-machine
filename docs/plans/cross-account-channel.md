@@ -246,9 +246,9 @@ Services: a hidden role account with a private group of the same name, the
 first free id from 300 to 399 for both, shell `/usr/bin/false`, no password
 and no authentication authority, and home `/var/agent-bot-hq` at 0700. An
 account that exists is verified or, when it is a person's account, left
-alone and named as shared, as on Linux. Groups macOS puts every local
-account in (`everyone`, `localaccounts`, `netaccounts`, `com.apple.*`) do
-not make an account shared. The plan is saved in the owner's state directory,
+alone and named as shared, as on Linux. Groups macOS puts every account in
+(`everyone`, `localaccounts`, `netaccounts`, `_lpoperator`, `com.apple.*`,
+and any group the `nobody` account is in) do not make an account shared. The plan is saved in the owner's state directory,
 `~/Library/Application Support/managed-machine/members/plans`, and the
 receipt goes to
 `/var/db/managed-machine/members/receipts`. An agent session above `sudo`
