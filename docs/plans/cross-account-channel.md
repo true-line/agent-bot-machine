@@ -239,9 +239,28 @@ with a private group, shell `nologin` and home `/var/lib/agent-bot-hq` at
 account that already exists is verified or, when it is a person's account,
 left alone and named as shared in the plan.
 
+**As built, macOS** ([#486](https://github.com/true-line/agent-bot-machine/issues/486)). `managed-machine members plan` on macOS plans
+the HQ account and nothing else, `_agent-bot-hq` by default, and the
+approved `sudo managed-machine members apply` creates it through Directory
+Services: a hidden role account with a private group of the same name, the
+first free id from 300 to 399 for both, shell `/usr/bin/false`, no password
+and no authentication authority, and home `/var/agent-bot-hq` at 0700. An
+account that exists is verified or, when it is a person's account, left
+alone and named as shared, as on Linux. Groups macOS puts every account in
+(`everyone`, `localaccounts`, `netaccounts`, `_lpoperator`, `com.apple.*`,
+and any group the `nobody` account is in) do not make an account shared. The plan is saved in the owner's state directory,
+`~/Library/Application Support/managed-machine/members/plans`, and the
+receipt goes to
+`/var/db/managed-machine/members/receipts`. An agent session above `sudo`
+is found through `ps -E`, since macOS has no `/proc`. Member accounts, the
+endpoint directories and the launch rule stay Linux only until HQ plan row
+29; a macOS plan that names members is refused with
+`MM_MEMBERS_UNSUPPORTED`. The CI job `HQ account on macOS (real account)`
+runs `tests/members-apply-macos.test.sh` on a GitHub-hosted macOS runner.
+
 Still to come:
 
-- macOS: `_agent-bot-hq`, with HQ plan row 29.
+- macOS member accounts and their sandbox, with HQ plan row 29.
 - HQ itself moves into the account, mints its `agent-daemon` key there,
   pairs with `pair --enroll ... --client agent-daemon`, and the copy in
   `user` is retired. That is agent-bot-hq's change.

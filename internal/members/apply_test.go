@@ -462,8 +462,8 @@ func TestApplyTakesAPlanIDAndNothingElse(t *testing.T) {
 			t.Fatalf("%v: %+v", args, res.Diagnostic)
 		}
 	}
-	res := Command(w.deps).Run(on(target.DarwinARM64), []string{"apply", applyID})
+	res := Command(w.deps).Run(on(target.WindowsAMD64), []string{"apply", applyID})
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.MembersUnsupported {
-		t.Fatalf("darwin: %+v", res.Diagnostic)
+		t.Fatalf("windows: %+v", res.Diagnostic)
 	}
 }
