@@ -141,6 +141,7 @@ func TestDaemonUsage(t *testing.T) {
 
 func TestDaemonPairAndUnpair(t *testing.T) {
 	root := t.TempDir()
+	debugOn(t, stateDir(root))
 	res := run(owner(root), cli.Context{}, []string{"pair"})
 	if res.Diagnostic != nil {
 		t.Fatal(res.Diagnostic.Message)
@@ -326,5 +327,62 @@ func TestFailedReloadAfterRestoreIsReported(t *testing.T) {
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed ||
 		!strings.Contains(res.Diagnostic.Message, "enable refused") || !strings.Contains(res.Diagnostic.Message, "reload refused") {
 		t.Fatalf("diagnostic %#v", res.Diagnostic)
+	}
+}
+
+func TestDebugClientIsOffUntilInstallDebug(t *testing.T) {
+	t.Setenv("AGENT_MACHINE_CHANNEL", filepath.Join(t.TempDir(), "channel"))
+	root := t.TempDir()
+	dir := stateDir(root)
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := run(owner(root), cli.Context{}, []string{"install"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	if got, _ := res.Records[0].Get("debug_client"); got != "off" {
+		t.Fatalf("debug_client after install: %v", got)
+	}
+	if err := adoptTerminal(dir, pub, 502); err == nil || !strings.Contains(err.Error(), "daemon install --debug") {
+		t.Fatalf("bootstrap with debug off: %v", err)
+	}
+	res = run(owner(root), cli.Context{}, []string{"install", "--debug"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	if got, _ := res.Records[0].Get("debug_client"); got != "on" {
+		t.Fatalf("debug_client after install --debug: %v", got)
+	}
+	if err := adoptTerminal(dir, pub, 502); err != nil {
+		t.Fatalf("bootstrap with debug on: %v", err)
+	}
+	pairing, err := loadPairing(dir)
+	if err != nil || !pairing.allows(pub) {
+		t.Fatalf("terminal key with debug on: %#v %v", pairing, err)
+	}
+	// start keeps the mode; a plain install turns it off and the enrolled
+	// terminal key stops being a live pairing.
+	res = run(owner(root), cli.Context{}, []string{"start"})
+	if got, _ := res.Records[0].Get("debug_client"); res.Diagnostic != nil || got != "on" {
+		t.Fatalf("debug_client after start: %v %#v", got, res.Diagnostic)
+	}
+	res = run(owner(root), cli.Context{}, []string{"install"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	pairing, err = loadPairing(dir)
+	if err != nil || pairing.allows(pub) {
+		t.Fatalf("terminal key with debug off again: %#v %v", pairing, err)
+	}
+}
+
+func TestDebugFlagsAreInstallOnly(t *testing.T) {
+	for _, args := range [][]string{{"start", "--debug"}, {"install", "--user", "someone"}, {"start", "--user", "someone"}} {
+		res := run(owner(t.TempDir()), cli.Context{}, args)
+		if res.Diagnostic == nil || res.Diagnostic.ID != diag.Usage {
+			t.Fatalf("%v diagnostic %#v", args, res.Diagnostic)
+		}
 	}
 }

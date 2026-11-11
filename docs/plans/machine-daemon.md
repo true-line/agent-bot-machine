@@ -172,15 +172,16 @@ a name exists.
 | Scope | Homebrew prefix, `/Applications` (admin group) | Homebrew/Linuxbrew or user prefixes | winget user scope, user prefixes |
 
 Peer identity is checked first and is never sufficient alone; every request
-must also carry a valid signature from a registered key. agent-daemon (the
-primary client) and the Terminal thin client both run in the user account
-and talk to the prefix-owner executor over this channel. The user does
-not pair: the next human thin-client call, including `--update` when the
+must also carry a valid signature from a registered key. agent-daemon is
+the client of the prefix-owner executor on this channel. The Terminal thin
+client is a debug tool: the daemon accepts it only after the prefix owner
+runs `daemon install --debug`, and a plain `daemon install` turns it off
+again ([cross-account-channel.md](cross-account-channel.md#debug-client)).
+With debug mode on the user does not pair: the next human thin-client call, including `--update` when the
 socket accepts, creates the state directory, mints `client.key` at home,
 and the daemon adopts that pubkey from the unix-socket UID. The enrolled
 agent-daemon key cannot bootstrap as the terminal client. `pair --enroll`
-remains for agent-daemon and a manual re-key. The thin client is the
-standalone fallback when agent-bot is not installed.
+remains for agent-daemon and a manual re-key.
 
 ### Pairing and signing
 
@@ -371,7 +372,7 @@ format (bounded JSON lines modelled on `mm-extension-1`), and the P0 table.
 `managed-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpair`
 writes a per-user service unit: a LaunchAgent, a systemd user unit, or a
 Windows service description that is not registered. `install`/`start` load
-the unit and wait until the socket accepts. The Terminal client auto-enrolls
+the unit and wait until the socket accepts. In debug mode the Terminal client auto-enrolls
 on first use (`client.key` at home, `peers/terminal.*` on the daemon). A
 system service manager needs root, which this daemon does not have.
 
@@ -451,7 +452,8 @@ executable is on the daemon's fixed PATH. The daemon does not install them.
 
 Acceptance: the `update` verb re-runs the declared flavor; `managed-machine
 --update` is a paired thin client of the daemon, run from the user account
-under the same signed-channel rules as agent-daemon, and falls back to the
+under the same signed-channel rules as agent-daemon (since 2026-11-10 only
+while the debug client is on), and falls back to the
 legacy path when no daemon is installed; each request uses a fresh nonce and
 sets harness to `terminal` so the receipt names the Terminal client; the
 client accepts the response only when `daemon.pub` verifies it; on Windows

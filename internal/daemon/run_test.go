@@ -29,6 +29,7 @@ func TestRunChecksRealPeer(t *testing.T) {
 		os.RemoveAll(root)
 	})
 	dir := stateDir(root)
+	debugOn(t, dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

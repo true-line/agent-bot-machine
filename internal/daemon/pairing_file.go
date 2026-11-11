@@ -292,7 +292,8 @@ func UnpairTerminal(root string) error {
 // peers/<client>.confirm contains the SHA-256 of the staged key. A wrong
 // confirm file leaves the live key in place. peers/<client>.revoked drops
 // that client until a confirmed re-registration replaces it. The other
-// client stays live. A legacy peer.pub is moved to peers/terminal.pub.
+// client stays live. The terminal key is live only while the debug client
+// is on. A legacy peer.pub is moved to peers/terminal.pub.
 // Old peer.* files beside an existing peers directory are refused.
 func loadPairing(dir string) (Pairing, error) {
 	if err := migrateLegacyPairing(dir); err != nil {
@@ -307,9 +308,16 @@ func loadPairing(dir string) (Pairing, error) {
 	if err := checkPairingFiles(peers); err != nil {
 		return Pairing{}, err
 	}
+	debug, err := debugClientEnabled(dir)
+	if err != nil {
+		return Pairing{}, err
+	}
 	var keys []ed25519.PublicKey
 	var terminal ed25519.PublicKey
 	for _, client := range pairingClients {
+		if client == "terminal" && !debug {
+			continue
+		}
 		key, err := loadClientKey(peers, client)
 		if err != nil {
 			return Pairing{}, err
@@ -499,6 +507,44 @@ func PinTerminalUID(root string, uid int) error {
 	return writeTerminalUID(dir, uid)
 }
 
+// debugClientOff is what a terminal client is told while debug mode is off.
+const debugClientOff = "the terminal client is a debug tool and is off; the prefix owner turns it on with `daemon install --debug`"
+
+func debugClientPath(dir string) string {
+	return filepath.Join(dir, "debug-client")
+}
+
+// debugClientEnabled reports whether the prefix owner turned on the
+// terminal debug client. HQ's agent-daemon key is the intended caller; the
+// terminal key is accepted only while this marker exists.
+func debugClientEnabled(dir string) (bool, error) {
+	_, err := os.Stat(debugClientPath(dir))
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}
+
+// SetDebugClient turns the terminal debug client on or off. Off is the
+// default: bootstrap is refused and an enrolled terminal key stops being
+// a live pairing until debug mode is on again.
+func SetDebugClient(root string, on bool) error {
+	dir := stateDir(root)
+	if !on {
+		if err := os.Remove(debugClientPath(dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	if _, err := ensureStateDirAndPeers(dir); err != nil {
+		return err
+	}
+	return os.WriteFile(debugClientPath(dir), []byte("on\n"), 0o600)
+}
+
 // PinTerminalUser looks up name and pins that account as the terminal client.
 func PinTerminalUser(root, name string) error {
 	u, err := user.Lookup(strings.TrimSpace(name))
@@ -535,6 +581,11 @@ func adoptTerminal(dir string, pub ed25519.PublicKey, uid int) error {
 	}
 	if len(pub) != ed25519.PublicKeySize {
 		return errors.New("bootstrap key is not a 32-byte Ed25519 public key")
+	}
+	if on, err := debugClientEnabled(dir); err != nil {
+		return err
+	} else if !on {
+		return errors.New(debugClientOff)
 	}
 	peers, err := ensureStateDirAndPeers(dir)
 	if err != nil {

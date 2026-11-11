@@ -163,6 +163,7 @@ func TestPrivateStateDirPermissionsAndNoUserAccess(t *testing.T) {
 	if want := filepath.Join(base, ".config", "agent-machine"); dir != want {
 		t.Fatalf("StateDir(%q) = %q, want %q", base, dir, want)
 	}
+	debugOn(t, dir)
 	if _, err := PairTerminal(base); err != nil {
 		t.Fatal(err)
 	}

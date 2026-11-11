@@ -34,7 +34,8 @@ Terminal `--update` client key (`client.key` and `peers/terminal.*`).
 
 Two clients, `terminal` and `agent-daemon`. Each has `peers/<client>.pub`
 and its own `.next`, `.confirm`, and `.revoked`. The gate accepts either
-live key. The Terminal `--update` thin client uses the `terminal` slot when
+live key, and the `terminal` key only while the prefix owner has the debug
+client on (`daemon install --debug`). The Terminal `--update` thin client uses the `terminal` slot when
 the socket and `client.key` exist, and otherwise leaves the legacy update
 script and its re-exec rule unchanged. An existing `peer.pub` is moved to
 `peers/terminal.pub`. If the old `peer.*` files and `peers/` are both

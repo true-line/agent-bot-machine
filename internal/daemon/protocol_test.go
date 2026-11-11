@@ -117,6 +117,7 @@ func TestStageKeepsLiveKey(t *testing.T) {
 
 func TestGateBootstrapAdoptsAndReplaces(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
+	debugOn(t, dir)
 	if err := os.MkdirAll(filepath.Join(dir, "peers"), 0o700); err != nil {
 		t.Fatal(err)
 	}
