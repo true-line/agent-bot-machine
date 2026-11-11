@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -383,5 +384,76 @@ func TestTerminalPairingRefusesPlanAndApply(t *testing.T) {
 		if _, id, _ := g.verify(7, raw); id != "" {
 			t.Fatalf("terminal %s got %s", verb, id)
 		}
+	}
+}
+
+func enrollHQ(t *testing.T, root string) (ed25519.PrivateKey, string) {
+	t.Helper()
+	pub, priv := keyPair(t)
+	return priv, hex.EncodeToString(pub)
+}
+
+func TestAgentDaemonKeyIsBoundToTheHQAccount(t *testing.T) {
+	root := t.TempDir()
+	dir := stateDir(root)
+	old := lookupUser
+	t.Cleanup(func() { lookupUser = old })
+	lookupUser = func(name string) (*user.User, error) {
+		if name == "agent-bot-hq" {
+			return &user.User{Username: name, Uid: "987"}, nil
+		}
+		return nil, user.UnknownUserError(name)
+	}
+	uid, bound, err := PinAgentDaemonUser(root, "")
+	if err != nil || !bound || uid != 987 {
+		t.Fatalf("pin to the dedicated account: %d %v %v", uid, bound, err)
+	}
+	priv, pubHex := enrollHQ(t, root)
+	pub := priv.Public().(ed25519.PublicKey)
+	if _, err := EnrollClient(root, "agent-daemon", pubHex, publicFingerprint(pub)); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	gate := &Gate{Dir: dir, Now: func() time.Time { return now }}
+	raw := signed(t, priv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "hq-1"})
+	if _, id, msg := gate.verify(987, raw); id != "" {
+		t.Fatalf("HQ account refused: %s %s", id, msg)
+	}
+	raw = signed(t, priv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "hq-2"})
+	if _, id, msg := gate.verify(502, raw); id != diag.DaemonPeerRefused || !strings.Contains(msg, "uid 987") {
+		t.Fatalf("another account with HQ's key: %s %s", id, msg)
+	}
+}
+
+func TestAgentDaemonKeyStaysUnboundWithoutAnHQAccount(t *testing.T) {
+	root := t.TempDir()
+	dir := stateDir(root)
+	old := lookupUser
+	t.Cleanup(func() { lookupUser = old })
+	lookupUser = func(name string) (*user.User, error) {
+		if name == "builder-agent" {
+			return &user.User{Username: "qwts-cursor-agent", Uid: "600"}, nil
+		}
+		return nil, user.UnknownUserError(name)
+	}
+	if _, bound, err := PinAgentDaemonUser(root, ""); err != nil || bound {
+		t.Fatalf("no dedicated account: bound %v err %v", bound, err)
+	}
+	if _, _, err := PinAgentDaemonUser(root, "nobody-here"); err == nil {
+		t.Fatal("an unknown --user was accepted")
+	}
+	if _, _, err := PinAgentDaemonUser(root, "builder-agent"); err == nil {
+		t.Fatal("an agent account was bound to the agent-daemon key")
+	}
+	priv, pubHex := enrollHQ(t, root)
+	pub := priv.Public().(ed25519.PublicKey)
+	if _, err := EnrollClient(root, "agent-daemon", pubHex, publicFingerprint(pub)); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	gate := &Gate{Dir: dir, Now: func() time.Time { return now }}
+	raw := signed(t, priv, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "any-1"})
+	if _, id, msg := gate.verify(502, raw); id != "" {
+		t.Fatalf("unbound agent-daemon key refused: %s %s", id, msg)
 	}
 }

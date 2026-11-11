@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"strconv"
 
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/command"
@@ -39,7 +40,9 @@ agent-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpai
 install writes the per-user unit, loads it, and waits until the socket
 accepts. start does the same when the unit already exists. stop unloads it.
 HQ's agent-daemon key is the intended caller: pair --enroll HEX
---fingerprint HEX --client agent-daemon enrolls it.
+--fingerprint HEX --client agent-daemon enrolls it and binds it to the
+dedicated HQ account when the machine has one, or to --user NAME. A bound
+key is accepted only from that account; uid=any means it is not bound.
 The terminal client is a debug tool and is off by default. install --debug
 turns it on, and install without --debug turns it off again. While it is
 on, the next human status mints client.key at home and the daemon adopts
@@ -87,8 +90,9 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if debug && verb != "install" {
 		return cli.Result{Diagnostic: command.UsageErr("--debug is only valid with install")}
 	}
-	if userSet && !debug {
-		return cli.Result{Diagnostic: command.UsageErr("--user is only valid with install --debug")}
+	hqEnroll := verb == "pair" && enrollSet && clientName == "agent-daemon"
+	if userSet && !debug && !hqEnroll {
+		return cli.Result{Diagnostic: command.UsageErr("--user is only valid with install --debug or pair --enroll --client agent-daemon")}
 	}
 	goos := deps.GOOS
 	if goos == "" {
@@ -214,12 +218,27 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			if fingerprint == "" {
 				return cli.Result{Diagnostic: command.UsageErr("pair --enroll needs --fingerprint")}
 			}
+			bound := ""
+			if hqEnroll {
+				uid, ok, err := PinAgentDaemonUser(root, userName)
+				if err != nil {
+					d := diag.New(diag.DaemonCallerRefused, err.Error())
+					return cli.Result{Diagnostic: &d}
+				}
+				bound = "any"
+				if ok {
+					bound = strconv.Itoa(uid)
+				}
+			}
 			staged, err := EnrollClient(root, clientName, enroll, fingerprint)
 			if err != nil {
 				d := diag.New(diag.DaemonCallerRefused, err.Error())
 				return cli.Result{Diagnostic: &d}
 			}
 			rec := output.New().Set("service", "agent-machine").Set("client", clientName).Set("state", "paired").Set("path", staged)
+			if bound != "" {
+				rec.Set("uid", bound)
+			}
 			return cli.Result{Records: []*output.Record{rec}}
 		}
 		if fingerprintSet {

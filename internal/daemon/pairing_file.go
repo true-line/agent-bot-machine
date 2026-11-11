@@ -313,7 +313,7 @@ func loadPairing(dir string) (Pairing, error) {
 		return Pairing{}, err
 	}
 	var keys []ed25519.PublicKey
-	var terminal ed25519.PublicKey
+	var terminal, agentDaemon ed25519.PublicKey
 	for _, client := range pairingClients {
 		if client == "terminal" && !debug {
 			continue
@@ -326,6 +326,8 @@ func loadPairing(dir string) (Pairing, error) {
 			keys = append(keys, key)
 			if client == "terminal" {
 				terminal = append(ed25519.PublicKey(nil), key...)
+			} else {
+				agentDaemon = append(ed25519.PublicKey(nil), key...)
 			}
 		}
 	}
@@ -334,6 +336,11 @@ func loadPairing(dir string) (Pairing, error) {
 		return Pairing{}, err
 	}
 	pairing.Terminal = terminal
+	pairing.AgentDaemon = agentDaemon
+	pairing.AgentDaemonUID, pairing.AgentDaemonBound, err = readAgentDaemonUID(dir)
+	if err != nil {
+		return Pairing{}, err
+	}
 	return pairing, nil
 }
 
@@ -543,6 +550,85 @@ func SetDebugClient(root string, on bool) error {
 		return err
 	}
 	return os.WriteFile(debugClientPath(dir), []byte("on\n"), 0o600)
+}
+
+// hqAccountNames are the dedicated HQ accounts that members apply creates:
+// agent-bot-hq on Linux and _agent-bot-hq on macOS (S6).
+var hqAccountNames = []string{"agent-bot-hq", "_agent-bot-hq"}
+
+// lookupUser is user.Lookup, replaceable in tests.
+var lookupUser = user.Lookup
+
+func agentDaemonUIDPath(dir string) string {
+	return filepath.Join(dir, "agent-daemon.uid")
+}
+
+// readAgentDaemonUID returns the UID the agent-daemon key is bound to, and
+// false when the key is not bound to an account.
+func readAgentDaemonUID(dir string) (int, bool, error) {
+	raw, err := os.ReadFile(agentDaemonUIDPath(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	uid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || uid <= 0 {
+		return 0, false, errors.New("agent-daemon.uid is not a uid")
+	}
+	return uid, true, nil
+}
+
+// PinAgentDaemonUser binds the agent-daemon key to one account, so the
+// daemon accepts that key only from that account's UID. With a name it
+// binds to that account. With no name it binds to the dedicated HQ account
+// when the machine has one, and otherwise leaves the binding as it is: HQ
+// in the owner's own account stays allowed, and unbound. It returns the
+// bound UID and whether a binding exists.
+func PinAgentDaemonUser(root, name string) (int, bool, error) {
+	dir := stateDir(root)
+	name = strings.TrimSpace(name)
+	var account *user.User
+	if name != "" {
+		u, err := lookupUser(name)
+		if err != nil {
+			return 0, false, fmt.Errorf("unknown user %q", name)
+		}
+		account = u
+	} else {
+		for _, candidate := range hqAccountNames {
+			if u, err := lookupUser(candidate); err == nil {
+				account = u
+				break
+			}
+		}
+		if account == nil {
+			return readAgentDaemonUID(dir)
+		}
+	}
+	if agentAccount(account.Username) {
+		return 0, false, errors.New("agent accounts cannot hold the agent-daemon key")
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil || uid <= 0 {
+		if name == "" {
+			return readAgentDaemonUID(dir)
+		}
+		return 0, false, fmt.Errorf("user %q has no uid", name)
+	}
+	if _, err := ensureStateDirAndPeers(dir); err != nil {
+		return 0, false, err
+	}
+	path := agentDaemonUIDPath(dir)
+	_ = os.Remove(path)
+	if err := os.WriteFile(path, []byte(strconv.Itoa(uid)+"\n"), 0o600); err != nil {
+		return 0, false, err
+	}
+	if err := stripDarwinACL(path); err != nil {
+		return 0, false, err
+	}
+	return uid, true, os.Chmod(path, 0o600)
 }
 
 // PinTerminalUser looks up name and pins that account as the terminal client.
