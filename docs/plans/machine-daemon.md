@@ -181,7 +181,10 @@ With debug mode on the user does not pair: the next human thin-client call, incl
 socket accepts, creates the state directory, mints `client.key` at home,
 and the daemon adopts that pubkey from the unix-socket UID. The enrolled
 agent-daemon key cannot bootstrap as the terminal client. `pair --enroll`
-remains for agent-daemon and a manual re-key.
+remains for agent-daemon and a manual re-key. Enrolling agent-daemon binds
+its key to the HQ account's UID when the machine has a dedicated HQ account
+or `--user NAME` is given; a bound key is refused from any other account
+([cross-account-channel.md](cross-account-channel.md#s6--hq-account-this-repo-d6)).
 
 ### Pairing and signing
 

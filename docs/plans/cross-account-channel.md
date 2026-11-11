@@ -245,8 +245,22 @@ Still to come:
 - HQ itself moves into the account, mints its `agent-daemon` key there,
   pairs with `pair --enroll ... --client agent-daemon`, and the copy in
   `user` is retired. That is agent-bot-hq's change.
-- agent-machine accepts the `agent-daemon` key only from the HQ account's
-  uid, as it already binds the terminal key to the terminal user.
+
+**As built: the `agent-daemon` key is bound to the HQ account**
+([#484](https://github.com/true-line/agent-bot-machine/issues/484)).
+`daemon pair --enroll HEX --fingerprint HEX --client agent-daemon` binds
+the key to an account and records its UID in `agent-daemon.uid` in the
+daemon's state directory. With `--user NAME` it binds to that account.
+Without it, it binds to the dedicated HQ account (`agent-bot-hq`, or
+`_agent-bot-hq` on macOS) when the machine has one. The record reports
+`uid=<n>`, or `uid=any` when the key is not bound. A bound key is accepted
+only from that UID; from any other account the request gets
+`MM_DAEMON_PEER_REFUSED`. Agent accounts cannot be bound.
+
+HQ in the owner's own account stays allowed: with no dedicated account and
+no `--user`, the key is not bound and works as before. A key enrolled
+before this change is not bound until it is enrolled again. On Windows the
+peer is not a numeric UID, so the key is never bound there.
 
 ## Replay
 

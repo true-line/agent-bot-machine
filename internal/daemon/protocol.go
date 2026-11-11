@@ -60,6 +60,11 @@ type Pairing struct {
 	Staged   ed25519.PublicKey
 	Extra    []ed25519.PublicKey
 	Terminal ed25519.PublicKey
+	// AgentDaemon is HQ's key. When AgentDaemonBound is set the gate
+	// accepts it only from AgentDaemonUID, the HQ account.
+	AgentDaemon      ed25519.PublicKey
+	AgentDaemonUID   int
+	AgentDaemonBound bool
 }
 
 // Stage records a replacement key and keeps Live authoritative.
@@ -173,6 +178,10 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	}
 	if !g.Pairing.allows(ed25519.PublicKey(pub)) {
 		return req, diag.DaemonUnknownKey, "request key is not the live pairing"
+	}
+	if p := g.Pairing; p.AgentDaemonBound && len(p.AgentDaemon) == ed25519.PublicKeySize &&
+		p.AgentDaemon.Equal(ed25519.PublicKey(pub)) && peerUID != p.AgentDaemonUID {
+		return req, diag.DaemonPeerRefused, fmt.Sprintf("the agent-daemon key is accepted only from the HQ account (uid %d)", p.AgentDaemonUID)
 	}
 	if g.Pairing.isTerminal(ed25519.PublicKey(pub)) && !terminalVerb(req.Verb) {
 		return req, diag.DaemonUnknownKey, "the terminal client key is only for update, status, and receipts"
