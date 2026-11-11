@@ -13,6 +13,17 @@ import (
 	"github.com/qwts/managed-machine/internal/diag"
 )
 
+// debugOn turns on the terminal debug client for a daemon state directory.
+func debugOn(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(debugClientPath(dir), []byte("on\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func peerPath(t *testing.T, dir, client, suffix string) string {
 	t.Helper()
 	peers := filepath.Join(dir, "peers")
@@ -25,6 +36,7 @@ func peerPath(t *testing.T, dir, client, suffix string) string {
 func TestEnrollClientTakesHexAndFingerprint(t *testing.T) {
 	userHome := t.TempDir()
 	adminHome := t.TempDir()
+	debugOn(t, stateDir(adminHome))
 	pubPath, err := PairClient(userHome)
 	if err != nil {
 		t.Fatal(err)
@@ -47,6 +59,7 @@ func TestEnrollClientTakesHexAndFingerprint(t *testing.T) {
 
 func TestLoadPairingKeepsLiveUntilConfirm(t *testing.T) {
 	dir := t.TempDir()
+	debugOn(t, dir)
 	livePub, _, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -83,6 +96,7 @@ func TestLoadPairingKeepsLiveUntilConfirm(t *testing.T) {
 
 func TestLoadPairingRevocationRefusesUntilConfirm(t *testing.T) {
 	dir := t.TempDir()
+	debugOn(t, dir)
 	livePub, livePriv := keyPair(t)
 	nextPub, nextPriv := keyPair(t)
 	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), livePub, 0o600); err != nil {
@@ -130,6 +144,7 @@ func TestLoadPairingRevocationRefusesUntilConfirm(t *testing.T) {
 
 func TestGateRereadsRevocationBeforeAuthorization(t *testing.T) {
 	dir := t.TempDir()
+	debugOn(t, dir)
 	livePub, livePriv := keyPair(t)
 	nextPub, nextPriv := keyPair(t)
 	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), livePub, 0o600); err != nil {
@@ -171,6 +186,7 @@ func TestGateRereadsRevocationBeforeAuthorization(t *testing.T) {
 
 func TestLoadPairingKeepsTheOtherClient(t *testing.T) {
 	dir := t.TempDir()
+	debugOn(t, dir)
 	terminal, _ := keyPair(t)
 	daemon, daemonPriv := keyPair(t)
 	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), terminal, 0o600); err != nil {
@@ -199,6 +215,7 @@ func TestLoadPairingKeepsTheOtherClient(t *testing.T) {
 
 func TestLoadPairingMigratesLegacyTerminalKey(t *testing.T) {
 	dir := t.TempDir()
+	debugOn(t, dir)
 	pub, _ := keyPair(t)
 	if err := os.WriteFile(filepath.Join(dir, "peer.pub"), pub, 0o600); err != nil {
 		t.Fatal(err)
@@ -220,6 +237,7 @@ func TestLoadPairingMigratesLegacyTerminalKey(t *testing.T) {
 
 func TestLoadPairingRefusesMixedState(t *testing.T) {
 	dir := t.TempDir()
+	debugOn(t, dir)
 	pub, _ := keyPair(t)
 	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), pub, 0o600); err != nil {
 		t.Fatal(err)
@@ -234,6 +252,7 @@ func TestLoadPairingRefusesMixedState(t *testing.T) {
 
 func TestLoadPairingRefusesAnUnknownClientFile(t *testing.T) {
 	dir := t.TempDir()
+	debugOn(t, dir)
 	if err := os.Mkdir(filepath.Join(dir, "peers"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -247,6 +266,7 @@ func TestLoadPairingRefusesAnUnknownClientFile(t *testing.T) {
 
 func TestLoadPairingNamesAStrayFile(t *testing.T) {
 	dir := t.TempDir()
+	debugOn(t, dir)
 	pub, priv := keyPair(t)
 	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), pub, 0o600); err != nil {
 		t.Fatal(err)
@@ -265,6 +285,7 @@ func TestLoadPairingNamesAStrayFile(t *testing.T) {
 
 func TestLoadPairingRevokesAgentDaemonOnly(t *testing.T) {
 	dir := t.TempDir()
+	debugOn(t, dir)
 	terminal, terminalPriv := keyPair(t)
 	daemon, _ := keyPair(t)
 	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), terminal, 0o600); err != nil {
@@ -293,6 +314,7 @@ func TestLoadPairingRevokesAgentDaemonOnly(t *testing.T) {
 
 func TestLoadPairingRotatesAgentDaemon(t *testing.T) {
 	dir := t.TempDir()
+	debugOn(t, dir)
 	terminal, _ := keyPair(t)
 	daemon, _ := keyPair(t)
 	next, _ := keyPair(t)
@@ -320,6 +342,7 @@ func TestLoadPairingRotatesAgentDaemon(t *testing.T) {
 
 func TestLoadPairingRefusesDuplicateKeys(t *testing.T) {
 	dir := t.TempDir()
+	debugOn(t, dir)
 	pub, _ := keyPair(t)
 	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), pub, 0o600); err != nil {
 		t.Fatal(err)
@@ -334,6 +357,7 @@ func TestLoadPairingRefusesDuplicateKeys(t *testing.T) {
 
 func TestTerminalPairingRefusesPlanAndApply(t *testing.T) {
 	dir := t.TempDir()
+	debugOn(t, dir)
 	terminal, terminalPriv := keyPair(t)
 	daemon, daemonPriv := keyPair(t)
 	if err := os.WriteFile(peerPath(t, dir, "terminal", ".pub"), terminal, 0o600); err != nil {

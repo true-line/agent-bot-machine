@@ -141,6 +141,7 @@ func TestThinClientStatusFromOtherUID(t *testing.T) {
 	user := filepath.Join(base, "user")
 	channel := filepath.Join(base, "channel")
 	t.Setenv("AGENT_MACHINE_CHANNEL", channel)
+	debugOn(t, stateDir(admin))
 	pubPath, err := PairClient(user)
 	if err != nil {
 		t.Fatal(err)
@@ -200,6 +201,7 @@ func TestThinClientBootstrapFromOtherUID(t *testing.T) {
 	user := filepath.Join(base, "user")
 	channel := filepath.Join(base, "channel")
 	t.Setenv("AGENT_MACHINE_CHANNEL", channel)
+	debugOn(t, stateDir(admin))
 	if err := os.MkdirAll(stateDir(admin), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -275,6 +277,7 @@ func TestThinClientBootstrapFromOtherUID(t *testing.T) {
 
 func TestAdoptTerminalRejectsAgentDaemonKey(t *testing.T) {
 	root := t.TempDir()
+	debugOn(t, stateDir(root))
 	pub, _, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)

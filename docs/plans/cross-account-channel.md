@@ -18,8 +18,9 @@ related_issues:
 
 Companion to [machine-daemon.md](machine-daemon.md) (P3–P8) and
 [macos-signing.md](macos-signing.md). This file is the product path: admin
-runs the executor; the owner's thin client in `user` and HQ
-(agent-bot-daemon) in its own `_agent-bot-hq` account are the clients.
+runs the executor; HQ (agent-bot-daemon) in its own `_agent-bot-hq` account
+is the client. The thin client in `user` is a debug tool, off by default
+(see [Debug client](#debug-client)).
 Pairing admin to itself is not the product.
 
 The platform is the source of truth for who holds what
@@ -95,12 +96,33 @@ risk: any `user` process can use the key for routine brokered requests
 requests stay out of reach because they need the presence signature. Moving
 HQ into its own account (S6) closes it.
 
+### Debug client
+
+Owner direction (2026-11-10): HQ is the intended caller of agent-machine.
+The thin client is a debug tool, not the mechanism, and the daemon allows
+it only in debug mode.
+
+- Debug mode is off by default. The prefix owner turns it on with
+  `daemon install --debug` and off again with a plain `daemon install`.
+  `daemon start` keeps the current mode. The install record reports
+  `debug_client=on|off`. `--user NAME` is valid only with
+  `install --debug`.
+- While it is off the daemon refuses `bootstrap`, and an enrolled
+  `terminal` key is not a live pairing: its requests get
+  `MM_DAEMON_UNKNOWN_KEY`. The `agent-daemon` key is not affected.
+- Consequence: with the daemon installed and debug mode off,
+  `managed-machine --update` from `user` is refused with a message that
+  names `daemon install --debug`. Updates then come through HQ.
+
+The pairing steps for the `terminal` client below apply only while debug
+mode is on.
+
 ### Pairing
 
 Two clients only: `terminal` (the owner, in `user`) and `agent-daemon`
 (HQ, in `_agent-bot-hq`).
 
-1. Admin: `daemon install [--user user]` writes the unit, loads it, and
+1. Admin: `daemon install [--debug [--user user]]` writes the unit, loads it, and
    waits until the socket accepts.
 2. User (next human command): create `~/.config/agent-machine` at `0700`
    if it is missing, mint `client.key` there, and `bootstrap` over the
@@ -149,13 +171,13 @@ off for `SecItemAdd` yields `-25293`.
 
 ### S2 — enroll UX (same repo)
 
-Happy path does not pair. `daemon install` as the prefix owner starts
-the executor. The next human thin-client call from the user account
+With the debug client on, the user does not pair. `daemon install --debug`
+as the prefix owner starts the executor. The next human thin-client call from the user account
 creates `~/.config/agent-machine` at `0700` when it is missing, mints
 `client.key` in that home (admin cannot write there), and sends a
 signed `bootstrap` request. A request signed by the enrolled
 `agent-daemon` key is refused. The daemon adopts a terminal pubkey because the
-unix-socket UID is the terminal user (`install --user NAME` pins it;
+unix-socket UID is the terminal user (`install --debug --user NAME` pins it;
 otherwise the first bootstrap pins the UID). The reply carries
 `daemon.pub` in the body; the client writes the pin next to
 `client.key`. Later calls are signed. If `client.key` disappears, the
@@ -197,7 +219,8 @@ agents.true-line.ai (true-line/agent-bot#66, #71) reach agent-machine only
 through HQ. HQ authorizes each request and alone signs it on this channel;
 the identity service and relays get no execution channel
 ([R2](https://github.com/true-line/agent-bot-platform/blob/main/docs/02-requirements/product-requirements.md#r2-control-stays-local)).
-The thin client remains the fallback when HQ is not installed.
+The thin client is a debug tool, off unless the prefix owner turns on debug
+mode.
 
 ### S6 — HQ account (this repo, D6)
 
@@ -241,7 +264,7 @@ Still to come:
 
    ```sh
    # admin
-   managed-machine daemon install --user user
+   managed-machine daemon install --debug --user user
    launchctl print user/$(id -u)/dev.qwts.agent-machine
    # user (no pair, no enroll paste)
    managed-machine daemon status

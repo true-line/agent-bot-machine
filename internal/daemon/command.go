@@ -38,10 +38,13 @@ agent-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpai
 
 install writes the per-user unit, loads it, and waits until the socket
 accepts. start does the same when the unit already exists. stop unloads it.
-install --user NAME pins the account that may auto-enroll as the terminal
-client. The user does not pair: the next human status mints client.key at
-home and the daemon adopts that pubkey from the unix-socket UID.
-pair --enroll HEX --fingerprint HEX remains for re-key and agent-daemon.
+HQ's agent-daemon key is the intended caller: pair --enroll HEX
+--fingerprint HEX --client agent-daemon enrolls it.
+The terminal client is a debug tool and is off by default. install --debug
+turns it on, and install without --debug turns it off again. While it is
+on, the next human status mints client.key at home and the daemon adopts
+that pubkey from the unix-socket UID. install --debug --user NAME pins the
+account that may enroll.
 status is running when the socket accepts, installed when only the unit
 file exists, and absent otherwise. channel=signed is the RPC proof.
 They refuse root, agent accounts, agent sessions, and a foreign home.
@@ -55,11 +58,12 @@ description. Nothing is registered with a system service manager.`,
 
 func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	var verb, enroll, fingerprint, clientName, userName string
-	var enrollSet, fingerprintSet, userSet bool
+	var enrollSet, fingerprintSet, userSet, debug bool
 	clientName = "terminal"
 	if d := command.Parse(args, command.Spec{
 		Positional:     &verb,
 		PositionalName: "daemon verb",
+		Bools:          map[string]*bool{"--debug": &debug},
 		Values: map[string]command.Flag{
 			"--enroll":      {Value: &enroll, Set: &enrollSet},
 			"--fingerprint": {Value: &fingerprint, Set: &fingerprintSet},
@@ -80,8 +84,11 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if fingerprintSet && verb != "pair" {
 		return cli.Result{Diagnostic: command.UsageErr("--fingerprint is only valid with pair")}
 	}
-	if userSet && verb != "install" && verb != "start" {
-		return cli.Result{Diagnostic: command.UsageErr("--user is only valid with install or start")}
+	if debug && verb != "install" {
+		return cli.Result{Diagnostic: command.UsageErr("--debug is only valid with install")}
+	}
+	if userSet && !debug {
+		return cli.Result{Diagnostic: command.UsageErr("--user is only valid with install --debug")}
 	}
 	goos := deps.GOOS
 	if goos == "" {
@@ -159,7 +166,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		}
 		return cli.Result{Records: []*output.Record{rec}}
 	case "install", "start":
-		return ensureService(deps, ctx, goos, root, userName)
+		return ensureService(deps, ctx, goos, root, userName, verb == "install", debug)
 	case "stop":
 		path, err := unitPath(goos, root)
 		if err != nil {
@@ -248,7 +255,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 }
 
-func ensureService(deps Deps, ctx cli.Context, goos, root, userName string) cli.Result {
+func ensureService(deps Deps, ctx cli.Context, goos, root, userName string, install, debug bool) cli.Result {
 	exec, err := deps.executable(ctx)
 	if err != nil {
 		return serviceFailed(err)
@@ -278,6 +285,15 @@ func ensureService(deps Deps, ctx cli.Context, goos, root, userName string) cli.
 			return undoInstall(deps, before, err)
 		}
 	}
+	if install {
+		if err := SetDebugClient(root, debug); err != nil {
+			return serviceFailed(err)
+		}
+	}
+	debugOn, err := debugClientEnabled(stateDir(root))
+	if err != nil {
+		return serviceFailed(err)
+	}
 	if userName != "" {
 		if err := PinTerminalUser(root, userName); err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
@@ -296,7 +312,11 @@ func ensureService(deps Deps, ctx cli.Context, goos, root, userName string) cli.
 		}
 		state = "running"
 	}
-	rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", state).Set("path", path)
+	debugState := "off"
+	if debugOn {
+		debugState = "on"
+	}
+	rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", state).Set("path", path).Set("debug_client", debugState)
 	return cli.Result{Records: []*output.Record{rec}}
 }
 
