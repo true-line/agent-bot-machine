@@ -3,6 +3,7 @@ package members
 import (
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -84,7 +85,7 @@ func TestDarwinPlanAndApplyCommands(t *testing.T) {
 	digest, _ := p.Digest()
 	raw, _ := json.Marshal(Saved{PlanID: applyID, PlanDigest: digest, Plan: p})
 	// macOS keeps the owner's state in Application Support.
-	w.h.files["/home/owner/Library/Application Support/managed-machine/members/plans/"+applyID+".json"] = string(raw)
+	w.h.files[filepath.Join("/home/owner", "Library", "Application Support", "managed-machine", "members", "plans", applyID+".json")] = string(raw)
 	w.approved(t, applyID, p)
 	res = Command(w.deps).Run(on(target.DarwinARM64), []string{"apply", applyID})
 	if res.Diagnostic != nil {
