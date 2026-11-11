@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"os/user"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -82,6 +83,13 @@ func (h OSHost) Account(name string) (Account, bool, error) {
 			continue
 		}
 		a.Groups = append(a.Groups, g.Name)
+	}
+	if runtime.GOOS == "darwin" && h.Passwd == "" && h.Group == "" {
+		// macOS keeps accounts in Directory Services, not in the files.
+		if err := darwinSharing(&a); err != nil {
+			return Account{}, false, err
+		}
+		return a, true, nil
 	}
 	sort.Strings(a.Groups)
 	passwd, err := fields(h.file(h.Passwd, "/etc/passwd"))

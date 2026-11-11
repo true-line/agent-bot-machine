@@ -3,6 +3,7 @@ package members
 import (
 	"fmt"
 	"path"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -11,6 +12,16 @@ import (
 // receipt is also the record that an approval was used, so no other account
 // may be able to remove it.
 const ReceiptsDir = "/var/lib/managed-machine/members/receipts"
+
+// DarwinReceiptsDir is ReceiptsDir on macOS, which has no /var/lib.
+const DarwinReceiptsDir = "/var/db/managed-machine/members/receipts"
+
+func receiptsDir() string {
+	if runtime.GOOS == "darwin" {
+		return DarwinReceiptsDir
+	}
+	return ReceiptsDir
+}
 
 // Root is everything an apply changes, and the two things only root can
 // read. The real one is OSRoot; tests inject a recording one.
@@ -75,6 +86,10 @@ func Precheck(p Plan, r Root) error {
 		if !locked(field) {
 			return refuse(RefusedAccount, "%s account %s has a password or an empty one; a dedicated account is locked", what, s.Target)
 		}
+	}
+	if p.Dir == DarwinDir {
+		// A macOS plan installs no launch rule.
+		return nil
 	}
 	have, ok, err := r.ReadSudoers()
 	if err != nil {
@@ -183,5 +198,5 @@ type Receipt struct {
 
 // ReceiptPath is the receipt of one plan.
 func ReceiptPath(planID string) string {
-	return path.Join(ReceiptsDir, planID+".json")
+	return path.Join(receiptsDir(), planID+".json")
 }

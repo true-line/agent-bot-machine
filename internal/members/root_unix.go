@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +46,9 @@ func runProgram(name string, args ...string) error {
 
 // PasswordField implements Root.
 func (OSRoot) PasswordField(account string) (string, bool, error) {
+	if runtime.GOOS == "darwin" {
+		return darwinPasswordField(account)
+	}
 	records, err := fields(shadowPath)
 	if err != nil {
 		return "", false, err
@@ -78,6 +82,9 @@ func (OSRoot) ReadSudoers() (string, bool, error) {
 
 // CreateAccount implements Root. useradd leaves a new account locked.
 func (OSRoot) CreateAccount(name string) error {
+	if runtime.GOOS == "darwin" {
+		return errors.New("member accounts are Linux only")
+	}
 	home := filepath.Join(HomeBase, name)
 	if err := runProgram(useraddPath, "--create-home", "--home-dir", home, "--user-group", "--shell", NoLoginShell, name); err != nil {
 		return err
@@ -88,6 +95,9 @@ func (OSRoot) CreateAccount(name string) error {
 // CreateHQAccount implements Root. A system account gets a uid below the
 // range of people's accounts and no password aging.
 func (OSRoot) CreateHQAccount(name string) error {
+	if runtime.GOOS == "darwin" {
+		return darwinCreateHQAccount(name)
+	}
 	home := filepath.Join(HQHomeBase, name)
 	if err := runProgram(useraddPath, "--system", "--create-home", "--home-dir", home, "--user-group", "--shell", NoLoginShell, name); err != nil {
 		return err
@@ -205,7 +215,7 @@ func (OSRoot) WriteFile(p string, mode uint32, content string, validate bool) er
 
 // Claim implements Root.
 func (OSRoot) Claim(planID string, receipt []byte) (bool, error) {
-	if err := os.MkdirAll(ReceiptsDir, 0o755); err != nil {
+	if err := os.MkdirAll(receiptsDir(), 0o755); err != nil {
 		return false, err
 	}
 	f, err := os.OpenFile(ReceiptPath(planID), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
@@ -235,6 +245,9 @@ func (OSRoot) Finish(planID string, receipt []byte) error {
 // far as /proc shows them. An agent session that starts sudo leaves its
 // markers there even though sudo resets the environment of the command.
 func AncestorEnvs() []map[string]string {
+	if runtime.GOOS == "darwin" {
+		return darwinAncestorEnvs()
+	}
 	var out []map[string]string
 	pid := os.Getppid()
 	for hops := 0; pid > 1 && hops < 64; hops++ {

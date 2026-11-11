@@ -44,7 +44,11 @@ boot, and the sudoers rule that lets the HQ account start members
 (docs/plans/member-accounts.md).
 
 plan reads the host and changes nothing. It saves the plan and prints its
-plan_id and plan_digest. Linux only.
+plan_id and plan_digest.
+
+Linux plans everything. macOS plans the HQ account alone (` + DarwinHQAccount + `, a
+hidden role account with home /var/agent-bot-hq): there plan takes
+--hq-account and nothing else. Other systems are refused.
 
 apply needs root and an approval. The owner approves the plan's digest in
 the local web UI, then runs apply with sudo in their own terminal within
@@ -54,7 +58,8 @@ option skips the approval. An agent account or session is refused.
 
 Options
 -h, --help              Show this usage and read nothing
---hq-account <account>  The account HQ runs in (default ` + DefaultHQAccount + `). It is
+--hq-account <account>  The account HQ runs in (default ` + DefaultHQAccount + `, or
+                        ` + DarwinHQAccount + ` on macOS). It is
                         created as a locked service account when it does not
                         exist. Naming your own account works but is not
                         recommended: the plan says it is not dedicated
@@ -125,26 +130,31 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}); d != nil {
 		return cli.Result{Diagnostic: d}
 	}
+	host, dg := command.DetectHost(ctx)
+	if dg != nil {
+		return cli.Result{Diagnostic: dg}
+	}
+	platform, ok := platformOf(string(host.Target))
+	if !ok {
+		return failure(diag.MembersUnsupported, "member accounts are Linux only, and the HQ account alone is planned on macOS; this host is %s", host.Target)
+	}
 	if hqAccount == "" {
-		hqAccount = DefaultHQAccount
+		hqAccount = DefaultHQAccountFor(platform)
 	}
 	switch {
+	case platform == PlatformDarwin && (hqConfigPath != "" || hasList || hasDir):
+		return failure(diag.MembersUnsupported, "member accounts are Linux only; on macOS members plan takes --hq-account and nothing else")
+	case platform == PlatformDarwin:
 	case (hqConfigPath != "") == hasList:
 		return cli.Result{Diagnostic: command.UsageErr("members plan needs exactly one of --hq-config and --members")}
 	case hqConfigPath != "" && hasDir:
 		return cli.Result{Diagnostic: command.UsageErr("--dir goes with --members; --hq-config names its own directory")}
 	}
 
-	host, dg := command.DetectHost(ctx)
-	if dg != nil {
-		return cli.Result{Diagnostic: dg}
-	}
-	if !strings.HasPrefix(string(host.Target), "linux/") {
-		return failure(diag.MembersUnsupported, "member accounts are Linux only; this host is %s", host.Target)
-	}
-
-	in := Input{HQAccount: hqAccount, Dir: dir}
-	if hqConfigPath != "" {
+	in := Input{HQAccount: hqAccount, Dir: dir, Platform: platform}
+	if platform == PlatformDarwin {
+		// The HQ account alone.
+	} else if hqConfigPath != "" {
 		read := deps.ReadFile
 		if read == nil {
 			read = os.ReadFile
@@ -163,7 +173,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			}
 		}
 	}
-	if name, err := deps.ResolveUsername("linux"); err == nil {
+	if name, err := deps.ResolveUsername(usernameOS(platform)); err == nil {
 		in.Invoker = name
 	}
 
@@ -220,6 +230,25 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			SetOptional("content", s.Content))
 	}
 	return cli.Result{Records: records}
+}
+
+// platformOf maps a host target to Input.Platform. Linux plans everything;
+// macOS plans the HQ account alone.
+func platformOf(target string) (string, bool) {
+	switch {
+	case strings.HasPrefix(target, "linux/"):
+		return "", true
+	case strings.HasPrefix(target, "darwin/"):
+		return PlatformDarwin, true
+	}
+	return "", false
+}
+
+func usernameOS(platform string) string {
+	if platform == PlatformDarwin {
+		return "darwin"
+	}
+	return "linux"
 }
 
 // save writes the plan file, private to the account that made it.

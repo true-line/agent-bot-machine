@@ -31,6 +31,18 @@ const (
 	// account, and its home is HQ's state, not a person's files.
 	HQHomeBase   = "/var/lib"
 	NoLoginShell = "/usr/sbin/nologin"
+	// PlatformDarwin is Input.Platform on macOS. There a plan holds the HQ
+	// account and nothing else: member accounts wait for HQ plan row 29.
+	PlatformDarwin = "darwin"
+	// DarwinHQAccount is the dedicated HQ account on macOS. Role accounts
+	// there start with an underscore.
+	DarwinHQAccount = "_agent-bot-hq"
+	// DarwinHQHomeBase holds the HQ account's home on macOS, named without
+	// the underscore: /var/agent-bot-hq.
+	DarwinHQHomeBase   = "/var"
+	DarwinNoLoginShell = "/usr/bin/false"
+	// DarwinDir is the members directory of a macOS plan: there is none.
+	DarwinDir = "none"
 	// PlanVersion is part of the digest: a change to what a plan means
 	// invalidates every approval made before it.
 	PlanVersion = 2
@@ -79,6 +91,32 @@ type Input struct {
 	Members   []string
 	// Invoker is the account running the plan. It can never be a member.
 	Invoker string
+	// Platform is PlatformDarwin on macOS and empty on Linux. It is not part
+	// of the plan: apply takes it from the host it runs on.
+	Platform string
+}
+
+// DefaultHQAccountFor is the dedicated HQ account of a platform.
+func DefaultHQAccountFor(platform string) string {
+	if platform == PlatformDarwin {
+		return DarwinHQAccount
+	}
+	return DefaultHQAccount
+}
+
+// HQHome is where a new HQ account's home goes.
+func HQHome(platform, name string) string {
+	if platform == PlatformDarwin {
+		return path.Join(DarwinHQHomeBase, strings.TrimPrefix(name, "_"))
+	}
+	return path.Join(HQHomeBase, name)
+}
+
+func hqShell(platform string) string {
+	if platform == PlatformDarwin {
+		return DarwinNoLoginShell
+	}
+	return NoLoginShell
 }
 
 // Account is the host's record of one account.
@@ -166,6 +204,16 @@ func Normalize(in Input) (Input, error) {
 	if !accountName.MatchString(in.HQAccount) {
 		return in, refuse(RefusedList, "HQ account %q is not an account name", in.HQAccount)
 	}
+	if in.Platform == PlatformDarwin {
+		if len(in.Members) > 0 {
+			return in, refuse(RefusedList, "member accounts are Linux only; on macOS the plan holds the HQ account alone")
+		}
+		if in.Dir != "" && in.Dir != DarwinDir {
+			return in, refuse(RefusedList, "a macOS plan has no members directory")
+		}
+		in.Dir, in.Members = DarwinDir, nil
+		return in, nil
+	}
 	if in.Dir == "" {
 		in.Dir = DefaultDir
 	}
@@ -212,6 +260,9 @@ func Build(in Input, h Host) (Plan, error) {
 		return Plan{}, err
 	}
 	p.Steps = append(p.Steps, hq)
+	if in.Platform == PlatformDarwin {
+		return p, nil
+	}
 	for _, m := range in.Members {
 		step, err := accountStep(m, h, uids)
 		if err != nil {
@@ -306,7 +357,11 @@ func hqAccountStep(in Input, h Host, uids map[int]string) (Step, error) {
 			return Step{}, refuse(RefusedAccount, "HQ account %s is the account running this command and has no account record", name)
 		}
 		want.Action = ActionCreate
-		want.Detail = fmt.Sprintf("service account, home %s, shell %s, private group, no password, no other groups", path.Join(HQHomeBase, name), NoLoginShell)
+		kind := "service account"
+		if in.Platform == PlatformDarwin {
+			kind = "hidden role account"
+		}
+		want.Detail = fmt.Sprintf("%s, home %s, shell %s, private group, no password, no other groups", kind, HQHome(in.Platform, name), hqShell(in.Platform))
 		return want, nil
 	}
 	if a.UID == 0 {
@@ -328,7 +383,7 @@ func hqAccountStep(in Input, h Host, uids map[int]string) (Step, error) {
 		// No group and no mode: nothing about this account is checked or
 		// changed at apply.
 		return Step{Kind: KindHQAccount, Target: name, Action: ActionNone,
-			Detail: fmt.Sprintf("exists and is not a dedicated account (%s); it is left as it is, and HQ's state is only as private as this account. %s", strings.Join(why, "; "), sharedAdvice(name))}, nil
+			Detail: fmt.Sprintf("exists and is not a dedicated account (%s); it is left as it is, and HQ's state is only as private as this account. %s", strings.Join(why, "; "), sharedAdvice(in.Platform, name))}, nil
 	}
 	home, ok, err := h.Lstat(a.Home)
 	if err != nil {
@@ -348,11 +403,12 @@ func hqAccountStep(in Input, h Host, uids map[int]string) (Step, error) {
 
 // sharedAdvice is what an owner is told when HQ would run in an account
 // that is not dedicated to it.
-func sharedAdvice(name string) string {
-	if name == DefaultHQAccount {
+func sharedAdvice(platform, name string) string {
+	dedicated := DefaultHQAccountFor(platform)
+	if name == dedicated {
 		return "Recommended: take " + name + " out of every other group and give it a private group of its own name, then plan again"
 	}
-	return "Recommended: plan without --hq-account, which creates and uses the dedicated account " + DefaultHQAccount
+	return "Recommended: plan without --hq-account, which creates and uses the dedicated account " + dedicated
 }
 
 // SharedHQAdvice returns the recommendation for a plan whose HQ account is
@@ -360,7 +416,11 @@ func sharedAdvice(name string) string {
 func (p Plan) SharedHQAdvice() string {
 	for _, s := range p.Steps {
 		if s.Kind == KindHQAccount && s.Action == ActionNone && s.Mode == "" {
-			return "HQ account " + s.Target + " is not a dedicated account: every process in it can read HQ's state and start members. " + sharedAdvice(s.Target)
+			platform := ""
+			if p.Dir == DarwinDir {
+				platform = PlatformDarwin
+			}
+			return "HQ account " + s.Target + " is not a dedicated account: every process in it can read HQ's state and start members. " + sharedAdvice(platform, s.Target)
 		}
 	}
 	return ""

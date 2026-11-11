@@ -645,13 +645,40 @@ jobs:
           MM_MEMBERS_REAL_ACCOUNTS: '1'
         run: bash tests/members-apply.test.sh
 
+  hq-account-macos:
+    # The HQ account on a real macOS host (docs/plans/cross-account-channel.md,
+    # S6): plan, approval and root apply. It creates an OS account on the
+    # throwaway runner.
+    name: HQ account on macOS (real account)
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: macos-15
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the merge candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Plan, approve and apply the HQ account
+        env:
+          MM_MEMBERS_REAL_ACCOUNTS: '1'
+        run: bash tests/members-apply-macos.test.sh
+
   required:
     # The single check to mark required on main. It passes when every heavy
     # job succeeded, or when they were all skipped because the PR touches no
     # Go core path; it fails if any job failed or was cancelled.
     name: Go core required
     if: always()
-    needs: [changes, build, core, first-slice-gate, s2-gate, s3-gate, s4-gate, s5-gate, release-gate, s6-gate, members-accounts]
+    needs: [changes, build, core, first-slice-gate, s2-gate, s3-gate, s4-gate, s5-gate, release-gate, s6-gate, members-accounts, hq-account-macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

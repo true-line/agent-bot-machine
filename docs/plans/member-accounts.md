@@ -34,8 +34,10 @@ The same plan creates the HQ account when it does not exist. That is S6 in
 
 ## Target
 
-Linux only. macOS waits for HQ plan row 29; every command here refuses on
-another OS before it reads anything.
+Linux only for member accounts, which on macOS wait for HQ plan row 29. On
+macOS the plan holds the HQ account alone (S6 in
+[cross-account-channel.md](cross-account-channel.md)). Every command here
+refuses on another OS before it reads anything.
 
 ### What is created
 

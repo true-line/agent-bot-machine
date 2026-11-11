@@ -76,8 +76,9 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if dg != nil {
 		return cli.Result{Diagnostic: dg}
 	}
-	if !strings.HasPrefix(string(host.Target), "linux/") {
-		return failure(diag.MembersUnsupported, "member accounts are Linux only; this host is %s", host.Target)
+	platform, ok := platformOf(string(host.Target))
+	if !ok {
+		return failure(diag.MembersUnsupported, "member accounts are Linux only, and the HQ account alone is applied on macOS; this host is %s", host.Target)
 	}
 
 	// The caller: root, through sudo, from a human's own session.
@@ -158,7 +159,7 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 
 	// The host as it is now.
-	p, err := Build(Input{HQAccount: saved.Plan.HQAccount, Dir: saved.Plan.Dir, Members: saved.Plan.Members, Invoker: owner}, h)
+	p, err := Build(Input{HQAccount: saved.Plan.HQAccount, Dir: saved.Plan.Dir, Members: saved.Plan.Members, Invoker: owner, Platform: platform}, h)
 	if err != nil {
 		return mapRefusal(err, diag.MembersPlanFailed, "cannot read the host")
 	}
@@ -202,7 +203,7 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		finish("failed", at)
 		return failure(diag.MembersApplyFailed, "stopped at %v; earlier steps stay applied; plan again to see the host", err)
 	}
-	after, err := Build(Input{HQAccount: p.HQAccount, Dir: p.Dir, Members: p.Members, Invoker: owner}, h)
+	after, err := Build(Input{HQAccount: p.HQAccount, Dir: p.Dir, Members: p.Members, Invoker: owner, Platform: platform}, h)
 	if err != nil {
 		finish("failed", "verification")
 		return mapRefusal(err, diag.MembersApplyFailed, "the host is not as planned after the apply")
