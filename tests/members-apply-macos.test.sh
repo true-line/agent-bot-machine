@@ -30,7 +30,8 @@ ME="$(id -un)"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { echo "ok: $*"; }
-attr() { dscl . -read "/Users/$1" "$2" 2>/dev/null | sed -n "s/^$2: //p"; }
+# dscl prints an attribute outside its standard set as dsAttrTypeNative:<name>.
+attr() { dscl . -read "/Users/$1" "$2" 2>/dev/null | sed -En "s/^(dsAttrTypeNative:)?$2: //p"; }
 exists() { dscl . -read "/Users/$1" UniqueID >/dev/null 2>&1; }
 
 # The account agent-machine runs in: the Homebrew prefix owner, or this one.
