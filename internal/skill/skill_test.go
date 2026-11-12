@@ -503,36 +503,6 @@ func TestSkillPath(t *testing.T) {
 		}
 	}
 
-	// 2b. An extracted release archive: the bundle beside the executable
-	// (#377), used only when ../libexec has none.
-	archiveDir := filepath.Join(base, "extracted", "managed-machine")
-	archiveBundleDir := filepath.Join(archiveDir, "skills", "managed-machine")
-	if err := os.MkdirAll(archiveBundleDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	archiveExe := filepath.Join(archiveDir, "managed-machine")
-	if err := os.WriteFile(archiveExe, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(archiveBundleDir, "SKILL.md"), []byte("# skill\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	aOut, aErr, aCode := runWith(nil, archiveExe, "path", "--human")
-	if want := fmt.Sprintf("%s\ncommit unknown\n", archiveBundleDir); aCode != 0 || aErr != "" || aOut != want {
-		t.Errorf("extracted archive: exit=%d stderr=%q\ngot:  %q\nwant: %q", aCode, aErr, aOut, want)
-	}
-	installedBundleDir := filepath.Join(base, "extracted", "libexec", "skills", "managed-machine")
-	if err := os.MkdirAll(installedBundleDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(installedBundleDir, "SKILL.md"), []byte("# skill\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	iOut, _, iCode := runWith(nil, archiveExe, "path", "--human")
-	if want := fmt.Sprintf("%s\ncommit unknown\n", installedBundleDir); iCode != 0 || iOut != want {
-		t.Errorf("../libexec wins over the executable's directory: exit=%d\ngot:  %q\nwant: %q", iCode, iOut, want)
-	}
-
 	// 3. Missing <bundle dir>/SKILL.md -> MM_SKILL_BUNDLE_MISSING (exit 1).
 	emptyRoot := filepath.Join(base, "empty-bundle")
 	mOut, mErr, mCode := runWith(map[string]string{BundleRootEnv: emptyRoot}, "", "path")

@@ -44,8 +44,7 @@ recognizing when a release is required.
       - `vendor-dmg` for a signed `.app` with no cask, fetched straight from
         the vendor DMG (qwts/managed-machine#116). Row fields: `app_name`
         (exact `.app` bundle name), `team_id`, pinned `url` or per-arch
-        `url_arm64`/`url_x86_64`, `url_hosts`, `sha256` or per-arch
-        `sha256_arm64`/`sha256_x86_64` (or `"no_check"` behind
+        `url_arm64`/`url_x86_64`, `url_hosts`, `sha256` (or `"no_check"` behind
         `allow_rolling_url`, with mandatory notarization), optional `version`
         for drift convergence, optional `sparkle` (appcast in `url`; the
         enclosure is resolved at download time), `aliases`, optional `auto`.
@@ -69,9 +68,8 @@ recognizing when a release is required.
       (exact `.app` bundle name), `team_id`, `url_hosts`, `homepage_hosts`,
       `aliases`, optional `auto`.
     - Desktop/IDE via direct DMG: `name`, `kind: "vendor-dmg"`, `app_name`,
-      `team_id`, `url` or `url_arm64`/`url_x86_64`, `url_hosts`, `sha256` or
-      `sha256_arm64`/`sha256_x86_64` (or `"no_check"` with
-      `allow_rolling_url`), optional `version`, optional
+      `team_id`, `url` or `url_arm64`/`url_x86_64`, `url_hosts`, `sha256` (or
+      `"no_check"` with `allow_rolling_url`), optional `version`, optional
       `sparkle`, `aliases`, optional `auto`.
    - Use `"auto": false` for setup-only components that must not run on every
      `managed-machine --update` / bootstrap.

@@ -134,14 +134,10 @@ func makeHostRunnableLinuxDist(t *testing.T, repoRoot, version, srcDist, arch st
 	}
 	licenseBytes := bytes.ReplaceAll(licenseRaw, []byte("\r\n"), []byte("\n"))
 
-	bundle, err := skillBundleEntries(repoRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	linuxTarGz, err := buildTarGz(append([]archiveEntry{
+	linuxTarGz, err := buildTarGz([]archiveEntry{
 		{Name: "LICENSE", Mode: 0o644, Data: licenseBytes},
 		{Name: "managed-machine", Mode: 0o755, Data: hostBin},
-	}, bundle...))
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,38 +295,6 @@ func runInstallCoreShSuite(t *testing.T, scriptPath, version, distDir, arch, una
 			t.Errorf("installed managed-machine --version = %q, want %q", string(verOut), version+"\n")
 		}
 
-		// The skill bundle is installed beside the binary, and `skill path`
-		// finds it there (#377).
-		bundleDir := filepath.Join(prefixDir, "skills", "managed-machine")
-		wantSkill, err := os.ReadFile(filepath.Join(repoRootForTest(t), "skills", "managed-machine", "SKILL.md"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		gotSkill, err := os.ReadFile(filepath.Join(bundleDir, "SKILL.md"))
-		if err != nil {
-			t.Fatalf("read installed skill bundle: %v", err)
-		}
-		if !bytes.Equal(gotSkill, bytes.ReplaceAll(wantSkill, []byte("\r\n"), []byte("\n"))) {
-			t.Errorf("installed SKILL.md differs from the repository's")
-		}
-		if !strings.Contains(stdout, "Installed the skill bundle to "+bundleDir) {
-			t.Errorf("first install stdout %q does not report the skill bundle", stdout)
-		}
-		pathOut, err := exec.Command(installedBin, "skill", "path", "--human").CombinedOutput()
-		if err != nil {
-			t.Fatalf("installed managed-machine skill path failed: %v (%s)", err, pathOut)
-		}
-		resolvedBundle, err := filepath.EvalSymlinks(bundleDir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if want := resolvedBundle + "\ncommit unknown\n"; string(pathOut) != want {
-			t.Errorf("installed skill path = %q, want %q", pathOut, want)
-		}
-		if ents, err := os.ReadDir(filepath.Join(prefixDir, "skills")); err != nil || len(ents) != 1 {
-			t.Errorf("staging left behind in %s: %v (err=%v)", filepath.Join(prefixDir, "skills"), ents, err)
-		}
-
 		// Verify no file outside prefix and tmpDir was created: harness home is byte-identical.
 		if afterHome := snapshotTree(t, homeDir); afterHome != beforeHome {
 			t.Fatalf("harness home changed when installing to explicit --prefix:\nbefore:\n%s\nafter:\n%s", beforeHome, afterHome)
@@ -361,9 +325,6 @@ func runInstallCoreShSuite(t *testing.T, scriptPath, version, distDir, arch, una
 		fi, err := os.Stat(installedBin)
 		if err != nil {
 			t.Fatal(err)
-		}
-		if strings.Contains(stdout2, "Installed the skill bundle") {
-			t.Errorf("second run reinstalled an identical skill bundle: %q", stdout2)
 		}
 		if !fi.ModTime().UTC().Equal(pastTime) {
 			t.Errorf("second run rewrote binary: mtime = %s, want %s", fi.ModTime().UTC(), pastTime)
@@ -549,13 +510,4 @@ func runInstallCoreShSuite(t *testing.T, scriptPath, version, distDir, arch, una
 		}
 		assertNoSentinelInvocations(t, sentinelLog)
 	})
-}
-
-func repoRootForTest(t *testing.T) string {
-	t.Helper()
-	root, err := findRepoRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return root
 }
