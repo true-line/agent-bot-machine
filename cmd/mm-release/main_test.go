@@ -55,6 +55,10 @@ func TestBuildDeterminismArchiveContentsAndVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantLicense = bytes.ReplaceAll(wantLicense, []byte("\r\n"), []byte("\n"))
+	bundle, err := skillBundleEntries(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	wantArchives := []struct {
 		name  string
@@ -86,11 +90,17 @@ func TestBuildDeterminismArchiveContentsAndVerify(t *testing.T) {
 			darwinDigest = sha256Hex(b1)
 		}
 
+		// Linux and Windows archives carry the skill bundle; darwin's comes
+		// from the formula (#377).
+		var wantBundle []archiveEntry
+		if wa.goos != "darwin" {
+			wantBundle = bundle
+		}
 		var binBytes []byte
 		if wa.isZip {
-			binBytes = checkZipArchive(t, wa.name, b1, wantLicense)
+			binBytes = checkZipArchive(t, wa.name, b1, wantLicense, wantBundle)
 		} else {
-			binBytes = checkTarGzArchive(t, wa.name, b1, wantLicense)
+			binBytes = checkTarGzArchive(t, wa.name, b1, wantLicense, wantBundle)
 		}
 
 		// Assert embedded version in every binary: run the host binary and read
@@ -172,7 +182,7 @@ func TestBuildDeterminismArchiveContentsAndVerify(t *testing.T) {
 	testFormulaPinVerification(t, out1, wantVersion, darwinDigest)
 }
 
-func checkTarGzArchive(t *testing.T, archiveName string, raw []byte, wantLicense []byte) []byte {
+func checkTarGzArchive(t *testing.T, archiveName string, raw []byte, wantLicense []byte, wantBundle []archiveEntry) []byte {
 	t.Helper()
 	gz, err := gzip.NewReader(bytes.NewReader(raw))
 	if err != nil {
@@ -209,8 +219,17 @@ func checkTarGzArchive(t *testing.T, archiveName string, raw []byte, wantLicense
 		}
 		entries = append(entries, gotEntry{hdr: hdr, data: data})
 	}
-	if len(entries) != 2 {
-		t.Fatalf("%s: got %d tar entries, want 2", archiveName, len(entries))
+	if len(entries) != 2+len(wantBundle) {
+		t.Fatalf("%s: got %d tar entries, want %d", archiveName, len(entries), 2+len(wantBundle))
+	}
+	for i, want := range wantBundle {
+		got := entries[2+i]
+		if got.hdr.Name != want.Name || got.hdr.Mode != 0o644 || got.hdr.Typeflag != tar.TypeReg {
+			t.Errorf("%s: tar entry %d = %q mode %#o, want %q mode 0644", archiveName, 2+i, got.hdr.Name, got.hdr.Mode, want.Name)
+		}
+		if !bytes.Equal(got.data, want.Data) {
+			t.Errorf("%s: %s content mismatch", archiveName, want.Name)
+		}
 	}
 	if entries[0].hdr.Name != "LICENSE" || entries[1].hdr.Name != "managed-machine" {
 		t.Fatalf("%s: tar entry names = [%q, %q], want [LICENSE, managed-machine]",
@@ -239,14 +258,21 @@ func checkTarGzArchive(t *testing.T, archiveName string, raw []byte, wantLicense
 	return entries[1].data
 }
 
-func checkZipArchive(t *testing.T, archiveName string, raw []byte, wantLicense []byte) []byte {
+func checkZipArchive(t *testing.T, archiveName string, raw []byte, wantLicense []byte, wantBundle []archiveEntry) []byte {
 	t.Helper()
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
 		t.Fatalf("%s: zip.NewReader: %v", archiveName, err)
 	}
-	if len(zr.File) != 2 {
-		t.Fatalf("%s: got %d zip entries, want 2", archiveName, len(zr.File))
+	if len(zr.File) != 2+len(wantBundle) {
+		t.Fatalf("%s: got %d zip entries, want %d", archiveName, len(zr.File), 2+len(wantBundle))
+	}
+	wantBundleData := map[string][]byte{}
+	for i, want := range wantBundle {
+		if got := zr.File[2+i]; got.Name != want.Name || got.Mode().Perm() != 0o644 {
+			t.Errorf("%s: zip entry %d = %q mode %#o, want %q mode 0644", archiveName, 2+i, got.Name, got.Mode().Perm(), want.Name)
+		}
+		wantBundleData[want.Name] = want.Data
 	}
 	if zr.File[0].Name != "LICENSE" || zr.File[1].Name != "managed-machine.exe" {
 		t.Fatalf("%s: zip entry names = [%q, %q], want [LICENSE, managed-machine.exe]",
@@ -272,7 +298,11 @@ func checkZipArchive(t *testing.T, archiveName string, raw []byte, wantLicense [
 		if err != nil {
 			t.Fatalf("%s: read %s: %v", archiveName, f.Name, err)
 		}
-		if f.Name == "LICENSE" {
+		if want, ok := wantBundleData[f.Name]; ok {
+			if !bytes.Equal(data, want) {
+				t.Errorf("%s: %s content mismatch", archiveName, f.Name)
+			}
+		} else if f.Name == "LICENSE" {
 			if !bytes.Equal(data, wantLicense) {
 				t.Errorf("%s: LICENSE content mismatch", archiveName)
 			}
@@ -479,5 +509,43 @@ func TestCLIUsageAndEdgeCases(t *testing.T) {
 	errBuf.Reset()
 	if code := run([]string{"verify", "-dist", filepath.Join(t.TempDir(), "missing")}, &outBuf, &errBuf); code != 1 || !strings.Contains(errBuf.String(), "SHA256SUMS") {
 		t.Errorf("missing dist: exit %d, stderr %q", code, errBuf.String())
+	}
+}
+
+// The archives must not be buildable without the skill bundle (#377).
+func TestSkillBundleEntries(t *testing.T) {
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := skillBundleEntries(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name, skillBundleDir+"/") || e.Mode != 0o644 || bytes.Contains(e.Data, []byte("\r\n")) {
+			t.Errorf("entry %q mode %#o is not a 0644 LF file under %s", e.Name, e.Mode, skillBundleDir)
+		}
+		found = found || e.Name == skillBundleDir+"/SKILL.md"
+	}
+	if !found {
+		t.Fatalf("no %s/SKILL.md in %d entries", skillBundleDir, len(entries))
+	}
+
+	empty := t.TempDir()
+	if _, err := skillBundleEntries(empty); err == nil {
+		t.Fatal("a repository without the skill bundle built entries")
+	}
+	if err := os.MkdirAll(filepath.Join(empty, "skills", "managed-machine"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := skillBundleEntries(empty); err == nil || !strings.Contains(err.Error(), "SKILL.md is missing") {
+		t.Fatalf("an empty skill bundle: %v", err)
+	}
+	for _, spec := range releaseTargets() {
+		if got, want := spec.shipsSkillBundle(), spec.OS != "darwin"; got != want {
+			t.Errorf("%s ships the bundle = %v, want %v", spec.Target, got, want)
+		}
 	}
 }

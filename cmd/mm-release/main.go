@@ -83,6 +83,58 @@ func releaseTargets() []targetSpec {
 	return out
 }
 
+// skillBundleDir is the skill bundle's path in the repository and in the
+// Linux and Windows archives (#377). `skill path` finds it beside the
+// executable in an extracted archive.
+const skillBundleDir = "skills/managed-machine"
+
+// shipsSkillBundle reports whether the target's archive carries the skill
+// bundle. The darwin archive does not: the Homebrew formula installs the
+// bundle from the tagged source into libexec.
+func (s targetSpec) shipsSkillBundle() bool { return s.OS != "darwin" }
+
+// skillBundleEntries reads the skill bundle from the repository as archive
+// entries: every regular file under skills/managed-machine at 0644 with LF
+// line endings, named by its slash path from the repository root.
+func skillBundleEntries(repoRoot string) ([]archiveEntry, error) {
+	root := filepath.Join(repoRoot, filepath.FromSlash(skillBundleDir))
+	var entries []archiveEntry
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", p)
+		}
+		rel, err := filepath.Rel(repoRoot, p)
+		if err != nil {
+			return err
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		entries = append(entries, archiveEntry{
+			Name: filepath.ToSlash(rel),
+			Mode: 0o644,
+			Data: bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n")),
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read skill bundle: %w", err)
+	}
+	for _, e := range entries {
+		if e.Name == skillBundleDir+"/SKILL.md" {
+			return entries, nil
+		}
+	}
+	return nil, fmt.Errorf("read skill bundle: %s/SKILL.md is missing", skillBundleDir)
+}
+
 func (s targetSpec) archiveName(version string) string {
 	ext := ".tar.gz"
 	if s.IsZip {
@@ -167,6 +219,10 @@ func buildCmd(args []string, stdout io.Writer) error {
 		return fmt.Errorf("read LICENSE: %w", err)
 	}
 	licenseBytes := bytes.ReplaceAll(licenseRaw, []byte("\r\n"), []byte("\n"))
+	bundle, err := skillBundleEntries(repoRoot)
+	if err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
 		return err
@@ -204,6 +260,9 @@ func buildCmd(args []string, stdout io.Writer) error {
 			entries := []archiveEntry{
 				{Name: "LICENSE", Mode: 0o644, Data: licenseBytes},
 				{Name: spec.BinaryName, Mode: 0o755, Data: binBytes},
+			}
+			if spec.shipsSkillBundle() {
+				entries = append(entries, bundle...)
 			}
 			sort.Slice(entries, func(a, b int) bool {
 				return entries[a].Name < entries[b].Name

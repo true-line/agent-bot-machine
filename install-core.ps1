@@ -7,6 +7,9 @@
 # archive for the host, verifies its SHA-256 digest with Get-FileHash before
 # extracting anything, and installs managed-machine.exe atomically into -Prefix
 # (default: %LOCALAPPDATA%\Programs\managed-machine).
+# When the archive carries the skill bundle (skills\managed-machine), it is
+# installed beside the executable, at <Prefix>\skills\managed-machine, where
+# `managed-machine skill path` finds it. Nothing is written outside -Prefix.
 #
 # Exits:
 #   0  installed or already identical
@@ -255,6 +258,7 @@ function Fetch-Resource([string]$ResourceName, [string]$DestPath) {
 
 $workDir = ""
 $stageBin = ""
+$stageBundle = ""
 try {
     $tempBase = [System.IO.Path]::GetTempPath()
     $workDir = Join-Path $tempBase ("managed-machine-install-core-" + [System.Guid]::NewGuid().ToString("N"))
@@ -310,9 +314,45 @@ try {
     $binSha = (Get-FileHash -LiteralPath $extractedBin -Algorithm SHA256).Hash.ToLowerInvariant()
     $destBin = Join-Path $Prefix "managed-machine.exe"
 
+    # The skill bundle, when the verified archive carries one. Releases before
+    # the bundle shipped in archives have none, and install the binary alone.
+    $bundleSrc = Join-Path (Join-Path $extractDir "skills") "managed-machine"
+    $hasBundle = Test-Path -LiteralPath $bundleSrc -PathType Container
+    if ($hasBundle -and -not (Test-Path -LiteralPath (Join-Path $bundleSrc "SKILL.md") -PathType Leaf)) {
+        Fail-Install "archive $matchedArchive has a skill bundle without SKILL.md"
+    }
+    # Replaces <Prefix>\skills\managed-machine with the archive's bundle.
+    $installBundle = {
+        if (-not $hasBundle) { return }
+        $skillsDir = Join-Path $Prefix "skills"
+        $bundleDest = Join-Path $skillsDir "managed-machine"
+        # An identical installed bundle is left untouched.
+        if (Test-Path -LiteralPath $bundleDest -PathType Container) {
+            $digest = {
+                param($root)
+                Get-ChildItem -LiteralPath $root -Recurse -File | Sort-Object FullName | ForEach-Object {
+                    $_.FullName.Substring($root.Length) + ":" + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+                }
+            }
+            if (((& $digest $bundleSrc) -join "|") -eq ((& $digest $bundleDest) -join "|")) { return }
+        }
+        if (-not (Test-Path -LiteralPath $skillsDir -PathType Container)) {
+            New-Item -ItemType Directory -Path $skillsDir -Force | Out-Null
+        }
+        $script:stageBundle = Join-Path $skillsDir (".managed-machine.tmp." + [System.Guid]::NewGuid().ToString("N"))
+        Copy-Item -LiteralPath $bundleSrc -Destination $script:stageBundle -Recurse -Force
+        if (Test-Path -LiteralPath $bundleDest) {
+            Remove-Item -LiteralPath $bundleDest -Recurse -Force
+        }
+        Move-Item -LiteralPath $script:stageBundle -Destination $bundleDest -Force
+        $script:stageBundle = ""
+        Write-Output "Installed the skill bundle to $bundleDest"
+    }
+
     if (Test-Path -LiteralPath $destBin -PathType Leaf) {
         $existingSha = (Get-FileHash -LiteralPath $destBin -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($existingSha -eq $binSha) {
+            & $installBundle
             Write-Output "managed-machine is already up to date at $destBin (sha256:$binSha)"
             Write-Output "Ensure $Prefix is on your PATH:"
             Write-Output "  `$env:PATH = `"$Prefix;`$env:PATH`""
@@ -327,6 +367,7 @@ try {
     Copy-Item -LiteralPath $extractedBin -Destination $stageBin -Force
     Move-Item -LiteralPath $stageBin -Destination $destBin -Force
     $stageBin = ""
+    & $installBundle
 
     Write-Output "Installed managed-machine to $destBin (sha256:$binSha)"
     Write-Output "Ensure $Prefix is on your PATH:"
@@ -336,6 +377,9 @@ try {
 } finally {
     if ($stageBin -ne "" -and (Test-Path -LiteralPath $stageBin)) {
         Remove-Item -LiteralPath $stageBin -Force -ErrorAction SilentlyContinue
+    }
+    if ($stageBundle -ne "" -and (Test-Path -LiteralPath $stageBundle)) {
+        Remove-Item -LiteralPath $stageBundle -Recurse -Force -ErrorAction SilentlyContinue
     }
     if ($workDir -ne "" -and (Test-Path -LiteralPath $workDir)) {
         Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue

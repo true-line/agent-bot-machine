@@ -192,7 +192,14 @@ func runPath(ctx cli.Context) cli.Result {
 		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
 			exePath = resolved
 		}
-		bundleRoot = filepath.Clean(filepath.Join(filepath.Dir(exePath), "..", "libexec"))
+		exeDir := filepath.Dir(exePath)
+		bundleRoot = filepath.Clean(filepath.Join(exeDir, "..", "libexec"))
+		// An extracted Linux or Windows release archive has the bundle
+		// beside the executable (#377). The installed layout wins when both
+		// exist.
+		if !isBundleRoot(bundleRoot) && isBundleRoot(exeDir) {
+			bundleRoot = exeDir
+		}
 	}
 	bundleDir := filepath.Join(bundleRoot, "skills", "managed-machine")
 	skillFile := filepath.Join(bundleDir, "SKILL.md")
@@ -211,6 +218,13 @@ func runPath(ctx cli.Context) cli.Result {
 		Records: []*output.Record{rec},
 		Human:   fmt.Sprintf("%s\ncommit %s\n", bundleDir, commit),
 	}
+}
+
+// isBundleRoot reports whether root holds skills/managed-machine/SKILL.md as
+// a regular file.
+func isBundleRoot(root string) bool {
+	info, err := os.Stat(filepath.Join(root, "skills", "managed-machine", "SKILL.md"))
+	return err == nil && info.Mode().IsRegular()
 }
 
 func readReleaseCommit(path string) string {

@@ -7,6 +7,9 @@
 # https:// URL or absolute directory), selects the _<os>_<arch>.tar.gz archive
 # for the host, verifies its SHA-256 digest before extracting anything, and
 # installs managed-machine atomically into --prefix (default: $HOME/.local/bin).
+# When the archive carries the skill bundle (skills/managed-machine), it is
+# installed beside the binary, at <prefix>/skills/managed-machine, where
+# `managed-machine skill path` finds it. Nothing is written outside --prefix.
 #
 # Exits:
 #   0  installed or already identical
@@ -172,9 +175,13 @@ tmpdir_base="${TMPDIR:-/tmp}"
 workdir="$(mktemp -d "${tmpdir_base%/}/managed-machine-install-core.XXXXXX" 2>/dev/null)" \
     || die "failed to create temporary directory under $tmpdir_base"
 stage_bin=""
+stage_bundle=""
 cleanup() {
     if [ -n "$stage_bin" ] && [ -e "$stage_bin" ]; then
         rm -f "$stage_bin" 2>/dev/null || true
+    fi
+    if [ -n "$stage_bundle" ] && [ -d "$stage_bundle" ]; then
+        rm -rf "$stage_bundle" 2>/dev/null || true
     fi
     if [ -n "${workdir:-}" ] && [ -d "$workdir" ]; then
         rm -rf "$workdir" 2>/dev/null || true
@@ -243,10 +250,46 @@ chmod 0755 "$extracted_bin" 2>/dev/null || die "failed to set permissions on ext
 bin_sha="$(compute_sha256 "$extracted_bin" || true)"
 [ -n "$bin_sha" ] || die "failed to compute SHA-256 digest of extracted binary"
 
+# The skill bundle, when the verified archive carries one. Releases before the
+# bundle shipped in archives have none, and install the binary alone. Member
+# names are limited to plain path characters before they reach tar.
+bundle_members="$(tar -tzf "$archive_file" 2>/dev/null | awk '
+    /^skills\/managed-machine\/[A-Za-z0-9._\/-]+$/ && !/\.\./ && !/\/$/ { print }
+')"
+
+# install_skill_bundle replaces <prefix>/skills/managed-machine with the
+# archive's bundle. An identical installed bundle is left untouched.
+install_skill_bundle() {
+    [ -n "$bundle_members" ] || return 0
+    # The names hold no spaces or glob characters, so splitting is safe.
+    # shellcheck disable=SC2086
+    tar -xzf "$archive_file" -C "$extract_dir" $bundle_members 2>/dev/null \
+        || die "failed to extract the skill bundle from $archive_name"
+    bundle_src="$extract_dir/skills/managed-machine"
+    if [ ! -f "$bundle_src/SKILL.md" ] || [ -L "$bundle_src/SKILL.md" ]; then
+        die "archive $archive_name has a skill bundle without a regular SKILL.md"
+    fi
+    bundle_dest="$prefix/skills/managed-machine"
+    if [ -d "$bundle_dest" ] && [ ! -L "$bundle_dest" ] \
+        && diff -r "$bundle_src" "$bundle_dest" >/dev/null 2>&1; then
+        return 0
+    fi
+    mkdir -p "$prefix/skills" 2>/dev/null || die "failed to create $prefix/skills"
+    stage_bundle="$(mktemp -d "$prefix/skills/.managed-machine.tmp.XXXXXX" 2>/dev/null)" \
+        || die "failed to create staging directory in $prefix/skills"
+    cp -R "$bundle_src/." "$stage_bundle/" 2>/dev/null || die "failed to stage the skill bundle in $prefix/skills"
+    chmod -R u=rwX,go=rX "$stage_bundle" 2>/dev/null || die "failed to set permissions on the staged skill bundle"
+    rm -rf "$bundle_dest" 2>/dev/null || die "failed to replace $bundle_dest"
+    mv "$stage_bundle" "$bundle_dest" 2>/dev/null || die "failed to move the skill bundle into $bundle_dest"
+    stage_bundle=""
+    printf 'Installed the skill bundle to %s\n' "$bundle_dest"
+}
+
 dest_bin="$prefix/managed-machine"
 if [ -f "$dest_bin" ] && [ ! -L "$dest_bin" ]; then
     existing_sha="$(compute_sha256 "$dest_bin" || true)"
     if [ "$existing_sha" = "$bin_sha" ]; then
+        install_skill_bundle
         printf 'managed-machine is already up to date at %s (sha256:%s)\n' "$dest_bin" "$bin_sha"
         printf 'Ensure %s is on your PATH:\n  export PATH="%s:$PATH"\n' "$prefix" "$prefix"
         exit 0
@@ -260,6 +303,7 @@ cp "$extracted_bin" "$stage_bin" 2>/dev/null || die "failed to write staging fil
 chmod 0755 "$stage_bin" 2>/dev/null || die "failed to chmod staging file in $prefix"
 mv -f "$stage_bin" "$dest_bin" 2>/dev/null || die "failed to move binary into $dest_bin"
 stage_bin=""
+install_skill_bundle
 
 printf 'Installed managed-machine to %s (sha256:%s)\n' "$dest_bin" "$bin_sha"
 printf 'Ensure %s is on your PATH:\n  export PATH="%s:$PATH"\n' "$prefix" "$prefix"
