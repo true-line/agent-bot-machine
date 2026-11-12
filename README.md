@@ -1,4 +1,8 @@
-# managed-machine
+# agent-bot-machine
+
+agent-bot-machine is the host layer of the [Soul Agent Platform](https://github.com/true-line/agent-bot-platform): the admin sandbox that installs catalog items, the executor that runs signed requests from HQ, and the provisioner that creates the HQ account and the member accounts. It is not HQ. Its charter is the `agent-bot-machine` entry in the platform's [`registry/repos.yaml`](https://github.com/true-line/agent-bot-platform/blob/main/registry/repos.yaml) ([PDR-0002](https://github.com/true-line/agent-bot-platform/blob/main/docs/04-decisions/PDR-0002-repository-topology-and-admission.md)).
+
+The executable, the Homebrew formula ([`Formula/managed-machine.rb`](Formula/managed-machine.rb)), the release archives and the `managed-machine` skill keep the name `managed-machine` until they can move without breaking an install. Every install command below is unchanged.
 
 Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI over HTTPS, explicit opt-in SSH identity/signing/fleet enrollment, gitleaks git hooks, Proton Pass CLI, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, Grok Build, Aider, Droid CLI, Goose CLI, OpenCode, OpenCode Desktop, Devin CLI, LM Studio, VS Code, Cursor, Claude, Antigravity, Rust (rustup), and host-to-host `authorized_keys` sync.
 
