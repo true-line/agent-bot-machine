@@ -96,6 +96,38 @@ risk: any `user` process can use the key for routine brokered requests
 requests stay out of reach because they need the presence signature. Moving
 HQ into its own account (S6) closes it.
 
+### Account setups
+
+The names `admin` and `user` are this machine's. The design does not need
+them: it needs a prefix owner, and it is safer when the owner's daily
+account is a different one. Two setups are supported.
+
+| | Separate administrator and daily accounts | One account |
+|---|---|---|
+| Prefix owner, runs agent-machine | the administrator account | the owner's only account |
+| Runs `sudo managed-machine members apply` | the administrator account | the owner's only account |
+| Daily work | a standard account with no `sudo` | the same administrator account |
+| HQ account and member accounts | separate accounts | separate accounts |
+
+What one account gives up is the line between daily use and install
+authority. The everyday account owns the prefix, holds agent-machine's
+state and can become root with its own password, so anything that takes it
+over is one prompt from root. What it keeps is the line around agents: HQ
+runs in its own account, and on Linux each member runs in its own, so a
+member reads neither HQ's key nor the owner's files in either setup.
+
+Separate accounts are the recommended setup, and neither setup is refused.
+HQ's local web UI shows a warning when the account it runs in is an
+administrator account
+([agent-bot-identity#1408](https://github.com/true-line/agent-bot-identity/issues/1408)).
+
+One gap is specific to separate accounts and is open:
+`members plan` saves the plan in the home of the account that runs it and
+`members apply` reads it from the home of the account that ran `sudo`,
+while HQ's Approvals tab reads its own account's home. When those are
+different accounts HQ does not see the plan
+([platform discussion 50](https://github.com/true-line/agent-bot-platform/discussions/50)).
+
 ### Debug client
 
 Owner direction (2026-11-10): HQ is the intended caller of agent-machine.
