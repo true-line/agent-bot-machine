@@ -90,6 +90,26 @@ func TestInstallCorePs1(t *testing.T) {
 			t.Errorf("installed managed-machine.exe --version = %q, want %q", string(verOut), version+"\n")
 		}
 
+		// The skill bundle is installed beside the executable, and `skill
+		// path` finds it there (#377).
+		bundleDir := filepath.Join(prefixDir, "skills", "managed-machine")
+		if fi, err := os.Stat(filepath.Join(bundleDir, "SKILL.md")); err != nil || !fi.Mode().IsRegular() {
+			t.Fatalf("installed skill bundle has no SKILL.md: %v", err)
+		}
+		if !strings.Contains(stdout, "Installed the skill bundle to ") {
+			t.Errorf("first install stdout %q does not report the skill bundle", stdout)
+		}
+		pathOut, err := exec.Command(installedBin, "skill", "path", "--human").CombinedOutput()
+		if err != nil {
+			t.Fatalf("installed managed-machine.exe skill path failed: %v (%s)", err, pathOut)
+		}
+		if !strings.Contains(string(pathOut), filepath.Join("skills", "managed-machine")) || !strings.Contains(string(pathOut), "commit unknown") {
+			t.Errorf("installed skill path = %q", pathOut)
+		}
+		if ents, err := os.ReadDir(filepath.Join(prefixDir, "skills")); err != nil || len(ents) != 1 {
+			t.Errorf("staging left behind in %s: %v (err=%v)", filepath.Join(prefixDir, "skills"), ents, err)
+		}
+
 		// Verify no file outside prefix and tmpDir was created: harness home is byte-identical.
 		if afterHome := snapshotWindowsHome(t, homeDir); afterHome != beforeHome {
 			t.Fatalf("harness home changed when installing to explicit -Prefix:\nbefore:\n%s\nafter:\n%s", beforeHome, afterHome)
@@ -112,6 +132,9 @@ func TestInstallCorePs1(t *testing.T) {
 		}
 		if !strings.Contains(stdout2, wantBinSHA) || !strings.Contains(stdout2, prefixDir) {
 			t.Errorf("second run stdout %q missing digest %s or prefix %s", stdout2, wantBinSHA, prefixDir)
+		}
+		if strings.Contains(stdout2, "Installed the skill bundle") {
+			t.Errorf("second run reinstalled an identical skill bundle: %q", stdout2)
 		}
 		fi, err := os.Stat(installedBin)
 		if err != nil {
