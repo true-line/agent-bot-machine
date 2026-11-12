@@ -1,14 +1,6 @@
-# agent-bot-machine
+# managed-machine
 
-The host's admin sandbox, executor and provisioner for the Soul Agent Platform ([PDR-0001](https://github.com/true-line/agent-bot-platform/blob/main/docs/04-decisions/PDR-0001-platform-repository-is-the-product-source-of-truth.md), [PDR-0002](https://github.com/true-line/agent-bot-platform/blob/main/docs/04-decisions/PDR-0002-repository-topology-and-admission.md)). It is not HQ. The executable, the Homebrew formula and the skill keep the name `managed-machine`. Machine setup and orchestration, distributed as a self-tapped Homebrew formula. Idempotent; safe to re-run.
-
-<!-- platform:agent-bot-platform:start -->
-Platform: true-line/agent-bot-platform, read at main.
-This repository's charter, seams and requirements are in the platform's
-registry/repos.yaml entry for agent-bot-machine. Read the platform's AGENTS.md
-at the start of every task, and before changing a seam or anything a
-requirement covers.
-<!-- platform:agent-bot-platform:end -->
+Machine setup and orchestration, distributed as a self-tapped Homebrew formula. Idempotent; safe to re-run.
 
 ## Agent migration protocol
 

@@ -645,15 +645,11 @@ func buildFullDist(repoRoot, ver, distDir string) error {
 			return err
 		}
 		archiveName := targetArchiveName(ver, tg)
-		bundle, err := releaseSkillBundle(repoRoot, goos)
-		if err != nil {
-			return err
-		}
 		var archiveBytes []byte
 		if goos == "windows" {
-			archiveBytes, err = packReleaseZip(binName, binBytes, licBytes, bundle...)
+			archiveBytes, err = packReleaseZip(binName, binBytes, licBytes)
 		} else {
-			archiveBytes, err = packReleaseTarGz(binName, binBytes, licBytes, bundle...)
+			archiveBytes, err = packReleaseTarGz(binName, binBytes, licBytes)
 		}
 		if err != nil {
 			return err
@@ -698,15 +694,11 @@ func buildTargetDist(repoRoot, ver, target, distDir string) error {
 	licBytes := bytes.ReplaceAll(licRaw, []byte("\r\n"), []byte("\n"))
 
 	archiveName := targetArchiveName(ver, target)
-	bundle, err := releaseSkillBundle(repoRoot, goos)
-	if err != nil {
-		return err
-	}
 	var archiveBytes []byte
 	if goos == "windows" {
-		archiveBytes, err = packReleaseZip(binName, binBytes, licBytes, bundle...)
+		archiveBytes, err = packReleaseZip(binName, binBytes, licBytes)
 	} else {
-		archiveBytes, err = packReleaseTarGz(binName, binBytes, licBytes, bundle...)
+		archiveBytes, err = packReleaseTarGz(binName, binBytes, licBytes)
 	}
 	if err != nil {
 		return err
@@ -749,53 +741,7 @@ func compileCoreBinary(repoRoot, ver, goos, goarch, outPath string) error {
 
 var releaseArchiveEpoch = time.Date(1980, time.January, 1, 0, 0, 0, 0, time.UTC)
 
-// releaseBundleFile is one file of the skill bundle as an archive entry.
-type releaseBundleFile struct {
-	name string
-	data []byte
-}
-
-// releaseSkillBundle reads the skill bundle the Linux and Windows archives
-// carry (#377): every regular file under skills/managed-machine, named by its
-// slash path from the repository root, with LF line endings. The darwin
-// archive has none; the formula installs the bundle from the tagged source.
-func releaseSkillBundle(repoRoot, goos string) ([]releaseBundleFile, error) {
-	if goos == "darwin" {
-		return nil, nil
-	}
-	root := filepath.Join(repoRoot, "skills", "managed-machine")
-	var files []releaseBundleFile
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		if !d.Type().IsRegular() {
-			return fmt.Errorf("%s is not a regular file", p)
-		}
-		rel, err := filepath.Rel(repoRoot, p)
-		if err != nil {
-			return err
-		}
-		raw, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		files = append(files, releaseBundleFile{name: filepath.ToSlash(rel), data: bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))})
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("read skill bundle: %w", err)
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
-	for _, f := range files {
-		if f.name == "skills/managed-machine/SKILL.md" {
-			return files, nil
-		}
-	}
-	return nil, errors.New("read skill bundle: skills/managed-machine/SKILL.md is missing")
-}
-
-func packReleaseTarGz(binName string, binBytes, licBytes []byte, bundle ...releaseBundleFile) ([]byte, error) {
+func packReleaseTarGz(binName string, binBytes, licBytes []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	gz, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 	if err != nil {
@@ -815,9 +761,6 @@ func packReleaseTarGz(binName string, binBytes, licBytes []byte, bundle ...relea
 	items := []item{
 		{name: "LICENSE", mode: 0o644, data: licBytes},
 		{name: binName, mode: 0o755, data: binBytes},
-	}
-	for _, f := range bundle {
-		items = append(items, item{name: f.name, mode: 0o644, data: f.data})
 	}
 	for _, it := range items {
 		hdr := &tar.Header{
@@ -844,7 +787,7 @@ func packReleaseTarGz(binName string, binBytes, licBytes []byte, bundle ...relea
 	return buf.Bytes(), nil
 }
 
-func packReleaseZip(binName string, binBytes, licBytes []byte, bundle ...releaseBundleFile) ([]byte, error) {
+func packReleaseZip(binName string, binBytes, licBytes []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	zw.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
@@ -858,9 +801,6 @@ func packReleaseZip(binName string, binBytes, licBytes []byte, bundle ...release
 	items := []item{
 		{name: "LICENSE", mode: 0o644, data: licBytes},
 		{name: binName, mode: 0o755, data: binBytes},
-	}
-	for _, f := range bundle {
-		items = append(items, item{name: f.name, mode: 0o644, data: f.data})
 	}
 	for _, it := range items {
 		fh := &zip.FileHeader{
@@ -1229,9 +1169,7 @@ func (h *releaseHarness) runChecksums() {
 }
 
 // runArchiveLayout proves `archive-layout` (D10): the target archive has the
-// exact sorted entries (LICENSE 0644, managed-machine[.exe] 0755, then on
-// Linux and Windows the skill bundle's files at 0644, byte-equal to the
-// repository's skills/managed-machine, #377), uid/gid
+// exact sorted root entries (LICENSE 0644, managed-machine[.exe] 0755), uid/gid
 // 0, empty uname/gname, constant mtime (1980-01-01T00:00:00Z), gzip header
 // empty/OS=255 or zip deflate with no extra fields, and binary digest equal to
 // binary_sha256.
@@ -1250,15 +1188,6 @@ func (h *releaseHarness) runArchiveLayout() {
 		return
 	}
 	wantLic := bytes.ReplaceAll(licRaw, []byte("\r\n"), []byte("\n"))
-	bundle, err := releaseSkillBundle(h.repoRoot, targetOS(h.target))
-	if err != nil {
-		h.recordCase(name, "ok", observedFailed, false, err.Error())
-		return
-	}
-	layout := "sorted root entries [LICENSE 0644, managed-machine 0755]"
-	if len(bundle) > 0 {
-		layout = fmt.Sprintf("sorted entries [LICENSE 0644, binary 0755, %d skill bundle file(s) 0644 equal to skills/managed-machine]", len(bundle))
-	}
 
 	if strings.HasSuffix(archiveName, ".zip") {
 		zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
@@ -1266,17 +1195,12 @@ func (h *releaseHarness) runArchiveLayout() {
 			h.recordCase(name, "ok", observedFailed, false, "open zip: "+err.Error())
 			return
 		}
-		if len(zr.File) != 2+len(bundle) || zr.File[0].Name != "LICENSE" || zr.File[1].Name != "managed-machine.exe" {
-			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("unexpected zip entries: %v, want %d", len(zr.File), 2+len(bundle)))
+		if len(zr.File) != 2 || zr.File[0].Name != "LICENSE" || zr.File[1].Name != "managed-machine.exe" {
+			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("unexpected zip entries: %v", len(zr.File)))
 			return
 		}
 		for i, f := range zr.File {
-			if i >= 2 {
-				if f.Name != bundle[i-2].name {
-					h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("zip entry %d = %q, want %q", i, f.Name, bundle[i-2].name))
-					return
-				}
-			} else if strings.ContainsAny(f.Name, `/\`) {
+			if strings.ContainsAny(f.Name, `/\`) {
 				h.recordCase(name, "ok", observedFailed, false, "zip entry has directory prefix: "+f.Name)
 				return
 			}
@@ -1320,14 +1244,10 @@ func (h *releaseHarness) runArchiveLayout() {
 				h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("zip binary sha256 %s != %s", sum(payload), h.ev.BinarySHA256))
 				return
 			}
-			if i >= 2 && !bytes.Equal(payload, bundle[i-2].data) {
-				h.recordCase(name, "ok", observedFailed, false, "zip "+f.Name+" payload differs from the repository's skill bundle")
-				return
-			}
 		}
 		h.recordCase(name, "ok", "ok", true,
-			fmt.Sprintf("%s verified: %s, deflate with empty extra fields, epoch 1980-01-01T00:00:00Z, binary sha256 %s",
-				archiveName, layout, h.ev.BinarySHA256[:12]))
+			fmt.Sprintf("%s verified: sorted root entries [LICENSE 0644, managed-machine.exe 0755], deflate with empty extra fields, epoch 1980-01-01T00:00:00Z, binary sha256 %s",
+				archiveName, h.ev.BinarySHA256[:12]))
 		return
 	}
 
@@ -1355,16 +1275,13 @@ func (h *releaseHarness) runArchiveLayout() {
 		{name: "LICENSE", mode: 0o644},
 		{name: "managed-machine", mode: 0o755},
 	}
-	for _, f := range bundle {
-		wants = append(wants, wantTarEntry{name: f.name, mode: 0o644})
-	}
 	for i, w := range wants {
 		hdr, err := tr.Next()
 		if err != nil {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("tar entry %d (%s): %v", i, w.name, err))
 			return
 		}
-		if hdr.Typeflag != tar.TypeReg || hdr.Name != w.name || (i < 2 && strings.Contains(hdr.Name, "/")) {
+		if hdr.Typeflag != tar.TypeReg || hdr.Name != w.name || strings.Contains(hdr.Name, "/") {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("tar entry %d = %q (type %v), want %q", i, hdr.Name, hdr.Typeflag, w.name))
 			return
 		}
@@ -1391,18 +1308,14 @@ func (h *releaseHarness) runArchiveLayout() {
 			h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("tar binary sha256 %s != %s", sum(payload), h.ev.BinarySHA256))
 			return
 		}
-		if i >= 2 && !bytes.Equal(payload, bundle[i-2].data) {
-			h.recordCase(name, "ok", observedFailed, false, "tar "+hdr.Name+" payload differs from the repository's skill bundle")
-			return
-		}
 	}
 	if _, err := tr.Next(); err != io.EOF {
 		h.recordCase(name, "ok", observedFailed, false, "tar archive has unexpected extra entries")
 		return
 	}
 	h.recordCase(name, "ok", "ok", true,
-		fmt.Sprintf("%s verified: %s, uid/gid 0, empty uname/gname, mtime 1980-01-01T00:00:00Z, gzip OS=255, binary sha256 %s",
-			archiveName, layout, h.ev.BinarySHA256[:12]))
+		fmt.Sprintf("%s verified: sorted root entries [LICENSE 0644, managed-machine 0755], uid/gid 0, empty uname/gname, mtime 1980-01-01T00:00:00Z, gzip OS=255, binary sha256 %s",
+			archiveName, h.ev.BinarySHA256[:12]))
 }
 
 // runVersion proves `version` (D10): `--version` prints `<X.Y.Z>\n` matching

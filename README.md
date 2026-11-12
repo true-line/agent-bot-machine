@@ -1,8 +1,4 @@
-# agent-bot-machine
-
-agent-bot-machine is the host layer of the [Soul Agent Platform](https://github.com/true-line/agent-bot-platform): the admin sandbox that installs catalog items, the executor that runs signed requests from HQ, and the provisioner that creates the HQ account and the member accounts. It is not HQ. Its charter is the `agent-bot-machine` entry in the platform's [`registry/repos.yaml`](https://github.com/true-line/agent-bot-platform/blob/main/registry/repos.yaml) ([PDR-0002](https://github.com/true-line/agent-bot-platform/blob/main/docs/04-decisions/PDR-0002-repository-topology-and-admission.md)).
-
-The executable, the Homebrew formula ([`Formula/managed-machine.rb`](Formula/managed-machine.rb)), the release archives and the `managed-machine` skill keep the name `managed-machine` until they can move without breaking an install. Every install command below is unchanged.
+# managed-machine
 
 Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI over HTTPS, explicit opt-in SSH identity/signing/fleet enrollment, gitleaks git hooks, Proton Pass CLI, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, Grok Build, Aider, Droid CLI, Goose CLI, OpenCode, OpenCode Desktop, Devin CLI, LM Studio, VS Code, Cursor, Claude, Antigravity, Rust (rustup), and host-to-host `authorized_keys` sync.
 
@@ -70,8 +66,8 @@ In-app updates keep all three current. managed-machine leaves those wrappers and
 | Target | Supported channel | Installed binary & resources |
 |---|---|---|
 | `darwin/arm64` (macOS 15 Sequoia+) | Homebrew formula (`qwts/managed-machine`, [`Formula/managed-machine.rb`](Formula/managed-machine.rb)) via [`install.sh`](install.sh) or `brew install qwts/managed-machine/managed-machine` | Installs the SHA-256-pinned `core` resource (introduced in `v0.9.0` with `depends_on arch: :arm64` and `depends_on macos: :sequoia`, and promoted to the installed entry point in `v0.11.0`, S8 D3) as `bin/managed-machine` from `managed-machine_<X.Y.Z>_darwin_arm64.tar.gz`, stages the legacy macOS Bash tree (`legacy/bin/managed-machine`, `legacy/setup-*`, `legacy/lib`, `legacy/scripts/*`, `legacy/git-hooks/*`) plus the private `managed-machine-config` seed and `local-bin` resources under `libexec/legacy`, and writes the transitional `libexec/scripts/update` re-exec shim alongside `libexec/VERSION`, `libexec/skills/managed-machine`, and `libexec/RELEASE_COMMIT`. |
-| `linux/amd64`, `linux/arm64` | Release archive (`managed-machine_<X.Y.Z>_linux_<arch>.tar.gz` + `SHA256SUMS`) and [`install-core.sh`](install-core.sh) | Fetches `SHA256SUMS` from `MANAGED_MACHINE_RELEASE_BASE` (default `https://github.com/qwts/managed-machine/releases/latest/download`, or `--release-base <https-url-or-abs-dir>`), verifies the archive SHA-256 digest before extraction, and installs `managed-machine` atomically into `--prefix` (default `$HOME/.local/bin`), with the archive's skill bundle beside it at `<prefix>/skills/managed-machine`, without elevating or editing `PATH` or shell profiles. Refuses `darwin` with exit 2 naming the formula. |
-| `windows/amd64`, `windows/arm64` | Release zip (`managed-machine_<X.Y.Z>_windows_<arch>.zip` + `SHA256SUMS`) and [`install-core.ps1`](install-core.ps1) | Fetches `SHA256SUMS` from `-ReleaseBase` / `$env:MANAGED_MACHINE_RELEASE_BASE` (default `https://github.com/qwts/managed-machine/releases/latest/download`), verifies the zip SHA-256 digest with `Get-FileHash -Algorithm SHA256` before extraction, and installs `managed-machine.exe` atomically into `-Prefix` (default `%LOCALAPPDATA%\Programs\managed-machine`), with the archive's skill bundle beside it at `<Prefix>\skills\managed-machine`, without elevating or editing `PATH`, shell profiles, or the Windows registry. |
+| `linux/amd64`, `linux/arm64` | Release archive (`managed-machine_<X.Y.Z>_linux_<arch>.tar.gz` + `SHA256SUMS`) and [`install-core.sh`](install-core.sh) | Fetches `SHA256SUMS` from `MANAGED_MACHINE_RELEASE_BASE` (default `https://github.com/qwts/managed-machine/releases/latest/download`, or `--release-base <https-url-or-abs-dir>`), verifies the archive SHA-256 digest before extraction, and installs `managed-machine` atomically into `--prefix` (default `$HOME/.local/bin`) without elevating or editing `PATH` or shell profiles. Refuses `darwin` with exit 2 naming the formula. |
+| `windows/amd64`, `windows/arm64` | Release zip (`managed-machine_<X.Y.Z>_windows_<arch>.zip` + `SHA256SUMS`) and [`install-core.ps1`](install-core.ps1) | Fetches `SHA256SUMS` from `-ReleaseBase` / `$env:MANAGED_MACHINE_RELEASE_BASE` (default `https://github.com/qwts/managed-machine/releases/latest/download`), verifies the zip SHA-256 digest with `Get-FileHash -Algorithm SHA256` before extraction, and installs `managed-machine.exe` atomically into `-Prefix` (default `%LOCALAPPDATA%\Programs\managed-machine`) without elevating or editing `PATH`, shell profiles, or the Windows registry. |
 
 #### Manual `managed-machine-config` clone on Linux and Windows
 
@@ -123,7 +119,7 @@ Legacy commands (macOS only; Homebrew install — delegated to `libexec/legacy/b
 - `[legacy] fleet remove <machine-id> [--yes] [--revoke-github] [--dry-run] [--json]`
 - `[legacy] status --section bootstrap|update [--json]`
 
-Bare `managed-machine status [--json|--human]` is served by the portable Go core (exit 0; reporting `software`, `config`, and `flavor`, with `--section fleet` available under `--user`), and `managed-machine skill path [--json|--human]` is a core command on all five targets (reporting `MM_SKILL_BUNDLE_MISSING`, exit 1, where the skill bundle is not present; the Linux and Windows release archives carry it beside the executable, and report `commit unknown`). On macOS, `[legacy] status --section bootstrap|update [--json]` remains a read-only legacy route printing the last recorded `bootstrap.manifest` and `update.manifest` outcomes. The 17 legacy `status` sections removed in `v0.11.0` and `fleet list` fail on all five targets with `MM_LEGACY_ROUTE_REMOVED` (exit 2) naming each route's replacement or `no replacement`: `status --section managed-machine` -> `managed-machine version`; `status --section ssh` -> `managed-machine ssh status`; `status --section agent-accounts` -> `managed-machine account doctor`; `status --section catalog` -> `managed-machine setup --list and managed-machine software --available`; `fleet list` -> `managed-machine fleet --keys`; and `status --section machine|local-bin|zsh-functions|pins|toolchain|homebrew|gh|nvm|node|hostname|rustup|rustc|cargo` -> `no replacement`.
+Bare `managed-machine status [--json|--human]` is served by the portable Go core (exit 0; reporting `software`, `config`, and `flavor`, with `--section fleet` available under `--user`), and `managed-machine skill path [--json|--human]` is a core command on all five targets (reporting `MM_SKILL_BUNDLE_MISSING`, exit 1, on archive installs where the skill bundle is not present). On macOS, `[legacy] status --section bootstrap|update [--json]` remains a read-only legacy route printing the last recorded `bootstrap.manifest` and `update.manifest` outcomes. The 17 legacy `status` sections removed in `v0.11.0` and `fleet list` fail on all five targets with `MM_LEGACY_ROUTE_REMOVED` (exit 2) naming each route's replacement or `no replacement`: `status --section managed-machine` -> `managed-machine version`; `status --section ssh` -> `managed-machine ssh status`; `status --section agent-accounts` -> `managed-machine account doctor`; `status --section catalog` -> `managed-machine setup --list and managed-machine software --available`; `fleet list` -> `managed-machine fleet --keys`; and `status --section machine|local-bin|zsh-functions|pins|toolchain|homebrew|gh|nvm|node|hostname|rustup|rustc|cargo` -> `no replacement`.
 
 ---
 
@@ -173,10 +169,10 @@ fetching the vendor's DMG directly — no Homebrew involved at any step:
 ```json
 { "name": "qwen-desktop", "kind": "vendor-dmg",
   "app_name": "Qwen Code Desktop.app", "team_id": "NF4574S59H",
-  "url_arm64": "https://github.com/.../desktop-v0.27.1/Qwen-Code-Desktop-arm64.dmg",
-  "url_x86_64": "https://github.com/.../desktop-v0.27.1/Qwen-Code-Desktop-x64.dmg",
-  "url_hosts": ["github.com"],
-  "sha256_arm64": "29f1e917...", "sha256_x86_64": "9d416050..." }
+  "url_arm64": "https://github.com/.../Qwen-Code-Desktop-arm64.dmg",
+  "url_x86_64": "https://github.com/.../Qwen-Code-Desktop-x64.dmg",
+  "url_hosts": ["github.com"], "sha256": "no_check",
+  "allow_rolling_url": true }
 ```
 
 The URL must be `https` on a `url_hosts` allowlist entry, and the download's

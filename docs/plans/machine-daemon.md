@@ -439,8 +439,7 @@ the pinned one and verified with `uv tool list --show-python`. An npm or uv row 
 provider, is refused before a process starts. A brew cask row carries its
 cask token, app name, Team ID, url hosts, and homepage hosts. An app-copy
 (`vendor-dmg`) row carries its url, sha256, url hosts, app name, Team ID,
-version, and format; a row with one build per architecture gives the arm64
-url and the arm64 digest (`url_arm64`, `sha256_arm64`). A winget row carries its `package_id` and never runs
+version, and format. A winget row carries its `package_id` and never runs
 elevated, so machine scope (`global`) is refused with
 `MM_DAEMON_PRIVILEGE_REQUIRED`. A go row carries its `module` and `package`,
 a cargo row carries its `crate`, and an archive row carries its `url`,

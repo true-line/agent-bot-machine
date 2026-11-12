@@ -87,7 +87,7 @@ var knownFields = map[string][]string{
 	"npm":          {"package", "command", "display", "version", "install_scripts"},
 	"uv-tool":      {"package", "command", "display", "version"},
 	"official-cli": {"url", "command", "display", "args", "env", "bin_dir"},
-	"vendor-dmg":   {"app_name", "team_id", "url", "url_hosts", "sha256", "allow_rolling_url", "sparkle", "retire_cask", "url_arm64", "url_x86_64", "sha256_arm64", "sha256_x86_64"},
+	"vendor-dmg":   {"app_name", "team_id", "url", "url_hosts", "sha256", "allow_rolling_url", "sparkle", "retire_cask", "url_arm64", "url_x86_64"},
 	"opencode":     {},
 	"devin":        {},
 }
@@ -413,24 +413,6 @@ func mapKind(r *rowReader, name, kind string, desired map[string]string) (*defin
 				opts["sha256"] = sha
 				r.note("sha256", Carried, "options.sha256")
 			}
-		}
-		// A row with one build per architecture pins one digest per build.
-		// The arm64 digest is the candidate's, since arm64 is the build the
-		// candidate's URL names; it replaces a row-wide sha256.
-		if sha, ok, err := r.str("sha256_arm64"); err != nil {
-			return nil, "", err
-		} else if ok {
-			if sha == "no_check" {
-				r.note("sha256_arm64", Blocked, "pin a digest")
-			} else {
-				opts["sha256"] = sha
-				r.note("sha256_arm64", Carried, "options.sha256")
-			}
-		}
-		if _, ok, err := r.str("sha256_x86_64"); err != nil {
-			return nil, "", err
-		} else if ok {
-			r.note("sha256_x86_64", Policy, "darwin/x86_64 is not a supported target (ADR-0014)")
 		}
 		if _, ok, err := r.boolean("allow_rolling_url"); err != nil {
 			return nil, "", err
