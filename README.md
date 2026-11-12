@@ -173,10 +173,10 @@ fetching the vendor's DMG directly — no Homebrew involved at any step:
 ```json
 { "name": "qwen-desktop", "kind": "vendor-dmg",
   "app_name": "Qwen Code Desktop.app", "team_id": "NF4574S59H",
-  "url_arm64": "https://github.com/.../Qwen-Code-Desktop-arm64.dmg",
-  "url_x86_64": "https://github.com/.../Qwen-Code-Desktop-x64.dmg",
-  "url_hosts": ["github.com"], "sha256": "no_check",
-  "allow_rolling_url": true }
+  "url_arm64": "https://github.com/.../desktop-v0.27.1/Qwen-Code-Desktop-arm64.dmg",
+  "url_x86_64": "https://github.com/.../desktop-v0.27.1/Qwen-Code-Desktop-x64.dmg",
+  "url_hosts": ["github.com"],
+  "sha256_arm64": "29f1e917...", "sha256_x86_64": "9d416050..." }
 ```
 
 The URL must be `https` on a `url_hosts` allowlist entry, and the download's

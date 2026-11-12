@@ -290,11 +290,11 @@
       "kind": "vendor-dmg",
       "app_name": "Qwen Code Desktop.app",
       "team_id": "NF4574S59H",
-      "url_arm64": "https://github.com/QwenLM/qwen-code/releases/download/desktop-latest/Qwen-Code-Desktop-arm64.dmg",
-      "url_x86_64": "https://github.com/QwenLM/qwen-code/releases/download/desktop-latest/Qwen-Code-Desktop-x64.dmg",
+      "url_arm64": "https://github.com/QwenLM/qwen-code/releases/download/desktop-v0.27.1/Qwen-Code-Desktop-arm64.dmg",
+      "url_x86_64": "https://github.com/QwenLM/qwen-code/releases/download/desktop-v0.27.1/Qwen-Code-Desktop-x64.dmg",
       "url_hosts": ["github.com"],
-      "sha256": "no_check",
-      "allow_rolling_url": true,
+      "sha256_arm64": "29f1e917a7a43a446a53e4f419c6c4ff454a9b7140ac6463e7296ffb49d3701a",
+      "sha256_x86_64": "9d4160501a514ee6e19dc88e61260b49b09a0bbc690ac1e366f91b57db3593fd",
       "aliases": ["qwen-code-desktop"]
     },
     {

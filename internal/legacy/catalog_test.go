@@ -308,16 +308,17 @@ func TestEmitAndCheckConvertedFixtureCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 2 brew-formula (qwen, minikube) + 20 signed-cask = 22 convertible rows.
-	if len(entries) != 22 {
-		t.Fatalf("emitted %d files, want 22", len(entries))
+	// 2 brew-formula (qwen, minikube) + 20 signed-cask + 1 digest-pinned
+	// vendor-dmg (qwen-desktop) = 23 convertible rows.
+	if len(entries) != 23 {
+		t.Fatalf("emitted %d files, want 23", len(entries))
 	}
 	checked, err := CheckConverted(rep, dir, reg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checked.Counts[Converted] != 22 || checked.Counts[Drift] != 0 {
-		t.Fatalf("counts %+v, want 22 converted and 0 drift", checked.Counts)
+	if checked.Counts[Converted] != 23 || checked.Counts[Drift] != 0 {
+		t.Fatalf("counts %+v, want 23 converted and 0 drift", checked.Counts)
 	}
 	for _, r := range checked.Rows {
 		if r.Verdict == Converted {
@@ -356,7 +357,7 @@ func TestEmitAndCheckConvertedFixtureCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checked.Counts[Converted] != 22 || checked.Counts[Drift] != 0 {
+	if checked.Counts[Converted] != 23 || checked.Counts[Drift] != 0 {
 		t.Fatalf("after description/id edit: counts %+v", checked.Counts)
 	}
 
@@ -368,8 +369,8 @@ func TestEmitAndCheckConvertedFixtureCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checked.Counts[Converted] != 21 || checked.Counts[Drift] != 1 {
-		t.Fatalf("after option edit: counts %+v, want 21 converted and 1 drift", checked.Counts)
+	if checked.Counts[Converted] != 22 || checked.Counts[Drift] != 1 {
+		t.Fatalf("after option edit: counts %+v, want 22 converted and 1 drift", checked.Counts)
 	}
 }
 
@@ -411,5 +412,55 @@ func TestPinnedVendorDMGConverts(t *testing.T) {
 	}
 	if checked.Counts[Converted] != 1 || checked.Counts[Drift] != 0 {
 		t.Fatalf("counts %+v", checked.Counts)
+	}
+}
+
+// A row with one build per architecture pins one digest per build. The
+// candidate takes the arm64 URL and the arm64 digest together (#374).
+func TestPerArchPinnedVendorDMGConverts(t *testing.T) {
+	const arm = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	catalog := func(armDigest string) string {
+		return `{
+		"schema_version": 1,
+		"apps": [
+			{
+				"name": "per-arch-dmg",
+				"kind": "vendor-dmg",
+				"app_name": "PerArch.app",
+				"team_id": "2HNR4339G9",
+				"url_arm64": "https://cdn.example.invalid/v1.2.3/PerArch-arm64.dmg",
+				"url_x86_64": "https://cdn.example.invalid/v1.2.3/PerArch-x64.dmg",
+				"url_hosts": ["cdn.example.invalid"],
+				"sha256_arm64": "` + armDigest + `",
+				"sha256_x86_64": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+			}
+		]
+	}`
+	}
+	rep, err := Classify([]byte(catalog(arm)), registry.Builtin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := rep.Rows[0]
+	if !row.Convertible() {
+		t.Fatalf("not convertible: %+v", row.Items)
+	}
+	rc := row.Software.Recipes[0]
+	if rc.Options["url"] != "https://cdn.example.invalid/v1.2.3/PerArch-arm64.dmg" || rc.Options["sha256"] != arm {
+		t.Fatalf("the candidate does not pair the arm64 URL with the arm64 digest: %+v", rc.Options)
+	}
+	if it, ok := item(row, "sha256_x86_64"); !ok || it.Action != Policy {
+		t.Fatalf("sha256_x86_64: %+v", it)
+	}
+
+	rep, err = Classify([]byte(catalog("no_check")), registry.Builtin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it, ok := item(rep.Rows[0], "sha256_arm64"); !ok || it.Action != Blocked || it.Reason != "pin a digest" {
+		t.Fatalf("an unpinned arm64 digest is not blocked: %+v", it)
+	}
+	if rep.Rows[0].Convertible() {
+		t.Fatal("a row without a digest converts")
 	}
 }
