@@ -330,8 +330,11 @@ try {
         if (Test-Path -LiteralPath $bundleDest -PathType Container) {
             $digest = {
                 param($root)
-                Get-ChildItem -LiteralPath $root -Recurse -File | Sort-Object FullName | ForEach-Object {
-                    $_.FullName.Substring($root.Length) + ":" + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+                # GetFiles returns each path with $root exactly as given, so
+                # the remainder is the same for both trees even when one root
+                # is an 8.3 short path.
+                [System.IO.Directory]::GetFiles($root, "*", [System.IO.SearchOption]::AllDirectories) | Sort-Object | ForEach-Object {
+                    $_.Substring($root.Length) + ":" + (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash
                 }
             }
             if (((& $digest $bundleSrc) -join "|") -eq ((& $digest $bundleDest) -join "|")) { return }
