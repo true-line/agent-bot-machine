@@ -48,8 +48,8 @@ func TestEmitAndConvertedAgainstFixtures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 22 {
-		t.Fatalf("emitted %d recipes, want 22", len(entries))
+	if len(entries) != 23 {
+		t.Fatalf("emitted %d recipes, want 23", len(entries))
 	}
 
 	// Edit a description and recipe id to verify --converted ignores both.
@@ -69,7 +69,7 @@ func TestEmitAndConvertedAgainstFixtures(t *testing.T) {
 	if code := run([]string{"--converted", dir, appsFixture}, &out, &errb); code != 0 {
 		t.Fatalf("--converted exit %d: %s", code, errb.String())
 	}
-	if got := errb.String(); got != "43 rows: 22 converted, 0 drift, 4 mappable, 2 manual, 15 unmappable; 0 alias collisions\n" {
+	if got := errb.String(); got != "43 rows: 23 converted, 0 drift, 4 mappable, 1 manual, 15 unmappable; 0 alias collisions\n" {
 		t.Errorf("summary %q", got)
 	}
 	var convertedCount int
@@ -108,8 +108,8 @@ func TestEmitAndConvertedAgainstFixtures(t *testing.T) {
 			}
 		}
 	}
-	if convertedCount != 22 {
-		t.Errorf("convertedCount=%d, want 22", convertedCount)
+	if convertedCount != 23 {
+		t.Errorf("convertedCount=%d, want 23", convertedCount)
 	}
 
 	// Human mode works with --converted too.
@@ -132,7 +132,7 @@ func TestEmitAndConvertedAgainstFixtures(t *testing.T) {
 	if code := run([]string{"--converted", dir, appsFixture}, &out, &errb); code != 0 {
 		t.Fatalf("--converted after drift exit %d: %s", code, errb.String())
 	}
-	if got := errb.String(); got != "43 rows: 21 converted, 1 drift, 4 mappable, 2 manual, 15 unmappable; 0 alias collisions\n" {
+	if got := errb.String(); got != "43 rows: 22 converted, 1 drift, 4 mappable, 1 manual, 15 unmappable; 0 alias collisions\n" {
 		t.Errorf("drift summary %q", got)
 	}
 }
