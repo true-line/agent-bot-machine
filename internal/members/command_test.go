@@ -242,7 +242,7 @@ func TestPlanRefusals(t *testing.T) {
 		host func() *fakeHost
 		want string
 	}{
-		"macOS":                 {on(target.DarwinARM64), []string{"plan", "--hq-account", "agent-bot-hq", "--members", "abm-a"}, bare, diag.MembersUnsupported},
+		"macOS":                 {on(target.DarwinARM64), []string{"plan", "--hq-account", "agent-bot-hq", "--dir", "/run/abm"}, bare, diag.MembersUnsupported},
 		"Windows":               {on(target.WindowsAMD64), []string{"plan", "--hq-account", "agent-bot-hq", "--members", "abm-a"}, bare, diag.MembersUnsupported},
 		"no action":             {on(target.LinuxAMD64), nil, bare, diag.Usage},
 		"apply is not built":    {on(target.LinuxAMD64), []string{"apply", "plan-1"}, bare, diag.Usage},

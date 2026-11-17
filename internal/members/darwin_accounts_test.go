@@ -18,6 +18,7 @@ func TestParseDsclAttr(t *testing.T) {
 		{"RealName:\n Agent Bot HQ\n", "RealName", "Agent Bot HQ", true},
 		{"GroupMembership: admin owner\n", "GroupMembership", "admin owner", true},
 		{"No such key: AuthenticationAuthority\n", "AuthenticationAuthority", "", false},
+		{"dsAttrTypeNative:IsHidden: 1\n", "IsHidden", "1", true},
 		{"Password: *\n", "Password", "*", true},
 	} {
 		got, found := parseDsclAttr(c.out, c.attr)
@@ -29,7 +30,7 @@ func TestParseDsclAttr(t *testing.T) {
 
 func TestDarwinIDsAndGroups(t *testing.T) {
 	users := parseDsclList("_www            70\nroot           0\nowner          501\n_taken     300\nnovalue\n")
-	if users["_www"] != "70" || users["owner"] != "501" || len(users) != 4 {
+	if users["_www"] != "70" || users["owner"] != "501" || len(users) != 5 {
 		t.Fatalf("users %v", users)
 	}
 	id, err := freeDarwinID(users, map[string]string{"g": "301"})

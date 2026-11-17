@@ -676,8 +676,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Plan, approve and apply the HQ account
+      - name: Plan, approve and apply the HQ and harness accounts
         env:
+          MM_MEMBERS_RUNNER: ${{ runner.environment }}
           MM_MEMBERS_REAL_ACCOUNTS: '1'
         run: bash tests/members-apply-macos.test.sh
 

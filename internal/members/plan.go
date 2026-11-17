@@ -34,16 +34,17 @@ const (
 	// account, and its home is HQ's state, not a person's files.
 	HQHomeBase   = "/var/lib"
 	NoLoginShell = "/usr/sbin/nologin"
-	// PlatformDarwin is Input.Platform on macOS. There a plan holds the HQ
-	// account and nothing else: member accounts wait for HQ plan row 29.
+	// PlatformDarwin plans role accounts without the Linux launch or egress rules.
 	PlatformDarwin = "darwin"
 	// DarwinHQAccount is the dedicated HQ account on macOS. Role accounts
 	// there start with an underscore.
 	DarwinHQAccount = "_agent-bot-hq"
 	// DarwinHQHomeBase holds the HQ account's home on macOS, named without
 	// the underscore: /var/agent-bot-hq.
-	DarwinHQHomeBase   = "/var"
-	DarwinNoLoginShell = "/usr/bin/false"
+	DarwinHQHomeBase      = "/var"
+	DarwinNoLoginShell    = "/usr/bin/false"
+	darwinHarnessRoleName = "Agent Bot Harness"
+	darwinHQRoleName      = "Agent Bot HQ"
 	// DarwinDir is the members directory of a macOS plan: there is none.
 	DarwinDir = "none"
 	// PlanVersion is part of the digest: a change to what a plan means
@@ -117,6 +118,11 @@ func HQHome(platform, name string) string {
 	return path.Join(HQHomeBase, name)
 }
 
+// A distinct, flat namespace under the root-owned Darwin service-home parent.
+func darwinHarnessHome(name string) string {
+	return path.Join(DarwinHQHomeBase, "agent-bot-harness-"+name)
+}
+
 func hqShell(platform string) string {
 	if platform == PlatformDarwin {
 		return DarwinNoLoginShell
@@ -136,9 +142,10 @@ type Account struct {
 	// PrimaryUsers are the accounts whose primary group is GID.
 	PrimaryUsers []string
 	// Groups are the names of every group the account is in.
-	Groups []string
-	Home   string
-	Shell  string
+	Groups     []string
+	Home       string
+	Shell      string
+	DarwinRole string // label of a verified local Directory Services role
 }
 
 // Entry is the host's record of one path, from lstat.
@@ -213,21 +220,16 @@ func Normalize(in Input) (Input, error) {
 		if in.HQService != nil {
 			return in, refuse(RefusedList, "HQ service provisioning is Linux only")
 		}
-		if len(in.Members) > 0 {
-			return in, refuse(RefusedList, "member accounts are Linux only; on macOS the plan holds the HQ account alone")
-		}
 		if in.Dir != "" && in.Dir != DarwinDir {
 			return in, refuse(RefusedList, "a macOS plan has no members directory")
 		}
-		in.Dir, in.Members = DarwinDir, nil
-		return in, nil
-	}
-	if in.Dir == "" {
+		in.Dir = DarwinDir
+	} else if in.Dir == "" {
 		in.Dir = DefaultDir
 	}
 	// agent-bot-hq's own bound on members.dir, plus what a tmpfiles or
 	// sudoers line can carry unquoted.
-	if !path.IsAbs(in.Dir) || path.Clean(in.Dir) != in.Dir || in.Dir == "/" || len(in.Dir) > 80 || strings.ContainsAny(in.Dir, " \t\n\\\"'%") {
+	if in.Platform != PlatformDarwin && (!path.IsAbs(in.Dir) || path.Clean(in.Dir) != in.Dir || in.Dir == "/" || len(in.Dir) > 80 || strings.ContainsAny(in.Dir, " \t\n\\\"'%")) {
 		return in, refuse(RefusedList, "members directory %q must be a clean absolute path of at most 80 characters", in.Dir)
 	}
 	members := append([]string(nil), in.Members...)
@@ -240,6 +242,8 @@ func Normalize(in Input) (Input, error) {
 			return in, refuse(RefusedList, "member account %q is listed twice", m)
 		case m == in.HQAccount:
 			return in, refuse(RefusedList, "member account %q is the HQ account; a member needs a separate one", m)
+		case in.Platform == PlatformDarwin && darwinHarnessHome(m) == HQHome(in.Platform, in.HQAccount):
+			return in, refuse(RefusedList, "member account %q would share the HQ home", m)
 		case m == "root" || m == "admin":
 			return in, refuse(RefusedList, "%s cannot be a member account", m)
 		case in.Invoker != "" && m == in.Invoker:
@@ -268,15 +272,19 @@ func Build(in Input, h Host) (Plan, error) {
 		return Plan{}, err
 	}
 	p.Steps = append(p.Steps, hq)
-	if in.Platform == PlatformDarwin {
-		return p, nil
+	if in.Platform == PlatformDarwin && len(in.Members) > 0 && p.SharedHQAdvice() != "" {
+		return Plan{}, refuse(RefusedAccount, "Darwin harness accounts require a dedicated HQ account")
 	}
 	for _, m := range in.Members {
-		step, err := accountStep(m, h, uids)
+		step, err := platformAccountStep(in.Platform, m, h, uids)
 		if err != nil {
 			return Plan{}, err
 		}
 		p.Steps = append(p.Steps, step)
+	}
+
+	if in.Platform == PlatformDarwin {
+		return p, nil
 	}
 
 	// The endpoint directories, exactly as hq/members.mjs verifies them.
@@ -388,6 +396,9 @@ func hqAccountStep(in Input, h Host, uids map[int]string) (Step, error) {
 		want.Detail = fmt.Sprintf("%s, home %s, shell %s, private group, no password, no other groups", kind, HQHome(in.Platform, name), hqShell(in.Platform))
 		return want, nil
 	}
+	if in.Platform == PlatformDarwin && len(in.Members) != 0 && (a.DarwinRole != darwinHQRoleName || a.Shell != DarwinNoLoginShell || a.Name == in.Invoker) {
+		return Step{}, refuse(RefusedAccount, "Darwin harness accounts require a managed, dedicated HQ account")
+	}
 	if a.UID == 0 {
 		return Step{}, refuse(RefusedAccount, "HQ account %s is root", name)
 	}
@@ -450,16 +461,30 @@ func (p Plan) SharedHQAdvice() string {
 	return ""
 }
 
-func accountStep(name string, h Host, uids map[int]string) (Step, error) {
+func platformAccountStep(platform, name string, h Host, uids map[int]string) (Step, error) {
+	homePath, shell := path.Join(HomeBase, name), NoLoginShell
+	if platform == PlatformDarwin {
+		homePath, shell = darwinHarnessHome(name), DarwinNoLoginShell
+	}
 	want := Step{Kind: KindAccount, Target: name, Group: name, Mode: "0700",
-		Detail: fmt.Sprintf("home %s, shell %s, private group, no password, no other groups", path.Join(HomeBase, name), NoLoginShell)}
+		Detail: fmt.Sprintf("home %s, shell %s, private group, no password, no other groups", homePath, shell)}
 	a, ok, err := h.Account(name)
 	if err != nil {
 		return Step{}, err
 	}
 	if !ok {
+		if platform == PlatformDarwin {
+			if _, exists, err := h.Lstat(homePath); err != nil {
+				return Step{}, err
+			} else if exists {
+				return Step{}, refuse(RefusedPath, "home for %s already exists without its managed account", name)
+			}
+		}
 		want.Action = ActionCreate
 		return want, nil
+	}
+	if platform == PlatformDarwin && (a.DarwinRole != darwinHarnessRoleName || a.Home != homePath || a.Shell != shell || a.UID != a.GID) {
+		return Step{}, refuse(RefusedAccount, "existing account %s is not a managed Darwin harness role", name)
 	}
 	// An account that exists is verified, never adopted and never changed.
 	others, extra := sharing(a)
@@ -482,7 +507,7 @@ func accountStep(name string, h Host, uids map[int]string) (Step, error) {
 	}
 	want.Action = ActionNone
 	want.Detail = fmt.Sprintf("exists; home %s; its password is checked at apply", a.Home)
-	if !ok || !home.Dir || home.Owner != name {
+	if !ok || !home.Dir || home.Owner != name || platform == PlatformDarwin && home.Group != name {
 		return Step{}, refuse(RefusedAccount, "member account %s's home %s is missing or not its own directory", name, a.Home)
 	}
 	if home.Mode&0o7777 != 0o700 {

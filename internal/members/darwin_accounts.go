@@ -5,14 +5,17 @@ package members
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -48,7 +51,7 @@ var runOutput = func(name string, args ...string) (string, error) {
 func parseDsclAttr(out, attr string) (string, bool) {
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	for i, line := range lines {
-		rest, ok := strings.CutPrefix(line, attr+":")
+		rest, ok := strings.CutPrefix(strings.TrimPrefix(line, "dsAttrTypeNative:"), attr+":")
 		if !ok {
 			continue
 		}
@@ -83,12 +86,14 @@ func dsclAttr(record, attr string) (value string, found bool, err error) {
 
 // parseDsclList reads `dscl . -list <path> <attr>`: one record per line,
 // the name and then the value. A record without the attribute has no value
-// and is left out.
+// and still reserves its name.
 func parseDsclList(out string) map[string]string {
 	records := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
-		if len(f) >= 2 {
+		if len(f) == 1 {
+			records[f[0]] = ""
+		} else if len(f) >= 2 {
 			records[f[0]] = f[len(f)-1]
 		}
 	}
@@ -129,9 +134,10 @@ func darwinSharing(a *Account) error {
 			}
 		}
 	}
+	harnessHome := a.Home == darwinHarnessHome(a.Name)
 	var groups []string
 	for _, g := range a.Groups {
-		if !darwinAutomaticGroup(g) && !everyones[g] {
+		if !everyones[g] && (harnessHome || !darwinAutomaticGroup(g)) {
 			groups = append(groups, g)
 		}
 	}
@@ -160,6 +166,49 @@ func darwinSharing(a *Account) error {
 		return err
 	}
 	a.Shell = shell
+	if (!harnessHome && a.Home != HQHome(PlatformDarwin, a.Name)) || a.UID < darwinIDFirst || a.UID > darwinIDLast || a.UID != a.GID {
+		return nil
+	}
+	label, _, err := dsclAttr("/Users/"+a.Name, "RealName")
+	if err != nil {
+		return err
+	}
+	hidden, _, err := dsclAttr("/Users/"+a.Name, "IsHidden")
+	if err != nil {
+		return err
+	}
+	if hidden != "1" {
+		return nil
+	}
+	if !harnessHome && label == darwinHQRoleName {
+		a.DarwinRole = label
+		return nil
+	}
+	if !harnessHome || label != darwinHarnessRoleName {
+		return nil
+	}
+	// A private group we create contains only the implicit primary member.
+	for _, attr := range []string{"NestedGroups", "GroupMembers"} {
+		members, _, err := dsclAttr("/Groups/"+a.Group, attr)
+		if err != nil {
+			return err
+		}
+		if members != "" {
+			return nil
+		}
+	}
+	for _, pair := range [][2]string{{"/Users", "UniqueID"}, {"/Groups", "PrimaryGroupID"}} {
+		records, err := dsclList(pair[0], pair[1])
+		if err != nil {
+			return err
+		}
+		for name, id := range records {
+			if id == gid && name != a.Name {
+				return nil
+			}
+		}
+	}
+	a.DarwinRole = label
 	return nil
 }
 
@@ -206,10 +255,17 @@ func freeDarwinID(users, groups map[string]string) (int, error) {
 	return 0, fmt.Errorf("no free account id from %d to %d", darwinIDFirst, darwinIDLast)
 }
 
-// darwinCreateHQAccount creates the HQ role account: a private group of the
-// same name, no password, no login shell, hidden from the login window, and
-// a home only it can enter.
-func darwinCreateHQAccount(name string) error {
+// Serialize Directory Services changes made by approved plans. The lock
+// is private to root, inside the receipt directory created at claim time.
+func darwinCreateRoleAccount(name, home, label string) (result error) {
+	lock, err := os.OpenFile(filepath.Join(receiptsDir(), ".role-account.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
 	users, err := dsclList("/Users", "UniqueID")
 	if err != nil {
 		return err
@@ -217,6 +273,9 @@ func darwinCreateHQAccount(name string) error {
 	groups, err := dsclList("/Groups", "PrimaryGroupID")
 	if err != nil {
 		return err
+	}
+	if _, ok := users[name]; ok {
+		return fmt.Errorf("an account named %s already exists", name)
 	}
 	if _, ok := groups[name]; ok {
 		return fmt.Errorf("a group named %s already exists", name)
@@ -226,28 +285,44 @@ func darwinCreateHQAccount(name string) error {
 		return err
 	}
 	num := strconv.Itoa(id)
-	home := HQHome(PlatformDarwin, name)
+	if err := os.Mkdir(home, 0o700); err != nil {
+		return err
+	}
+	var created []string
+	defer func() {
+		if result == nil {
+			return
+		}
+		for i := len(created) - 1; i >= 0; i-- {
+			if err := runProgram(dsclPath, ".", "-delete", created[i]); err != nil {
+				result = errors.Join(result, err)
+			}
+		}
+		if err := os.Remove(home); err != nil {
+			result = errors.Join(result, err)
+		}
+	}()
 	group, account := "/Groups/"+name, "/Users/"+name
 	for _, args := range [][]string{
 		{group},
 		{group, "PrimaryGroupID", num},
 		{group, "Password", "*"},
-		{group, "RealName", "Agent Bot HQ"},
+		{group, "RealName", label},
 		{account},
 		{account, "UniqueID", num},
 		{account, "PrimaryGroupID", num},
 		{account, "UserShell", DarwinNoLoginShell},
 		{account, "NFSHomeDirectory", home},
-		{account, "RealName", "Agent Bot HQ"},
+		{account, "RealName", label},
 		{account, "Password", "*"},
 		{account, "IsHidden", "1"},
 	} {
 		if err := runProgram(dsclPath, append([]string{".", "-create"}, args...)...); err != nil {
 			return err
 		}
-	}
-	if err := os.Mkdir(home, 0o700); err != nil {
-		return err
+		if len(args) == 1 {
+			created = append(created, args[0])
+		}
 	}
 	if err := os.Lchown(home, id, id); err != nil {
 		return err

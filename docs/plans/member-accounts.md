@@ -42,10 +42,17 @@ The same plan creates the HQ account when it does not exist. That is S6 in
 
 ## Target
 
-Linux only for harness accounts, which on macOS wait for HQ plan row 29. On
-macOS the plan holds the HQ account alone (S6 in
-[cross-account-channel.md](cross-account-channel.md)). Every command here
-refuses on another OS before it reads anything.
+On macOS, `members plan` without an account list retains the HQ-only plan.
+Pass `--hq-config` to plan one role for each distinct credential account in
+`harnesses.accounts`, or `--members` to supply the account names directly.
+The owner's digest approval and root apply create each harness role with
+a unique UID, a same-name private group, a locked password, shell
+`/usr/bin/false`, and a 0700 home at `/var/agent-bot-harness-<account>`.
+Existing harness accounts must match the managed role. Shared HQ and owner
+accounts are refused for a harness plan. Darwin only provisions the accounts
+in this plan. The Linux endpoint, launch and egress steps below are separate
+parts of the protected-harness qualification on macOS.
+The disposable macOS acceptance test is `tests/members-apply-macos.test.sh`.
 
 ### What is created
 

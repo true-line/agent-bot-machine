@@ -100,9 +100,9 @@ func TestApproveMembersRefusesTheTerminalKey(t *testing.T) {
 	}
 }
 
-func TestApproveMembersRecordsOnLinuxOnly(t *testing.T) {
+func TestApproveMembersRecordsOnSupportedHosts(t *testing.T) {
 	now := time.Date(2026, 11, 10, 5, 0, 0, 0, time.UTC)
-	for _, goos := range []string{"darwin", "windows"} {
+	for _, goos := range []string{"windows", "freebsd"} {
 		dir := t.TempDir()
 		body, id, _ := approveMembers(goos, dir, approvePlanID, approveDigest, now)
 		if id != diag.MembersUnsupported || body != nil {
@@ -112,29 +112,59 @@ func TestApproveMembersRecordsOnLinuxOnly(t *testing.T) {
 			t.Fatalf("%s wrote state: %v", goos, err)
 		}
 	}
+	for _, goos := range []string{"linux", "darwin"} {
+		t.Run(goos, func(t *testing.T) {
+			dir := t.TempDir()
+			body, id, msg := approveMembers(goos, dir, approvePlanID, approveDigest, now)
+			if id != "" {
+				t.Fatalf("%s %s", id, msg)
+			}
+			var got members.Approval
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatal(err)
+			}
+			want := members.Approval{PlanID: approvePlanID, PlanDigest: approveDigest, ApprovedAt: "2026-11-10T05:00:00Z", ExpiresAt: "2026-11-10T05:10:00Z"}
+			if got != want {
+				t.Fatalf("body %+v", got)
+			}
+			raw, err := os.ReadFile(members.ApprovalPath(dir, approvePlanID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var onDisk members.Approval
+			if err := json.Unmarshal(raw, &onDisk); err != nil || onDisk != want {
+				t.Fatalf("file %s %v", raw, err)
+			}
+			if _, id, _ := approveMembers(goos, dir, "plan-bad", approveDigest, now); id != diag.DaemonUndeclared {
+				t.Fatalf("malformed id: %s", id)
+			}
+		})
+	}
+}
+
+func TestDarwinPairedApprovalReachesThePlanStore(t *testing.T) {
 	dir := t.TempDir()
-	body, id, msg := approveMembers("linux", dir, approvePlanID, approveDigest, now)
+	now := time.Now()
+	pub, priv := keyPair(t)
+	const uid = 302
+	g := Gate{Pairing: Pairing{Live: pub, AgentDaemon: pub, AgentDaemonBound: true, AgentDaemonUID: uid}, Now: func() time.Time { return now }}
+	req, id, msg := g.verify(uid, signed(t, priv, approveRequest(now, "darwin-approval")))
 	if id != "" {
 		t.Fatalf("%s %s", id, msg)
 	}
-	var got members.Approval
-	if err := json.Unmarshal(body, &got); err != nil {
-		t.Fatal(err)
+	hooks := Hooks{ApproveMembers: func(planID, digest string) ([]byte, string, string) {
+		return approveMembers("darwin", dir, planID, digest, now)
+	}}
+	if res := hooks.reply(req); !res.OK || res.State != "approved" {
+		t.Fatalf("approval: %+v", res)
 	}
-	want := members.Approval{PlanID: approvePlanID, PlanDigest: approveDigest, ApprovedAt: "2026-11-10T05:00:00Z", ExpiresAt: "2026-11-10T05:10:00Z"}
-	if got != want {
-		t.Fatalf("body %+v", got)
-	}
-	raw, err := os.ReadFile(members.ApprovalPath(dir, approvePlanID))
+	raw, err := os.ReadFile(members.ApprovalPath(dir, req.PlanID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var onDisk members.Approval
-	if err := json.Unmarshal(raw, &onDisk); err != nil || onDisk != want {
-		t.Fatalf("file %s %v", raw, err)
-	}
-	if _, id, _ := approveMembers("linux", dir, "plan-bad", approveDigest, now); id != diag.DaemonUndeclared {
-		t.Fatalf("malformed id: %s", id)
+	var approval members.Approval
+	if err := json.Unmarshal(raw, &approval); err != nil || approval.PlanDigest != req.PlanDigest {
+		t.Fatalf("approval: %+v %v", approval, err)
 	}
 }
 
@@ -160,7 +190,7 @@ func TestHooksReplyApproveMembers(t *testing.T) {
 		t.Fatalf("hook saw %s %s", gotID, gotDigest)
 	}
 	refuse := Hooks{ApproveMembers: func(string, string) ([]byte, string, string) {
-		return nil, diag.MembersUnsupported, "member accounts are Linux only"
+		return nil, diag.MembersUnsupported, "member account provisioning requires Linux or macOS"
 	}}
 	if res := refuse.reply(req); res.OK || res.Diagnostic != diag.MembersUnsupported {
 		t.Fatalf("%+v", res)
