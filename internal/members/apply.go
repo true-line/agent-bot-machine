@@ -53,6 +53,8 @@ type Root interface {
 	// activation fails, it removes an existing managed launch rule so a
 	// previously provisioned account cannot start without the boundary.
 	ActivateEgress(unit string) error
+	PreflightHQ() error
+	ActivateHQ(step Step) error
 	// Claim records that planID is being applied. It reports false when a
 	// receipt for planID already exists.
 	Claim(planID string, receipt []byte) (bool, error)
@@ -72,6 +74,11 @@ func locked(field string) bool {
 // is one this tool wrote. It changes nothing.
 func Precheck(p Plan, r Root) error {
 	for _, s := range p.Steps {
+		if s.Kind == KindService && s.Target == hqSocketName {
+			if err := r.PreflightHQ(); err != nil {
+				return err
+			}
+		}
 		what := "member"
 		switch {
 		case s.Action == ActionCreate:
@@ -184,6 +191,9 @@ func applyStep(s Step, h Host, r Root) error {
 			return r.WriteFile(s.Target, uint32(mode), s.Content, s.Target == SudoersPath)
 		}
 	case KindService:
+		if s.Action == ActionWrite && s.Target == hqSocketName {
+			return r.ActivateHQ(s)
+		}
 		if s.Action == ActionWrite && s.Target == EgressUnitName {
 			return r.ActivateEgress(s.Target)
 		}

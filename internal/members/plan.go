@@ -90,6 +90,7 @@ const (
 
 // Input is what the owner asked for.
 type Input struct {
+	HQService *HQService
 	HQAccount string
 	Dir       string
 	Members   []string
@@ -209,6 +210,9 @@ func Normalize(in Input) (Input, error) {
 		return in, refuse(RefusedList, "HQ account %q is not an account name", in.HQAccount)
 	}
 	if in.Platform == PlatformDarwin {
+		if in.HQService != nil {
+			return in, refuse(RefusedList, "HQ service provisioning is Linux only")
+		}
 		if len(in.Members) > 0 {
 			return in, refuse(RefusedList, "member accounts are Linux only; on macOS the plan holds the HQ account alone")
 		}
@@ -333,6 +337,11 @@ func Build(in Input, h Host) (Plan, error) {
 	// boundary has been activated successfully.
 	p.Steps = append(p.Steps, Step{Kind: KindFile, Target: SudoersPath, Action: ActionWrite, Owner: "root", Group: "root",
 		Mode: "0440", Content: Sudoers(in), Detail: "checked with visudo before it is moved into place"})
+	if in.HQService != nil {
+		if err := appendHQService(&p, in, h); err != nil {
+			return Plan{}, err
+		}
+	}
 	return p, nil
 }
 

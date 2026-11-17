@@ -5,6 +5,7 @@ package members
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -42,7 +43,13 @@ func runProgram(name string, args ...string) error {
 }
 
 func runProgramInput(input, name string, args ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	// Account creation can wait on the host account database. Let a single
+	// invocation finish instead of replaying a partial privileged operation.
+	limit := time.Minute
+	if name == useraddPath {
+		limit = 3 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = rootEnv
@@ -52,6 +59,9 @@ func runProgramInput(input, name string, args ...string) error {
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("%s did not finish within %s", filepath.Base(name), limit)
+		}
 		return fmt.Errorf("%s: %v: %s", filepath.Base(name), err, strings.TrimSpace(out.String()))
 	}
 	return nil
@@ -303,6 +313,102 @@ func (OSRoot) ActivateEgress(unit string) error {
 		}
 	}
 	return nil
+}
+
+// Check the manager's effective units, including runtime overrides that a
+// filesystem check of /etc/systemd/system alone cannot see.
+func checkHQUnits() error {
+	for _, name := range []string{hqServiceName, hqSocketName} {
+		out, err := hqProgramOutput(systemctlPath, "show", "--property=FragmentPath,DropInPaths", name)
+		if err != nil {
+			return err
+		}
+		for _, property := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			k, v, _ := strings.Cut(property, "=")
+			if k == "DropInPaths" && v != "" || k == "FragmentPath" && v != "" && v != filepath.Join(hqSystemDir, name) {
+				return refuse(RefusedPath, "%s has an external fragment or drop-in; reconcile it before enabling HQ", name)
+			}
+		}
+	}
+	return nil
+}
+
+func hqProgramOutput(program string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, program, args...)
+	cmd.Env = rootEnv
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", filepath.Base(program), err)
+	}
+	return out, nil
+}
+
+func (OSRoot) PreflightHQ() error {
+	if runtime.GOOS != "linux" {
+		return errors.New("HQ service is Linux only")
+	}
+	for _, p := range []string{"/usr/sbin/runuser", "/usr/bin/python3", systemctlPath} {
+		if err := requireProgram(p); err != nil {
+			return err
+		}
+	}
+	return checkHQUnits()
+}
+
+// ActivateHQ never runs release code as root. The compatibility check uses
+// the HQ account; the status round trip uses the approved owner's UID.
+func (OSRoot) ActivateHQ(step Step) error {
+	s, err := decodeHQService([]byte(step.Content))
+	if err != nil {
+		return err
+	}
+	if err := s.verify(OSHost{}); err != nil {
+		return err
+	}
+	main := filepath.Join(s.ReleaseDir, "hq/main.mjs")
+	verified, err := hqProgramOutput("/usr/sbin/runuser", "-u", DefaultHQAccount, "--", s.Node, main, "check-owner-control")
+	var cap struct{ Capability string }
+	if err != nil || json.Unmarshal(verified, &cap) != nil || cap.Capability != "linux-owner-control/v1" {
+		return errors.New("the verified HQ release did not confirm linux-owner-control/v1 under the service account")
+	}
+	if err := runProgram(systemctlPath, "daemon-reload"); err != nil {
+		return err
+	}
+	if err := checkHQUnits(); err != nil {
+		return err
+	}
+	socketActive := runProgram(systemctlPath, "is-active", "--quiet", hqSocketName) == nil
+	serviceActive := runProgram(systemctlPath, "is-active", "--quiet", hqServiceName) == nil
+	if serviceActive && !socketActive {
+		return errors.New("the installed HQ service is active without its owner socket; reconcile it before applying")
+	}
+	owner, err := user.Lookup(step.Owner)
+	if err != nil {
+		return err
+	}
+	wasEnabled := runProgram(systemctlPath, "is-enabled", "--quiet", hqSocketName) == nil
+	err = runProgram(systemctlPath, "enable", "--now", hqSocketName)
+	if err == nil {
+		// The round trip activates the socket without restarting an existing HQ.
+		var out []byte
+		out, err = hqProgramOutput("/usr/sbin/runuser", "-u", step.Owner, "--", s.Node, main, "status", "--owner-control", "--json")
+		if err == nil && confirmsHQOwner(out, step.Owner, owner.Uid) {
+			return nil
+		}
+		err = fmt.Errorf("owner-control status as %s did not confirm %s", step.Owner, DefaultHQAccount)
+	}
+	if !socketActive {
+		err = errors.Join(err, runProgram(systemctlPath, "stop", hqSocketName))
+	}
+	if !serviceActive {
+		err = errors.Join(err, runProgram(systemctlPath, "stop", hqServiceName))
+	}
+	if !wasEnabled {
+		err = errors.Join(err, runProgram(systemctlPath, "disable", hqSocketName))
+	}
+	return err
 }
 
 // Claim implements Root.

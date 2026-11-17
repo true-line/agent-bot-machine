@@ -27,6 +27,8 @@ func (OSRoot) SetMode(string, uint32) error                   { return errUnsupp
 func (OSRoot) EnsureDir(string, string, string, uint32) error { return errUnsupported }
 func (OSRoot) RemoveDir(string) error                         { return errUnsupported }
 func (OSRoot) WriteFile(string, uint32, string, bool) error   { return errUnsupported }
+func (OSRoot) PreflightHQ() error                             { return errUnsupported }
+func (OSRoot) ActivateHQ(Step) error                          { return errUnsupported }
 func (OSRoot) ActivateEgress(string) error                    { return errUnsupported }
 func (OSRoot) Claim(string, []byte) (bool, error)             { return false, errUnsupported }
 func (OSRoot) Finish(string, []byte) error                    { return errUnsupported }

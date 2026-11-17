@@ -127,6 +127,12 @@ func (r *fakeRoot) WriteFile(p string, mode uint32, content string, validate boo
 	return nil
 }
 
+func (r *fakeRoot) PreflightHQ() error { return nil }
+func (r *fakeRoot) ActivateHQ(s Step) error {
+	r.log = append(r.log, "service "+s.Target)
+	return r.activateErr
+}
+
 func (r *fakeRoot) ActivateEgress(unit string) error {
 	if r.activateErr != nil {
 		if r.sudoers != nil && strings.HasPrefix(*r.sudoers, header) {

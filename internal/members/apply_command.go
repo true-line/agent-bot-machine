@@ -159,7 +159,7 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 
 	// The host as it is now.
-	p, err := Build(Input{HQAccount: saved.Plan.HQAccount, Dir: saved.Plan.Dir, Members: saved.Plan.Members, Invoker: owner, Platform: platform}, h)
+	p, err := Build(Input{HQService: saved.HQService, HQAccount: saved.Plan.HQAccount, Dir: saved.Plan.Dir, Members: saved.Plan.Members, Invoker: owner, Platform: platform}, h)
 	if err != nil {
 		return mapRefusal(err, diag.MembersPlanFailed, "cannot read the host")
 	}
@@ -203,7 +203,7 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		finish("failed", at)
 		return failure(diag.MembersApplyFailed, "stopped at %v; earlier steps stay applied; plan again to see the host", err)
 	}
-	after, err := Build(Input{HQAccount: p.HQAccount, Dir: p.Dir, Members: p.Members, Invoker: owner, Platform: platform}, h)
+	after, err := Build(Input{HQService: saved.HQService, HQAccount: p.HQAccount, Dir: p.Dir, Members: p.Members, Invoker: owner, Platform: platform}, h)
 	if err != nil {
 		finish("failed", "verification")
 		return mapRefusal(err, diag.MembersApplyFailed, "the host is not as planned after the apply")

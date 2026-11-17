@@ -80,6 +80,13 @@ refused() {
     grep -q "$want" <<<"$out" || fail "expected $want from: $* -- got: $out"
 }
 
+# Run the installed-HQ smoke on its own disposable runner. Both matrix
+# entries use the same binary, approval record and real-account helpers.
+if [[ "${1:-}" == hq-service ]]; then
+    source "$ROOT/tests/fixtures/hq-service-install.sh"
+    exit 0
+fi
+
 untouched() {
     ! getent passwd "$A" >/dev/null || fail "$A exists after a refused apply"
     ! getent passwd "$HQ" >/dev/null || fail "$HQ exists after a refused apply"
