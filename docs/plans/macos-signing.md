@@ -138,6 +138,11 @@ the draft instead of creating a release.
   cleanly, a resume reuses the draft, `tag` refuses a missing or unsigned
   draft, the formula pins the signed digest, and the generated formula installs
   both executables side by side and passes its `test do` in the Ruby harness.
+- The macOS PR job runs `foreign_presence_item_survives_refused_owner_request`
+  in a disposable Keychain. A second executable owns the synthetic presence
+  item. After the bundled helper refuses an owner request, the original writer
+  must still find the same value. [Machine #507](https://github.com/true-line/agent-bot-machine/issues/507)
+  tracks the owner-approved migration and subsequent public-key continuity check.
 
 ## Replay
 
