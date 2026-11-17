@@ -1,11 +1,11 @@
 ---
 name: member-accounts
 status: active
-overview: On Linux, create one OS account per Soul member, the broker endpoint directories HQ verifies, and the rule that lets the HQ account start members. Nothing runs as root until the owner has approved the exact plan in the local web UI.
+overview: On Linux, provision the harness credential accounts from HQ's configuration, their broker endpoint directories, and HQ's launch rule. Nothing runs as root until the owner has approved the exact plan in the local web UI.
 related_prs: [471, 472, 473, 474, 476, 478]
 ---
 
-# Member accounts, endpoint directories and the launch rule
+# Harness accounts, endpoint directories and the launch rule
 
 Issue: [#470](https://github.com/true-line/agent-bot-machine/issues/470).
 Source: rows 16a and 16b of the
@@ -14,10 +14,15 @@ and the owner's decisions of 2026-11-10 recorded there.
 
 ## Intent
 
-The Linux protected profile needs each Soul member in its own OS account, so
-one member cannot read another member's state or speak for it. HQ is not root
-and creates none of this. HQ already verifies the layout at start
-(`hq/members.mjs` in agent-bot-hq) and refuses anything else.
+[PDR-0053](https://github.com/true-line/agent-bot-platform/blob/main/docs/04-decisions/PDR-0053-soul-life-and-agent-replace-member.md)
+sets the unit to one OS account per harness credential, shared by the agents
+of every Soul using that credential. HQ is not root and creates none of this.
+HQ verifies the layout at start (`hq/harness-accounts.mjs`) and refuses anything
+else. Account provisioning alone does not establish the protected profile;
+PDR-0053 leaves the protected eligibility of shared harness accounts unspecified.
+
+The `members` command, `--members` flag, saved plan fields and installed paths
+retain their compatibility names. They do not define a per-Soul account unit.
 
 The owner decided:
 
@@ -34,19 +39,19 @@ The same plan creates the HQ account when it does not exist. That is S6 in
 
 ## Target
 
-Linux only for member accounts, which on macOS wait for HQ plan row 29. On
+Linux only for harness accounts, which on macOS wait for HQ plan row 29. On
 macOS the plan holds the HQ account alone (S6 in
 [cross-account-channel.md](cross-account-channel.md)). Every command here
 refuses on another OS before it reads anything.
 
 ### What is created
 
-For an HQ account `H` and each listed member account `M`:
+For an HQ account `H` and each listed harness credential account `M`:
 
 | Thing                                       | Owner, group, mode                      | Notes                                                                                                                                                                                             |
 | ------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Account `H`, when it does not exist         | its own private group, no other members | A service account: no password, shell `nologin`, in no other group. Home `/var/lib/H` at 0700, which is HQ's state                                                                                |
-| Account `M`                                 | its own private group, no other members | No password, no login shell beyond what a member needs, not in `sudo`, `admin` or `H`'s group. Home at 0700                                                                                       |
+| Account `M`                                 | its own private group, no other members | No password, no login shell beyond what a harness needs, not in `sudo`, `admin` or `H`'s group. Home at 0700                                                                                       |
 | `/run/agent-bot-hq/members/`                | `H` or root, 0755                       | Not writable by group or others                                                                                                                                                                   |
 | `/run/agent-bot-hq/members/M/`              | `H`, group of `M`, 2750                 | HQ creates `broker.sock` inside, 0660                                                                                                                                                             |
 | `/etc/tmpfiles.d/agent-bot-hq-members.conf` | root, 0644                              | Recreates the two directories at boot, because `/run` is cleared                                                                                                                                  |
@@ -54,7 +59,7 @@ For an HQ account `H` and each listed member account `M`:
 
 Refused, never adopted: an `M` that already exists with a shared group, a
 password, extra group memberships or uid 0; an `M` equal to `H`, to the prefix
-owner or to the invoking owner; two members with one uid.
+owner or to the invoking owner; two distinct account names with one uid.
 
 ### Three steps, three actors
 
@@ -104,16 +109,17 @@ signing key is out of the owner's account and the approval stands alone.
 
 ### Removal
 
-`members plan` with a member taken off the list plans the removal of its
-sudoers entry and endpoint directory. The account and its home are kept and
-reported, never deleted by this tool: a member's home may hold work.
+`members plan` with an account absent from the unique account set plans the
+removal of its sudoers entry and endpoint directory. Removing one adapter does
+not remove an account still used by another adapter. The account and its home
+are kept and reported, never deleted by this tool: the home may hold work.
 
 ## Open questions for the owner
 
 | Question                                    | Recommendation                                                                                                            |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | Account names                               | `abm-<name>`, at most 32 characters, matching `^[a-z_][a-z0-9_-]{0,31}$`, which is what HQ accepts                        |
-| One list for both sides                     | HQ's `members.accounts` config names the accounts. `members plan` reads that file, so the provisioner and HQ cannot drift |
+| One list for both sides                     | HQ's `harnesses.accounts` maps adapter IDs to accounts. `members plan` reads that file and provisions each distinct account once |
 | A graphical prompt instead of terminal sudo | Not now. `pkexec` can be added later without changing the plan, the approval or the digest                                |
 
 ## As built
@@ -124,8 +130,22 @@ reported, never deleted by this tool: a member's home may hold work.
 managed-machine members plan [--hq-account <account>] (--hq-config <path> | --members <a,b,...>) [--dir <path>]
 ```
 
-- `--hq-config` reads `members.accounts` and `members.dir` from HQ's
-  `config.json`. `--members` names the accounts directly.
+- `--hq-config` reads `harnesses.accounts` (adapter ID to account) and optional
+  `harnesses.dir` from HQ's `config.json`. Multiple adapters may share an
+  account; the provisioner sorts and deduplicates the account set before
+  building the plan. Omitted `dir` uses `/run/agent-bot-hq/members`.
+- The `harnesses` section accepts only `accounts` and `dir`. Adapter IDs follow
+  HQ's `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`; account names follow
+  `^[a-z_][a-z0-9_-]{0,31}$`. The existing provisioning path restrictions
+  still apply, including a clean absolute directory safe for tmpfiles/sudoers.
+- Missing, null or malformed account maps are refused before saving a plan.
+  An explicit `accounts: {}` requests the existing removal plan, never deletion
+  of accounts or homes. A legacy `members` section, even alongside `harnesses`,
+  is refused with migration advice; there is no fallback to the retired mapping.
+- `--members` still names accounts directly. Equivalent account sets retain
+  the same version-2 plan and digest, approval protocol and apply behavior.
+  Adapter-to-account binding remains HQ's responsibility; the plan covers
+  the accounts and host changes it provisions.
 - The first record carries `plan_id`, `plan_digest`, `changes` and
   `applied: false`. One record follows per step, with the exact content of
   each file.
@@ -138,7 +158,7 @@ managed-machine members plan [--hq-account <account>] (--hq-config <path> | --me
 - An account that already exists is verified, never changed. Its password
   can only be read as root, so that check is at apply.
 - New accounts get home `/home/<account>` and shell `/usr/sbin/nologin`.
-  `sudo -u` runs a command directly, so a member needs no login shell.
+  `sudo -u` runs a command directly, so a harness needs no login shell.
 - Diagnostics: `MM_MEMBERS_UNSUPPORTED`, `MM_MEMBERS_LIST_INVALID`,
   `MM_MEMBERS_ACCOUNT_REFUSED`, `MM_MEMBERS_PATH_REFUSED`,
   `MM_MEMBERS_PLAN_FAILED`.
@@ -149,10 +169,10 @@ managed-machine members plan [--hq-account <account>] (--hq-config <path> | --me
 - **Missing:** the step is `create`. Apply runs
   `useradd --system --create-home --home-dir /var/lib/<account> --user-group --shell /usr/sbin/nologin`,
   sets the home to 0700, and fails unless the new account is locked. It comes
-  before the member accounts, so the directories, the tmpfiles entry and the
+  before the harness accounts, so the directories, the tmpfiles entry and the
   launch rule never name an account that does not exist.
 - **Exists and is dedicated** (a private group of its own name, nobody else
-  in it, no other group): it is verified like a member account. Its home
+  in it, no other group): it is verified like a harness account. Its home
   must be its own directory and is repaired to 0700; a password, an empty
   one or no shadow entry is `MM_MEMBERS_ACCOUNT_REFUSED` at apply.
 - **Exists and is shared** (the owner's own account, where HQ runs until it
@@ -166,7 +186,7 @@ managed-machine members plan [--hq-account <account>] (--hq-config <path> | --me
   `hq_account_dedicated: false` and an `advice` line saying what every
   process in that account can then do and to plan again without
   `--hq-account`. The same recommendation is in the step the owner approves.
-- uid 0 is refused. A member that shares the HQ account's uid is refused.
+- uid 0 is refused. A harness account that shares the HQ account's uid is refused.
 - The plan version is 2. A plan saved by an older build has another digest
   and cannot be approved.
 
@@ -222,7 +242,7 @@ refusal comes before any change:
    account, writable by nobody else, and the file a regular file. It must
    name this plan ID, be unexpired, and carry the digest of the plan just
    rebuilt. Anything else is `MM_MEMBERS_NOT_APPROVED`.
-4. **What only root can read.** An existing member account must be locked:
+4. **What only root can read.** An existing harness account must be locked:
    a shadow field starting with `!` or `*`. A password, an empty field or
    no entry is `MM_MEMBERS_ACCOUNT_REFUSED`. A launch rule already at
    `/etc/sudoers.d/agent-bot-hq-members` that this tool did not write is
@@ -266,25 +286,37 @@ asserts the same owners, groups and modes), a deliberately broken rule
 made to generate one), and `approve-members` itself (Go tests in
 `internal/daemon`; the script writes the approval file in the same form).
 
-The proposal in the local web UI is not built. Nothing sends
-`approve-members` yet.
+**Local owner approval is built.** agent-bot-identity's
+[proposal route](https://github.com/true-line/agent-bot-identity/blob/774e177a0c79ef4ab404de4df3cfb35949e4db6a/agent-web.mjs)
+reads the saved plan, verifies its canonical digest, and presents its steps
+in the local Approvals tab. Only the approved callback sends `approve-members`
+with the plan ID and digest. Its `machine-members.mjs`,
+`tests/machine-members.test.mjs`, `tests/web-client.test.mjs` and
+`tests/machine-route.test.mjs` cover digest matching, owner-only approval and
+the signed request. These component tests and machine's injected approval
+fixture do not claim a complete live-host UI-to-root provisioning rehearsal.
 
 ## Acceptance
 
 On real accounts in CI (Linux), as in agent-bot-hq's member accounts step:
 
 - `plan` changes nothing and its digest is stable across two runs.
+- Current HQ harness configuration produces the same plan as the equivalent
+  direct account list. Shared accounts are provisioned once, mapping order
+  does not change the digest, and malformed or legacy configuration leaves
+  existing saved plans untouched. An explicit empty map plans removal.
 - `apply` without an approval, with an expired or used approval, with an
   approval file a non-owner can write, or after the host changed, runs
   nothing and says which.
 - A plan on a host with no HQ account creates it first. After the apply it
   is a locked service account in no other group; its home is 0700 and
-  neither the owner nor a member can enter it. The owner's own account named
+  neither the owner nor a harness account can enter it. The owner's own account named
   as the HQ account is left alone and the plan says it is shared.
 - After an approved apply: HQ's layout check passes; the HQ account can start
-  a process as a member account and cannot start one as root or as an
-  unlisted account; a member account cannot use the rule; a member cannot
-  enter another member's endpoint directory or home.
+  a process as a harness account and cannot start one as root or as an
+  unlisted account; a harness account cannot use the rule or enter another
+  harness account's endpoint directory or home. Processes sharing one account
+  are not isolated from each other by these filesystem permissions.
 - A second approved apply on the same host is a no-op.
 - `visudo -c` passes, and a deliberately broken rule is never installed.
 - An agent account or session is refused before anything is read.
@@ -300,8 +332,8 @@ On real accounts in CI (Linux), as in agent-bot-hq's member accounts step:
 3. Build order: the plan and its digest (`internal/members`, pure, tested
    with injected host readers); the `approve-members` verb in
    `internal/daemon`; the root apply; the CI job on real accounts. The
-   proposal type in agent-bot-identity's `agent-web.mjs` follows, and the
-   matching screen in the design source.
+   proposal type in agent-bot-identity's `agent-web.mjs` is built; retain its
+   plan/digest compatibility when changing the input mapping.
 4. Gate: `gofmt -l . && go vet ./... && go test ./...`.
 5. Update the closed verb set in [machine-daemon.md](machine-daemon.md) in
    the change that adds `approve-members`.

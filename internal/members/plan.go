@@ -1,8 +1,8 @@
-// Package members plans the Linux member accounts of
-// docs/plans/member-accounts.md: one OS account per Soul member, the broker
+// Package members plans the Linux harness accounts of
+// docs/plans/member-accounts.md: one OS account per harness credential, the broker
 // endpoint directories agent-bot-hq verifies, the tmpfiles entry that
 // recreates them at boot, and the sudoers rule that lets the HQ account
-// start members. This file is pure: it reads the host through Host and
+// start harness processes. This file is pure: it reads the host through Host and
 // changes nothing. Applying a plan is a separate, approved, root step.
 package members
 

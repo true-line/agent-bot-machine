@@ -35,8 +35,8 @@ func deps(t *testing.T, h Host) (Deps, string) {
 			if p != "/etc/hq/config.json" {
 				return nil, errors.New("no such file")
 			}
-			return []byte(`{"leaseTtlMs": 1000, "members": {"dir": "/run/hq-m", "accounts": {
-				"agent_3d9ab2ac-9c97-442c-9bfa-8fcf497ded66": {"m_spec": "abm-spec", "m_lead": "abm-lead"}}}}`), nil
+			return []byte(`{"leaseTtlMs": 1000, "harnesses": {"dir": "/run/hq-m", "accounts": {
+				"test:spec": "abm-spec", "test:lead": "abm-lead"}}}`), nil
 		},
 	}, state
 }
@@ -87,7 +87,7 @@ func TestPlanSavesThePlanAndReportsItsDigest(t *testing.T) {
 	}
 }
 
-func TestPlanReadsTheMembersFromHQsConfig(t *testing.T) {
+func TestPlanReadsTheHarnessAccountsFromHQsConfig(t *testing.T) {
 	d, _ := deps(t, bare())
 	res := Command(d).Run(on(target.LinuxARM64), []string{"plan", "--hq-account=agent-bot-hq", "--hq-config", "/etc/hq/config.json"})
 	if res.Diagnostic != nil {
@@ -98,6 +98,140 @@ func TestPlanReadsTheMembersFromHQsConfig(t *testing.T) {
 	}
 	if got, _ := res.Records[0].Get("dir"); got != "/run/hq-m" {
 		t.Errorf("dir = %v", got)
+	}
+}
+
+func TestHarnessConfigDeduplicatesAccountsAndPreservesPlanDigest(t *testing.T) {
+	// Mapping order and the number of adapters sharing a credential do not
+	// change what is provisioned, or the saved request the owner approves.
+	configs := []string{
+		`{"harnesses":{"accounts":{"test:spec":"abm-spec","test:lead":"abm-lead","test:other":"abm-lead"}}}`,
+		`{"harnesses":{"dir":"/run/agent-bot-hq/members","accounts":{"test:lead":"abm-lead","test:spec":"abm-spec"}}}`,
+		`{"harnesses":{"accounts":{"` + strings.Repeat("a", 128) + `":"abm-lead","Z0._:-":"abm-spec"}}}`,
+	}
+	want, err := Build(Input{HQAccount: DefaultHQAccount, Members: []string{"abm-lead", "abm-spec"}, Invoker: "owner"}, bare())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDigest, _ := want.Digest()
+	for _, config := range configs {
+		d, state := deps(t, bare())
+		d.ReadFile = func(string) ([]byte, error) { return []byte(config), nil }
+		res := Command(d).Run(on(target.LinuxAMD64), []string{"plan", "--hq-config", "/etc/hq/config.json"})
+		if res.Diagnostic != nil {
+			t.Fatalf("%s: %+v", config, res.Diagnostic)
+		}
+		raw, err := os.ReadFile(filepath.Join(state, "members", "plans", "plan-20261110T040000Z-abcd.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saved Saved
+		if err := json.Unmarshal(raw, &saved); err != nil {
+			t.Fatal(err)
+		}
+		if saved.Plan.Version != 2 || saved.PlanDigest != wantDigest || saved.Plan.Dir != DefaultDir {
+			t.Fatalf("config changed compatible plan: %+v", saved)
+		}
+		if got := strings.Join(saved.Plan.Members, ","); got != "abm-lead,abm-spec" {
+			t.Fatalf("accounts = %s", got)
+		}
+		counts := map[string]int{}
+		for _, step := range saved.Plan.Steps {
+			if step.Kind == KindAccount {
+				counts[step.Target]++
+			}
+		}
+		if len(counts) != 2 || counts["abm-lead"] != 1 || counts["abm-spec"] != 1 {
+			t.Fatalf("account steps = %v", counts)
+		}
+	}
+}
+
+func TestInvalidHarnessConfigCannotReplaceASavedPlan(t *testing.T) {
+	for name, config := range map[string]string{
+		"malformed JSON":           `{`,
+		"null root":                `null`,
+		"array root":               `[]`,
+		"missing section":          `{}`,
+		"legacy":                   `{"members":{"accounts":{"soul":{"member":"abm-lead"}}}}`,
+		"mixed":                    `{"members":{},"harnesses":{"accounts":{}}}`,
+		"legacy null":              `{"members":null,"harnesses":{"accounts":{}}}`,
+		"null section":             `{"harnesses":null}`,
+		"array section":            `{"harnesses":[]}`,
+		"string section":           `{"harnesses":"accounts"}`,
+		"unknown section key":      `{"harnesses":{"accounts":{},"enabled":true}}`,
+		"missing accounts":         `{"harnesses":{}}`,
+		"null accounts":            `{"harnesses":{"accounts":null}}`,
+		"array accounts":           `{"harnesses":{"accounts":[]}}`,
+		"string accounts":          `{"harnesses":{"accounts":"abm-lead"}}`,
+		"nested account":           `{"harnesses":{"accounts":{"test":{"member":"abm-lead"}}}}`,
+		"null account":             `{"harnesses":{"accounts":{"test":null}}}`,
+		"number account":           `{"harnesses":{"accounts":{"test":3}}}`,
+		"empty account":            `{"harnesses":{"accounts":{"test":""}}}`,
+		"invalid account":          `{"harnesses":{"accounts":{"test":"abm-lead;id"}}}`,
+		"empty adapter":            `{"harnesses":{"accounts":{"":"abm-lead"}}}`,
+		"invalid adapter":          `{"harnesses":{"accounts":{"/test":"abm-lead"}}}`,
+		"adapter newline":          `{"harnesses":{"accounts":{"test\n":"abm-lead"}}}`,
+		"adapter too long":         `{"harnesses":{"accounts":{"` + strings.Repeat("a", 129) + `":"abm-lead"}}}`,
+		"null dir":                 `{"harnesses":{"accounts":{},"dir":null}}`,
+		"number dir":               `{"harnesses":{"accounts":{},"dir":3}}`,
+		"empty dir":                `{"harnesses":{"accounts":{},"dir":""}}`,
+		"relative dir":             `{"harnesses":{"accounts":{},"dir":"run/test"}}`,
+		"NUL dir":                  `{"harnesses":{"accounts":{},"dir":"/run/a\u0000"}}`,
+		"newline dir":              `{"harnesses":{"accounts":{},"dir":"/run/a\n"}}`,
+		"dir too long":             `{"harnesses":{"accounts":{},"dir":"/` + strings.Repeat("a", 80) + `"}}`,
+		"unclean provisioning dir": `{"harnesses":{"accounts":{},"dir":"/run/../tmp"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, state := deps(t, provisioned())
+			// An invalid config must not turn into an empty removal plan or
+			// overwrite a prior plan, even if a plan ID would be reused.
+			res := Command(d).Run(on(target.LinuxAMD64), []string{"plan", "--members", "abm-lead,abm-spec"})
+			if res.Diagnostic != nil {
+				t.Fatalf("seed plan: %+v", res.Diagnostic)
+			}
+			file := filepath.Join(state, "members", "plans", "plan-20261110T040000Z-abcd.json")
+			before, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d.ReadFile = func(string) ([]byte, error) { return []byte(config), nil }
+			res = Command(d).Run(on(target.LinuxAMD64), []string{"plan", "--hq-config", "/etc/hq/config.json"})
+			if res.Diagnostic == nil || res.Diagnostic.ID != diag.MembersListInvalid || len(res.Records) != 0 {
+				t.Fatalf("refusal = %+v, records = %d", res.Diagnostic, len(res.Records))
+			}
+			if strings.HasPrefix(name, "legacy") || name == "mixed" {
+				if !strings.Contains(res.Diagnostic.Message, "migrate to harnesses.accounts") {
+					t.Fatalf("missing migration advice: %+v", res.Diagnostic)
+				}
+			}
+			after, err := os.ReadFile(file)
+			entries, listErr := os.ReadDir(filepath.Dir(file))
+			if err != nil || listErr != nil || string(after) != string(before) || len(entries) != 1 {
+				t.Fatal("refused config changed saved plans")
+			}
+		})
+	}
+}
+
+func TestExplicitEmptyHarnessAccountsPlansRemoval(t *testing.T) {
+	d, _ := deps(t, provisioned())
+	d.ReadFile = func(string) ([]byte, error) { return []byte(`{"harnesses":{"accounts":{}}}`), nil }
+	res := Command(d).Run(on(target.LinuxAMD64), []string{"plan", "--hq-config", "/etc/hq/config.json"})
+	if res.Diagnostic != nil {
+		t.Fatalf("diagnostic: %+v", res.Diagnostic)
+	}
+	removed := 0
+	for _, record := range res.Records[1:] {
+		if action, _ := record.Get("action"); action == ActionRemove {
+			removed++
+		}
+		if content, ok := record.Get("content"); ok && strings.Contains(content.(string), "NOPASSWD") {
+			t.Fatal("empty accounts still grants a launch rule")
+		}
+	}
+	if removed != 2 {
+		t.Fatalf("removal steps = %d, want 2", removed)
 	}
 }
 
