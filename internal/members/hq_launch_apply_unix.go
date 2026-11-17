@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -32,21 +33,48 @@ func preflightLaunchDaemon() error {
 
 // A matching installed plist may be reapplied. A loaded job pointing at a
 // different plist or a socket left by a different service is never displaced.
-func loadedLaunchDaemon() (bool, error) {
+func loadedLaunchDaemon(s HQService, owner string) (bool, string, error) {
 	out, err := hqProgramOutput(launchctl, "print", "system/"+launchLabel)
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 113 {
-			return false, nil
+			return false, "", nil
 		}
-		return false, err
+		return false, "", err
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.TrimSpace(line) == "path = "+launchPlist {
-			return true, nil
+	// The file on disk can have been replaced since launchd loaded it.
+	// Check the active job's source and complete argv, independently of
+	// whether the job currently has a process.
+	var args []string
+	var source, program, pid string
+	inArguments := false
+	for _, raw := range strings.Split(string(out), "\n") {
+		line := strings.TrimSpace(raw)
+		if inArguments {
+			if line == "}" {
+				inArguments = false
+			} else {
+				args = append(args, line)
+			}
+			continue
+		}
+		switch {
+		case line == "arguments = {":
+			inArguments = true
+		case strings.HasPrefix(line, "path = ") && source == "":
+			source = strings.TrimPrefix(line, "path = ")
+		case strings.HasPrefix(line, "program = "):
+			program = strings.TrimPrefix(line, "program = ")
+		case strings.HasPrefix(line, "pid = "):
+			pid = strings.TrimPrefix(line, "pid = ")
 		}
 	}
-	return false, refuse(RefusedPath, "loaded LaunchDaemon has an unexpected source")
+	want := []string{"/usr/bin/ruby", "--disable-gems", filepath.Join(s.ReleaseDir, "helpers/darwin-owner.rb"),
+		"launch", s.Node, filepath.Join(s.ReleaseDir, "hq/main.mjs"), "run", "--home", launchState, "--owner-account", owner}
+	if source != launchPlist || program != want[0] || !slices.Equal(args, want) {
+		return false, "", refuse(RefusedPath, "loaded LaunchDaemon differs from the approved job")
+	}
+	return true, pid, nil
 }
 
 func activateLaunchDaemon(step Step) (err error) {
@@ -70,7 +98,7 @@ func activateLaunchDaemon(step Step) (err error) {
 	if u.Uid != strconv.Itoa(rec.OwnerUID) {
 		return errors.New("approved owner's UID changed")
 	}
-	loaded, err := loadedLaunchDaemon()
+	loaded, _, err := loadedLaunchDaemon(rec.Service, step.Owner)
 	if err != nil {
 		return err
 	}
@@ -157,6 +185,22 @@ func activateLaunchDaemon(step Step) (err error) {
 	}
 	if !confirmsServiceOwner(out, step.Owner, u.Uid, DarwinHQAccount, launchSocket, "getpeereid") {
 		return errors.New("running HQ did not confirm the approved macOS owner-control endpoint")
+	}
+	loaded, pid, err := loadedLaunchDaemon(rec.Service, step.Owner)
+	if err != nil {
+		return err
+	}
+	n, parseErr := strconv.Atoi(pid)
+	if !loaded || parseErr != nil || n <= 0 {
+		return errors.New("HQ has no live launchd process")
+	}
+	role, err := user.Lookup(DarwinHQAccount)
+	if err != nil {
+		return err
+	}
+	uid, err := hqProgramOutput("/bin/ps", "-o", "uid=", "-p", pid)
+	if err != nil || strings.TrimSpace(string(uid)) != role.Uid {
+		return errors.New("launchd HQ process does not run under the dedicated service UID")
 	}
 	return nil
 }
