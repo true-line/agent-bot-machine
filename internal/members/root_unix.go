@@ -43,7 +43,13 @@ func runProgram(name string, args ...string) error {
 }
 
 func runProgramInput(input, name string, args ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	// Account creation can wait on the host account database. Let a single
+	// invocation finish instead of replaying a partial privileged operation.
+	limit := time.Minute
+	if name == useraddPath {
+		limit = 3 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = rootEnv
@@ -53,6 +59,9 @@ func runProgramInput(input, name string, args ...string) error {
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("%s did not finish within %s", filepath.Base(name), limit)
+		}
 		return fmt.Errorf("%s: %v: %s", filepath.Base(name), err, strings.TrimSpace(out.String()))
 	}
 	return nil

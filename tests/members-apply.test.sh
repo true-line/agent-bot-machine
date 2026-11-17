@@ -80,6 +80,13 @@ refused() {
     grep -q "$want" <<<"$out" || fail "expected $want from: $* -- got: $out"
 }
 
+# Run the installed-HQ smoke on its own disposable runner. Both matrix
+# entries use the same binary, approval record and real-account helpers.
+if [[ "${1:-}" == hq-service ]]; then
+    source "$ROOT/tests/fixtures/hq-service-install.sh"
+    exit 0
+fi
+
 untouched() {
     ! getent passwd "$A" >/dev/null || fail "$A exists after a refused apply"
     ! getent passwd "$HQ" >/dev/null || fail "$HQ exists after a refused apply"
@@ -330,10 +337,3 @@ trap - EXIT
 ok "a removed member loses its launch, directory and egress rules; its account and home stay"
 
 echo "members-apply: all checks passed"
-
-# Exercise a real, offline HQ release with kernel peer-credential support.
-# This is a fresh service and state; the existing synthetic harness account
-# tests above deliberately run HQ as another account.
-if [[ "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]; then
-    source "$ROOT/tests/fixtures/hq-service-install.sh"
-fi

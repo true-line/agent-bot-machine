@@ -622,7 +622,15 @@ jobs:
     # Member accounts on real Linux accounts (docs/plans/member-accounts.md):
     # plan, approval, root apply, and what the launch rule allows. It creates
     # OS accounts and writes /etc/sudoers.d on the throwaway runner.
-    name: member accounts (real accounts)
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: member accounts (real accounts)
+            fixture: members
+          - name: HQ service (dedicated Linux account)
+            fixture: hq-service
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
@@ -643,7 +651,8 @@ jobs:
       - name: Plan, approve and apply member accounts
         env:
           MM_MEMBERS_REAL_ACCOUNTS: '1'
-        run: bash tests/members-apply.test.sh
+          FIXTURE: ${{ matrix.fixture }}
+        run: bash tests/members-apply.test.sh "$FIXTURE"
 
   hq-account-macos:
     # The HQ account on a real macOS host (docs/plans/cross-account-channel.md,
