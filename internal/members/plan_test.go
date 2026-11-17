@@ -79,7 +79,7 @@ func TestPlanOnABareHostCreatesEverythingInOrder(t *testing.T) {
 		"directory /run/agent-bot-hq/members/abm-lead create",
 		"directory /run/agent-bot-hq/members/abm-spec create",
 		"file /etc/tmpfiles.d/agent-bot-hq-members.conf create",
-		"file /usr/local/libexec/agent-bot-hq-members-egress create",
+		"file /usr/local/sbin/agent-bot-hq-members-egress create",
 		"file /etc/systemd/system/agent-bot-hq-members-egress.service create",
 		"service agent-bot-hq-members-egress.service write",
 		"file /etc/sudoers.d/agent-bot-hq-members write",

@@ -26,7 +26,7 @@ const (
 	DefaultHQAccount = "agent-bot-hq"
 	TmpfilesPath     = "/etc/tmpfiles.d/agent-bot-hq-members.conf"
 	SudoersPath      = "/etc/sudoers.d/agent-bot-hq-members"
-	EgressScriptPath = "/usr/local/libexec/agent-bot-hq-members-egress"
+	EgressScriptPath = "/usr/local/sbin/agent-bot-hq-members-egress"
 	EgressUnitPath   = "/etc/systemd/system/agent-bot-hq-members-egress.service"
 	EgressUnitName   = "agent-bot-hq-members-egress.service"
 	HomeBase         = "/home"
