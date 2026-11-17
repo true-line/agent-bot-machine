@@ -207,6 +207,7 @@ for snippet in (
     'resource("core").stage',
     'bin.install "managed-machine"',
     'chmod 0755, bin / "managed-machine"',
+    'bin.install "agent-bot-keyd"',
     'bin.install_symlink "managed-machine" => "agent-machine"',
     'cp "VERSION", legacy / "VERSION"',
     'libexec.install "VERSION"',
@@ -361,6 +362,7 @@ class StubResource
     else
       Dir.mktmpdir("core-stage") do |dir|
         FileUtils.cp(@core_bin, File.join(dir, "managed-machine"))
+        File.write(File.join(dir, "agent-bot-keyd"), "fixture keyd\n")
         Dir.chdir(dir) { yield }
       end
     end
@@ -457,6 +459,8 @@ Dir.chdir(post_build) do
   raise "expected libexec/legacy to exist in post-P01 install" unless (f.libexec / "legacy").exist?
   raise "expected libexec/legacy/bin/managed-machine to be executable" unless (f.libexec / "legacy/bin/managed-machine").executable?
   raise "expected libexec/scripts/update shim to be executable" unless (f.libexec / "scripts/update").executable?
+  helper = f.bin / "agent-bot-keyd"
+  raise "expected packaged executable helper" unless helper.executable? && helper.read == "fixture keyd\n"
   f.instance_eval(&ManagedMachine.test_block)
 end
 
