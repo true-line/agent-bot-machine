@@ -29,9 +29,10 @@ const (
 var systemdPath = regexp.MustCompile(`^/[a-zA-Z0-9._/+:-]+$`)
 var digestHex = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
-// HQService identifies an installed, operator-approved Linux interim release.
+// HQService identifies an installed, operator-approved interim release.
 // Machine never downloads, extracts, or executes the payload as root.
 type HQService struct {
+	Archive        string `json:"archive,omitempty"`
 	ReleaseDir     string `json:"release_dir"`
 	ArtifactSHA256 string `json:"artifact_sha256"`
 	Node           string `json:"node"`
@@ -52,9 +53,13 @@ func decodeHQService(raw []byte) (*HQService, error) {
 }
 
 func (s HQService) validate() error {
-	for _, p := range []string{s.ReleaseDir, s.Node} {
+	paths := []string{s.ReleaseDir, s.Node}
+	if s.Archive != "" {
+		paths = append(paths, s.Archive)
+	}
+	for _, p := range paths {
 		if !systemdPath.MatchString(p) || filepath.Clean(p) != p || p == "/" {
-			return refuse(RefusedPath, "HQ service paths must be clean absolute systemd arguments")
+			return refuse(RefusedPath, "HQ service paths must be clean absolute service arguments")
 		}
 	}
 	if filepath.Base(s.ReleaseDir) != "hq" || !digestHex.MatchString(s.ArtifactSHA256) || !digestHex.MatchString(s.NodeSHA256) {
@@ -169,6 +174,9 @@ func (s HQService) verify(h Host) error {
 
 func appendHQService(p *Plan, in Input, h Host) error {
 	s := in.HQService
+	if s.Archive != "" {
+		return refuse(RefusedList, "archive is used only by the macOS installer")
+	}
 	if in.Platform != "" || p.HQAccount != DefaultHQAccount || p.SharedHQAdvice() != "" || in.Invoker == DefaultHQAccount || !accountName.MatchString(in.Invoker) {
 		return refuse(RefusedAccount, "the Linux HQ service needs the dedicated HQ account and a separate owner")
 	}
@@ -245,6 +253,10 @@ ExecStart=%s %s run --home %s --owner-account %s
 }
 
 func confirmsHQOwner(out []byte, owner string, uid string) bool {
+	return confirmsServiceOwner(out, owner, uid, DefaultHQAccount, hqControlDir+"/control.sock", "SO_PEERCRED")
+}
+
+func confirmsServiceOwner(out []byte, owner, uid, serviceAccount, socket, peerCheck string) bool {
 	var status struct {
 		HQ struct {
 			Account string
@@ -262,5 +274,5 @@ func confirmsHQOwner(out []byte, owner string, uid string) bool {
 		return false
 	}
 	control := status.HQ.Sockets.OwnerControl
-	return status.HQ.Account == DefaultHQAccount && control.Account == owner && control.UID != nil && strconv.Itoa(*control.UID) == uid && control.Path == hqControlDir+"/control.sock" && control.PeerCheck == "SO_PEERCRED"
+	return status.HQ.Account == serviceAccount && control.Account == owner && control.UID != nil && strconv.Itoa(*control.UID) == uid && control.Path == socket && control.PeerCheck == peerCheck
 }

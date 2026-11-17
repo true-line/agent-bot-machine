@@ -221,4 +221,5 @@ approve "$PLAN_ID" "$PLAN_DIGEST"
 sudo "$MM" members apply "$PLAN_ID" >/dev/null
 ok "two distinct credential principals and their private homes survive an approved reapply"
 
+source "$ROOT/tests/fixtures/hq-launchd-install.sh"
 echo "members-apply-macos: all checks passed"
