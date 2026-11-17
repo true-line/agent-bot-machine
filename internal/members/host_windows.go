@@ -20,12 +20,14 @@ type OSRoot struct{}
 
 func (OSRoot) PasswordField(string) (string, bool, error)     { return "", false, errUnsupported }
 func (OSRoot) ReadSudoers() (string, bool, error)             { return "", false, errUnsupported }
+func (OSRoot) PreflightEgress(string, string) error           { return errUnsupported }
 func (OSRoot) CreateAccount(string) error                     { return errUnsupported }
 func (OSRoot) CreateHQAccount(string) error                   { return errUnsupported }
 func (OSRoot) SetMode(string, uint32) error                   { return errUnsupported }
 func (OSRoot) EnsureDir(string, string, string, uint32) error { return errUnsupported }
 func (OSRoot) RemoveDir(string) error                         { return errUnsupported }
 func (OSRoot) WriteFile(string, uint32, string, bool) error   { return errUnsupported }
+func (OSRoot) ActivateEgress(string) error                    { return errUnsupported }
 func (OSRoot) Claim(string, []byte) (bool, error)             { return false, errUnsupported }
 func (OSRoot) Finish(string, []byte) error                    { return errUnsupported }
 

@@ -26,6 +26,9 @@ const (
 	DefaultHQAccount = "agent-bot-hq"
 	TmpfilesPath     = "/etc/tmpfiles.d/agent-bot-hq-members.conf"
 	SudoersPath      = "/etc/sudoers.d/agent-bot-hq-members"
+	EgressScriptPath = "/usr/local/libexec/agent-bot-hq-members-egress"
+	EgressUnitPath   = "/etc/systemd/system/agent-bot-hq-members-egress.service"
+	EgressUnitName   = "agent-bot-hq-members-egress.service"
 	HomeBase         = "/home"
 	// HQHomeBase is where a new HQ account's home goes: it is a service
 	// account, and its home is HQ's state, not a person's files.
@@ -45,7 +48,7 @@ const (
 	DarwinDir = "none"
 	// PlanVersion is part of the digest: a change to what a plan means
 	// invalidates every approval made before it.
-	PlanVersion = 2
+	PlanVersion = 3
 )
 
 // EnvKeep is the fixed environment allowlist of the launch rule. HQ passes a
@@ -82,6 +85,7 @@ const (
 	KindHQAccount = "hq-account"
 	KindDirectory = "directory"
 	KindFile      = "file"
+	KindService   = "service"
 )
 
 // Input is what the owner asked for.
@@ -306,18 +310,29 @@ func Build(in Input, h Host) (Plan, error) {
 			Detail: "no longer a member; the account and its home are kept"})
 	}
 
+	step, err := fileStep(h, TmpfilesPath, "0644", Tmpfiles(in))
+	if err != nil {
+		return Plan{}, err
+	}
+	p.Steps = append(p.Steps, step)
 	for _, f := range []struct {
 		path, mode, content string
 	}{
-		{TmpfilesPath, "0644", Tmpfiles(in)},
-		{SudoersPath, "0440", Sudoers(in)},
+		{EgressScriptPath, "0755", EgressScript(in)},
+		{EgressUnitPath, "0644", EgressUnit()},
 	} {
-		step, err := fileStep(h, f.path, f.mode, f.content)
+		step, err := ownedFileStep(h, f.path, f.mode, f.content)
 		if err != nil {
 			return Plan{}, err
 		}
 		p.Steps = append(p.Steps, step)
 	}
+	p.Steps = append(p.Steps, Step{Kind: KindService, Target: EgressUnitName, Action: ActionWrite,
+		Detail: "validate both firewall families, reload systemd, enable for boot and restart before installing the launch rule"})
+	// The launch rule stays last: HQ cannot start a member before its egress
+	// boundary has been activated successfully.
+	p.Steps = append(p.Steps, Step{Kind: KindFile, Target: SudoersPath, Action: ActionWrite, Owner: "root", Group: "root",
+		Mode: "0440", Content: Sudoers(in), Detail: "checked with visudo before it is moved into place"})
 	return p, nil
 }
 
@@ -516,7 +531,34 @@ func fileStep(h Host, p, mode, content string) (Step, error) {
 	return step, nil
 }
 
+// ownedFileStep refuses an occupied tool-owned path that lacks our marker.
+// These files are readable without privilege, unlike sudoers, so plan and
+// root's rebuild can agree on the refusal before approval is consumed.
+func ownedFileStep(h Host, p, mode, content string) (Step, error) {
+	step, err := fileStep(h, p, mode, content)
+	if err != nil {
+		return Step{}, err
+	}
+	if step.Action == ActionCreate {
+		return step, nil
+	}
+	have, _, err := h.ReadFile(p)
+	if err != nil {
+		return Step{}, err
+	}
+	prefix := header
+	if strings.HasPrefix(content, "#!/bin/sh\n") {
+		prefix = "#!/bin/sh\n" + header
+	}
+	if !strings.HasPrefix(have, prefix) {
+		return Step{}, refuse(RefusedPath, "%s exists and was not written by this tool", p)
+	}
+	return step, nil
+}
+
 const header = "# Managed by managed-machine (members). Do not edit: it is rewritten.\n"
+
+const egressChain = "ABHQ_MEMBER_EGRESS"
 
 // Tmpfiles is the tmpfiles.d entry that recreates the endpoint directories
 // at boot, because /run is cleared.
@@ -549,8 +591,81 @@ func Sudoers(in Input) string {
 	return b.String()
 }
 
-// Changes counts the steps that would change the host. The sudoers file is
-// always written and is not counted.
+// EgressScript owns one chain in each firewall family. The OUTPUT jump is
+// first, so a host-wide accept rule cannot let a harness account bypass it.
+// Unix-domain sockets never traverse these chains and remain available.
+func EgressScript(in Input) string {
+	var accounts strings.Builder
+	for _, m := range in.Members {
+		fmt.Fprintf(&accounts, "    \"$tool\" -w -A \"$chain\" -m owner --uid-owner %s -j REJECT\n", m)
+	}
+	return "#!/bin/sh\n" + header + `set -eu
+
+chain=` + egressChain + `
+
+start_family() {
+  tool="$1"
+  "$tool" -w -N "$chain" 2>/dev/null || "$tool" -w -F "$chain"
+  while "$tool" -w -C OUTPUT -j "$chain" >/dev/null 2>&1; do
+    "$tool" -w -D OUTPUT -j "$chain"
+  done
+  "$tool" -w -I OUTPUT 1 -j "$chain"
+` + accounts.String() + `}
+
+stop_family() {
+  tool="$1"
+  while "$tool" -w -C OUTPUT -j "$chain" >/dev/null 2>&1; do
+    "$tool" -w -D OUTPUT -j "$chain"
+  done
+  "$tool" -w -F "$chain" 2>/dev/null || true
+  "$tool" -w -X "$chain" 2>/dev/null || true
+}
+
+case "${1-}" in
+  start)
+    start_family /usr/sbin/iptables
+    start_family /usr/sbin/ip6tables
+    ;;
+  stop)
+    stop_family /usr/sbin/iptables
+    stop_family /usr/sbin/ip6tables
+    ;;
+  *)
+    echo "usage: agent-bot-hq-members-egress start|stop" >&2
+    exit 2
+    ;;
+esac
+`
+}
+
+// EgressUnit makes the approved policy persistent and active before HQ can
+// launch a member. It does not require agent-bot-hq.service to be installed.
+func EgressUnit() string {
+	return header + `[Unit]
+Description=Agent Bot HQ member egress isolation
+After=local-fs.target
+Before=agent-bot-hq.service
+
+[Service]
+Type=oneshot
+ExecStart=` + EgressScriptPath + ` start
+ExecStop=` + EgressScriptPath + ` stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+`
+}
+
+// EgressRestore is a no-change parse check for the rules the script installs.
+// uid 1 is numeric so validation does not depend on accounts that the same
+// approved apply may still need to create.
+func EgressRestore() string {
+	return "*filter\n:" + egressChain + " - [0:0]\n-A " + egressChain + " -m owner --uid-owner 1 -j REJECT\nCOMMIT\n"
+}
+
+// Changes counts the steps whose desired content differs from the host. The
+// sudoers write and service activation always run and are not counted.
 func (p Plan) Changes() int {
 	n := 0
 	for _, s := range p.Steps {

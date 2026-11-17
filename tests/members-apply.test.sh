@@ -27,6 +27,10 @@ A=abm-ci-a
 B=abm-ci-b
 DIR=/run/agent-bot-hq/members
 RULE=/etc/sudoers.d/agent-bot-hq-members
+EGRESS_SCRIPT=/usr/local/libexec/agent-bot-hq-members-egress
+EGRESS_UNIT=/etc/systemd/system/agent-bot-hq-members-egress.service
+EGRESS_SERVICE=agent-bot-hq-members-egress.service
+EGRESS_CHAIN=ABHQ_MEMBER_EGRESS
 ME="$(id -un)"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -95,6 +99,60 @@ sudoers_ok() {
     sudo cat "$RULE" >&2 || true
     return 1
 }
+
+# A local server proves that the OUTPUT owner match covers both IP families
+# while leaving the Unix broker transport alone. The server publishes its
+# ephemeral ports only after all three listeners are ready.
+cat >"$WORK/egress-probe.py" <<'PY'
+import json
+import os
+import selectors
+import socket
+import sys
+import time
+
+if sys.argv[1] == "serve":
+    ready, unix_path = sys.argv[2:]
+    listeners = []
+    for family, address in (
+        (socket.AF_INET, ("127.0.0.1", 0)),
+        (socket.AF_INET6, ("::1", 0)),
+        (socket.AF_UNIX, unix_path),
+    ):
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        sock.bind(address)
+        sock.listen()
+        listeners.append(sock)
+    os.chmod(unix_path, 0o660)
+    with open(ready, "w", encoding="utf-8") as out:
+        json.dump({"v4": listeners[0].getsockname()[1], "v6": listeners[1].getsockname()[1]}, out)
+    selector = selectors.DefaultSelector()
+    for sock in listeners:
+        selector.register(sock, selectors.EVENT_READ)
+    until = time.monotonic() + 60
+    while time.monotonic() < until:
+        for key, _ in selector.select(timeout=1):
+            conn, _ = key.fileobj.accept()
+            with conn:
+                conn.sendall(b"ok")
+    sys.exit(0)
+
+kind, target = sys.argv[1:]
+if kind == "unix":
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    address = target
+elif kind == "v4":
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    address = ("127.0.0.1", int(target))
+else:
+    client = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    address = ("::1", int(target))
+client.settimeout(3)
+client.connect(address)
+if client.recv(2) != b"ok":
+    raise SystemExit("server returned the wrong response")
+PY
+chmod 755 "$WORK/egress-probe.py"
 
 # The HQ account does not exist yet: the plan creates it (S6).
 ! getent passwd "$HQ" >/dev/null || fail "$HQ exists before the test"
@@ -183,6 +241,39 @@ sudo systemd-tmpfiles --create /etc/tmpfiles.d/agent-bot-hq-members.conf || fail
 [ "$(sudo jq -r .result "/var/lib/managed-machine/members/receipts/$PLAN_ID.json")" = "applied" ] || fail "no applied receipt"
 ok "accounts, directories, rule, tmpfiles entry and receipt are as planned"
 
+# --- the member egress boundary --------------------------------------------
+[ "$(sudo stat -c '%U %G %a' "$EGRESS_SCRIPT")" = "root root 755" ] || fail "$EGRESS_SCRIPT has the wrong owner or mode"
+[ "$(sudo stat -c '%U %G %a' "$EGRESS_UNIT")" = "root root 644" ] || fail "$EGRESS_UNIT has the wrong owner or mode"
+sudo systemctl is-enabled --quiet "$EGRESS_SERVICE" || fail "$EGRESS_SERVICE is not enabled for boot"
+sudo systemctl is-active --quiet "$EGRESS_SERVICE" || fail "$EGRESS_SERVICE is not active"
+for tool in iptables ip6tables; do
+    sudo "$tool" -w -C OUTPUT -j "$EGRESS_CHAIN" || fail "$tool has no OUTPUT jump"
+    for m in "$A" "$B"; do
+        sudo "$tool" -w -C "$EGRESS_CHAIN" -m owner --uid-owner "$m" -j REJECT || fail "$tool does not reject $m"
+    done
+done
+
+PROBE_READY="$WORK/egress-ready.json"
+PROBE_SOCKET="$DIR/$A/broker.sock"
+touch "$PROBE_READY"
+chmod 666 "$PROBE_READY"
+sudo -u "$HQ" python3 "$WORK/egress-probe.py" serve "$PROBE_READY" "$PROBE_SOCKET" &
+PROBE_PID=$!
+trap 'kill "$PROBE_PID" 2>/dev/null || true' EXIT
+for _ in $(seq 1 50); do
+    [ -s "$PROBE_READY" ] && break
+    sleep .1
+done
+[ -s "$PROBE_READY" ] || fail "the local egress probe did not start"
+PROBE_V4="$(jq -r .v4 "$PROBE_READY")"
+PROBE_V6="$(jq -r .v6 "$PROBE_READY")"
+python3 "$WORK/egress-probe.py" v4 "$PROBE_V4" || fail "the owner cannot reach the IPv4 probe"
+python3 "$WORK/egress-probe.py" v6 "$PROBE_V6" || fail "the owner cannot reach the IPv6 probe"
+! sudo -u "$A" python3 "$WORK/egress-probe.py" v4 "$PROBE_V4" 2>/dev/null || fail "$A reached an IPv4 endpoint"
+! sudo -u "$A" python3 "$WORK/egress-probe.py" v6 "$PROBE_V6" 2>/dev/null || fail "$A reached an IPv6 endpoint"
+sudo -u "$A" python3 "$WORK/egress-probe.py" unix "$PROBE_SOCKET" || fail "$A cannot reach its Unix broker transport"
+ok "listed members have no IPv4 or IPv6 egress and retain Unix-socket access"
+
 # --- what the rule allows ---------------------------------------------------
 as_hq() { sudo -u "$HQ" "$@"; }
 [ "$(as_hq sudo -n -u "$A" /usr/bin/id -un)" = "$A" ] || fail "the HQ account cannot start a process as $A"
@@ -226,6 +317,16 @@ sudo test -d "/home/$B" || fail "the removed member's home was deleted"
 ! as_hq sudo -n -u "$B" /usr/bin/true 2>/dev/null || fail "the HQ account can still run as the removed member"
 [ "$(as_hq sudo -n -u "$A" /usr/bin/id -un)" = "$A" ] || fail "the remaining member was lost"
 sudoers_ok || fail "visudo -c fails after the removal"
-ok "a removed member loses its rule and directory; its account and home stay"
+sudo iptables -w -C "$EGRESS_CHAIN" -m owner --uid-owner "$A" -j REJECT || fail "$A lost its IPv4 egress rule"
+sudo ip6tables -w -C "$EGRESS_CHAIN" -m owner --uid-owner "$A" -j REJECT || fail "$A lost its IPv6 egress rule"
+! sudo iptables -w -C "$EGRESS_CHAIN" -m owner --uid-owner "$B" -j REJECT 2>/dev/null || fail "$B still has an IPv4 egress rule"
+! sudo ip6tables -w -C "$EGRESS_CHAIN" -m owner --uid-owner "$B" -j REJECT 2>/dev/null || fail "$B still has an IPv6 egress rule"
+sudo -u "$B" python3 "$WORK/egress-probe.py" v4 "$PROBE_V4" || fail "$B remains isolated after removal"
+! sudo -u "$A" python3 "$WORK/egress-probe.py" v4 "$PROBE_V4" 2>/dev/null || fail "$A escaped isolation after removal"
+sudo -u "$A" python3 "$WORK/egress-probe.py" unix "$PROBE_SOCKET" || fail "$A lost Unix-socket access after removal"
+kill "$PROBE_PID"
+wait "$PROBE_PID" 2>/dev/null || true
+trap - EXIT
+ok "a removed member loses its launch, directory and egress rules; its account and home stay"
 
 echo "members-apply: all checks passed"

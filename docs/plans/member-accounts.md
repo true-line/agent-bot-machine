@@ -1,14 +1,15 @@
 ---
 name: member-accounts
 status: active
-overview: On Linux, provision the harness credential accounts from HQ's configuration, their broker endpoint directories, and HQ's launch rule. Nothing runs as root until the owner has approved the exact plan in the local web UI.
+overview: On Linux, provision the harness credential accounts from HQ's configuration, their broker endpoint directories, outbound-IP isolation, and HQ's launch rule. Nothing runs as root until the owner has approved the exact plan in the local web UI.
 related_prs: [471, 472, 473, 474, 476, 478]
 ---
 
-# Harness accounts, endpoint directories and the launch rule
+# Harness accounts, endpoint directories, egress isolation and the launch rule
 
-Issue: [#470](https://github.com/true-line/agent-bot-machine/issues/470).
-Source: rows 16a and 16b of the
+Issues: [#470](https://github.com/true-line/agent-bot-machine/issues/470) and
+[#496](https://github.com/true-line/agent-bot-machine/issues/496).
+Source: rows 16a, 16b and the machine-owned boundary in row 16c of the
 [agent-bot-hq migration plan](https://github.com/true-line/agent-bot-hq/blob/main/docs/daemon-plugin-split.md),
 and the owner's decisions of 2026-11-10 recorded there.
 
@@ -18,8 +19,10 @@ and the owner's decisions of 2026-11-10 recorded there.
 sets the unit to one OS account per harness credential, shared by the agents
 of every Soul using that credential. HQ is not root and creates none of this.
 HQ verifies the layout at start (`hq/harness-accounts.mjs`) and refuses anything
-else. Account provisioning alone does not establish the protected profile;
-PDR-0053 leaves the protected eligibility of shared harness accounts unspecified.
+else. Account provisioning and this egress boundary do not by themselves
+establish the protected profile; PDR-0053 leaves the protected eligibility of
+shared harness accounts unspecified. HQ admission verification and workspace
+views remain separate row 16c work.
 
 The `members` command, `--members` flag, saved plan fields and installed paths
 retain their compatibility names. They do not define a per-Soul account unit.
@@ -55,6 +58,8 @@ For an HQ account `H` and each listed harness credential account `M`:
 | `/run/agent-bot-hq/members/`                | `H` or root, 0755                       | Not writable by group or others                                                                                                                                                                   |
 | `/run/agent-bot-hq/members/M/`              | `H`, group of `M`, 2750                 | HQ creates `broker.sock` inside, 0660                                                                                                                                                             |
 | `/etc/tmpfiles.d/agent-bot-hq-members.conf` | root, 0644                              | Recreates the two directories at boot, because `/run` is cleared                                                                                                                                  |
+| `/usr/local/libexec/agent-bot-hq-members-egress` | root, 0755                         | Owns and replaces `ABHQ_MEMBER_EGRESS` in both `iptables` and `ip6tables`; rejects outbound IP from each listed `M`, without affecting Unix-domain sockets                                        |
+| `/etc/systemd/system/agent-bot-hq-members-egress.service` | root, 0644              | Enables the exact approved policy at boot and activates it before the launch rule is installed                                                                                                   |
 | `/etc/sudoers.d/agent-bot-hq-members`       | root, 0440                              | `H` may run commands as the listed `M` accounts and as nothing else. No root, no group target, no `SETENV`. A fixed environment allowlist. Checked with `visudo -c` before it is moved into place |
 
 Refused, never adopted: an `M` that already exists with a shared group, a
@@ -65,7 +70,7 @@ owner or to the invoking owner; two distinct account names with one uid.
 
 1. **Plan (no privilege).** `managed-machine members plan` reads the list and
    the host, and writes a saved plan: every account, directory and file it
-   would create or repair, with the exact contents of the two files. It
+   would create or repair, with the exact contents of every managed file. It
    changes nothing. It prints the plan ID and `plan_digest`, the SHA-256 of
    the plan's canonical JSON. An agent may run it.
 2. **Approve (the owner, in the local web UI).** The plan appears as a
@@ -110,9 +115,10 @@ signing key is out of the owner's account and the approval stands alone.
 ### Removal
 
 `members plan` with an account absent from the unique account set plans the
-removal of its sudoers entry and endpoint directory. Removing one adapter does
-not remove an account still used by another adapter. The account and its home
-are kept and reported, never deleted by this tool: the home may hold work.
+removal of its sudoers entry, egress rules and endpoint directory. Removing one
+adapter does not remove an account still used by another adapter. The account
+and its home are kept and reported, never deleted by this tool: the home may
+hold work.
 
 ## Open questions for the owner
 
@@ -143,7 +149,7 @@ managed-machine members plan [--hq-account <account>] (--hq-config <path> | --me
   of accounts or homes. A legacy `members` section, even alongside `harnesses`,
   is refused with migration advice; there is no fallback to the retired mapping.
 - `--members` still names accounts directly. Equivalent account sets retain
-  the same version-2 plan and digest, approval protocol and apply behavior.
+  the same version-3 plan and digest, approval protocol and apply behavior.
   Adapter-to-account binding remains HQ's responsibility; the plan covers
   the accounts and host changes it provisions.
 - The first record carries `plan_id`, `plan_digest`, `changes` and
@@ -187,7 +193,7 @@ managed-machine members plan [--hq-account <account>] (--hq-config <path> | --me
   process in that account can then do and to plan again without
   `--hq-account`. The same recommendation is in the step the owner approves.
 - uid 0 is refused. A harness account that shares the HQ account's uid is refused.
-- The plan version is 2. A plan saved by an older build has another digest
+- The plan version is 3. A plan saved by an older build has another digest
   and cannot be approved.
 
 **Step 2, the approval record** (`internal/daemon`, `internal/members`):
@@ -246,7 +252,11 @@ refusal comes before any change:
    a shadow field starting with `!` or `*`. A password, an empty field or
    no entry is `MM_MEMBERS_ACCOUNT_REFUSED`. A launch rule already at
    `/etc/sudoers.d/agent-bot-hq-members` that this tool did not write is
-   `MM_MEMBERS_PATH_REFUSED`.
+   `MM_MEMBERS_PATH_REFUSED`. Occupied egress script or unit paths without the
+   managed header are also refused. Before the approval is claimed,
+   `/bin/sh -n` parses the exact helper and both `iptables-restore --test` variants
+   parse its owner-match rule; all programs are absolute paths. A missing or
+   unsupported prerequisite changes nothing and does not consume the approval.
 5. **One apply per approval.** The receipt is created, exclusively, at
    `/var/lib/managed-machine/members/receipts/<plan-id>.json` before the
    first change. If it exists, the approval was used. The receipt is in a
@@ -261,7 +271,7 @@ rule is now `H ALL = (ABHQ_MEMBERS) NOPASSWD: NOSETENV: ALL`, and the CI job
 checks that a variable outside the allowlist is refused both ways.
 
 Then the steps run in plan order: accounts, directories, the tmpfiles entry,
-and the launch rule last.
+the egress helper and unit, egress activation, and the launch rule last.
 
 - Accounts: `/usr/sbin/useradd --create-home --home-dir /home/<m>
   --user-group --shell /usr/sbin/nologin <m>`, then the home is set to 0700
@@ -273,14 +283,21 @@ and the launch rule last.
   sudo skips, then renamed. The launch rule is checked with
   `/usr/sbin/visudo -c -f` on the temporary file first; a rule that fails
   is removed and never installed.
+- Egress: systemd is reloaded, the unit is enabled for boot, restarted and
+  required to be active. Its tool-owned IPv4 and IPv6 chains reject output by
+  uid for exactly the approved member list. Unix-domain broker sockets do not
+  cross these chains. If activation fails during an upgrade, an existing
+  managed launch rule is removed before apply fails, so a member cannot keep
+  launching without the boundary.
 - After the last step the plan is built once more. Any remaining change is
   `MM_MEMBERS_APPLY_FAILED`. A failed apply leaves earlier steps in place,
   says which step stopped it, and records `failed` in the receipt.
 
 The CI job `member accounts (real accounts)` runs
 `tests/members-apply.test.sh` on a GitHub-hosted Linux runner with real
-accounts, sudo and visudo. It covers the acceptance list below except three
-lines: HQ's own layout check (that code is in agent-bot-hq; the script
+accounts, sudo, visudo, systemd and both firewall families. It covers the
+acceptance list below except three lines: HQ's own layout check (that code is
+in agent-bot-hq; the script
 asserts the same owners, groups and modes), a deliberately broken rule
 (covered by a Go test with an injected failure, because the tool cannot be
 made to generate one), and `approve-members` itself (Go tests in
@@ -317,6 +334,10 @@ On real accounts in CI (Linux), as in agent-bot-hq's member accounts step:
   unlisted account; a harness account cannot use the rule or enter another
   harness account's endpoint directory or home. Processes sharing one account
   are not isolated from each other by these filesystem permissions.
+- The persistent egress service is enabled and active. A listed member cannot
+  connect to local IPv4 or IPv6 listeners, while the owner can; the member can
+  still connect to a Unix-domain listener. Removing a member removes only its
+  egress rules, and restarting the service restores the approved policy.
 - A second approved apply on the same host is a no-op.
 - `visudo -c` passes, and a deliberately broken rule is never installed.
 - An agent account or session is refused before anything is read.

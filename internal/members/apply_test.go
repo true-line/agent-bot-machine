@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,8 +24,11 @@ type fakeRoot struct {
 	log      []string
 	receipts map[string]Receipt
 	// brokenRule makes the sudoers check fail.
-	brokenRule bool
-	nextUID    int
+	brokenRule   bool
+	preflightErr error
+	activateErr  error
+	preflights   int
+	nextUID      int
 }
 
 func newRoot(h *fakeHost) *fakeRoot {
@@ -45,6 +49,14 @@ func (r *fakeRoot) ReadSudoers() (string, bool, error) {
 		return "", false, nil
 	}
 	return *r.sudoers, true, nil
+}
+
+func (r *fakeRoot) PreflightEgress(script, restore string) error {
+	r.preflights++
+	if !strings.HasPrefix(script, "#!/bin/sh\n"+header) || !strings.Contains(restore, "--uid-owner 1") {
+		return errors.New("the egress preflight did not receive the planned policy")
+	}
+	return r.preflightErr
 }
 
 func (r *fakeRoot) CreateAccount(name string) error {
@@ -112,6 +124,18 @@ func (r *fakeRoot) WriteFile(p string, mode uint32, content string, validate boo
 	}
 	r.h.entries[p] = Entry{Regular: true, Mode: mode, Owner: "root", Group: "root"}
 	r.h.files[p] = content
+	return nil
+}
+
+func (r *fakeRoot) ActivateEgress(unit string) error {
+	if r.activateErr != nil {
+		if r.sudoers != nil && strings.HasPrefix(*r.sudoers, header) {
+			r.log = append(r.log, "remove "+SudoersPath)
+			r.sudoers = nil
+		}
+		return r.activateErr
+	}
+	r.log = append(r.log, "service "+unit)
 	return nil
 }
 
@@ -232,12 +256,13 @@ func TestApplyRunsAnApprovedPlanOnce(t *testing.T) {
 	want := []string{
 		"useradd abm-lead", "useradd abm-spec",
 		"dir " + DefaultDir, "dir " + DefaultDir + "/abm-lead", "dir " + DefaultDir + "/abm-spec",
-		"write " + TmpfilesPath, "write " + SudoersPath,
+		"write " + TmpfilesPath, "write " + EgressScriptPath, "write " + EgressUnitPath,
+		"service " + EgressUnitName, "write " + SudoersPath,
 	}
 	if strings.Join(w.r.log, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("steps:\n%s", strings.Join(w.r.log, "\n"))
 	}
-	if rc := w.r.receipts[applyID]; rc.Result != "applied" || rc.Owner != "owner" || rc.Changes != 6 || rc.FinishedAt == "" {
+	if rc := w.r.receipts[applyID]; rc.Result != "applied" || rc.Owner != "owner" || rc.Changes != 8 || rc.FinishedAt == "" {
 		t.Fatalf("receipt %+v", rc)
 	}
 	in, _ := Normalize(request)
@@ -259,7 +284,7 @@ func TestApplyRunsAnApprovedPlanOnce(t *testing.T) {
 	if res := w.apply(next); res.Diagnostic != nil {
 		t.Fatalf("second apply: %+v", res.Diagnostic)
 	}
-	if strings.Join(w.r.log, "\n") != "write "+SudoersPath {
+	if strings.Join(w.r.log, "\n") != "service "+EgressUnitName+"\nwrite "+SudoersPath {
 		t.Fatalf("second apply did: %v", w.r.log)
 	}
 }
@@ -368,7 +393,7 @@ func TestApplyCreatesTheHQAccountBeforeAnythingThatNamesIt(t *testing.T) {
 	if a := h.accounts["agent-bot-hq"]; a.Home != "/var/lib/agent-bot-hq" {
 		t.Fatalf("HQ account = %+v", a)
 	}
-	if rc := w.r.receipts[applyID]; rc.Result != "applied" || rc.Changes != 7 {
+	if rc := w.r.receipts[applyID]; rc.Result != "applied" || rc.Changes != 9 {
 		t.Fatalf("receipt %+v", rc)
 	}
 }
@@ -438,6 +463,39 @@ func TestApplyNeverInstallsABrokenRule(t *testing.T) {
 	}
 }
 
+func TestApplyPreflightsAndActivatesEgressBeforeTheLaunchRule(t *testing.T) {
+	t.Run("missing prerequisite changes nothing", func(t *testing.T) {
+		w := newWorld(bare())
+		w.r.preflightErr = errors.New("iptables is unavailable")
+		w.approved(t, applyID, w.planned(t, applyID))
+		wantRefused(t, w, w.apply(applyID), diag.MembersApplyFailed)
+		if len(w.r.receipts) != 0 {
+			t.Fatal("a failed preflight consumed the approval")
+		}
+	})
+
+	t.Run("activation failure stops before sudoers", func(t *testing.T) {
+		w := newWorld(bare())
+		managed := Sudoers(request)
+		w.r.sudoers = &managed
+		w.r.activateErr = errors.New("systemd refused the unit")
+		w.approved(t, applyID, w.planned(t, applyID))
+		res := w.apply(applyID)
+		if res.Diagnostic == nil || res.Diagnostic.ID != diag.MembersApplyFailed {
+			t.Fatalf("diagnostic %+v", res.Diagnostic)
+		}
+		if w.r.sudoers != nil {
+			t.Fatal("the existing managed launch rule survived without an active egress boundary")
+		}
+		if !slices.Contains(w.r.log, "remove "+SudoersPath) {
+			t.Fatalf("activation did not disable the launch rule: %v", w.r.log)
+		}
+		if rc := w.r.receipts[applyID]; rc.Result != "failed" || rc.FailedAt != "service "+EgressUnitName {
+			t.Fatalf("receipt %+v", rc)
+		}
+	})
+}
+
 func TestApplyRepairsAndRemoves(t *testing.T) {
 	w := newWorld(provisioned())
 	w.r.shadow["abm-lead"], w.r.shadow["abm-spec"] = "!", "*"
@@ -448,7 +506,7 @@ func TestApplyRepairsAndRemoves(t *testing.T) {
 	if res := w.apply(applyID); res.Diagnostic != nil {
 		t.Fatalf("diagnostic: %+v", res.Diagnostic)
 	}
-	want := "chmod /home/abm-lead\nrmdir " + DefaultDir + "/abm-old\nwrite " + SudoersPath
+	want := "chmod /home/abm-lead\nrmdir " + DefaultDir + "/abm-old\nservice " + EgressUnitName + "\nwrite " + SudoersPath
 	if strings.Join(w.r.log, "\n") != want {
 		t.Fatalf("steps:\n%s", strings.Join(w.r.log, "\n"))
 	}
