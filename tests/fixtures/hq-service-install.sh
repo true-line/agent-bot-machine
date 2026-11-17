@@ -24,7 +24,7 @@ JS
     node scripts/build-interim-release.mjs "$HQ_SOURCE" "$WORK/contracts" "$WORK/hq-release.tar"
 )
 printf '%s  %s\n' "$HQ_ARTIFACT" "$WORK/hq-release.tar" | sha256sum -c -
-install_dir="/opt/machine-hq-ci/$HQ_SOURCE"
+install_dir="/var/lib/machine-hq-ci/$HQ_SOURCE"
 sudo install -d -m 0755 -o root -g root "$install_dir"
 sudo tar --no-same-owner -xf "$WORK/hq-release.tar" -C "$install_dir"
 sudo install -m 0755 -o root -g root "$(command -v node)" "$install_dir/node"

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -124,6 +125,11 @@ func (s HQService) verify(h Host) error {
 		if err != nil {
 			return err
 		}
+		if !e.IsDir() && info.Mode()&0o111 != 0 {
+			if err := checkHQFileCapabilities(p); err != nil {
+				return err
+			}
+		}
 		count++
 		fileBytes += info.Size()
 		if count > 10000 || fileBytes > 256<<20 {
@@ -132,6 +138,9 @@ func (s HQService) verify(h Host) error {
 		return nil
 	})
 	if err != nil {
+		return err
+	}
+	if err := checkHQFileCapabilities(s.Node); err != nil {
 		return err
 	}
 	node, err := os.Open(s.Node)
@@ -233,4 +242,25 @@ ExecStart=%s %s run --home %s --owner-account %s
 	}
 	p.Steps = append(p.Steps, Step{Kind: KindService, Target: hqSocketName, Action: ActionWrite, Owner: in.Invoker, Content: string(raw), Detail: "verify owner-control support as the service account, enable its socket and verify status as the owner"})
 	return nil
+}
+
+func confirmsHQOwner(out []byte, owner string, uid string) bool {
+	var status struct {
+		HQ struct {
+			Account string
+			Sockets struct {
+				OwnerControl struct {
+					Account   string
+					UID       *int
+					Path      string
+					PeerCheck string `json:"peer_check"`
+				}
+			}
+		}
+	}
+	if json.Unmarshal(out, &status) != nil {
+		return false
+	}
+	control := status.HQ.Sockets.OwnerControl
+	return status.HQ.Account == DefaultHQAccount && control.Account == owner && control.UID != nil && strconv.Itoa(*control.UID) == uid && control.Path == hqControlDir+"/control.sock" && control.PeerCheck == "SO_PEERCRED"
 }

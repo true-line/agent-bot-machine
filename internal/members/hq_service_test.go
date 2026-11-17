@@ -90,3 +90,15 @@ func TestHQServiceRejectsInvalidRecord(t *testing.T) {
 		}
 	}
 }
+
+func TestHQOwnerStatusRequiresAuthenticatedPublicEndpoint(t *testing.T) {
+	good := `{"hq":{"account":"agent-bot-hq","sockets":{"ownerControl":{"account":"operator","uid":1002,"path":"/run/agent-bot-hq/control.sock","peer_check":"SO_PEERCRED"}}}}`
+	if !confirmsHQOwner([]byte(good), "operator", "1002") {
+		t.Fatal("valid owner status refused")
+	}
+	for _, bad := range []string{strings.Replace(good, "1002", "1003", 1), strings.Replace(good, "SO_PEERCRED", "", 1), strings.Replace(good, "/run/agent-bot-hq/control.sock", "/tmp/control.sock", 1)} {
+		if confirmsHQOwner([]byte(bad), "operator", "1002") {
+			t.Fatal("incorrect owner status accepted")
+		}
+	}
+}

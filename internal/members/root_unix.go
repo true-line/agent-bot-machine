@@ -370,21 +370,31 @@ func (OSRoot) ActivateHQ(step Step) error {
 	if err := checkHQUnits(); err != nil {
 		return err
 	}
-	wasActive := runProgram(systemctlPath, "is-active", "--quiet", hqSocketName) == nil || runProgram(systemctlPath, "is-active", "--quiet", hqServiceName) == nil
+	socketActive := runProgram(systemctlPath, "is-active", "--quiet", hqSocketName) == nil
+	serviceActive := runProgram(systemctlPath, "is-active", "--quiet", hqServiceName) == nil
+	if serviceActive && !socketActive {
+		return errors.New("the installed HQ service is active without its owner socket; reconcile it before applying")
+	}
+	owner, err := user.Lookup(step.Owner)
+	if err != nil {
+		return err
+	}
 	wasEnabled := runProgram(systemctlPath, "is-enabled", "--quiet", hqSocketName) == nil
 	err = runProgram(systemctlPath, "enable", "--now", hqSocketName)
 	if err == nil {
 		// The round trip activates the socket without restarting an existing HQ.
 		var out []byte
 		out, err = hqProgramOutput("/usr/sbin/runuser", "-u", step.Owner, "--", s.Node, main, "status", "--owner-control", "--json")
-		var status struct{ HQ struct{ Account string } }
-		if err == nil && json.Unmarshal(out, &status) == nil && status.HQ.Account == DefaultHQAccount {
+		if err == nil && confirmsHQOwner(out, step.Owner, owner.Uid) {
 			return nil
 		}
 		err = fmt.Errorf("owner-control status as %s did not confirm %s", step.Owner, DefaultHQAccount)
 	}
-	if !wasActive {
-		err = errors.Join(err, runProgram(systemctlPath, "stop", hqSocketName, hqServiceName))
+	if !socketActive {
+		err = errors.Join(err, runProgram(systemctlPath, "stop", hqSocketName))
+	}
+	if !serviceActive {
+		err = errors.Join(err, runProgram(systemctlPath, "stop", hqServiceName))
 	}
 	if !wasEnabled {
 		err = errors.Join(err, runProgram(systemctlPath, "disable", hqSocketName))
