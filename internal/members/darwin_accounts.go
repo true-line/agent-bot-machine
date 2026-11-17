@@ -237,9 +237,40 @@ func darwinPasswordField(account string) (string, bool, error) {
 	return "set", true, nil
 }
 
+// Directory Services resolves aliases and configured directory nodes through
+// /Search. Enumeration of the local node only returns primary record names.
+func refuseVisibleDarwinName(name string) error {
+	for _, kind := range []string{"/Users/", "/Groups/"} {
+		record := kind + name
+		out, err := runOutput(dsclPath, "/Search", "-read", record, "RecordName")
+		if err == nil {
+			return fmt.Errorf("Directory Services already resolves %s", record)
+		}
+		if !strings.Contains(out, "eDSRecordNotFound") {
+			return fmt.Errorf("cannot confirm %s is available: %w: %s", record, err, strings.TrimSpace(out))
+		}
+	}
+	return nil
+}
+
+func darwinDirectoryIDUsed(id string) (bool, error) {
+	// Search by number too. A directory-backed user or group can reserve an
+	// ID without appearing in the local Directory Services node.
+	for _, field := range [][2]string{{"/Users", "UniqueID"}, {"/Groups", "PrimaryGroupID"}} {
+		out, err := runOutput(dsclPath, "/Search", "-search", field[0], field[1], id)
+		if err != nil {
+			return false, fmt.Errorf("Directory Services search for %s %s: %w: %s", field[1], id, err, strings.TrimSpace(out))
+		}
+		if strings.TrimSpace(out) != "" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // freeDarwinID returns the first id in the role range that neither an
 // account nor a group uses.
-func freeDarwinID(users, groups map[string]string) (int, error) {
+func freeDarwinID(users, groups map[string]string, directoryUsed func(string) (bool, error)) (int, error) {
 	used := map[string]bool{}
 	for _, id := range users {
 		used[id] = true
@@ -248,7 +279,15 @@ func freeDarwinID(users, groups map[string]string) (int, error) {
 		used[id] = true
 	}
 	for id := darwinIDFirst; id <= darwinIDLast; id++ {
-		if !used[strconv.Itoa(id)] {
+		num := strconv.Itoa(id)
+		if used[num] {
+			continue
+		}
+		reserved, err := directoryUsed(num)
+		if err != nil {
+			return 0, err
+		}
+		if !reserved {
 			return id, nil
 		}
 	}
@@ -280,7 +319,10 @@ func darwinCreateRoleAccount(name, home, label string) (result error) {
 	if _, ok := groups[name]; ok {
 		return fmt.Errorf("a group named %s already exists", name)
 	}
-	id, err := freeDarwinID(users, groups)
+	if err := refuseVisibleDarwinName(name); err != nil {
+		return err
+	}
+	id, err := freeDarwinID(users, groups, darwinDirectoryIDUsed)
 	if err != nil {
 		return err
 	}

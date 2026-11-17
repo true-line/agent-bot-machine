@@ -33,21 +33,50 @@ func TestDarwinIDsAndGroups(t *testing.T) {
 	if users["_www"] != "70" || users["owner"] != "501" || len(users) != 5 {
 		t.Fatalf("users %v", users)
 	}
-	id, err := freeDarwinID(users, map[string]string{"g": "301"})
-	if err != nil || id != 302 {
+	directoryUsed := func(id string) (bool, error) { return id == "302", nil }
+	id, err := freeDarwinID(users, map[string]string{"g": "301"}, directoryUsed)
+	if err != nil || id != 303 {
 		t.Fatalf("free id %d %v", id, err)
 	}
 	full := map[string]string{}
 	for i := darwinIDFirst; i <= darwinIDLast; i++ {
 		full[string(rune('a'+i%26))+strings.Repeat("x", i)] = strings.TrimSpace(strings.Join([]string{itoa(i)}, ""))
 	}
-	if _, err := freeDarwinID(full, nil); err == nil {
+	if _, err := freeDarwinID(full, nil, directoryUsed); err == nil {
 		t.Fatal("a full id range gave an id")
 	}
 	for name, want := range map[string]bool{"everyone": true, "localaccounts": true, "_lpoperator": true, "com.apple.sharepoint.group.1": true, "staff": false, "admin": false, "_agent-bot-hq": false} {
 		if darwinAutomaticGroup(name) != want {
 			t.Errorf("automatic %s", name)
 		}
+	}
+}
+
+func TestDarwinRoleRespectsDirectorySearchPolicy(t *testing.T) {
+	old := runOutput
+	t.Cleanup(func() { runOutput = old })
+	runOutput = func(name string, args ...string) (string, error) {
+		switch strings.Join(args, " ") {
+		case "/Search -read /Users/_role RecordName":
+			return "eDSRecordNotFound", errors.New("missing")
+		case "/Search -read /Groups/_role RecordName":
+			return "RecordName: existing-group _role", nil
+		case "/Search -search /Users UniqueID 302":
+			return "", nil
+		case "/Search -search /Groups PrimaryGroupID 302":
+			return "directory-backed-group 302", nil
+		default:
+			return "", errors.New("directory unavailable")
+		}
+	}
+	if err := refuseVisibleDarwinName("_role"); err == nil {
+		t.Fatal("accepted a name reserved by a group alias")
+	}
+	if used, err := darwinDirectoryIDUsed("302"); err != nil || !used {
+		t.Fatalf("directory ID: %v %v", used, err)
+	}
+	if _, err := darwinDirectoryIDUsed("303"); err == nil {
+		t.Fatal("ignored a directory lookup error")
 	}
 }
 
