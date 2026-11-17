@@ -330,3 +330,10 @@ trap - EXIT
 ok "a removed member loses its launch, directory and egress rules; its account and home stay"
 
 echo "members-apply: all checks passed"
+
+# Exercise a real, offline HQ release with kernel peer-credential support.
+# This is a fresh service and state; the existing synthetic harness account
+# tests above deliberately run HQ as another account.
+if [[ "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]; then
+    source "$ROOT/tests/fixtures/hq-service-install.sh"
+fi

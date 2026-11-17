@@ -359,3 +359,41 @@ On real accounts in CI (Linux), as in agent-bot-hq's member accounts step:
 4. Gate: `gofmt -l . && go vet ./... && go test ./...`.
 5. Update the closed verb set in [machine-daemon.md](machine-daemon.md) in
    the change that adds `approve-members`.
+
+### Opt-in Linux HQ service
+
+For a new dedicated installation, add `--hq-service RECORD.json` to the normal
+`members plan`. The owner reviews and approves it and runs `members apply`
+through the existing local flow. Machine uses a previously verified, extracted
+[HQ interim artifact](https://github.com/true-line/agent-bot-hq/blob/main/docs/interim-release-runbook.md)
+supporting `check-owner-control` and `--owner-control`. The deployment operator
+selects a versioned install location and verifies both the archive and the Node
+runtime before use. This example illustrates the record shape; replace both
+paths and SHA-256 values with the installed, approved target.
+
+```json
+{
+  "release_dir": "/opt/example-releases/VERSION/hq",
+  "artifact_sha256": "<lowercase SHA-256 of the approved interim tar>",
+  "node": "/opt/example-runtime/VERSION/bin/node",
+  "node_sha256": "<lowercase SHA-256 of the installed Node executable>"
+}
+```
+
+The `hq` extraction, every entry below it, Node, and their parent directories
+must be root-owned, free of symlinks, and closed to group/other writes.
+Planning and apply compare the extracted tree to the approved digest using
+the builder's GNU tar options and compare Node's bytes to its digest. The
+unit paths, account, UID and deployment record are in the approved steps.
+The Linux host supplies systemd, GNU tar, runuser, and `/usr/bin/python3`
+for HQ's peer-credential check.
+
+Systemd opens `/run/agent-bot-hq/control.sock` mode 0600 for the approved
+owner. Its socket-activated service runs as `agent-bot-hq`, with private state
+in `/var/lib/agent-bot-hq/.agent-bot-hq`. Apply verifies capability as HQ, then
+requests status over the new socket as the owner. An activation error records
+a failed receipt; inspect the service and socket before making a fresh plan.
+A conflicting installed unit requires an explicit cutover with rollback.
+The existing owner-account instance, its admission clients, pairing, enrollment
+and credentials require their own migration. This opt-in installs a distinct
+service and does not transfer that state or qualify a protected host.

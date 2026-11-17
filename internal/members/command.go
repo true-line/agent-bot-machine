@@ -68,6 +68,7 @@ Options
 --hq-config <path>      Read HQ's harnesses.accounts (adapter ID to account)
                         and optional harnesses.dir. Shared accounts are
                         provisioned once. Legacy members config is refused
+--hq-service <json>     Install the Linux HQ service from a verified release record
 --members <a,b,...>     Name the harness accounts directly (compatibility flag)
 --dir <path>            The endpoint directory, with --members
                         (default ` + DefaultDir + `)
@@ -83,10 +84,11 @@ func failure(id, format string, args ...any) cli.Result {
 // Saved is the plan file apply reads: the request, so the plan can be built
 // again from the host, and the digest the owner is asked to approve.
 type Saved struct {
-	PlanID     string `json:"plan_id"`
-	PlanDigest string `json:"plan_digest"`
-	CreatedAt  string `json:"created_at"`
-	Plan       Plan   `json:"plan"`
+	HQService  *HQService `json:"hq_service,omitempty"`
+	PlanID     string     `json:"plan_id"`
+	PlanDigest string     `json:"plan_digest"`
+	CreatedAt  string     `json:"created_at"`
+	Plan       Plan       `json:"plan"`
 }
 
 // HQ adapter IDs identify harness credentials (PDR-0053). Several adapters
@@ -152,10 +154,11 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if len(args) == 0 || args[0] != "plan" {
 		return cli.Result{Diagnostic: command.UsageErr("members takes one action: plan or apply")}
 	}
-	var hqAccount, hqConfigPath, list, dir string
+	var hqAccount, hqConfigPath, list, dir, serviceRecord string
 	var hasList, hasDir bool
 	if d := command.Parse(args[1:], command.Spec{
 		Values: map[string]command.Flag{
+			"--hq-service": {Value: &serviceRecord},
 			"--hq-account": {Value: &hqAccount},
 			"--hq-config":  {Value: &hqConfigPath},
 			"--members":    {Value: &list, Set: &hasList, Optional: true},
@@ -176,7 +179,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		hqAccount = DefaultHQAccountFor(platform)
 	}
 	switch {
-	case platform == PlatformDarwin && (hqConfigPath != "" || hasList || hasDir):
+	case platform == PlatformDarwin && (hqConfigPath != "" || hasList || hasDir || serviceRecord != ""):
 		return failure(diag.MembersUnsupported, "member accounts are Linux only; on macOS members plan takes --hq-account and nothing else")
 	case platform == PlatformDarwin:
 	case (hqConfigPath != "") == hasList:
@@ -211,6 +214,20 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		in.Invoker = name
 	}
 
+	if serviceRecord != "" {
+		read := deps.ReadFile
+		if read == nil {
+			read = os.ReadFile
+		}
+		raw, err := read(serviceRecord)
+		if err != nil {
+			return failure(diag.MembersListInvalid, "cannot read HQ service record: %v", err)
+		}
+		in.HQService, err = decodeHQService(raw)
+		if err != nil {
+			return failure(diag.MembersListInvalid, "%v", err)
+		}
+	}
 	var h Host = OSHost{}
 	if deps.Host != nil {
 		h = deps.Host()
@@ -237,7 +254,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if err != nil {
 		return failure(diag.MembersPlanFailed, "cannot locate the state directory: %v", err)
 	}
-	saved := Saved{PlanID: planID, PlanDigest: digest, CreatedAt: now.UTC().Format("2006-01-02T15:04:05Z"), Plan: plan}
+	saved := Saved{HQService: in.HQService, PlanID: planID, PlanDigest: digest, CreatedAt: now.UTC().Format("2006-01-02T15:04:05Z"), Plan: plan}
 	if err := save(filepath.Join(state, "members", "plans"), saved); err != nil {
 		return failure(diag.MembersPlanFailed, "cannot save the plan: %v", err)
 	}
