@@ -23,6 +23,11 @@ import (
 
 const maxReleaseBytes = 256 << 20
 
+type installedHQEntry struct {
+	Entry
+	path string // discovered from the installed tree before reading the archive
+}
+
 // macOS ships bsdtar. Check the approved archive directly against every file
 // of its extraction. An installer never extracts or executes a file as root.
 func verifyDarwinRelease(s HQService, h Host) error {
@@ -47,7 +52,7 @@ func verifyDarwinRelease(s HQService, h Host) error {
 			p = filepath.Dir(p)
 		}
 	}
-	remaining := make(map[string]Entry)
+	remaining := make(map[string]installedHQEntry)
 	var size int64
 	err := filepath.WalkDir(s.ReleaseDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -75,7 +80,7 @@ func verifyDarwinRelease(s HQService, h Host) error {
 		if err != nil {
 			return err
 		}
-		remaining[rel] = e
+		remaining[rel] = installedHQEntry{Entry: e, path: p}
 		paths = append(paths, p)
 		return nil
 	})
@@ -97,7 +102,7 @@ func verifyDarwinRelease(s HQService, h Host) error {
 		return err
 	}
 	defer archive.Close()
-	if err := matchDarwinArchive(archive, filepath.Dir(s.ReleaseDir), remaining); err != nil {
+	if err := matchDarwinArchive(archive, remaining); err != nil {
 		return err
 	}
 	meta, err := os.ReadFile(filepath.Join(s.ReleaseDir, "governance/interim-release.json"))
@@ -143,7 +148,7 @@ func openPinnedFile(p, digest string) (*os.File, error) {
 	return f, nil
 }
 
-func matchDarwinArchive(r io.Reader, parent string, remaining map[string]Entry) error {
+func matchDarwinArchive(r io.Reader, remaining map[string]installedHQEntry) error {
 	ar := tar.NewReader(r)
 	for {
 		hdr, err := ar.Next()
@@ -155,8 +160,11 @@ func matchDarwinArchive(r io.Reader, parent string, remaining map[string]Entry) 
 		}
 		name := strings.TrimSuffix(hdr.Name, "/")
 		entry, ok := remaining[name]
-		if !ok || name != path.Clean(name) || hdr.Format != tar.FormatUSTAR || hdr.Mode != int64(entry.Mode) {
-			return refuse(RefusedPath, "unexpected, repeated or changed tar entry %q", name)
+		if !ok || name != path.Clean(name) {
+			return refuse(RefusedPath, "unexpected or repeated tar entry %q", name)
+		}
+		if hdr.Format != tar.FormatUSTAR || hdr.Mode != int64(entry.Mode) {
+			return refuse(RefusedPath, "archive %q has format %s mode %04o; expected ustar and installed mode %04o", name, hdr.Format, hdr.Mode, entry.Mode)
 		}
 		delete(remaining, name)
 		if hdr.Typeflag == tar.TypeDir && entry.Dir {
@@ -169,7 +177,7 @@ func matchDarwinArchive(r io.Reader, parent string, remaining map[string]Entry) 
 		if _, err := io.Copy(want, ar); err != nil {
 			return err
 		}
-		f, err := openPinnedFile(filepath.Join(parent, name), hex.EncodeToString(want.Sum(nil)))
+		f, err := openPinnedFile(entry.path, hex.EncodeToString(want.Sum(nil)))
 		if err != nil {
 			return err
 		}

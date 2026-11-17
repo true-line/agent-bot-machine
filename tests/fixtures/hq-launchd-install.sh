@@ -20,7 +20,12 @@ touch "$fixture/hq/hq/main.mjs"
 printf '%s\n' 'exec(*ARGV.drop(1))' > "$fixture/hq/helpers/darwin-owner.rb"
 printf '%s\n' '{"target_platform":"darwin"}' > "$fixture/hq/governance/interim-release.json"
 chmod -R u=rwX,go=rX "$fixture/hq"
-COPYFILE_DISABLE=1 tar --format ustar -cf "$fixture/approved.tar" -C "$fixture" hq
+python3 - "$fixture" <<'PYTAR'
+import os, sys, tarfile
+os.chdir(sys.argv[1])
+with tarfile.open("approved.tar", "w", format=tarfile.USTAR_FORMAT) as archive:
+    archive.add("hq")
+PYTAR
 sudo install -m 0644 -o root -g wheel "$fixture/approved.tar" "$stage/approved.tar"
 sudo tar --no-same-owner -xf "$stage/approved.tar" -C "$stage"
 clang -Wall -Werror -o "$fixture/runtime" "$ROOT/tests/fixtures/hq-launchd-runtime.c"
