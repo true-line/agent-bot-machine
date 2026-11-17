@@ -346,6 +346,9 @@ func hqProgramOutput(program string, args ...string) ([]byte, error) {
 }
 
 func (OSRoot) PreflightHQ() error {
+	if runtime.GOOS == "darwin" {
+		return preflightLaunchDaemon()
+	}
 	if runtime.GOOS != "linux" {
 		return errors.New("HQ service is Linux only")
 	}
@@ -360,6 +363,9 @@ func (OSRoot) PreflightHQ() error {
 // ActivateHQ never runs release code as root. The compatibility check uses
 // the HQ account; the status round trip uses the approved owner's UID.
 func (OSRoot) ActivateHQ(step Step) error {
+	if runtime.GOOS == "darwin" {
+		return activateLaunchDaemon(step)
+	}
 	s, err := decodeHQService([]byte(step.Content))
 	if err != nil {
 		return err

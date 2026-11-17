@@ -180,4 +180,5 @@ sudo "$MM" members apply "$PLAN_ID" >/dev/null
 [ "$(sudo stat -f '%Lp' "$HQ_HOME")" = "700" ] || fail "the home was not set back to 0700"
 ok "an HQ home that others can enter is set back to 0700"
 
+source "$ROOT/tests/fixtures/hq-launchd-install.sh"
 echo "members-apply-macos: all checks passed"

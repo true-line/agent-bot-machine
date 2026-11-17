@@ -397,3 +397,27 @@ A conflicting installed unit requires an explicit cutover with rollback.
 The existing owner-account instance, its admission clients, pairing, enrollment
 and credentials require their own migration. This opt-in installs a distinct
 service and does not transfer that state or qualify a protected host.
+
+### macOS HQ LaunchDaemon
+
+A macOS owner can run `managed-machine members plan --hq-service <record.json>`
+and approve/apply its digest through the existing members workflow. The service
+record uses the Linux `release_dir`, `artifact_sha256`, `node` and `node_sha256`
+fields and adds `archive`, the absolute path to the retained approved Darwin
+ustar artifact. Stage the archive, its complete extraction (ending in `/hq`)
+and a standalone Node executable under root-owned, read-only-to-others paths.
+The installer checks each extracted entry, the Node digest, and Mach-O loader
+dependencies. Node must use Apple system libraries. Owner-writable Homebrew
+runtimes are unsuitable. No build tools or downloads run during installation.
+
+Machine creates the system LaunchDaemon `ai.true-line.agent-bot-hq` for
+`_agent-bot-hq`. Its root-owned listener is
+`/private/var/agent-bot-hq-control.sock`. Kernel peer credentials and the
+approved owner's UID authorize each request. Machine checks the release's
+`darwin-owner-control/v1` capability as the HQ account and verifies the running
+endpoint via status as the approved owner. A second approved apply verifies the
+same loaded job. A differing job or release needs a separate cutover.
+First-install failure rolls back the new registration; role-account state stays
+in its private home. This service operation does not qualify the protected
+profile. The [HQ service issue](https://github.com/true-line/agent-bot-hq/issues/88)
+tracks the scope and remaining acceptance evidence.

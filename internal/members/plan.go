@@ -210,9 +210,6 @@ func Normalize(in Input) (Input, error) {
 		return in, refuse(RefusedList, "HQ account %q is not an account name", in.HQAccount)
 	}
 	if in.Platform == PlatformDarwin {
-		if in.HQService != nil {
-			return in, refuse(RefusedList, "HQ service provisioning is Linux only")
-		}
 		if len(in.Members) > 0 {
 			return in, refuse(RefusedList, "member accounts are Linux only; on macOS the plan holds the HQ account alone")
 		}
@@ -269,6 +266,11 @@ func Build(in Input, h Host) (Plan, error) {
 	}
 	p.Steps = append(p.Steps, hq)
 	if in.Platform == PlatformDarwin {
+		if in.HQService != nil {
+			if err := appendLaunchDaemon(&p, in, h); err != nil {
+				return Plan{}, err
+			}
+		}
 		return p, nil
 	}
 	for _, m := range in.Members {

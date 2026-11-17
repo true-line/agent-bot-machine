@@ -50,7 +50,7 @@ plan_id and plan_digest.
 
 Linux plans everything. macOS plans the HQ account alone (` + DarwinHQAccount + `, a
 hidden role account with home /var/agent-bot-hq): there plan takes
---hq-account and nothing else. Other systems are refused.
+--hq-account and optionally --hq-service. Other systems are refused.
 
 apply needs root and an approval. The owner approves the plan's digest in
 the local web UI, then runs apply with sudo in their own terminal within
@@ -68,7 +68,7 @@ Options
 --hq-config <path>      Read HQ's harnesses.accounts (adapter ID to account)
                         and optional harnesses.dir. Shared accounts are
                         provisioned once. Legacy members config is refused
---hq-service <json>     Install the Linux HQ service from a verified release record
+--hq-service <json>     Install the platform HQ service from a verified release record
 --members <a,b,...>     Name the harness accounts directly (compatibility flag)
 --dir <path>            The endpoint directory, with --members
                         (default ` + DefaultDir + `)
@@ -179,8 +179,8 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		hqAccount = DefaultHQAccountFor(platform)
 	}
 	switch {
-	case platform == PlatformDarwin && (hqConfigPath != "" || hasList || hasDir || serviceRecord != ""):
-		return failure(diag.MembersUnsupported, "member accounts are Linux only; on macOS members plan takes --hq-account and nothing else")
+	case platform == PlatformDarwin && (hqConfigPath != "" || hasList || hasDir):
+		return failure(diag.MembersUnsupported, "member accounts are Linux only; on macOS use --hq-account and optional --hq-service")
 	case platform == PlatformDarwin:
 	case (hqConfigPath != "") == hasList:
 		return cli.Result{Diagnostic: command.UsageErr("members plan needs exactly one of --hq-config and --members")}
