@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -29,7 +31,7 @@ type Deps struct {
 func Command(deps Deps) cli.Command {
 	return cli.Command{
 		Name:    "members",
-		Summary: "Plan and apply the Linux accounts, endpoint directories and launch rule for Soul members",
+		Summary: "Plan and apply the Linux harness accounts, endpoint directories and launch rule",
 		Usage:   usage,
 		Run:     func(ctx cli.Context, args []string) cli.Result { return run(deps, ctx, args) },
 	}
@@ -38,9 +40,9 @@ func Command(deps Deps) cli.Command {
 const usage = `Usage: managed-machine members plan [--hq-account <account>] (--hq-config <path> | --members <a,b,...>) [--dir <path>]
        sudo managed-machine members apply <plan-id>
 
-Plan the account HQ runs in, one OS account per Soul member, the broker
+Plan the account HQ runs in, one OS account per harness credential, the broker
 endpoint directories HQ verifies, the tmpfiles entry that recreates them at
-boot, and the sudoers rule that lets the HQ account start members
+boot, and the sudoers rule that lets HQ start harness processes
 (docs/plans/member-accounts.md).
 
 plan reads the host and changes nothing. It saves the plan and prints its
@@ -63,9 +65,10 @@ Options
                         created as a locked service account when it does not
                         exist. Naming your own account works but is not
                         recommended: the plan says it is not dedicated
---hq-config <path>      Read the member accounts and directory from HQ's
-                        config.json (members.accounts, members.dir)
---members <a,b,...>     Name the member accounts directly
+--hq-config <path>      Read HQ's harnesses.accounts (adapter ID to account)
+                        and optional harnesses.dir. Shared accounts are
+                        provisioned once. Legacy members config is refused
+--members <a,b,...>     Name the harness accounts directly (compatibility flag)
 --dir <path>            The endpoint directory, with --members
                         (default ` + DefaultDir + `)
 --json                  Return the records as one JSON document
@@ -86,29 +89,60 @@ type Saved struct {
 	Plan       Plan   `json:"plan"`
 }
 
-// hqConfig is the part of agent-bot-hq's config.json this command reads.
-type hqConfig struct {
-	Members *struct {
-		Dir      string                       `json:"dir"`
-		Accounts map[string]map[string]string `json:"accounts"`
-	} `json:"members"`
+// HQ adapter IDs identify harness credentials (PDR-0053). Several adapters
+// may deliberately use the same account; provisioning consumes the unique set.
+var adapterID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+
+func configObject(raw json.RawMessage, name string) (map[string]json.RawMessage, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return nil, fmt.Errorf("%s must be an object", name)
+	}
+	return object, nil
 }
 
 func fromConfig(raw []byte) (dir string, members []string, err error) {
-	var c hqConfig
-	if err := json.Unmarshal(raw, &c); err != nil {
-		return "", nil, fmt.Errorf("not JSON: %v", err)
+	c, err := configObject(raw, "HQ config")
+	if err != nil {
+		return "", nil, err
 	}
-	if c.Members == nil {
-		return "", nil, errors.New("it has no members section")
+	if _, legacy := c["members"]; legacy {
+		return "", nil, errors.New("members config is retired; migrate to harnesses.accounts (adapter ID to account) and harnesses.dir, then remove members")
 	}
-	for _, byMember := range c.Members.Accounts {
-		for _, account := range byMember {
+	harnesses, err := configObject(c["harnesses"], "harnesses")
+	if err != nil {
+		return "", nil, err
+	}
+	for key := range harnesses {
+		if key != "accounts" && key != "dir" {
+			return "", nil, errors.New("harnesses accepts only accounts and dir")
+		}
+	}
+	accounts, err := configObject(harnesses["accounts"], "harnesses.accounts")
+	if err != nil {
+		return "", nil, err
+	}
+	if value, present := harnesses["dir"]; present {
+		if err := json.Unmarshal(value, &dir); err != nil || !path.IsAbs(dir) || len(dir) > 80 || strings.ContainsAny(dir, "\x00\n") {
+			return "", nil, errors.New("harnesses.dir must be an absolute path of at most 80 characters without NUL or newline")
+		}
+	}
+	seen := make(map[string]bool)
+	for adapter, value := range accounts {
+		if !adapterID.MatchString(adapter) {
+			return "", nil, errors.New("harnesses.accounts has an invalid adapter ID")
+		}
+		var account string
+		if err := json.Unmarshal(value, &account); err != nil || !accountName.MatchString(account) {
+			return "", nil, errors.New("harnesses.accounts values must be OS account names")
+		}
+		if !seen[account] {
 			members = append(members, account)
+			seen[account] = true
 		}
 	}
 	sort.Strings(members)
-	return c.Members.Dir, members, nil
+	return dir, members, nil
 }
 
 func run(deps Deps, ctx cli.Context, args []string) cli.Result {
