@@ -12,7 +12,7 @@ deletion and planting. The data-protection Keychain/access-group contract
 is separate work.
 GeniusBar #361 records the historical matching JavaScript adoption and signed
 release. The current ordinary source candidate pins JavaScript agent-bot
-**v0.12.0**, while this native helper remains the **v0.10.62** snapshot above.
+**v0.12.0**, while the native base is the **v0.10.62** snapshot above.
 Upstream `keyd/` is identical between v0.11.0 and v0.12.0, so the gap is
 unchanged: it does not include upstream #1062's api.github.com-only grant validation and
 redirect refusal, or #1067/#1095's connection caps, deadlines and eviction.
@@ -27,6 +27,12 @@ presence seed creation inserts atomically rather than replacing a concurrent
 request's key. `src/server.rs` documents the invariant and tests concurrent
 fresh-store status replies against the persisted key. Preserve this patch
 until the upstream implementation provides the same guarantee.
+
+Machine backports the 0.2.1 Keychain ACL change and its tests from
+[Identity commit a08a2004](https://github.com/true-line/agent-bot-identity/commit/a08a2004b8beee6f5aa4bb7c0f02b9f6efd15cbf),
+including the [Core Foundation parsing fix](https://github.com/true-line/agent-bot-identity/commit/8d83f8f8f332ef2a44c5241f9e73efeba8ee10d0).
+This updates the bundled helper version to 0.2.1 on the base described above.
+
 agent-bot-machine builds and signs this source with the agent-machine
 Developer ID. Fetching the JavaScript component alone does not update the
 native helper.

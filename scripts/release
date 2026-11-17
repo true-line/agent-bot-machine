@@ -389,6 +389,8 @@ d3_install_block = """  def install
     resource("core").stage do
       bin.install "managed-machine"
       chmod 0755, bin / "managed-machine"
+      bin.install "agent-bot-keyd"
+      chmod 0755, bin / "agent-bot-keyd"
     end
     bin.install_symlink "managed-machine" => "agent-machine"
 
@@ -421,6 +423,7 @@ d3_test_block = """  test do
     assert_match "managed-machine", help_output
     assert_match "status", help_output
     assert_match "[legacy] adopt", help_output
+    assert_predicate bin/"agent-bot-keyd", :executable?
     assert_predicate libexec/"legacy/setup-hostname", :executable?
     assert_predicate libexec/"scripts/update", :executable?
 
@@ -541,6 +544,8 @@ for snippet in (
     'resource("core").stage',
     'bin.install "managed-machine"',
     'chmod 0755, bin / "managed-machine"',
+    'bin.install "agent-bot-keyd"',
+    'assert_predicate bin/"agent-bot-keyd", :executable?',
     'bin.install_symlink "managed-machine" => "agent-machine"',
     'cp "VERSION", legacy / "VERSION"',
     'assert_match "[legacy] adopt", help_output',

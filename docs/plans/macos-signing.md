@@ -136,8 +136,8 @@ the draft instead of creating a release.
 - `tests/release.test.sh` and `tests/formula-core.test.sh` run `prepare` and
   `tag` against `tests/fixtures/fake-gh`: a failed signing run aborts prepare
   cleanly, a resume reuses the draft, `tag` refuses a missing or unsigned
-  draft, the formula pins the signed digest, and the formula installs and
-  passes its `test do` in the Ruby harness.
+  draft, the formula pins the signed digest, and the generated formula installs
+  both executables side by side and passes its `test do` in the Ruby harness.
 
 ## Replay
 

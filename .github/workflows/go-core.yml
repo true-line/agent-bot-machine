@@ -19,6 +19,7 @@ on:
     paths:
       - 'cmd/**'
       - 'internal/**'
+      - 'keyd/**'
       - 'go.mod'
       - 'go.sum'
       - 'VERSION'
@@ -73,7 +74,7 @@ jobs:
           fi
           changed="$(git diff --name-only HEAD^1 HEAD)"
           echo "changed files:"; echo "$changed"
-          re='^(cmd/|internal/|Formula/|legacy/|scripts/|tests/)|^(go\.mod|go\.sum|VERSION|LICENSE|\.github/workflows/go-core\.yml)$'
+          re='^(cmd/|internal/|keyd/|Formula/|legacy/|scripts/|tests/)|^(go\.mod|go\.sum|VERSION|LICENSE|\.github/workflows/go-core\.yml)$'
           if printf '%s\n' "$changed" | grep -Eq "$re"; then go=true; else go=false; fi
           echo "go=$go" >> "$GITHUB_OUTPUT"; echo "go=$go"
 
@@ -174,6 +175,13 @@ jobs:
           got="$(go version | awk '{print $3}')"
           echo "go.mod wants $want, runner has $got"
           test "$got" = "$want"
+      - name: Test the bundled keyd on macOS
+        if: matrix.os == 'darwin'
+        working-directory: keyd
+        run: cargo test --locked
+      - name: Test the prepared Homebrew formula on macOS
+        if: matrix.os == 'darwin'
+        run: (cd "$RUNNER_TEMP" && bash "$GITHUB_WORKSPACE/tests/formula-core.test.sh")
       - name: Formatting
         run: |
           unformatted="$(gofmt -l .)"
