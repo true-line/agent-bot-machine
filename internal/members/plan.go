@@ -236,8 +236,8 @@ func Normalize(in Input) (Input, error) {
 			return in, refuse(RefusedList, "member account %q is listed twice", m)
 		case m == in.HQAccount:
 			return in, refuse(RefusedList, "member account %q is the HQ account; a member needs a separate one", m)
-		case m == "root":
-			return in, refuse(RefusedList, "root cannot be a member account")
+		case m == "root" || m == "admin":
+			return in, refuse(RefusedList, "%s cannot be a member account", m)
 		case in.Invoker != "" && m == in.Invoker:
 			return in, refuse(RefusedList, "member account %q is the account running this command", m)
 		}

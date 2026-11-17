@@ -333,6 +333,7 @@ func TestRefusals(t *testing.T) {
 		"a member listed twice":                   {in: Input{HQAccount: "agent-bot-hq", Members: []string{"abm-a", "abm-a"}}, code: RefusedList, says: "twice"},
 		"the HQ account as a member":              {in: Input{HQAccount: "agent-bot-hq", Members: []string{"agent-bot-hq"}}, code: RefusedList, says: "HQ account"},
 		"root as a member":                        {in: Input{HQAccount: "agent-bot-hq", Members: []string{"root"}}, code: RefusedList, says: "root"},
+		"admin as a member":                       {in: Input{HQAccount: "agent-bot-hq", Members: []string{"admin"}}, code: RefusedList, says: "admin cannot be a member account"},
 		"the invoking account as a member":        {in: Input{HQAccount: "agent-bot-hq", Members: []string{"owner"}, Invoker: "owner"}, code: RefusedList, says: "running this command"},
 		"a directory that is not clean":           {in: Input{HQAccount: "agent-bot-hq", Dir: "/run/../etc"}, code: RefusedList, says: "clean absolute path"},
 		"a directory with a space":                {in: Input{HQAccount: "agent-bot-hq", Dir: "/run/a b"}, code: RefusedList, says: "clean absolute path"},
