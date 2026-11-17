@@ -21,9 +21,15 @@ import (
 // Programs an apply starts. They are named by absolute path and run with a
 // fixed environment, so nothing in the caller's PATH or environment is used.
 const (
-	useraddPath = "/usr/sbin/useradd"
-	visudoPath  = "/usr/sbin/visudo"
-	shadowPath  = "/etc/shadow"
+	useraddPath         = "/usr/sbin/useradd"
+	visudoPath          = "/usr/sbin/visudo"
+	iptablesPath        = "/usr/sbin/iptables"
+	ip6tablesPath       = "/usr/sbin/ip6tables"
+	iptablesRestorePath = "/usr/sbin/iptables-restore"
+	ip6RestorePath      = "/usr/sbin/ip6tables-restore"
+	systemctlPath       = "/usr/bin/systemctl"
+	shPath              = "/bin/sh"
+	shadowPath          = "/etc/shadow"
 )
 
 var rootEnv = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C"}
@@ -32,14 +38,32 @@ var rootEnv = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C"}
 type OSRoot struct{}
 
 func runProgram(name string, args ...string) error {
+	return runProgramInput("", name, args...)
+}
+
+func runProgramInput(input, name string, args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = rootEnv
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s: %v: %s", filepath.Base(name), err, strings.TrimSpace(out.String()))
+	}
+	return nil
+}
+
+func requireProgram(name string) error {
+	fi, err := os.Stat(name)
+	if err != nil {
+		return fmt.Errorf("required program %s is unavailable: %w", name, err)
+	}
+	if !fi.Mode().IsRegular() || fi.Mode()&0o111 == 0 {
+		return fmt.Errorf("required program %s is not an executable regular file", name)
 	}
 	return nil
 }
@@ -78,6 +102,45 @@ func (OSRoot) ReadSudoers() (string, bool, error) {
 		return "", false, err
 	}
 	return string(raw), true, nil
+}
+
+// PreflightEgress implements Root. It proves the fixed helper parses and
+// both firewall families accept the owner-match rule without changing them.
+func (OSRoot) PreflightEgress(script, restore string) error {
+	if runtime.GOOS == "darwin" {
+		return errors.New("member egress isolation is Linux only")
+	}
+	for _, name := range []string{shPath, iptablesPath, ip6tablesPath, iptablesRestorePath, ip6RestorePath, systemctlPath} {
+		if err := requireProgram(name); err != nil {
+			return err
+		}
+	}
+	f, err := os.CreateTemp("", "managed-machine-egress-*.sh")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.WriteString(script); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := runProgram(shPath, "-n", tmp); err != nil {
+		return fmt.Errorf("the member egress helper is invalid: %w", err)
+	}
+	for _, name := range []string{iptablesRestorePath, ip6RestorePath} {
+		if err := runProgramInput(restore, name, "--test"); err != nil {
+			return fmt.Errorf("the member egress policy is unsupported: %w", err)
+		}
+	}
+	return nil
 }
 
 // CreateAccount implements Root. useradd leaves a new account locked.
@@ -211,6 +274,35 @@ func (OSRoot) WriteFile(p string, mode uint32, content string, validate bool) er
 		}
 	}
 	return os.Rename(tmp, p)
+}
+
+func disableLaunchRule() error {
+	have, ok, err := (OSRoot{}).ReadSudoers()
+	if err != nil || !ok {
+		return err
+	}
+	if !strings.HasPrefix(have, header) {
+		return fmt.Errorf("%s changed and was not removed", SudoersPath)
+	}
+	return os.Remove(SudoersPath)
+}
+
+// ActivateEgress implements Root. Activation is fail closed for upgrades: if
+// systemd cannot establish the boundary, an older managed launch rule is
+// removed before the error is returned.
+func (OSRoot) ActivateEgress(unit string) error {
+	if runtime.GOOS == "darwin" || unit != EgressUnitName {
+		return errors.New("member egress isolation is Linux only")
+	}
+	for _, args := range [][]string{{"daemon-reload"}, {"enable", unit}, {"restart", unit}, {"is-active", "--quiet", unit}} {
+		if err := runProgram(systemctlPath, args...); err != nil {
+			if disableErr := disableLaunchRule(); disableErr != nil {
+				return fmt.Errorf("%w; the managed launch rule could not be disabled: %v", err, disableErr)
+			}
+			return fmt.Errorf("%w; the managed launch rule was disabled", err)
+		}
+	}
+	return nil
 }
 
 // Claim implements Root.

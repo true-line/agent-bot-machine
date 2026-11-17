@@ -51,6 +51,10 @@ func provisioned() *fakeHost {
 	h.lists[DefaultDir] = []string{"abm-lead", "abm-spec"}
 	h.entries[TmpfilesPath] = Entry{Regular: true, Mode: 0o644, Owner: "root", Group: "root"}
 	h.files[TmpfilesPath] = Tmpfiles(in)
+	h.entries[EgressScriptPath] = Entry{Regular: true, Mode: 0o755, Owner: "root", Group: "root"}
+	h.files[EgressScriptPath] = EgressScript(in)
+	h.entries[EgressUnitPath] = Entry{Regular: true, Mode: 0o644, Owner: "root", Group: "root"}
+	h.files[EgressUnitPath] = EgressUnit()
 	return h
 }
 
@@ -75,13 +79,16 @@ func TestPlanOnABareHostCreatesEverythingInOrder(t *testing.T) {
 		"directory /run/agent-bot-hq/members/abm-lead create",
 		"directory /run/agent-bot-hq/members/abm-spec create",
 		"file /etc/tmpfiles.d/agent-bot-hq-members.conf create",
+		"file /usr/local/sbin/agent-bot-hq-members-egress create",
+		"file /etc/systemd/system/agent-bot-hq-members-egress.service create",
+		"service agent-bot-hq-members-egress.service write",
 		"file /etc/sudoers.d/agent-bot-hq-members write",
 	}, "\n")
 	if got := actions(p); got != want {
 		t.Fatalf("steps:\n%s\nwant:\n%s", got, want)
 	}
-	if p.Changes() != 6 {
-		t.Errorf("changes = %d, want 6", p.Changes())
+	if p.Changes() != 8 {
+		t.Errorf("changes = %d, want 8", p.Changes())
 	}
 	// The endpoint directory is exactly what agent-bot-hq verifies.
 	d := p.Steps[4]
@@ -116,6 +123,51 @@ func TestTheRuleNamesOnlyTheHQAccountAndTheListedMembers(t *testing.T) {
 	none := Sudoers(Input{HQAccount: "agent-bot-hq"})
 	if strings.Contains(none, "NOPASSWD") || strings.Contains(none, "Runas_Alias") {
 		t.Errorf("an empty list still grants something:\n%s", none)
+	}
+}
+
+func TestTheEgressPolicyNamesOnlyListedMembersAndRunsBeforeTheLaunchRule(t *testing.T) {
+	in, _ := Normalize(request)
+	script := EgressScript(in)
+	for _, account := range []string{"abm-lead", "abm-spec"} {
+		if !strings.Contains(script, "--uid-owner "+account+" -j REJECT") {
+			t.Errorf("policy does not deny %s:\n%s", account, script)
+		}
+	}
+	for _, forbidden := range []string{"--uid-owner agent-bot-hq", "--uid-owner root", "--uid-owner owner", "ACCEPT"} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("policy contains %q:\n%s", forbidden, script)
+		}
+	}
+	if !strings.Contains(script, "start_family /usr/sbin/iptables\n    start_family /usr/sbin/ip6tables") {
+		t.Errorf("policy does not install both families:\n%s", script)
+	}
+	if unit := EgressUnit(); !strings.Contains(unit, "ExecStart="+EgressScriptPath+" start") || !strings.Contains(unit, "WantedBy=multi-user.target") {
+		t.Errorf("unit is not persistent:\n%s", unit)
+	}
+	p, _ := Build(request, bare())
+	if got := p.Steps[len(p.Steps)-2]; got.Kind != KindService || got.Target != EgressUnitName {
+		t.Fatalf("the penultimate step is %+v, want egress activation", got)
+	}
+	if got := p.Steps[len(p.Steps)-1]; got.Target != SudoersPath {
+		t.Fatalf("the last step is %+v, want the launch rule", got)
+	}
+	empty := EgressScript(Input{HQAccount: "agent-bot-hq"})
+	if strings.Contains(empty, "--uid-owner") {
+		t.Errorf("an empty member set denies an account:\n%s", empty)
+	}
+}
+
+func TestEgressPathsAreNeverAdopted(t *testing.T) {
+	for _, path := range []string{EgressScriptPath, EgressUnitPath} {
+		h := bare()
+		h.entries[path] = Entry{Regular: true, Mode: 0o644, Owner: "root", Group: "root"}
+		h.files[path] = "foreign content\n" + header
+		_, err := Build(request, h)
+		var refusal *Refusal
+		if !errors.As(err, &refusal) || refusal.Code != RefusedPath || !strings.Contains(err.Error(), path) {
+			t.Errorf("%s: %v, want refusal", path, err)
+		}
 	}
 }
 
@@ -158,6 +210,7 @@ func TestAHostThatChangedGivesAnotherDigest(t *testing.T) {
 			h.entries["/home/abm-spec"] = Entry{Dir: true, Mode: 0o755, Owner: "abm-spec", Group: "abm-spec"}
 		},
 		"an edited tmpfiles entry": func(h *fakeHost) { h.files[TmpfilesPath] += "d /run/other 0777 root root -\n" },
+		"an edited egress policy":  func(h *fakeHost) { h.files[EgressScriptPath] += "# drift\n" },
 		"a missing member account": func(h *fakeHost) { delete(h.accounts, "abm-spec") },
 		"a former member's directory": func(h *fakeHost) {
 			h.lists[DefaultDir] = append(h.lists[DefaultDir], "abm-old")
@@ -194,6 +247,16 @@ func TestAMemberTakenOffTheListLosesItsDirectoryAndRuleButKeepsItsAccount(t *tes
 	for _, s := range p.Steps {
 		if s.Kind == KindFile && strings.Contains(s.Content, "abm-spec") {
 			t.Errorf("%s still names abm-spec", s.Target)
+		}
+	}
+}
+
+func TestAForeignEgressFileIsRefusedNeverAdopted(t *testing.T) {
+	for _, target := range []string{EgressScriptPath, EgressUnitPath} {
+		h := provisioned()
+		h.files[target] = "someone else's policy\n"
+		if _, err := Build(request, h); err == nil || !strings.Contains(err.Error(), "was not written by this tool") {
+			t.Errorf("%s: err = %v", target, err)
 		}
 	}
 }

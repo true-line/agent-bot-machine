@@ -55,11 +55,11 @@ func TestPlanSavesThePlanAndReportsItsDigest(t *testing.T) {
 	if applied, _ := head.Get("applied"); applied != false {
 		t.Errorf("applied = %v", applied)
 	}
-	if len(res.Records) != 9 {
-		t.Fatalf("%d records, want the summary and 8 steps", len(res.Records))
+	if len(res.Records) != 12 {
+		t.Fatalf("%d records, want the summary and 11 steps", len(res.Records))
 	}
 	// The owner is shown the exact rule.
-	rule, _ := res.Records[8].Get("content")
+	rule, _ := res.Records[len(res.Records)-1].Get("content")
 	if !strings.Contains(rule.(string), "agent-bot-hq ALL = (ABHQ_MEMBERS) NOPASSWD: NOSETENV: ALL") {
 		t.Errorf("the sudoers record does not carry the rule: %v", rule)
 	}
@@ -129,7 +129,7 @@ func TestHarnessConfigDeduplicatesAccountsAndPreservesPlanDigest(t *testing.T) {
 		if err := json.Unmarshal(raw, &saved); err != nil {
 			t.Fatal(err)
 		}
-		if saved.Plan.Version != 2 || saved.PlanDigest != wantDigest || saved.Plan.Dir != DefaultDir {
+		if saved.Plan.Version != PlanVersion || saved.PlanDigest != wantDigest || saved.Plan.Dir != DefaultDir {
 			t.Fatalf("config changed compatible plan: %+v", saved)
 		}
 		if got := strings.Join(saved.Plan.Members, ","); got != "abm-lead,abm-spec" {

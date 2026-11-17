@@ -30,6 +30,9 @@ type Root interface {
 	PasswordField(account string) (string, bool, error)
 	// ReadSudoers returns the launch rule that is installed now.
 	ReadSudoers() (string, bool, error)
+	// PreflightEgress validates the fixed shell and both firewall families
+	// without changing the host. It runs before an approval is claimed.
+	PreflightEgress(script, restore string) error
 	// CreateAccount creates a locked account with a private group, home
 	// HomeBase/<name> at 0700 and shell NoLoginShell.
 	CreateAccount(name string) error
@@ -45,6 +48,11 @@ type Root interface {
 	// WriteFile replaces p, owned by root. When validate is set the content
 	// is checked as a sudoers file before it is moved into place.
 	WriteFile(p string, mode uint32, content string, validate bool) error
+	// ActivateEgress reloads systemd, enables the planned unit for boot and
+	// restarts it now. The unit and script have already been written. If
+	// activation fails, it removes an existing managed launch rule so a
+	// previously provisioned account cannot start without the boundary.
+	ActivateEgress(unit string) error
 	// Claim records that planID is being applied. It reports false when a
 	// receipt for planID already exists.
 	Claim(planID string, receipt []byte) (bool, error)
@@ -98,7 +106,7 @@ func Precheck(p Plan, r Root) error {
 	if ok && !strings.HasPrefix(have, header) {
 		return refuse(RefusedPath, "%s exists and was not written by this tool", SudoersPath)
 	}
-	return nil
+	return r.PreflightEgress(EgressScript(Input{HQAccount: p.HQAccount, Dir: p.Dir, Members: p.Members}), EgressRestore())
 }
 
 // StepError is the step an apply stopped at.
@@ -174,6 +182,10 @@ func applyStep(s Step, h Host, r Root) error {
 		switch s.Action {
 		case ActionCreate, ActionRepair, ActionWrite:
 			return r.WriteFile(s.Target, uint32(mode), s.Content, s.Target == SudoersPath)
+		}
+	case KindService:
+		if s.Action == ActionWrite && s.Target == EgressUnitName {
+			return r.ActivateEgress(s.Target)
 		}
 	}
 	return fmt.Errorf("no way to %s a %s", s.Action, s.Kind)
