@@ -65,6 +65,7 @@ For an HQ account `H` and each listed harness credential account `M`:
 Refused, never adopted: an `M` that already exists with a shared group, a
 password, extra group memberships or uid 0; an `M` equal to `H`, to the prefix
 owner or to the invoking owner; two distinct account names with one uid.
+The names `root` and `admin` are reserved even if a lookup finds no account.
 
 ### Three steps, three actors
 
