@@ -31,10 +31,54 @@ func TestDarwinPlanIsTheHQAccountAlone(t *testing.T) {
 			t.Errorf("detail %q lacks %q", p.Steps[0].Detail, want)
 		}
 	}
-	_, err = Build(Input{HQAccount: DarwinHQAccount, Members: []string{"abm-a"}, Platform: PlatformDarwin}, emptyHost())
-	var r *Refusal
-	if !errors.As(err, &r) || r.Code != RefusedList {
-		t.Fatalf("members on macOS: %v", err)
+
+}
+
+func TestDarwinHarnessAccounts(t *testing.T) {
+	in := Input{HQAccount: DarwinHQAccount, Members: []string{"_abm-b", "_abm-a"}, Invoker: "owner", Platform: PlatformDarwin}
+	h := emptyHost()
+	p, err := Build(in, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := actions(p); got != "hq-account _agent-bot-hq create\naccount _abm-a create\naccount _abm-b create" {
+		t.Fatalf("unexpected actions %q", got)
+	}
+	for i, name := range p.Members {
+		id := 310 + i
+		h.accounts[name] = Account{Name: name, Group: name, UID: id, GID: id, Home: darwinHarnessHome(name), Shell: DarwinNoLoginShell, DarwinRole: darwinHarnessRoleName}
+		h.entries[darwinHarnessHome(name)] = Entry{Dir: true, Owner: name, Group: name, Mode: 0700}
+	}
+	p, err = Build(in, h)
+	if err != nil || p.Changes() != 1 {
+		t.Fatalf("existing private accounts: %+v %v", p, err)
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*Account)
+	}{
+		{"existing system account", func(a *Account) { a.DarwinRole = "" }},
+		{"another home", func(a *Account) { a.Home = "/Users/owner" }},
+		{"interactive shell", func(a *Account) { a.Shell = "/bin/zsh" }},
+		{"same uid as second role", func(a *Account) { a.UID = 311; a.GID = 311 }},
+		{"shared group", func(a *Account) { a.PrimaryUsers = []string{"another"} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := h.accounts["_abm-a"]
+			changed := a
+			tc.change(&changed)
+			h.accounts[a.Name] = changed
+			defer func() { h.accounts[a.Name] = a }()
+			_, err := Build(in, h)
+			var r *Refusal
+			if !errors.As(err, &r) || r.Code != RefusedAccount {
+				t.Fatalf("wanted account refusal; got %v", err)
+			}
+		})
+	}
+	delete(h.accounts, "_abm-a")
+	if _, err := Build(in, h); err == nil {
+		t.Fatal("accepted a pre-existing home without its role")
 	}
 }
 
@@ -68,7 +112,7 @@ func TestDarwinPlanAndApplyCommands(t *testing.T) {
 	if got, _ := res.Records[0].Get("dir"); got != DarwinDir {
 		t.Errorf("dir = %v", got)
 	}
-	for _, args := range [][]string{{"plan", "--members", "abm-a"}, {"plan", "--hq-config", "/etc/hq/config.json"}, {"plan", "--dir", "/run/x"}} {
+	for _, args := range [][]string{{"plan", "--dir", "/run/x"}, {"plan", "--hq-service", "/tmp/service.json"}} {
 		res := Command(d).Run(on(target.DarwinARM64), args)
 		if res.Diagnostic == nil || res.Diagnostic.ID != diag.MembersUnsupported {
 			t.Fatalf("%v: %+v", args, res.Diagnostic)

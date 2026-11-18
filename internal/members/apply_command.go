@@ -78,7 +78,7 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 	platform, ok := platformOf(string(host.Target))
 	if !ok {
-		return failure(diag.MembersUnsupported, "member accounts are Linux only, and the HQ account alone is applied on macOS; this host is %s", host.Target)
+		return failure(diag.MembersUnsupported, "account provisioning supports Linux and macOS; this host is %s", host.Target)
 	}
 
 	// The caller: root, through sudo, from a human's own session.

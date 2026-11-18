@@ -13,10 +13,10 @@ import (
 // in the daemon state directory and returns it. It reads no plan and runs
 // nothing: the plan is private to the account that made it, and the root
 // apply is what compares its own rebuilt digest with the one recorded here.
-// Member accounts are Linux only, so every other host refuses first.
+// Linux and Darwin use the same owner approval record.
 func approveMembers(goos, dir, planID, digest string, now time.Time) ([]byte, string, string) {
-	if goos != "linux" {
-		return nil, diag.MembersUnsupported, "member accounts are Linux only"
+	if goos != "linux" && goos != "darwin" {
+		return nil, diag.MembersUnsupported, "member account provisioning requires Linux or macOS"
 	}
 	approval, err := members.RecordApproval(dir, planID, digest, now)
 	if errors.Is(err, members.ErrApprovalMalformed) {

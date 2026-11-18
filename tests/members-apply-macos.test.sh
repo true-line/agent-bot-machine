@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# The HQ account on a real macOS host (docs/plans/cross-account-channel.md,
-# S6): plan, approval, root apply, and what the account is afterwards. On
-# macOS a plan holds the HQ account alone.
+# The HQ and harness credential accounts on a real macOS host: plan,
+# approval, root apply, account identity and private home ownership.
 #
 # This test creates an OS account. It runs only on a throwaway GitHub-hosted
 # macOS runner, and only when asked:
@@ -12,9 +11,13 @@
 # in internal/daemon.
 set -euo pipefail
 
-if [ "${MM_MEMBERS_REAL_ACCOUNTS:-}" != "1" ] || [ "${GITHUB_ACTIONS:-}" != "true" ] || [ "$(uname -s)" != "Darwin" ]; then
+if [ "${MM_MEMBERS_REAL_ACCOUNTS:-}" != "1" ]; then
     echo "members-apply-macos: skipped (needs MM_MEMBERS_REAL_ACCOUNTS=1 on a GitHub-hosted macOS runner)"
     exit 0
+fi
+if [ "${GITHUB_ACTIONS:-}" != "true" ] || [ "${MM_MEMBERS_RUNNER:-}" != "github-hosted" ] || [ "$(uname -s)" != Darwin ]; then
+    echo "members-apply-macos: real account test requires a disposable GitHub-hosted macOS runner" >&2
+    exit 1
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -65,7 +68,7 @@ approve() {
 # plan sets PLAN_ID, PLAN_DIGEST, PLAN_CHANGES and PLAN_STEP.
 plan() {
     local out
-    out="$("$MM" members plan --hq-account "$HQ")"
+    out="$("$MM" members plan --hq-account "$HQ" "$@")"
     PLAN_STEP="$(sed -n 2p <<<"$out")"
     out="${out%%$'\n'*}"
     PLAN_ID="$(jq -r .plan_id <<<"$out")"
@@ -90,9 +93,9 @@ untouched() {
 
 ! exists "$HQ" || fail "$HQ exists before the test"
 
-# --- member accounts are not planned on macOS --------------------------------
-refused MM_MEMBERS_UNSUPPORTED "$MM" members plan --hq-account "$HQ" --members abm-ci-a
-ok "a plan with member accounts is refused"
+# Darwin wire-up of the endpoint directory is a separate work item.
+refused MM_MEMBERS_UNSUPPORTED "$MM" members plan --dir /tmp/unmanaged
+ok "a request to install endpoint directories is refused"
 
 # --- an account that is not dedicated is accepted and named as such ----------
 shared="$("$MM" members plan --hq-account "$ME" | sed -n 2p)"
@@ -179,5 +182,43 @@ approve "$PLAN_ID" "$PLAN_DIGEST"
 sudo "$MM" members apply "$PLAN_ID" >/dev/null
 [ "$(sudo stat -f '%Lp' "$HQ_HOME")" = "700" ] || fail "the home was not set back to 0700"
 ok "an HQ home that others can enter is set back to 0700"
+
+# Two credentials get two OS principals. Multiple adapters sharing one
+# credential get one account, on the same digest-bound approval path.
+A=_abm-ci-a
+B=_abm-ci-b
+for member in "$A" "$B"; do
+    ! exists "$member" || fail "$member already exists on this runner"
+    sudo test ! -e "/var/agent-bot-harness-$member" || fail "a harness home already exists"
+done
+jq -n --arg a "$A" --arg b "$B" '{harnesses:{accounts:{first:$a,second:$b,shared:$a},dir:"/var/run/agent-bot-hq/members"}}' >"$WORK/hq.json"
+refused MM_MEMBERS_LIST_INVALID "$MM" members plan --hq-account "$HQ" --members "$ME"
+refused MM_MEMBERS_ACCOUNT_REFUSED "$MM" members plan --hq-account "$HQ" --members nobody
+plan --hq-config "$WORK/hq.json"
+[ "$PLAN_CHANGES" = 2 ] || fail "expected two accounts; plan contains $PLAN_CHANGES changes"
+refused MM_MEMBERS_NOT_APPROVED sudo "$MM" members apply "$PLAN_ID"
+! exists "$A" && ! exists "$B" || fail "an unapproved plan created a harness account"
+approve "$PLAN_ID" "$PLAN_DIGEST"
+sudo "$MM" members apply "$PLAN_ID" >/dev/null
+[ "$(id -u "$A")" != "$(id -u "$B")" ] || fail "credential accounts share a UID"
+for member in "$A" "$B"; do
+    uid="$(id -u "$member")"
+    home="/var/agent-bot-harness-$member"
+    [ "$uid" != "$(id -u "$HQ")" ] && [ "$uid" != "$(id -u "$ME")" ] || fail "$member shares a UID"
+    [ "$uid" -ge 300 ] && [ "$uid" -le 399 ] && [ "$(id -g "$member")" = "$uid" ] || fail "$member has non-role IDs"
+    [ "$(id -gn "$member")" = "$member" ] || fail "$member lacks its private group"
+    [ "$(attr "$member" NFSHomeDirectory)" = "$home" ] || fail "$member has the wrong home"
+    [ "$(attr "$member" UserShell)" = /usr/bin/false ] && [ "$(attr "$member" Password)" = '*' ] || fail "$member can log in"
+    [ -z "$(attr "$member" AuthenticationAuthority)" ] && [ "$(attr "$member" IsHidden)" = 1 ] || fail "$member is not a locked, hidden role"
+    [ "$(sudo stat -f '%Su %Sg %Lp' "$home")" = "$member $member 700" ] || fail "$home is not private"
+    sudo -u "$member" test -w "$home" || fail "$member cannot write its own home"
+done
+refused MM_MEMBERS_NOT_APPROVED sudo "$MM" members apply "$PLAN_ID"
+sleep 1
+plan --members "$B,$A"
+[ "$PLAN_CHANGES" = 0 ] || fail "the explicit account list plans $PLAN_CHANGES changes on a provisioned host"
+approve "$PLAN_ID" "$PLAN_DIGEST"
+sudo "$MM" members apply "$PLAN_ID" >/dev/null
+ok "two distinct credential principals and their private homes survive an approved reapply"
 
 echo "members-apply-macos: all checks passed"
