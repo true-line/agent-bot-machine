@@ -2,12 +2,13 @@
 # Prepare a managed-machine release branch/PR or push the release tag (S6 R05, D11).
 #
 #   scripts/release prepare vX.Y.Z
+#   scripts/release render vX.Y.Z <unsigned-dir> <signed-dir>
 #   scripts/release tag vX.Y.Z
 #
 # `prepare` runs from clean main at origin/main, validates qwts-versions
 # (ENG-0055), builds five deterministic archives and SHA256SUMS in a temporary
 # directory with cmd/mm-release, dispatches .github/workflows/sign.yml at origin/main (the
-# owner approves the `release` environment deployment) or reuses its draft
+# owner approves the `release-manual` environment deployment) or reuses its draft
 # release vX.Y.Z, proves the signed dist is that build plus Developer ID
 # signatures with `mm-release verify-signed`, creates branch release/vX.Y.Z,
 # updates VERSION and Formula/managed-machine.rb (tag, version, arm64/sequoia
@@ -25,16 +26,17 @@ set -euo pipefail
 
 usage() {
     echo "Usage: scripts/release <prepare|tag> vX.Y.Z" >&2
+    echo "       scripts/release render vX.Y.Z <unsigned-dir> <signed-dir>" >&2
 }
 
 subcmd="${1:-}"
-if [[ "$subcmd" != "prepare" && "$subcmd" != "tag" ]]; then
+if [[ "$subcmd" != "prepare" && "$subcmd" != "tag" && "$subcmd" != "render" ]]; then
     usage
-    echo "Error: expected subcommand 'prepare' or 'tag' (got '${subcmd:-<missing>}')" >&2
+    echo "Error: expected subcommand 'prepare', 'tag', or 'render' (got '${subcmd:-<missing>}')" >&2
     exit 1
 fi
 
-if [[ $# -ne 2 ]]; then
+if [[ "$subcmd" == render && $# -ne 4 || "$subcmd" != render && $# -ne 2 ]]; then
     usage
     echo "Error: version must look like v1.2.3 (got '${2:-<missing>}')" >&2
     exit 1
@@ -61,7 +63,9 @@ fi
 cd "$root"
 
 go_root="$root"
-if [[ ! -f "$go_root/go.mod" && -f "$script_root/go.mod" ]]; then
+# The signed base supplies the two release files. Render always uses the
+# verifier from the same trusted checkout as this script.
+if [[ "$subcmd" == render || ( ! -f "$go_root/go.mod" && -f "$script_root/go.mod" ) ]]; then
     go_root="$script_root"
 fi
 
@@ -465,6 +469,31 @@ for forbidden in (
 PY
 }
 
+# Both preparation paths apply the exact same formula transformation and check
+# the final pin against the signed distribution. Rendering alone is local.
+render_verified_formula() {
+    local dist_dir="$1" signed_dir="$2" darwin_sha="$3"
+    printf '%s\n' "$bare" >"$version_file"
+    if ! write_formula "$formula" "$version" "$bare" "$darwin_sha" \
+        || ! verify_formula_state "$formula" "$version_file" "$version" "$bare" "$darwin_sha" >/dev/null; then
+        git checkout -- "$formula" "$version_file"
+        echo "Error: version fields not found where expected — formula/VERSION format changed; release aborted, files restored" >&2
+        return 1
+    fi
+    if ! verify_signed_dist "$dist_dir" "$signed_dir" -formula "$formula" -require-pin >/dev/null; then
+        git checkout -- "$formula" "$version_file"
+        echo "Error: mm-release verify-signed -require-pin failed; release aborted, files restored" >&2
+        return 1
+    fi
+}
+
+if [[ "$subcmd" == render ]]; then
+    darwin_sha="$(verify_signed_dist "$3" "$4")" || exit 1
+    [[ "$darwin_sha" =~ ^[0-9a-f]{64}$ ]] || exit 1
+    render_verified_formula "$3" "$4" "$darwin_sha"
+    exit 0
+fi
+
 print_pr_command() {
     local rel_branch="$1"
     echo "Prepared $version on branch $rel_branch."
@@ -541,18 +570,7 @@ if [[ "$subcmd" == "prepare" ]]; then
         exit 1
     fi
 
-    printf '%s\n' "$bare" >"$version_file"
-    if ! write_formula "$formula" "$version" "$bare" "$darwin_sha" \
-        || ! verify_formula_state "$formula" "$version_file" "$version" "$bare" "$darwin_sha" >/dev/null; then
-        git checkout -- "$formula" "$version_file"
-        echo "Error: version fields not found where expected — formula/VERSION format changed; release aborted, files restored" >&2
-        exit 1
-    fi
-    if ! verify_signed_dist "$dist_dir" "$signed_dir" -formula "$formula" -require-pin >/dev/null; then
-        git checkout -- "$formula" "$version_file"
-        echo "Error: mm-release verify-signed -require-pin failed; release aborted, files restored" >&2
-        exit 1
-    fi
+    render_verified_formula "$dist_dir" "$signed_dir" "$darwin_sha" || exit 1
 
     git checkout --quiet -B "$release_branch"
     git add "$formula" "$version_file"

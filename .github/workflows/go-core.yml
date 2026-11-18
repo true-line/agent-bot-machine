@@ -29,6 +29,9 @@ on:
       - 'install-core.sh'
       - 'install-core.ps1'
       - '.github/workflows/go-core.yml'
+      - '.github/workflows/sign.yml'
+      - '.github/workflows/prepare-release.yml'
+      - '.github/workflows/version-cut.yml'
       - 'legacy/**'
       - 'scripts/**'
       - 'tests/**'
@@ -77,7 +80,7 @@ jobs:
           fi
           changed="$(git diff --name-only HEAD^1 HEAD)"
           echo "changed files:"; echo "$changed"
-          re='^(cmd/|internal/|keyd/|Formula/|legacy/|scripts/|tests/)|^(go\.mod|go\.sum|install\.sh|install-core\.(sh|ps1)|VERSION|LICENSE|\.github/workflows/go-core\.yml)$'
+          re='^(cmd/|internal/|keyd/|Formula/|legacy/|scripts/|tests/)|^(go\.mod|go\.sum|install\.sh|install-core\.(sh|ps1)|VERSION|LICENSE|\.github/workflows/(go-core|sign|prepare-release|version-cut)\.yml)$'
           if printf '%s\n' "$changed" | grep -Eq "$re"; then go=true; else go=false; fi
           echo "go=$go" >> "$GITHUB_OUTPUT"; echo "go=$go"
 
@@ -172,6 +175,11 @@ jobs:
         with:
           node-version: '22'
           package-manager-cache: false
+      - name: Test release preparation and tagging
+        if: matrix.target == 'linux/amd64'
+        run: |
+          node --test tests/prepare-release.test.mjs
+          bash tests/version-cut.test.sh
       - name: Toolchain matches core/go.mod
         run: |
           want="go$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)"

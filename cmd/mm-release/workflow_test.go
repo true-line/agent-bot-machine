@@ -2,8 +2,10 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -37,6 +39,21 @@ type workflowStep struct {
 	Run  string            `yaml:"run"`
 }
 
+// Count references in parsed YAML, including expressions outside job steps.
+// Counting the context name covers both dot access and bracket notation.
+var secretContext = regexp.MustCompile(`(?i)\bsecrets\b`)
+
+func workflowSecretReferences(node *yaml.Node) int {
+	if node.Kind == yaml.ScalarNode {
+		return len(secretContext.FindAllStringIndex(node.Value, -1))
+	}
+	n := 0
+	for _, child := range node.Content {
+		n += workflowSecretReferences(child)
+	}
+	return n
+}
+
 func TestWorkflowsContractAndPermissions(t *testing.T) {
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -48,8 +65,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		t.Fatalf("read workflows dir: %v", err)
 	}
 
-	// No workflow file may reference pull_request_target, and only sign.yml
-	// may reference secrets.* (checked in TestSignWorkflowContract).
+	// Signing credentials belong to Sign. Only the two release-PR workflows
+	// can pass the chores App credentials to its pinned token action.
 	for _, e := range ents {
 		if e.IsDir() || (!strings.HasSuffix(e.Name(), ".yml") && !strings.HasSuffix(e.Name(), ".yaml")) {
 			continue
@@ -63,8 +80,38 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		if strings.Contains(text, "pull_request_target") {
 			t.Errorf("%s contains forbidden pull_request_target trigger", e.Name())
 		}
-		if e.Name() != "sign.yml" && strings.Contains(text, "secrets.") {
-			t.Errorf("%s contains forbidden secrets.* reference (only github.token is permitted)", e.Name())
+		var tree yaml.Node
+		if err := yaml.Unmarshal(raw, &tree); err != nil {
+			t.Fatalf("parse %s: %v", e.Name(), err)
+		}
+		var allowed int
+		switch e.Name() {
+		case "sign.yml":
+			allowed = 6 // TestSignWorkflowContract checks each reference and its location.
+		case "version-cut.yml", "prepare-release.yml":
+			var doc workflowDoc
+			if err := tree.Decode(&doc); err != nil {
+				t.Fatal(err)
+			}
+			for _, job := range doc.Jobs {
+				for _, step := range job.Steps {
+					if step.Uses != "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510" {
+						continue
+					}
+					if step.With["client-id"] != "${{ secrets.CHORES_DUMB_CLIENT_ID }}" ||
+						step.With["private-key"] != "${{ secrets.CHORES_DUMB_PRIVATE_KEY }}" {
+						t.Errorf("%s must use the chores App credentials only as token action inputs", e.Name())
+					} else {
+						allowed += 2
+					}
+				}
+			}
+			if allowed == 0 {
+				t.Errorf("%s does not use the pinned chores App token action", e.Name())
+			}
+		}
+		if n := workflowSecretReferences(&tree); n != allowed {
+			t.Errorf("%s has %d secret references, want %d at their approved inputs", e.Name(), n, allowed)
 		}
 	}
 
@@ -276,9 +323,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	}
 }
 
-// TestSignWorkflowContract pins the only workflow allowed to read secrets: a
-// signing job on main, inside the approval-gated release
-// environment, reading exactly the six signing secrets.
+// TestSignWorkflowContract pins the main-only jobs and both signing paths.
+// Only the signer in release reads the six distribution secrets.
 func TestSignWorkflowContract(t *testing.T) {
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -303,21 +349,29 @@ func TestSignWorkflowContract(t *testing.T) {
 		t.Errorf("sign.yml top-level permissions = %v, want {contents: read}", doc.Permissions)
 	}
 	request, exists := doc.Jobs["request"]
-	if len(doc.Jobs) != 2 || !exists || request.Environment != "" || len(request.Permissions) != 0 || request.If != "github.ref == 'refs/heads/main'" {
-		t.Fatal("version resolution must run read-only on main outside the release environment")
+	readOnly := map[string]string{"actions": "read", "contents": "read", "pull-requests": "read"}
+	if len(doc.Jobs) != 3 || !exists || request.Environment != "" || !reflect.DeepEqual(request.Permissions, readOnly) || request.If != "github.ref == 'refs/heads/main'" {
+		t.Fatal("version and provenance must be validated read-only on main before any deployment")
+	}
+	manual := doc.Jobs["manual-approval"]
+	if manual.Needs != "request" || manual.Environment != "release-manual" ||
+		manual.If != "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'" ||
+		!reflect.DeepEqual(manual.Permissions, map[string]string{"actions": "read"}) {
+		t.Fatalf("unexpected manual deployment gate: %+v", manual)
+	}
+	if len(manual.Steps) != 1 || !strings.Contains(manual.Steps[0].Run, "actions/runs/$GITHUB_RUN_ID/approvals") ||
+		!strings.Contains(manual.Steps[0].Run, `.state == "approved"`) || !strings.Contains(manual.Steps[0].Run, `.name == "release-manual"`) {
+		t.Fatal("manual gate must confirm an approval for this workflow run and environment")
 	}
 	job, ok := doc.Jobs["sign"]
-	if !ok {
-		t.Fatal("sign.yml missing sign job")
+	if !ok || !reflect.DeepEqual(job.Needs, []any{"request", "manual-approval"}) || job.Environment != "release" {
+		t.Fatal("the release signer must depend on version resolution and the manual gate")
 	}
-	if job.Needs != "request" {
-		t.Fatal("sign must use the validated request")
-	}
-	if job.Environment != "release" {
-		t.Errorf("sign.environment = %q, want release", job.Environment)
-	}
-	if job.If != "github.ref == 'refs/heads/main'" {
-		t.Errorf("sign.if = %q, want github.ref == 'refs/heads/main'", job.If)
+	const signIf = "${{ !cancelled() && github.ref == 'refs/heads/main' && needs.request.result == 'success' && " +
+		"((github.event_name == 'push' && needs.manual-approval.result == 'skipped') || " +
+		"(github.event_name == 'workflow_dispatch' && needs.manual-approval.result == 'success')) }}"
+	if job.If != signIf {
+		t.Errorf("sign.if = %q, want %q", job.If, signIf)
 	}
 	if len(job.Permissions) != 1 || job.Permissions["contents"] != "write" {
 		t.Errorf("sign.permissions = %v, want {contents: write}", job.Permissions)
@@ -379,6 +433,90 @@ func TestSignWorkflowContract(t *testing.T) {
 	}
 	if len(importLines) != 1 || importLines[0] != wantImportLine {
 		t.Errorf("sign.yml security -i import lines = %q, want [%q]", importLines, wantImportLine)
+	}
+}
+
+// Exercise the actual preflight shell and jq predicates using recorded API
+// response shapes. The fixture accepts only the intended repository endpoints.
+func TestSignPreflight(t *testing.T) {
+	for _, dependency := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(dependency); err != nil {
+			t.Skipf("%s unavailable", dependency)
+		}
+	}
+	root, err := findRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "sign.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc workflowDoc
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	steps := map[string]string{}
+	for _, step := range doc.Jobs["request"].Steps {
+		steps[step.If] = step.Run
+	}
+	const push = "github.event_name == 'push'"
+	const dispatch = "github.event_name == 'workflow_dispatch'"
+	const receipt = "approved deployment"
+	steps[receipt] = doc.Jobs["manual-approval"].Steps[0].Run
+	const fixture = `api_fixture() {
+	case "${!#}" in
+		'repos/org/project/commits/merged/pulls?per_page=100') echo "$PRS" ;;
+		'repos/org/project/pulls/7/files?per_page=100') echo "$FILES" ;;
+		'repos/org/project/pulls/7/reviews?per_page=100') echo "$REVIEWS" ;;
+		'repos/org/project/environments/release-manual') echo "$ENVIRONMENT" ;;
+		'repos/org/project/actions/runs/15/approvals') echo "$APPROVALS" ;;
+		*) return 22 ;;
+	esac
+}
+`
+	const pulls = `PRS=[[{"merged_at":"now","base":{"ref":"main","repo":{"full_name":"org/project"}},"merge_commit_sha":"merged","number":7,"head":{"sha":"head"}}]]`
+	const reviews = `REVIEWS=[[{"id":1,"user":{"id":42},"state":"APPROVED","commit_id":"head"}]]`
+	defaults := []string{
+		"GITHUB_REPOSITORY=org/project", "GITHUB_SHA=merged", "GITHUB_REF_PROTECTED=true", "GITHUB_RUN_ID=15",
+		pulls, reviews,
+		`FILES=[[{"filename":".github/machine-release-version","status":"modified"}]]`,
+		`ENVIRONMENT={"protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":42}}]}]}`,
+		`APPROVALS=[{"state":"approved","environments":[{"name":"release-manual"}]}]`,
+	}
+	for _, tc := range []struct {
+		name, step, override string
+		pass                 bool
+	}{
+		{"reviewed push", push, "", true},
+		{"unprotected push", push, "GITHUB_REF_PROTECTED=false", false},
+		{"direct push", push, "PRS=[[]]", false},
+		{"other merge", push, strings.Replace(pulls, `"merge_commit_sha":"merged"`, `"merge_commit_sha":"elsewhere"`, 1), false},
+		{"different PR base", push, strings.Replace(pulls, `"ref":"main"`, `"ref":"other"`, 1), false},
+		{"unrelated PR", push, "FILES=[[]]", false},
+		{"stale approval", push, strings.Replace(reviews, `"commit_id":"head"`, `"commit_id":"old"`, 1), false},
+		{"changes requested later", push, `REVIEWS=[[{"id":1,"user":{"id":42},"state":"APPROVED","commit_id":"head"},{"id":2,"user":{"id":42},"state":"CHANGES_REQUESTED","commit_id":"head"}]]`, false},
+		{"configured manual gate", dispatch, "", true},
+		{"unconfigured environment", dispatch, "ENVIRONMENT={}", false},
+		{"empty reviewer list", dispatch, `ENVIRONMENT={"protection_rules":[{"type":"required_reviewers","reviewers":[]}]}`, false},
+		{"approved manual gate", receipt, "", true},
+		{"missing approval", receipt, "APPROVALS=[]", false},
+		{"other environment approved", receipt, `APPROVALS=[{"state":"approved","environments":[{"name":"other"}]}]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := steps[tc.step]
+			if !strings.Contains(script, "gh api ") {
+				t.Fatalf("missing API check for %s", tc.step)
+			}
+			cmd := exec.Command("bash", "-c", fixture+strings.ReplaceAll(script, "gh api ", "api_fixture "))
+			cmd.Env = append(os.Environ(), defaults...)
+			if tc.override != "" {
+				cmd.Env = append(cmd.Env, tc.override)
+			}
+			if out, err := cmd.CombinedOutput(); (err == nil) != tc.pass {
+				t.Fatalf("pass = %t, want %t: %s", err == nil, tc.pass, out)
+			}
+		})
 	}
 }
 
