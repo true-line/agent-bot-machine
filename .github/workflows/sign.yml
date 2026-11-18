@@ -1,5 +1,5 @@
-# Sign workflow (docs/plans/macos-signing.md). Dispatched by
-# `scripts/release prepare vX.Y.Z` on main: builds the five deterministic
+# Sign workflow (docs/plans/macos-signing.md). On a reviewed version request
+# merged to main, or an explicit release dispatch, it builds the five deterministic
 # archives at the dispatched commit, signs and notarizes the darwin binary with
 # the Developer ID identity held in the `release` environment, and uploads the
 # signed dist to a draft release vX.Y.Z. Prepare pins the signed darwin digest
@@ -7,6 +7,9 @@
 name: Sign
 
 on:
+  push:
+    branches: [main]
+    paths: [.github/machine-release-version]
   workflow_dispatch:
     inputs:
       artifact:
@@ -24,16 +27,42 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: sign-${{ inputs.artifact || 'machine' }}-${{ inputs.version }}
-  cancel-in-progress: false
-
 env:
   GOTOOLCHAIN: local
   CGO_ENABLED: '0'
 
 jobs:
+  request:
+    name: Resolve the release version
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: version
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        shell: bash
+        run: |
+          version="$VERSION_INPUT"
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            version="$(cat .github/machine-release-version)"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Expected a release version of the form X.Y.Z' >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   sign:
+    needs: request
+    concurrency:
+      group: sign-${{ inputs.artifact || 'machine' }}-${{ needs.request.outputs.version }}
+      cancel-in-progress: false
     name: sign (darwin/arm64)
     if: github.ref == 'refs/heads/main'
     runs-on: macos-15
@@ -41,6 +70,7 @@ jobs:
     environment: release
     env:
       RUSTUP_TOOLCHAIN: "1.96.1"
+      VERSION: ${{ needs.request.outputs.version }}
     permissions:
       contents: write
     defaults:
@@ -50,13 +80,8 @@ jobs:
       - name: Check the requested version
         env:
           ARTIFACT: ${{ inputs.artifact }}
-          VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Error: version must be X.Y.Z (got '$VERSION')" >&2
-            exit 1
-          fi
           tag="v$VERSION"
           if [[ "$ARTIFACT" == owner-presence ]]; then tag="owner-presence-v$VERSION"; fi
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
@@ -78,8 +103,6 @@ jobs:
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - name: Build the deterministic archives
         if: inputs.artifact != 'owner-presence'
-        env:
-          VERSION: ${{ inputs.version }}
         run: go run ./cmd/mm-release build -version "$VERSION" -out "$RUNNER_TEMP/unsigned"
       - name: Check out the reviewed owner app
         if: inputs.artifact == 'owner-presence'
@@ -144,7 +167,6 @@ jobs:
       - name: Sign, notarize and verify
         env:
           ARTIFACT: ${{ inputs.artifact }}
-          VERSION: ${{ inputs.version }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
@@ -156,7 +178,6 @@ jobs:
       - name: Upload the signed dist to the draft release
         if: inputs.artifact != 'owner-presence'
         env:
-          VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="v$VERSION"
@@ -173,7 +194,6 @@ jobs:
       - name: Create the owner approval draft
         if: inputs.artifact == 'owner-presence'
         env:
-          VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
           zip="$RUNNER_TEMP/AgentBotOwnerPresence_${VERSION}_darwin_arm64.zip"

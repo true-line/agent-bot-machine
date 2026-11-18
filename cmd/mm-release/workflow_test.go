@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -276,7 +277,7 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 }
 
 // TestSignWorkflowContract pins the only workflow allowed to read secrets: a
-// manually dispatched job on main, inside the approval-gated release
+// signing job on main, inside the approval-gated release
 // environment, reading exactly the six signing secrets.
 func TestSignWorkflowContract(t *testing.T) {
 	repoRoot, err := findRepoRoot()
@@ -291,18 +292,26 @@ func TestSignWorkflowContract(t *testing.T) {
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("unmarshal sign.yml: %v", err)
 	}
-	if len(doc.On) != 1 || doc.On["workflow_dispatch"] == nil {
-		t.Errorf("sign.yml triggers = %v, want only workflow_dispatch", doc.On)
+	push := map[string]any{
+		"branches": []any{"main"},
+		"paths":    []any{".github/machine-release-version"},
+	}
+	if len(doc.On) != 2 || doc.On["workflow_dispatch"] == nil || !reflect.DeepEqual(doc.On["push"], push) {
+		t.Errorf("sign.yml triggers = %v, want dispatch or a release request on main", doc.On)
 	}
 	if len(doc.Permissions) != 1 || doc.Permissions["contents"] != "read" {
 		t.Errorf("sign.yml top-level permissions = %v, want {contents: read}", doc.Permissions)
 	}
-	if len(doc.Jobs) != 1 {
-		t.Fatalf("sign.yml has %d jobs, want 1", len(doc.Jobs))
+	request, exists := doc.Jobs["request"]
+	if len(doc.Jobs) != 2 || !exists || request.Environment != "" || len(request.Permissions) != 0 || request.If != "github.ref == 'refs/heads/main'" {
+		t.Fatal("version resolution must run read-only on main outside the release environment")
 	}
 	job, ok := doc.Jobs["sign"]
 	if !ok {
 		t.Fatal("sign.yml missing sign job")
+	}
+	if job.Needs != "request" {
+		t.Fatal("sign must use the validated request")
 	}
 	if job.Environment != "release" {
 		t.Errorf("sign.environment = %q, want release", job.Environment)
