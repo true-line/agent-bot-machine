@@ -4,6 +4,12 @@
 
 `setup-bin` must work from a Homebrew install. The bundled `libexec/local-bin` is prefix-owned; Git 2.35+ refuses that from the invoking user, and mutating git operations (`clone`, `fetch`, `checkout`, `pull`) fail with permission denied unless run as the prefix owner.
 
+The Homebrew formula carries the same utility revision as its config seed.
+Release preparation resolves the seed's `local-bin.ref` to a full commit and
+also pins the tag when one is named. Homebrew can reuse that ref in its Git
+cache while offline. An empty cache still requires authorized read access to
+the private repository. The full staged clone remains available to account setup.
+
 ## Target
  
  - Trust that exact path for git commands only (`-c safe.directory`). Do not write `safe.directory` into the user gitconfig.

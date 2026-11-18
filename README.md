@@ -69,6 +69,20 @@ In-app updates keep all three current. managed-machine leaves those wrappers and
 | `linux/amd64`, `linux/arm64` | Release archive (`managed-machine_<X.Y.Z>_linux_<arch>.tar.gz` + `SHA256SUMS`) and [`install-core.sh`](install-core.sh) | Fetches `SHA256SUMS` from `MANAGED_MACHINE_RELEASE_BASE` (default `https://github.com/qwts/managed-machine/releases/latest/download`, or `--release-base <https-url-or-abs-dir>`), verifies the archive SHA-256 digest before extraction, and installs `managed-machine` atomically into `--prefix` (default `$HOME/.local/bin`) without elevating or editing `PATH` or shell profiles. Refuses `darwin` with exit 2 naming the formula. |
 | `windows/amd64`, `windows/arm64` | Release zip (`managed-machine_<X.Y.Z>_windows_<arch>.zip` + `SHA256SUMS`) and [`install-core.ps1`](install-core.ps1) | Fetches `SHA256SUMS` from `-ReleaseBase` / `$env:MANAGED_MACHINE_RELEASE_BASE` (default `https://github.com/qwts/managed-machine/releases/latest/download`), verifies the zip SHA-256 digest with `Get-FileHash -Algorithm SHA256` before extraction, and installs `managed-machine.exe` atomically into `-Prefix` (default `%LOCALAPPDATA%\Programs\managed-machine`) without elevating or editing `PATH`, shell profiles, or the Windows registry. |
 
+If Homebrew reports `managed-machine--local-bin` and `terminal prompts disabled`,
+keep the existing Homebrew cache. The formula pins the tools shipped with its
+config. For Machine 0.11.5, if the existing cache lacks the pin, fetch that tag
+once from the Homebrew owner's Terminal with its configured Git credentials:
+
+```sh
+git -C "$(brew --cache)/managed-machine--local-bin--git" fetch --no-recurse-submodules https://github.com/qwts/local-bin.git tag v0.2.1
+brew install true-line/agent-bot-machine/managed-machine
+```
+
+Homebrew verifies the tag's commit against the formula. This recovery applies
+to an existing Git cache (the failing command in the log is `git fetch`).
+
+
 #### Manual `managed-machine-config` clone on Linux and Windows
 
 The bundled `managed-machine-config` seed is a Homebrew formula mechanism on `darwin/arm64` and exists on no other target. On Linux and Windows, clone the private [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config) repository by hand into `<state>/managed-machine-config` (or point `MANAGED_MACHINE_POLICY_DIR` at an existing checkout):
