@@ -26,8 +26,19 @@ def version(value):
     return tuple(map(int, value.split(".")))
 
 
+def trusted_cut(cut):
+    # workflow_run's GITHUB_SHA identifies the default branch revision that
+    # supplied the workflow. Its checkout supplies all executable release code.
+    main = oid(os.environ["GITHUB_SHA"])
+    require(git("rev-parse", "HEAD") == main, "checkout differs from trusted workflow revision")
+    require(git("merge-base", oid(cut), main) == cut, "CI commit is not on trusted main")
+    if cut != main:
+        require(cut in git("rev-list", "--first-parent", main).splitlines(),
+                "CI commit is a merged side branch, not a main push")
+
+
 def candidate(cut):
-    require(git("rev-parse", "HEAD") == oid(cut), "checkout differs from triggering CI SHA")
+    trusted_cut(cut)
     current = git("show", f"{cut}:VERSION")
     previous = git("show", f"{cut}^1:VERSION")
     if current == previous:
@@ -115,7 +126,9 @@ def tag_cut(cut, tag):
 if __name__ == "__main__":
     try:
         mode, *args = sys.argv[1:]
-        if mode == "candidate":
+        if mode == "trusted":
+            trusted_cut(*args)
+        elif mode == "candidate":
             print(candidate(*args))
         elif mode == "ci":
             print(select_ci(json.load(sys.stdin)["workflow_runs"], *args))

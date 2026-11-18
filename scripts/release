@@ -63,7 +63,9 @@ fi
 cd "$root"
 
 go_root="$root"
-if [[ ! -f "$go_root/go.mod" && -f "$script_root/go.mod" ]]; then
+# The signed base supplies the two release files. Render always uses the
+# verifier from the same trusted checkout as this script.
+if [[ "$subcmd" == render || ( ! -f "$go_root/go.mod" && -f "$script_root/go.mod" ) ]]; then
     go_root="$script_root"
 fi
 

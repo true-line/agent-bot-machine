@@ -16,6 +16,7 @@ concurrency:
 jobs:
   prepare:
     if: >-
+      github.ref == 'refs/heads/main' && github.ref_protected &&
       github.repository == 'true-line/agent-bot-machine' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       github.event.workflow_run.path == '.github/workflows/sign.yml' &&
@@ -38,31 +39,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Confirm the release request still heads main
         id: request
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$SIGN_SHA" =~ ^[0-9a-f]{40}$ && "$(git rev-parse HEAD)" == "$SIGN_SHA" ]]
-          version="$(cat .github/machine-release-version)"
-          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          if git ls-remote --exit-code origin "refs/tags/v$version" >/dev/null; then
-            echo "v$version has already been tagged."
-            exit 0
-          else
-            [[ $? == 2 ]]
-          fi
-          git fetch --no-tags --depth=1 origin refs/heads/main
-          if [[ "$(git rev-parse FETCH_HEAD)" != "$SIGN_SHA" ]]; then
-            if [[ "$(git show FETCH_HEAD:.github/machine-release-version)" != "$version" ]]; then
-              echo 'A new release request superseded this one.'
-              exit 0
-            fi
-            echo "::error::Main changed after Sign for v$version. Merge a new reviewed version request to rebuild and sign current main."
-            exit 1
-          fi
+          version="$(node scripts/prepare-release.mjs eligible-version "$SIGN_SHA")"
           echo "version=$version" >>"$GITHUB_OUTPUT"
       - name: Install the pinned Go toolchain
         if: steps.request.outputs.version != ''
@@ -101,9 +86,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+      - name: Recheck the signed commit against protected main
+        id: request
+        run: |
+          version="$(node scripts/prepare-release.mjs eligible-version "$SIGN_SHA")"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
       - name: Restore only the two verified text files
+        if: steps.request.outputs.version != ''
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           FORMULA: ${{ needs.prepare.outputs.formula }}
@@ -113,6 +105,7 @@ jobs:
           printf '%s' "$FORMULA" | base64 -d >Formula/managed-machine.rb
           git diff --check
       - name: Mint the release PR App token
+        if: steps.request.outputs.version != ''
         id: chores
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
@@ -121,6 +114,7 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
       - name: Create the signed release commit and request review
+        if: steps.request.outputs.version != ''
         env:
           API_TOKEN: ${{ steps.chores.outputs.token }}
           APP_SLUG: ${{ steps.chores.outputs.app-slug }}

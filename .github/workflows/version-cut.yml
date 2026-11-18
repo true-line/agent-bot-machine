@@ -78,6 +78,10 @@ jobs:
   identify:
     if: >-
       github.event_name == 'workflow_run' &&
+      github.repository == 'true-line/agent-bot-machine' &&
+      github.ref == 'refs/heads/main' && github.ref_protected &&
+      (github.event.workflow_run.path == '.github/workflows/ci.yml' ||
+       github.event.workflow_run.path == '.github/workflows/go-core.yml') &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
@@ -97,8 +101,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 2
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - id: cut
         name: Identify the reviewed cut and its successful main gates
@@ -107,7 +111,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if git diff --quiet "$CUT^1" "$CUT" -- VERSION; then exit 0; fi
           tag="$(python3 scripts/version-cut.py candidate "$CUT")"
           [[ -n "$tag" ]] || exit 0
           existing="$(python3 scripts/version-cut.py existing "$CUT" "$tag")"
@@ -143,9 +146,25 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Resolve the immutable signing parent of the reviewed release PR
+        id: source
+        env:
+          CUT: ${{ github.event.workflow_run.head_sha }}
+          TAG: ${{ needs.identify.outputs.tag }}
+          PR: ${{ needs.identify.outputs.pr }}
+          PR_HEAD: ${{ needs.identify.outputs.head }}
+        run: |
+          set -euo pipefail
+          python3 scripts/version-cut.py trusted "$CUT"
+          git fetch --quiet --no-tags origin "refs/pull/$PR/head"
+          test "$(git rev-parse FETCH_HEAD)" = "$PR_HEAD"
+          base="$(git rev-parse "$PR_HEAD^1")"
+          python3 scripts/version-cut.py lineage "$CUT" "$TAG" "$base" "$PR_HEAD"
+          git worktree add --quiet --detach "$RUNNER_TEMP/cut-base" "$base"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -157,21 +176,6 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ needs.identify.outputs.core }}
           path: ${{ runner.temp }}/cut-dist
-      - name: Resolve the immutable signing parent of the reviewed release PR
-        id: source
-        env:
-          CUT: ${{ github.event.workflow_run.head_sha }}
-          TAG: ${{ needs.identify.outputs.tag }}
-          PR: ${{ needs.identify.outputs.pr }}
-          PR_HEAD: ${{ needs.identify.outputs.head }}
-        run: |
-          set -euo pipefail
-          git fetch --quiet --no-tags origin "refs/pull/$PR/head"
-          test "$(git rev-parse FETCH_HEAD)" = "$PR_HEAD"
-          base="$(git rev-parse "$PR_HEAD^1")"
-          python3 scripts/version-cut.py lineage "$CUT" "$TAG" "$base" "$PR_HEAD"
-          git worktree add --quiet --detach "$RUNNER_TEMP/cut-base" "$base"
-          echo "base=$base" >> "$GITHUB_OUTPUT"
       - name: Download the protected draft and verify each asset digest
         env:
           SIGN_BASE: ${{ steps.source.outputs.base }}
@@ -185,8 +189,9 @@ jobs:
           GOTOOLCHAIN: local
         run: |
           set -euo pipefail
+          git show "$CUT:Formula/managed-machine.rb" > "$RUNNER_TEMP/cut-formula.rb"
           go run ./cmd/mm-release verify-signed -unsigned "$RUNNER_TEMP/cut-dist" -signed "$RUNNER_TEMP/cut-signed" \
-            -team Z5DM34QS5U -require-keyd -formula Formula/managed-machine.rb -require-pin
+            -team Z5DM34QS5U -require-keyd -formula "$RUNNER_TEMP/cut-formula.rb" -require-pin
           (cd "$RUNNER_TEMP/cut-base" &&
             "$GITHUB_WORKSPACE/scripts/release" render "$TAG" "$RUNNER_TEMP/cut-dist" "$RUNNER_TEMP/cut-signed")
           git -C "$RUNNER_TEMP/cut-base" add -- VERSION Formula/managed-machine.rb
@@ -203,7 +208,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Confirm the gate results still belong to this cut
@@ -214,6 +219,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          python3 scripts/version-cut.py trusted "$CUT"
           for pair in "ci.yml:$CI" "go-core.yml:$CORE"; do
             workflow="${pair%:*}"
             current="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?event=push&branch=main&head_sha=$CUT&per_page=100" |

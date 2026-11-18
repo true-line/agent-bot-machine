@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { download, openReleasePR, validateDraft } from '../scripts/prepare-release.mjs';
@@ -130,6 +132,69 @@ test('download checks the bytes of each asset and refuses a corrupt response', a
     corrupt = true;
     await assert.rejects(() => download(version, sha, join(root, 'corrupt'), call));
     assert.deepEqual(await readdir(join(root, 'corrupt')), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('only trusted workflow code runs in both jobs, before draft access or App credential creation', async () => {
+  const yml = await readFile(new URL('../.github/workflows/prepare-release.yml', import.meta.url), 'utf8');
+  const jobs = yml.split('  open-pr:');
+  assert.equal(jobs.length, 2);
+  assert.match(jobs[0], /github.ref == 'refs\/heads\/main' && github.ref_protected/);
+  for (const [i, job] of jobs.entries()) {
+    assert.ok(job.includes('ref: ${{ github.sha }}'));
+    assert.ok(!job.includes('ref: ${{ github.event.workflow_run.head_sha }}'));
+    const check = job.indexOf('scripts/prepare-release.mjs eligible-version');
+    assert.ok(check > job.indexOf('ref: ${{ github.sha }}'));
+    assert.ok(check < job.indexOf(i === 0 ? 'Read the signed draft' : 'Mint the release PR App token'));
+  }
+});
+
+test('Sign eligibility uses the checked-out workflow SHA, protected main tip, and main history', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mm-sign-eligibility-'));
+  const script = fileURLToPath(new URL('../scripts/prepare-release.mjs', import.meta.url));
+  const source = join(root, 'source');
+  const checkout = join(root, 'checkout');
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ALLOW_PROTOCOL: 'file',
+    GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
+    GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid' };
+  function git(cwd, ...args) {
+    const result = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  }
+  function check(trustedSha, signSha) {
+    return spawnSync(process.execPath, [script, 'eligible-version', signSha], {
+      cwd: checkout, env: { ...env, GITHUB_REPOSITORY: repository, GITHUB_SHA: trustedSha }, encoding: 'utf8',
+    });
+  }
+  try {
+    git(root, 'init', '-q', '-b', 'main', source);
+    await mkdir(join(source, '.github'));
+    await writeFile(join(source, '.github/machine-release-version'), version + '\n');
+    git(source, 'add', '.github');
+    git(source, 'commit', '-qm', 'request release');
+    const sign = git(source, 'rev-parse', 'HEAD');
+    git(root, 'clone', '-q', source, checkout);
+    assert.equal(check(sign, sign).stdout.trim(), version);
+    git(source, 'switch', '-qc', 'elsewhere');
+    git(source, 'commit', '--allow-empty', '-qm', 'outside main');
+    const outside = git(source, 'rev-parse', 'HEAD');
+    git(checkout, 'fetch', '-q', 'origin', 'refs/heads/elsewhere');
+    assert.notEqual(check(sign, outside).status, 0);
+    git(source, 'switch', '-q', 'main');
+    git(source, 'commit', '--allow-empty', '-qm', 'advance main');
+    const next = git(source, 'rev-parse', 'HEAD');
+    assert.notEqual(check(sign, sign).status, 0);
+    assert.notEqual(check(sign, next).status, 0);
+    assert.notEqual(check(next, sign).status, 0);
+    await writeFile(join(source, '.github/machine-release-version'), '0.12.2\n');
+    git(source, 'commit', '-qam', 'replace request');
+    const superseded = check(sign, sign);
+    assert.equal(superseded.status, 0, superseded.stderr);
+    assert.equal(superseded.stdout.trim(), '');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

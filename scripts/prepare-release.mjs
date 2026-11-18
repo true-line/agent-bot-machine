@@ -119,11 +119,39 @@ export async function openReleasePR({version, sha, tree, additions}, call = requ
   console.log(pr.html_url);
 }
 
+// The workflow only checks out its own protected-main SHA. Fetch main by
+// its fixed ref, then treat the event SHA as data until both commits match.
+function eligibleVersion(sha) {
+  git('fetch', '--quiet', '--no-tags', 'origin', 'refs/heads/main');
+  const main = git('rev-parse', 'FETCH_HEAD');
+  requireState(git('merge-base', sha, main) === sha, 'The Sign commit is outside main history');
+  const version = git('show', sha + ':.github/machine-release-version');
+  assert.match(version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
+  if (git('ls-remote', 'origin', 'refs/tags/v' + version)) {
+    console.error('This release has already been tagged.');
+    return '';
+  }
+  if (main !== sha) {
+    const latest = git('show', main + ':.github/machine-release-version');
+    requireState(latest !== version, 'Main changed after Sign for v' + version +
+      '. Merge a new reviewed version request to rebuild and sign current main.');
+    console.error('A new release request superseded this one.');
+    return '';
+  }
+  assert.equal(main, process.env.GITHUB_SHA, 'Signing SHA must equal the trusted workflow checkout');
+  return version;
+}
+
 async function main() {
   const [operation, sha, dir] = process.argv.slice(2);
   assert.equal(process.env.GITHUB_REPOSITORY, repo);
   assert.match(sha, /^[0-9a-f]{40}$/);
-  assert.equal(git('rev-parse', 'HEAD'), sha);
+  assert.equal(git('rev-parse', 'HEAD'), process.env.GITHUB_SHA, 'Expected the trusted workflow checkout');
+  if (operation === 'eligible-version') {
+    console.log(eligibleVersion(sha));
+    return;
+  }
+  assert.equal(sha, process.env.GITHUB_SHA, 'Expected Sign at the trusted workflow checkout');
   const version = (await readFile('.github/machine-release-version', 'utf8')).trim();
   assert.match(version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
   if (operation === 'download') return download(version, sha, dir);

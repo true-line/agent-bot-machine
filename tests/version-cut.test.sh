@@ -31,6 +31,7 @@ git push -q origin main
 run() { python3 "$script" "$@"; }
 refuses() { if "$@" >/dev/null 2>&1; then echo "unexpected acceptance: $*" >&2; exit 1; fi; }
 tag=v0.12.0
+export GITHUB_SHA="$cut"
 [[ "$(run candidate "$cut")" == "$tag" ]]
 run lineage "$cut" "$tag" "$base" "$pr"
 refuses run lineage "$cut" "$tag" "$pr" "$pr"
@@ -61,9 +62,12 @@ done
 echo docs >notes
 git add notes && git commit -qm docs
 later="$(git rev-parse HEAD)"
+refuses run trusted "$cut" # The worktree moved; it is not the supplied workflow SHA.
+export GITHUB_SHA="$later"
+run trusted "$cut"
+[[ "$(run candidate "$cut")" == "$tag" ]]
 [[ -z "$(run candidate "$later")" ]]
 git push -q origin main
-git checkout --detach -q "$cut"
 run tag "$cut" "$tag"
 [[ "$(git cat-file -t "$tag")" == tag && "$(git rev-parse "$tag^{}")" == "$cut" ]]
 run tag "$cut" "$tag"
@@ -83,7 +87,7 @@ git switch -q main
 echo 0.13.0 >.github/machine-release-version
 git add .github && git commit -qm 'Superseding release request'
 git push -q origin main
-git checkout --detach -q "$cut"
+export GITHUB_SHA="$(git rev-parse HEAD)"
 refuses run tag "$cut" "$tag"
 
 # An intervening source edit between signing and review invalidates the cut.
@@ -92,8 +96,13 @@ echo changed >code
 git add code && git commit -qm drift
 git cherry-pick "$pr" >/dev/null
 wrong="$(git rev-parse HEAD)"
+git checkout -q main
+refuses run trusted "$wrong" # Local object, but outside the trusted main history.
+git checkout -q drift
+export GITHUB_SHA="$wrong"
 refuses run lineage "$wrong" "$tag" "$base" "$wrong"
 echo 0.13.0 >VERSION
 git add VERSION && git commit -qm 'Wrong release request'
-refuses run candidate "$(git rev-parse HEAD)"
+export GITHUB_SHA="$(git rev-parse HEAD)"
+refuses run candidate "$GITHUB_SHA"
 echo 'version-cut tests passed'
