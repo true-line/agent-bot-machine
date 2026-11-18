@@ -120,8 +120,15 @@ requires the owner's approval and admits the `main` branch and `v*` tags.
 and `managed-machine` (`0755`), identical in layout to the Linux and Windows
 archives.
 
-**Signing.** `.github/workflows/sign.yml` is dispatched on `main` with a
-version. In the `release` environment on a macOS runner it builds the
+**Signing.** Submit the next Machine version (for example `0.11.7`) in
+`.github/machine-release-version` through a reviewed PR. Merging it to
+`main` starts Sign at that merge commit. The read-only first job validates
+the version. The existing `release` environment controls access to the signing
+identity. Manual dispatch remains available for recovery and the owner app.
+After the signed draft exists, the release PR pins its verified digest in the
+Homebrew formula. Changes to VERSION and the formula do not request signing again.
+
+The macOS signing job builds the
 deterministic dist, imports the Developer ID identity into a temporary keychain
 via `security -i` on stdin (so neither the keychain password nor the `.p12`
 password appears in `argv`, and `-T /usr/bin/codesign` restricts key use to
@@ -164,7 +171,7 @@ the draft instead of creating a release.
   code, wrong Team ID, data after the signature, extra or changed files, a
   changed other archive), and on darwin/arm64 proves a real `codesign` re-sign
   passes.
-- `TestSignWorkflowContract` pins `sign.yml`: dispatch only, `main` only, the
+- `TestSignWorkflowContract` pins the release-request path and manual dispatch on `main`, the
   `release` environment, `contents: write` on the job alone, only the five
   CLI signing secrets plus the profile on owner-app dispatches through `env`, and no password-bearing `security` flags or
   `-A` on the command line.
