@@ -45,12 +45,13 @@ class ManagedMachine < Formula
   end
 
   # Utility scripts repo. Installed as a working git clone so setup-bin can
-  # pull new commands and keep the ~/.local/bin symlinks pointed here.
+  # use the immutable config seed pin without refreshing a moving branch.
   resource "local-bin" do
     url "https://github.com/qwts/local-bin.git",
-        using:   :git,
-        branch:  "main",
-        shallow: false
+        using:    :git,
+        tag:      "v0.2.1",
+        revision: "34b38897002b8f0042958ea4d2c47a40b3961bca",
+        shallow:  false
   end
 
   # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, S8 D3).

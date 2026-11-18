@@ -156,7 +156,8 @@ func TestReleaseFormulaDerivation(t *testing.T) {
 		}
 	}
 
-	candDerived, err := deriveCandidateFormula(candBase, checkoutDir, candSHA, configDir, "0.9.0", commitC, localBinDir, coreArchive, coreSHA)
+	localBinRev := strings.Repeat("4", 40)
+	candDerived, err := deriveCandidateFormula(candBase, checkoutDir, candSHA, configDir, "0.9.0", commitC, localBinDir, localBinRev, coreArchive, coreSHA)
 	if err != nil {
 		t.Fatalf("deriveCandidateFormula failed: %v", err)
 	}
@@ -169,6 +170,7 @@ func TestReleaseFormulaDerivation(t *testing.T) {
 		`url "file://` + filepath.ToSlash(configDir) + `"`,
 		`revision: "` + commitC + `"`,
 		`url "file://` + filepath.ToSlash(localBinDir) + `"`,
+		`revision: "` + localBinRev + `"`,
 		`url "file://` + filepath.ToSlash(coreArchive) + `"`,
 		`sha256 "` + coreSHA + `"`,
 	} {

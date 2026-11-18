@@ -217,6 +217,7 @@ type releaseHarness struct {
 	fakeOriginBare          string
 	fakeOriginWork          string
 	localBinBare            string
+	localBinRev             string
 	checkoutClone           string
 	commitA                 string
 	commitB                 string

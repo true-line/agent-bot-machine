@@ -67,11 +67,25 @@ git -C "$CONFIG_REPO" config user.name 'managed-machine test'
 git -C "$CONFIG_REPO" config user.email 'managed-machine-test@example.invalid'
 git -C "$CONFIG_REPO" config commit.gpgsign false
 git -C "$CONFIG_REPO" config tag.gpgsign false
+# Reuse the synthetic Machine origin as the private tools remote for this test.
+export GIT_CONFIG_GLOBAL="$TEST_DIR/gitconfig"
+git config --global url."$REMOTE".insteadOf https://github.com/qwts/local-bin.git
+git -C "$REPO" tag -a fixture-tools -m fixture
+git -C "$REPO" push --quiet origin refs/tags/fixture-tools
+printf 'main\n' >"$CONFIG_REPO/local-bin.ref"
 printf '{}\n' >"$CONFIG_REPO/apps.json"
 git -C "$CONFIG_REPO" add . && git -C "$CONFIG_REPO" commit --quiet -m seed
 git -C "$CONFIG_REPO" branch -M main
 git -C "$CONFIG_REPO" remote add origin "$CONFIG_REMOTE"
 git -C "$CONFIG_REPO" push --quiet -u origin main
+
+if (cd "$REPO" && /bin/bash "$ROOT/scripts/release" prepare "$VERSION") >"$TEST_DIR/refusal" 2>&1; then
+    fail "release accepted a moving local-bin branch"
+fi
+grep -Fq 'local-bin.ref must resolve to a tag or commit' "$TEST_DIR/refusal"
+printf 'fixture-tools\n' >"$CONFIG_REPO/local-bin.ref"
+git -C "$CONFIG_REPO" commit --quiet -am 'pin tools'
+git -C "$CONFIG_REPO" push --quiet origin main
 
 (cd "$REPO" && MANAGED_MACHINE_CONFIG_DIR="$CONFIG_REPO" /bin/bash "$ROOT/scripts/release" prepare "$VERSION" >"$TEST_DIR/prepare.out")
 
@@ -141,8 +155,8 @@ if not re.search(r'revision:\s*"[0-9a-f]{40}"', cfg_block):
 lb_block = resources["local-bin"]
 if 'url "https://github.com/qwts/local-bin.git"' not in lb_block:
     raise SystemExit("local-bin url changed")
-if 'branch:  "main"' not in lb_block:
-    raise SystemExit("local-bin branch changed")
+if 'branch:' in lb_block or not re.search(r'revision:\s*"[0-9a-f]{40}"', lb_block):
+    raise SystemExit("local-bin must use an immutable revision")
 
 # 4. Core resource URL names v<VERSION> and managed-machine_<VERSION>_darwin_arm64.tar.gz,
 #    and pins a 64-hex sha256.
@@ -297,6 +311,8 @@ PY
 
 verify_formula_structure "$ROOT/Formula/managed-machine.rb" "$VERSION"
 verify_formula_structure "$FORMULA" "$VERSION"
+grep -Fq 'tag:      "fixture-tools"' "$FORMULA"
+grep -Fq "revision: \"$(git -C "$REPO" rev-parse 'fixture-tools^{commit}')\"" "$FORMULA"
 
 # Exercise `def install` and `test do` in Ruby for both the repository's
 # current formula (covering both branches while the guard exists) and the

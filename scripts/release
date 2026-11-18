@@ -221,13 +221,35 @@ ensure_signed_dist() {
     verify_signed_dist "$unsigned" "$signed"
 }
 
+# Resolve exactly the utility revision requested by the release config. A
+# metadata-only clone also resolves annotated tags and abbreviated commit IDs.
+resolve_local_bin_pin() {
+    local cfg_sha="$1" repo="$tmp_dir/local-bin.git" ref object
+    ref="$(git -C "$config_repo" show "$cfg_sha:local-bin.ref" |
+        awk '!/^[[:space:]]*(#|$)/ && !pin {gsub(/[[:space:]]/, ""); pin=$0} END {print pin}')" || return 1
+    if [[ ! "$ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || ! git check-ref-format "refs/tags/$ref"; then
+        echo "Error: invalid local-bin.ref in release config" >&2
+        return 1
+    fi
+    git -C "$config_repo" clone --quiet --bare --filter=blob:none https://github.com/qwts/local-bin.git "$repo" || return 1
+    local_bin_tag=""
+    if object="$(git -C "$repo" rev-parse --verify --quiet "refs/tags/${ref}^{commit}")"; then
+        local_bin_tag="$ref"
+    elif [[ ! "$ref" =~ ^[0-9a-f]{7,40}$ ]] || git -C "$repo" show-ref --verify --quiet "refs/heads/$ref" ||
+         ! object="$(git -C "$repo" rev-parse --verify --quiet "${ref}^{commit}")" || [[ "$object" != "$ref"* ]]; then
+        echo "Error: local-bin.ref must resolve to a tag or commit in qwts/local-bin" >&2
+        return 1
+    fi
+    local_bin_sha="$object"
+}
+
 write_formula() {
     local formula_path="$1" ver="$2" bare_ver="$3" cfg_sha="$4" core_sha="$5"
-    python3 - "$formula_path" "$ver" "$bare_ver" "$cfg_sha" "$core_sha" <<'PY' || return 1
+    python3 - "$formula_path" "$ver" "$bare_ver" "$cfg_sha" "$core_sha" "$local_bin_tag" "$local_bin_sha" <<'PY' || return 1
 import re
 import sys
 
-formula_path, version, bare, config_sha, core_sha = sys.argv[1:6]
+formula_path, version, bare, config_sha, core_sha, bin_tag, bin_sha = sys.argv[1:]
 with open(formula_path, encoding="utf-8") as fh:
     text = fh.read()
 
@@ -296,6 +318,21 @@ text, n_cfg = re.subn(
     flags=re.MULTILINE | re.DOTALL,
 )
 if n_cfg != 1:
+    sys.exit(1)
+
+# Keep a full working clone for offline account setup, including the named tag.
+bin_resource = (
+    '  resource "local-bin" do\n'
+    '    url "https://github.com/qwts/local-bin.git",\n'
+    '        using:    :git,\n'
+    + (f'        tag:      "{bin_tag}",\n' if bin_tag else '')
+    + f'        revision: "{bin_sha}",\n'
+    '        shallow:  false\n'
+    '  end'
+)
+text, count = re.subn(r'^  resource "local-bin" do\n.*?^  end$', lambda _: bin_resource,
+                      text, flags=re.MULTILINE | re.DOTALL)
+if count != 1:
     sys.exit(1)
 
 core_resource_block = (
@@ -522,6 +559,10 @@ cfg_sha = rev_m.group(1)
 if want_cfg_sha and cfg_sha != want_cfg_sha:
     sys.exit(1)
 
+bin_block = resources["local-bin"]
+if "branch:" in bin_block or not re.search(r'^\s*revision:\s*"[0-9a-f]{40}",?$', bin_block, re.MULTILINE):
+    sys.exit(1)
+
 core_block = resources["core"]
 want_url = f"https://github.com/qwts/managed-machine/releases/download/{version}/managed-machine_{bare}_darwin_arm64.tar.gz"
 url_m = re.search(r'^\s*url\s+"([^"]+)"\s*$', core_block, re.MULTILINE)
@@ -665,6 +706,7 @@ if [[ "$subcmd" == "prepare" ]]; then
         exit 1
     fi
     config_sha="$(git -C "$config_repo" rev-parse HEAD)"
+    resolve_local_bin_pin "$config_sha" || exit 1
     ensure_config_tag "$config_sha" || exit 1
 
     # Build the five deterministic archives, have the sign workflow sign and

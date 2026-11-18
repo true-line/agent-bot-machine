@@ -86,6 +86,9 @@ git -C "$CONFIG_FIXTURE" config user.name 'managed-machine test'
 git -C "$CONFIG_FIXTURE" config user.email 'managed-machine-test@example.invalid'
 git -C "$CONFIG_FIXTURE" config commit.gpgsign false
 git -C "$CONFIG_FIXTURE" config tag.gpgsign false
+export GIT_CONFIG_GLOBAL="$TEST_DIR/gitconfig"
+git config --global url."$REMOTE".insteadOf https://github.com/qwts/local-bin.git
+printf '%.12s\n' "$SEED_MAIN_SHA" >"$CONFIG_FIXTURE/local-bin.ref"
 printf '{}\n' >"$CONFIG_FIXTURE/apps.json"
 git -C "$CONFIG_FIXTURE" add . && git -C "$CONFIG_FIXTURE" commit --quiet -m seed
 git -C "$CONFIG_FIXTURE" branch -M main
@@ -173,6 +176,7 @@ fi
 # commits "Release v9.9.9" on release/v9.9.9, pushes the branch only (origin
 # main and tags of this repository unchanged), and prints the gh pr create line.
 run_release prepare v9.9.9 >"$TEST_DIR/prepare.out"
+grep -Fq "revision: \"$SEED_MAIN_SHA\"" "$FIXTURE/Formula/managed-machine.rb"
 [[ "$(git -C "$FIXTURE" rev-parse --abbrev-ref HEAD)" == 'release/v9.9.9' ]]
 [[ "$(cat "$FIXTURE/VERSION")" == '9.9.9' ]]
 grep -qE '^[[:space:]]*tag:[[:space:]]*"v9\.9\.9"' "$FIXTURE/Formula/managed-machine.rb"
