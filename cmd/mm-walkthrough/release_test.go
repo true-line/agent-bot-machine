@@ -99,7 +99,6 @@ func TestReleaseFormulaDerivation(t *testing.T) {
 		t.Fatalf("git show v0.8.12:Formula/managed-machine.rb: %v", err)
 	}
 	commitA := "1111111111111111111111111111111111111111"
-	commitC := "3333333333333333333333333333333333333333"
 	candSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	coreSHA := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	checkoutDir := filepath.Join(h.root, "repos", "managed-machine")
@@ -156,8 +155,7 @@ func TestReleaseFormulaDerivation(t *testing.T) {
 		}
 	}
 
-	localBinRev := strings.Repeat("4", 40)
-	candDerived, err := deriveCandidateFormula(candBase, checkoutDir, candSHA, configDir, "0.9.0", commitC, localBinDir, localBinRev, coreArchive, coreSHA)
+	candDerived, err := deriveCandidateFormula(candBase, checkoutDir, candSHA, coreArchive, coreSHA)
 	if err != nil {
 		t.Fatalf("deriveCandidateFormula failed: %v", err)
 	}
@@ -167,16 +165,17 @@ func TestReleaseFormulaDerivation(t *testing.T) {
 	for _, want := range []string{
 		`url "file://` + filepath.ToSlash(checkoutDir) + `"`,
 		`revision: "` + candSHA + `"`,
-		`url "file://` + filepath.ToSlash(configDir) + `"`,
-		`revision: "` + commitC + `"`,
-		`url "file://` + filepath.ToSlash(localBinDir) + `"`,
-		`revision: "` + localBinRev + `"`,
 		`url "file://` + filepath.ToSlash(coreArchive) + `"`,
 		`sha256 "` + coreSHA + `"`,
 	} {
 		if !strings.Contains(candDerived, want) {
 			t.Errorf("candDerived missing %q", want)
 		}
+	}
+
+	withPrivateResource := strings.Replace(candBase, `resource "core" do`, "resource \"local-bin\" do\n  end\n  resource \"core\" do", 1)
+	if _, err := ensureCandidateFormulaBase(withPrivateResource, "0.9.0"); err == nil {
+		t.Fatal("candidate formula accepted a private resource")
 	}
 
 	// Mutating any non-URL line must be rejected by assertFormulaDiffersOnlyInURLs.
@@ -394,14 +393,14 @@ func TestReleaseAggregateRejectsBadRecords(t *testing.T) {
 		files := releaseRecords(t, t.TempDir(), func(ev *ReleaseEvidence) {
 			if ev.Target == "darwin/arm64" {
 				for i := range ev.Cases {
-					if ev.Cases[i].Case == caseReleasePrivateSeed {
+					if ev.Cases[i].Case == caseReleasePublicPackage {
 						ev.Cases[i].Observed = "n-a"
 					}
 				}
 			}
 		})
 		if err := releaseAggregateCmd(append([]string{"-source-revision", "rev"}, files...)); err == nil {
-			t.Fatal("private-seed n-a on darwin/arm64 was accepted")
+			t.Fatal("public-package n-a on darwin/arm64 was accepted")
 		}
 	})
 	t.Run("macos case ok outside darwin", func(t *testing.T) {
@@ -651,7 +650,7 @@ func TestReleaseUpgradeFromBashRefusesOutsideHostedRunner(t *testing.T) {
 	}
 	nonDarwin.runUpgradeFromBash()
 	nonDarwin.runUpgradeFromV010()
-	nonDarwin.runPrivateSeed()
+	nonDarwin.runPublicPackage()
 	nonDarwin.runDispatcher()
 	if len(nonDarwin.cases) != 4 {
 		t.Fatalf("expected 4 non-darwin cases, got %d", len(nonDarwin.cases))
@@ -739,13 +738,100 @@ func TestReleaseZeroHitGrep(t *testing.T) {
 	}
 }
 
-// TestReleasePrivateSeedScenarios exercises the D7 synthetic seed scenarios
-// (a)-(f) directly against a staged v0.8.12 + candidate tree and verifies both
+func TestHomebrewPackageFixtureKeepsDistAndChecksInstalledKeyd(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("macOS file-mode checks")
+	}
+	root := t.TempDir()
+	h := &releaseHarness{
+		installHarness: &installHarness{root: root, target: "darwin/arm64", ev: &InstallEvidence{}},
+		repoRoot:       root, upgradeVer: "0.12.0", upgradeDistDir: filepath.Join(root, "dist"),
+	}
+	if err := write(filepath.Join(root, "LICENSE"), "test license"); err != nil {
+		t.Fatal(err)
+	}
+	core := []byte("original CI core")
+	raw, err := packReleaseTarGz("managed-machine", core, []byte("test license"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := targetArchiveName(h.upgradeVer, h.target)
+	base := filepath.Join(h.upgradeDistDir, name)
+	if err := write(base, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	keyd := filepath.Join(root, "keg", "bin", "agent-bot-keyd")
+	if err := write(keyd, "test keyd"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.prepareBrewTestPackage(keyd); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(base)
+	if err != nil || !bytes.Equal(got, raw) {
+		t.Fatalf("deterministic archive changed: %v", err)
+	}
+	got, err = extractArchiveBinaryBytes(filepath.Join(h.upgradeDistDir, name))
+	if err != nil || !bytes.Equal(got, core) {
+		t.Fatalf("fixture core changed: %v", err)
+	}
+	keg := filepath.Join(root, "keg")
+	if err := os.Chmod(keyd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkPublicKeg(keg, h.brewTestKeydSHA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(keyd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkPublicKeg(keg, h.brewTestKeydSHA); err == nil {
+		t.Fatal("accepted a world-executable helper")
+	}
+	if err := os.Chmod(keyd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyd, []byte("different helper"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkPublicKeg(keg, h.brewTestKeydSHA); err == nil {
+		t.Fatal("accepted an unexpected helper")
+	}
+}
+
+func TestPublicKegRejectsPrivateResources(t *testing.T) {
+	for _, tt := range []struct{ name, content string }{
+		{"libexec/legacy/managed-machine-config/catalog", ""},
+		{"libexec/tools/local-bin", ""},
+		{"libexec/renamed/settings", releaseSeedMarkerZSH},
+		{"libexec/renamed/keys", releaseSeedMarkerAuthKeys},
+		{"bin/renamed-tool", "#!/usr/bin/env bash\necho hello-fixture-v1.2.4\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			keg := t.TempDir()
+			if err := write(filepath.Join(keg, "bin", "managed-machine"), "public core"); err != nil {
+				t.Fatal(err)
+			}
+			if err := checkPublicKeg(keg, ""); err != nil {
+				t.Fatal(err)
+			}
+			if err := write(filepath.Join(keg, tt.name), tt.content); err != nil {
+				t.Fatal(err)
+			}
+			if err := checkPublicKeg(keg, ""); err == nil {
+				t.Fatal("accepted private fixture")
+			}
+		})
+	}
+}
+
+// TestReleasePublicPackageScenarios exercises the D7 synthetic seed scenarios
+// (a)-(f) directly against a staged v0.9.0 + candidate tree and verifies both
 // the passing path and that a git sentinel invocation in scenario (f) fails the
 // case.
-func TestReleasePrivateSeedScenarios(t *testing.T) {
+func TestReleasePublicPackageScenarios(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("private-seed is a macOS Bash/git case")
+		t.Skip("public-package is a macOS Bash/git case")
 	}
 	repoRoot, err := findReleaseRepoRoot()
 	if err != nil {
@@ -826,9 +912,9 @@ exit 1
 		hostStateKey:   hostKey,
 	}
 
-	h.runPrivateSeed()
+	h.runPublicPackage()
 	if len(h.cases) != 1 || !h.cases[0].OK || h.cases[0].Observed != "ok" {
-		t.Fatalf("expected private-seed scenarios (a)-(f) to pass, got %+v", h.cases)
+		t.Fatalf("expected public-package scenarios (a)-(f) to pass, got %+v", h.cases)
 	}
 
 	// Verify that if the core starts `git` during scenario (f), the sentinel is
@@ -838,18 +924,18 @@ exit 1
 	if err := writeExecutableAtomically(stagedCore, []byte(badCore)); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.RemoveAll(filepath.Join(root, "private-seed-home"))
+	_ = os.RemoveAll(filepath.Join(root, "public-package-home"))
 	_ = os.Remove(logPath)
 	h.cases = nil
-	h.runPrivateSeed()
+	h.runPublicPackage()
 	if len(h.cases) != 1 || h.cases[0].OK || !strings.Contains(h.cases[0].Detail, "sentinel was started by the core") {
-		t.Fatalf("expected git sentinel invocation in scenario (f) to fail private-seed, got %+v", h.cases)
+		t.Fatalf("expected git sentinel invocation in scenario (f) to fail public-package, got %+v", h.cases)
 	}
 }
 
 // installFakeBrewForTest writes a self-contained fake `brew` script under a
 // temporary Homebrew prefix inside t.TempDir() so `upgrade-from-bash`,
-// `private-seed`, and `dispatcher` can be unit-tested end-to-end on macOS
+// `public-package`, and `dispatcher` can be unit-tested end-to-end on macOS
 // without ever running the machine's real `brew` or touching `/opt/homebrew`.
 func installFakeBrewForTest(t *testing.T) string {
 	t.Helper()
@@ -947,16 +1033,16 @@ case "$cmd" in
       formula="$PREFIX/Library/Taps/${t%%/*}/homebrew-${t#*/}/Formula/${formula##*/}.rb"
     fi
     [[ -f "$formula" ]] || { echo "missing formula $formula" >&2; exit 1; }
-    eval "$(python3 - "$formula" <<'PY'
+    formula_fields="$(python3 - "$formula" <<'PY'
 import re, shlex, sys
 text = open(sys.argv[1], encoding="utf-8").read()
 ver = re.search(r'^\s*version\s+"([^"]+)"', text, re.M).group(1)
 main_m = re.search(r'^\s*url\s+"file://([^"]+)",\s*\n\s*using:\s*:git,\s*\n\s*(tag|revision):\s*"([^"]+)"', text, re.M)
 main_repo, main_ref = main_m.group(1), main_m.group(3)
 cfg_m = re.search(r'resource "managed-machine-config" do\s*\n\s*url\s+"file://([^"]+)",\s*\n\s*using:\s*:git,\s*\n\s*tag:\s*"[^"]+",\s*\n\s*revision:\s*"([^"]+)"', text, re.M)
-cfg_repo, cfg_rev = cfg_m.group(1), cfg_m.group(2)
+cfg_repo, cfg_rev = cfg_m.groups() if cfg_m else ("", "")
 lb_m = re.search(r'resource "local-bin" do\s*\n\s*url\s+"file://([^"]+)"', text, re.M)
-lb_repo = lb_m.group(1)
+lb_repo = lb_m.group(1) if lb_m else ""
 core_m = re.search(r'resource "core" do\s*\n\s*url\s+"file://([^"]+)"\s*\n\s*sha256\s+"([0-9a-f]{64})"', text, re.M)
 core_url = core_m.group(1) if core_m else ""
 core_sha = core_m.group(2) if core_m else ""
@@ -973,6 +1059,7 @@ for k, v in [
     print(f"{k}={shlex.quote(v)}")
 PY
 )"
+    eval "$formula_fields"
     keg="$CELLAR/$F_VER"
     libexec="$keg/libexec"
     bin_dir="$keg/bin"
@@ -1001,10 +1088,11 @@ PY
 exec "$(dirname "$0")/../legacy/scripts/update" "$@"
 SHIM
       chmod 0755 "$libexec/scripts/update"
+      if [[ "$F_VER" != "0.11.5" ]]; then
+        cp "$work/src/install.sh" "$libexec/install.sh"
+      fi
 
-      git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_CFG_REPO" "$legacy_dir/managed-machine-config"
-      git -C "$legacy_dir/managed-machine-config" checkout --quiet --detach "$F_CFG_REV"
-      git -c protocol.file.allow=always clone --quiet --no-hardlinks "$F_LB_REPO" "$legacy_dir/local-bin"
+      [[ -z "$F_CFG_REPO" && -z "$F_LB_REPO" ]] || { echo "private resource in candidate" >&2; exit 1; }
 
       if [[ -f "$work/src/VERSION" ]]; then
         cp "$work/src/VERSION" "$libexec/VERSION"
@@ -1021,6 +1109,13 @@ SHIM
       fi
       tar -xzf "$F_CORE_URL" -C "$bin_dir" managed-machine
       chmod 0755 "$bin_dir/managed-machine"
+      if tar -tzf "$F_CORE_URL" | grep -qx 'agent-bot-keyd'; then
+        tar -xzf "$F_CORE_URL" -C "$bin_dir" agent-bot-keyd
+        chmod 0700 "$bin_dir/agent-bot-keyd"
+      elif ! grep -Fq 'if File.exist?("agent-bot-keyd")' "$formula"; then
+        echo "required keyd missing from core resource" >&2
+        exit 1
+      fi
     else
       for f in "$work/src"/setup-*; do
         [[ -f "$f" ]] && cp "$f" "$libexec/" && chmod 0755 "$libexec/$(basename "$f")"
@@ -1177,13 +1272,21 @@ func TestReleaseGateEndToEnd(t *testing.T) {
 	}
 
 	out := filepath.Join(t.TempDir(), "release-gate.json")
-	if err := releaseCmd([]string{
+	args := []string{
 		"-dist", distDir,
 		"-version", ver,
 		"-target", host(),
 		"-evidence", out,
 		"-source-revision", "test-rev",
-	}); err != nil {
+	}
+	if runtime.GOOS == "darwin" {
+		keyd := filepath.Join(t.TempDir(), "agent-bot-keyd")
+		if err := os.WriteFile(keyd, []byte("unit-test fixture"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		args = append(args, "-homebrew-test-keyd", keyd)
+	}
+	if err := releaseCmd(args); err != nil {
 		t.Fatalf("release gate failed: %v", err)
 	}
 

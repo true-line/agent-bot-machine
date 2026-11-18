@@ -54,7 +54,7 @@ func TestInstallCoreSh(t *testing.T) {
 				t.Errorf("install-core.sh on darwin: unexpected stdout %q", stdout)
 			}
 			assertSingleErrorLine(t, "darwin refusal", stderr)
-			if !strings.Contains(stderr, "Formula/managed-machine.rb") && !strings.Contains(stderr, "qwts/managed-machine") {
+			if !strings.Contains(stderr, "Formula/managed-machine.rb") && !strings.Contains(stderr, "true-line/agent-bot-machine") {
 				t.Errorf("darwin refusal stderr %q does not name the formula", stderr)
 			}
 			if _, err := os.Stat(prefixDir); !errors.Is(err, os.ErrNotExist) {

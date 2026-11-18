@@ -10,7 +10,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$REPO_ROOT/lib/install.sh"
 # shellcheck source=lib/agent-account.sh
 source "$REPO_ROOT/lib/agent-account.sh"
-AGENT_ORG_PROFILE_API="repos/qwts/qwts-agent-org/contents/governance/organization-profile.json"
+AGENT_ORG_PROFILE_API="${MANAGED_MACHINE_ORG_PROFILE_API:-}"
 AGENT_ORG_PROFILE_TIMEOUT_SECONDS=20
 
 usage() {
@@ -49,12 +49,11 @@ Options:
                          order instead of one slug: each account keeps its own
                          administrator prompt, failures are collected, and the
                          run exits nonzero naming every slug that failed.
-                         Takes no slug and no --full-name. Without
-                         MANAGED_MACHINE_ORG_PROFILE, --all first refreshes
-                         the authoritative roster via gh api; on failure it
-                         warns and falls back to the local roster source.
+                         Takes no slug and no --full-name. The roster is read locally unless
+                         a refresh endpoint is explicitly configured.
 
 Environment:
+  MANAGED_MACHINE_ORG_PROFILE_API  optional GitHub API path for roster refresh
   MANAGED_MACHINE_ORG_PROFILE  roster source override (organization profile,
                                existing agent-bot config.json, or playbook agents.json)
 EOF
@@ -130,19 +129,15 @@ agent_refresh_org_profile() {
 # only enumerates, delegates, and summarizes. A slug the child rejects is a
 # collected failure, never a silent skip.
 #
-# The roster a stale local file names is not the fleet (#235): without an
-# explicit override, --all first refreshes the authoritative profile and
-# exports it so each child validates against the same refreshed roster that
-# enumerated it. An explicit override is deliberate and never refreshed. A
-# failed refresh falls back to the local source with a warning naming it,
-# so a partial provision is never mistaken for a complete one.
+# An explicit file wins. With a configured endpoint, refresh the roster once
+# for all children. A failed refresh reports which local roster was used.
 provision_all_agents() {
     local rows slug status child_rc ok=0 total=0 active=0 retired=0
     local source_label="" refresh_file="" local_source=""
     local -a slugs=() failed=()
     if [[ -n "${MANAGED_MACHINE_ORG_PROFILE:-}" ]]; then
         source_label="MANAGED_MACHINE_ORG_PROFILE override: ${MANAGED_MACHINE_ORG_PROFILE}"
-    elif refresh_file="$(mktemp)" && agent_refresh_org_profile "$refresh_file"; then
+    elif [[ -n "$AGENT_ORG_PROFILE_API" ]] && refresh_file="$(mktemp)" && agent_refresh_org_profile "$refresh_file"; then
         export MANAGED_MACHINE_ORG_PROFILE="$refresh_file"
         source_label="authoritative organization profile via gh api (${AGENT_ORG_PROFILE_API})"
     else
@@ -152,7 +147,9 @@ provision_all_agents() {
             echo "Error: no roster source found — provide MANAGED_MACHINE_ORG_PROFILE" >&2
             return 1
         fi
-        echo "warn: could not refresh the authoritative roster — using local roster source $local_source, which may be stale" >&2
+        if [[ -n "$AGENT_ORG_PROFILE_API" ]]; then
+            echo "warn: could not refresh the authoritative roster — using local roster source $local_source, which may be stale" >&2
+        fi
         source_label="$local_source"
     fi
     if ! rows="$(agent_roster_rows 2>/dev/null)"; then

@@ -84,6 +84,21 @@ class ReadinessTests(unittest.TestCase):
             self.assertEqual(m.exit_code(self.report()), 75)
             self.assertIn("pending_admin", self.codes())
 
+    def test_optional_tools_require_evidence_only_when_selected_or_previously_installed(self):
+        self.manifest.unlink()
+        (self.home / ".config/local-bin/linked-commands").unlink()
+        self.assertTrue(self.report()["ready"])
+        (self.catalog.parent / "local-bin.ref").write_text("v1.0.0\n")
+        self.assertIn("manifest-missing", self.codes())
+        self.assertFalse(self.report()["ready"])
+
+    def test_account_without_a_catalog_reports_fleet_opt_in_and_does_not_probe_tools(self):
+        self.args.catalog = None
+        report = self.report()
+        self.assertEqual(m.exit_code(report), 75)
+        self.assertIn("account-config-unselected", self.codes())
+        self.assertEqual(self.calls, [])
+
     def test_pin_record_required(self):
         for text in ("schema_version=1\nref=v1\n", "schema_version=1\nref=v1\ncommit=\ncheckout=" + str(self.checkout)):
             self.manifest.write_text(text)

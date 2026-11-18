@@ -44,6 +44,29 @@ account_setup_clean() {
         "$@"
 }
 
+# Only an offline checkout selected by path or by its own Git origin can
+# supply a requested tool or fleet configuration.
+account_seed_matches() {
+    local source="$1" requested="$2" actual
+    [[ "$source" == /* && -d "$source" && ! -L "$source" && -e "$source/.git" ]] || return 1
+    case "$requested" in
+        '') return 0 ;;
+        /*) [[ "$source" == "$requested" ]]; return ;;
+        http://*@*|https://*@*) return 1 ;;
+    esac
+    source="$(cd "$source" && pwd -P)" || return 1
+    actual="$(account_setup_clean git -c "safe.directory=$source" -C "$source" config --local --get remote.origin.url)" || return 1
+    [[ "$actual" == "$requested" ]]
+}
+
+account_recorded_checkout() {
+    local record="$HOME/.config/managed-machine/$1.manifest" dir
+    [[ -f "$record" ]] && account_setup_path "$record" || return 1
+    dir="$(sed -n 's/^checkout=//p' "$record")"
+    [[ -d "$dir" ]] && account_setup_path "$dir" || return 1
+    printf '%s\n' "$dir"
+}
+
 account_config_source() {
     local root="$1" candidate
     if [[ -n "${CONFIG_REPO_ROOT:-}" ]]; then
@@ -59,37 +82,55 @@ account_config_source() {
     if [[ -d "$candidate" && -e "$candidate/.git" ]]; then
         printf '%s\n' "$candidate"; return
     fi
-    for candidate in "$root/managed-machine-config" "$root/../managed-machine-config"; do
-        if [[ -d "$candidate" && ! -L "$candidate" && -e "$candidate/.git" ]]; then
+    [[ -n "${MANAGED_MACHINE_CONFIG_REPO_URL:-}" ]] || {
+        account_setup_error 'Select your fleet configuration checkout with CONFIG_REPO_ROOT in the target account.'
+        return 75
+    }
+    for candidate in "$MANAGED_MACHINE_CONFIG_REPO_URL" "$root/managed-machine-config" "$root/../managed-machine-config"; do
+        [[ "$candidate" == /* ]] || continue
+        if account_seed_matches "$candidate" "$MANAGED_MACHINE_CONFIG_REPO_URL"; then
             (cd "$candidate" && pwd -P)
             return
         fi
     done
-    account_setup_error 'Config seed unavailable; update managed-machine bundled private sources from the owning administrator account, then retry account setup.'
+    account_setup_error 'Account setup is offline. Select an existing fleet configuration checkout with CONFIG_REPO_ROOT inside the target account HOME.'
     return 75
 }
 
 account_prepare_config() {
-    local root="$1" target seed candidate status
+    local root="$1" target seed candidate status requested="${MANAGED_MACHINE_CONFIG_REPO_URL:-}"
+    [[ -z "${CONFIG_REPO_ROOT:-}" ]] || requested=""
     target="${CONFIG_REPO_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config}"
     account_setup_tree "$target" || return 1
     seed=""
-    if [[ -z "${CONFIG_REPO_ROOT:-}" || ! -e "$target" ]]; then
-        for candidate in "$root/managed-machine-config" "$root/../managed-machine-config"; do
+    if [[ -n "$requested" ]]; then
+        for candidate in "$MANAGED_MACHINE_CONFIG_REPO_URL" "$root/managed-machine-config" "$root/../managed-machine-config"; do
+            [[ "$candidate" == /* ]] || continue
             if [[ -e "$candidate" || -L "$candidate" ]]; then
                 seed="$candidate"
                 break
             fi
         done
-        if [[ -z "$seed" && ! -e "$target" ]]; then
-            account_setup_error 'Config seed unavailable; update managed-machine bundled private sources from the owning administrator account, then retry account setup.'; return 75
-        fi
     fi
-    if ! account_setup_clean /bin/bash -c '
+    if [[ -z "$seed" && ! -e "$target" ]]; then
+        account_setup_error 'Account setup is offline. Select an existing fleet configuration checkout with CONFIG_REPO_ROOT inside the target account HOME.'; return 75
+    fi
+    status=0
+    account_setup_clean /bin/bash -c '
         source "$1/lib/install.sh"
-        materialize_managed_machine_config_repo "$2" "$3" "$MANAGED_MACHINE_CONFIG_DEFAULT_REPO"
-    ' bash "$root" "$seed" "$target" >/dev/null 2>&1; then
-        account_setup_error 'Could not prepare account config; check target checkout ownership and origin, or update the clean bundled config seed.'; return 1
+        if [[ -z "$4" ]]; then
+            assert_managed_machine_config_repo "$3"
+        else
+            if [[ -n "$2" && "$2" != "$4" ]]; then
+                actual="$(config_repo_git "$2" config --local --get remote.origin.url)" || exit 75
+                [[ "$actual" == "$4" ]] || exit 75
+            fi
+            materialize_managed_machine_config_repo "$2" "$3" "$4"
+        fi
+    ' bash "$root" "$seed" "$target" "$requested" >/dev/null 2>&1 || status=$?
+    if [[ "$status" != 0 ]]; then
+        account_setup_error 'Could not prepare account config; check target checkout ownership, the selected origin and the matching local seed.'
+        return "$status"
     fi
     if [[ -n "${CONFIG_REPO_ROOT:-}" ]]; then
         printf 'Using explicit target-owned CONFIG_REPO_ROOT; bundled config refresh is disabled.\n' >&2
@@ -130,10 +171,12 @@ account_prepare_shell() {
     [[ -n "${CONFIG_REPO_ROOT:-}" ]] || { account_setup_error 'Prepare target account config before shell setup.'; return 1; }
     account_setup_tree "$CONFIG_REPO_ROOT" || return 1
     account_setup_path "$zdotdir" || return 1
+    account_setup_path "$HOME/.local/bin" || return 1
     manifest="$HOME/.config/managed-machine/zsh.manifest"
     account_setup_path "$manifest" || return 1
     for name in .zshenv .zprofile .zshrc; do
         account_setup_path "$zdotdir/$name" || return 1
+        [[ -d "$CONFIG_REPO_ROOT/dotfiles/zsh" ]] || continue
         [[ -f "$CONFIG_REPO_ROOT/dotfiles/zsh/$name" && ! -L "$CONFIG_REPO_ROOT/dotfiles/zsh/$name" ]] || {
             account_setup_error 'Shell templates unavailable; update the target account config checkout.'; return 1;
         }
@@ -141,8 +184,11 @@ account_prepare_shell() {
     if ! account_setup_clean /bin/bash -c '
         set -e
         source "$1/lib/install.sh"
+        mkdir -p "$HOME/.local/bin"
         for name in .zshenv .zprofile .zshrc; do
-            install_home_file "$2/dotfiles/zsh/$name" "$3/$name" "$4" "$name"
+            if [[ -d "$2/dotfiles/zsh" ]]; then
+                install_home_file "$2/dotfiles/zsh/$name" "$3/$name" "$4" "$name"
+            fi
             # All three startup files get the guarded local-bin block on
             # purpose: agent and harness shells may be non-login and
             # non-interactive, where only .zshenv is read and PATH is
@@ -224,8 +270,10 @@ account_prepare_local_bin() {
     [[ "$ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && "$ref" != *..* ]] || {
         account_setup_error 'Invalid local-bin pin; pin an immutable tag or commit in target account config.'; return 1;
     }
-    for source in "$root/local-bin" "$root/../local-bin"; do
-        [[ -d "$source" && ! -L "$source" && -e "$source/.git" ]] || continue
+    local requested="${LOCAL_BIN_REPO:-${HOME_BIN_REPO:-}}" recorded
+    recorded="$(account_recorded_checkout local-bin)" || recorded=""
+    for source in "$requested" "$root/local-bin" "$root/../local-bin" "$recorded"; do
+        account_seed_matches "$source" "$requested" || continue
         source="$(cd "$source" && pwd -P)"
         resolved="$(account_setup_clean git -c "safe.directory=$source" -C "$source" rev-parse --verify --quiet "refs/tags/${ref}^{commit}" 2>/dev/null)" || resolved=""
         if [[ -z "$resolved" && "$ref" =~ ^[0-9a-f]{7,40}$ ]]; then
@@ -241,7 +289,7 @@ account_prepare_local_bin() {
         account_setup_error 'Invalid local-bin branch pin; pin an immutable tag or commit in target account config.'; return 1
     fi
     [[ -n "$resolved" ]] || {
-        account_setup_error 'Pinned local-bin unavailable offline; update managed-machine bundled local-bin to include the immutable local-bin.ref from the owning administrator account, then retry account setup.'; return 75;
+        account_setup_error 'Pinned local-bin unavailable offline; set LOCAL_BIN_REPO to an offline checkout containing the immutable pin in local-bin.ref.'; return 75;
     }
     target="${LOCAL_BIN_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/local-bin/$resolved}"
     for path in "$target" "$HOME/.local/bin" "$HOME/.bin" "$HOME/.zshrc" "${ZDOTDIR:-$HOME}/.zshrc" "$HOME/.config/managed-machine/local-bin.manifest"; do
@@ -262,7 +310,6 @@ account_prepare_local_bin() {
         [[ -z "$(git -C "$target" status --porcelain)" ]]
         git -C "$target" checkout --quiet --detach "$4"
         [[ -z "$(find "$target" -type l -print)" ]]
-        git -C "$target" remote set-url origin https://github.com/qwts/local-bin.git
     ' bash "$root" "$source" "$target" "$resolved" >/dev/null 2>&1; then
         account_setup_error 'Could not prepare account-local tools; check the clean account-owned local-bin checkout and target permissions.'; return 1
     fi
@@ -280,11 +327,17 @@ account_prepare_local_bin() {
     fi
 }
 
+# Retain a prior managed installation's checks when a pin goes missing.
+account_component_selected() {
+    local ref="$CONFIG_REPO_ROOT/$1.ref" record="$HOME/.config/managed-machine/$1.manifest"
+    [[ -e "$ref" || -L "$ref" || -e "$record" || -L "$record" ]]
+}
+
 account_prepare_environment() {
     account_prepare_config "$1" >/dev/null || return $?
     account_prepare_shell "$1" || return $?
-    account_prepare_local_bin "$1" || return $?
-    account_prepare_zsh_functions "$1"
+    if account_component_selected local-bin; then account_prepare_local_bin "$1" || return $?; fi
+    if account_component_selected zsh-functions; then account_prepare_zsh_functions "$1" || return $?; fi
 }
 
 # The ~/.local/bin/zsh-profile link is the one shared-namespace write the
@@ -321,8 +374,10 @@ account_prepare_zsh_functions() {
     [[ "$ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && "$ref" != *..* ]] || {
         account_setup_error 'Invalid zsh-functions pin; pin an immutable tag or commit in target account config.'; return 1;
     }
-    for source in "$root/zsh-functions" "$root/../zsh-functions"; do
-        [[ -d "$source" && ! -L "$source" && -e "$source/.git" ]] || continue
+    local requested="${ZSH_FUNCTIONS_REPO:-}" recorded
+    recorded="$(account_recorded_checkout zsh-functions)" || recorded=""
+    for source in "$requested" "$root/zsh-functions" "$root/../zsh-functions" "$recorded"; do
+        account_seed_matches "$source" "$requested" || continue
         source="$(cd "$source" && pwd -P)"
         if [[ "$ref" =~ ^[0-9a-f]{7,40}$ ]]; then
             resolved="$(account_setup_clean git -c "safe.directory=$source" -C "$source" rev-parse --verify --quiet "${ref}^{commit}" 2>/dev/null)" || resolved=""
@@ -339,7 +394,7 @@ account_prepare_zsh_functions() {
         account_setup_error 'Invalid zsh-functions branch pin; pin an immutable tag or commit in target account config.'; return 1
     fi
     [[ -n "$resolved" ]] || {
-        account_setup_error 'Pinned zsh-functions unavailable offline; update managed-machine bundled zsh-functions to include the immutable zsh-functions.ref from the owning administrator account, then retry account setup.'; return 75;
+        account_setup_error 'Pinned zsh-functions unavailable offline; set ZSH_FUNCTIONS_REPO to an offline checkout containing the immutable pin in zsh-functions.ref.'; return 75;
     }
     target="${ZSH_FUNCTIONS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/zsh-functions/$resolved}"
     for path in "$target" "${XDG_DATA_HOME:-$HOME/.local/share}/zsh/functions" "${ZDOTDIR:-$HOME}/.zshenv" "$HOME/.config/managed-machine/zsh-functions.manifest"; do
@@ -363,7 +418,6 @@ account_prepare_zsh_functions() {
             printf "zsh-functions pin resolved to a different commit; refusing shadowed SHA.\n" >&2
             exit 1
         fi
-        git -C "$target" remote set-url origin https://github.com/qwts/zsh-functions.git
     ' bash "$root" "$source" "$target" "$resolved" "$ref" >/dev/null 2>&1; then
         account_setup_error 'Could not prepare account-local functions; check the clean account-owned zsh-functions checkout and target permissions.'; return 1
     fi

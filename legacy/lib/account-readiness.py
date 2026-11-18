@@ -68,6 +68,69 @@ def catalog_app(path, harness):
     return kind, command
 
 
+def check_local_bin(add, runner, home, env, local_bin, manifest, linked_commands):
+    try:
+        values = dict(line.split("=", 1) for line in manifest.read_text().splitlines() if "=" in line)
+        checkout = Path(values.get("checkout", ""))
+        commit = values.get("commit", "")
+        manifest_ok = (values.get("schema_version") == "1" and bool(values.get("ref")) and
+                       re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) is not None and
+                       checkout.is_absolute() and checkout.is_dir() and
+                       str(checkout.resolve()) == values.get("checkout") and
+                       within(checkout, home) and checkout.resolve() != home.resolve())
+    except (OSError, UnicodeError, ValueError):
+        manifest_ok = False
+    add("local_bin.manifest", "ready" if manifest_ok else "failed",
+        "manifest-present" if manifest_ok else "manifest-missing",
+        "Managed local-bin installation record checked.", "Run account local-bin setup.")
+    pin_ok = False
+    tracked = set()
+    if manifest_ok:
+        git_env = dict(env, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0",
+                       GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_NO_REPLACE_OBJECTS="1",
+                       GIT_CONFIG_SYSTEM="/dev/null", GIT_ASKPASS="/usr/bin/false",
+                       SSH_ASKPASS="/usr/bin/false")
+        def git(*arguments):
+            return runner(["/usr/bin/git", "-c", "core.fsmonitor=false", "-c",
+                           "credential.helper=", "-c", "core.hooksPath=/dev/null",
+                           "-C", str(checkout), *arguments], git_env, str(home))
+        root = git("rev-parse", "--show-toplevel")
+        head = git("rev-parse", "--verify", "HEAD^{commit}")
+        state = git("status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
+        files = git("ls-tree", "-r", "-z", commit)
+        pin_ok = (all(probe.returncode == 0 for probe in (root, head, state, files)) and
+                  root.stdout.strip() == str(checkout) and head.stdout.strip() == commit and
+                  not state.stdout)
+        if pin_ok:
+            for entry in files.stdout.split("\0"):
+                if "\t" in entry:
+                    metadata, filename = entry.split("\t", 1)
+                    if metadata.startswith("100755 blob "):
+                        tracked.add(filename)
+    add("local_bin.pin", "ready" if pin_ok else "failed",
+        "pin-verified" if pin_ok else "pin-unverified",
+        "Managed checkout commit and clean Git state checked.",
+        "Run account local-bin setup to restore the pinned checkout.")
+    broken = 0
+    try:
+        linked = linked_commands.read_text().splitlines()
+        links_ok = bool(linked) and all(NAME.fullmatch(name) for name in linked)
+        if links_ok:
+            broken = sum(1 for name in linked if (local_bin / name).is_symlink() and not (local_bin / name).exists())
+            links_ok = pin_ok and all((local_bin / name).is_symlink() and
+                           within(local_bin / name, checkout) and
+                           (local_bin / name).resolve().relative_to(checkout).as_posix() in tracked and
+                           (local_bin / name).resolve().name == name and
+                           os.access(local_bin / name, os.X_OK) for name in linked)
+        links_ok = links_ok and broken == 0
+    except (OSError, UnicodeError, RuntimeError):
+        links_ok = False
+    add("local_bin.links", "ready" if links_ok else "failed",
+        "links-valid" if links_ok else "broken-managed-link",
+        "Managed executable directory links checked.", "Run account local-bin setup to repair links.",
+        broken_links=broken)
+
+
 def diagnose(args, runner=run, identity=None, environ=None):
     checks = []
 
@@ -87,10 +150,10 @@ def diagnose(args, runner=run, identity=None, environ=None):
         try:
             outcomes = load_json(args.setup_results)
             actions = {
-                "setup.config": "Refresh the bundled configuration as its owner, then rerun account setup.",
+                "setup.config": "Select a target-owned fleet checkout with CONFIG_REPO_ROOT, then rerun account setup.",
                 "setup.shell": "Review target shell profile conflicts and ownership, then rerun account setup.",
-                "setup.local-bin": "Resolve target command collisions or refresh the immutable local-bin bundle as admin.",
-                "setup.zsh-functions": "Refresh the reviewed zsh-functions bundle/pin as its owner, then rerun account setup.",
+                "setup.local-bin": "Resolve target command collisions or check the selected local-bin checkout and pin.",
+                "setup.zsh-functions": "Check the selected zsh-functions checkout and its immutable pin, then rerun account setup.",
                 "setup.harness": "Resolve the selected harness catalog, installer, or admin prerequisite, then rerun account setup.",
             }
             allowed = set(actions)
@@ -149,6 +212,11 @@ def diagnose(args, runner=run, identity=None, environ=None):
             "An account directory override is not inside the target HOME.",
             "Remove foreign or relative directory overrides and rerun account setup.")
         return finish()
+    if not args.catalog:
+        add("fleet.config", "pending_user_action", "account-config-unselected",
+            "Account harness setup needs a selected fleet configuration.",
+            "Set CONFIG_REPO_ROOT to a target-owned fleet configuration checkout.")
+        return finish()
     local_bin = home / ".local/bin"
     add("shell.local_bin", "ready" if local_bin.is_dir() else "failed",
         "local-bin-present" if local_bin.is_dir() else "local-bin-missing",
@@ -165,66 +233,10 @@ def diagnose(args, runner=run, identity=None, environ=None):
         "Fresh-shell ZDOTDIR and zsh profiles checked.",
         "Run account shell setup to repair target zsh profiles.")
     manifest = home / ".config/managed-machine/local-bin.manifest"
-    try:
-        values = dict(line.split("=", 1) for line in manifest.read_text().splitlines() if "=" in line)
-        checkout = Path(values.get("checkout", ""))
-        commit = values.get("commit", "")
-        manifest_ok = (values.get("schema_version") == "1" and bool(values.get("ref")) and
-                       re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) is not None and
-                       checkout.is_absolute() and checkout.is_dir() and
-                       str(checkout.resolve()) == values.get("checkout") and
-                       within(checkout, home) and checkout.resolve() != home.resolve())
-    except (OSError, UnicodeError, ValueError):
-        manifest_ok = False
-    add("local_bin.manifest", "ready" if manifest_ok else "failed",
-        "manifest-present" if manifest_ok else "manifest-missing",
-        "Managed local-bin installation record checked.", "Run account local-bin setup.")
-    pin_ok = False
-    tracked = set()
-    if manifest_ok:
-        git_env = dict(env, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0",
-                       GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_NO_REPLACE_OBJECTS="1",
-                       GIT_CONFIG_SYSTEM="/dev/null", GIT_ASKPASS="/usr/bin/false",
-                       SSH_ASKPASS="/usr/bin/false")
-        def git(*arguments):
-            return runner(["/usr/bin/git", "-c", "core.fsmonitor=false", "-c",
-                           "credential.helper=", "-c", "core.hooksPath=/dev/null",
-                           "-C", str(checkout), *arguments], git_env, args.home)
-        root = git("rev-parse", "--show-toplevel")
-        head = git("rev-parse", "--verify", "HEAD^{commit}")
-        state = git("status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
-        files = git("ls-tree", "-r", "-z", commit)
-        pin_ok = (all(probe.returncode == 0 for probe in (root, head, state, files)) and
-                  root.stdout.strip() == str(checkout) and head.stdout.strip() == commit and
-                  not state.stdout)
-        if pin_ok:
-            for entry in files.stdout.split("\0"):
-                if "\t" in entry:
-                    metadata, filename = entry.split("\t", 1)
-                    if metadata.startswith("100755 blob "):
-                        tracked.add(filename)
-    add("local_bin.pin", "ready" if pin_ok else "failed",
-        "pin-verified" if pin_ok else "pin-unverified",
-        "Managed checkout commit and clean Git state checked.",
-        "Run account local-bin setup to restore the pinned checkout.")
-    broken = 0
-    try:
-        linked = (home / ".config/local-bin/linked-commands").read_text().splitlines()
-        links_ok = bool(linked) and all(NAME.fullmatch(name) for name in linked)
-        if links_ok:
-            broken = sum(1 for name in linked if (local_bin / name).is_symlink() and not (local_bin / name).exists())
-            links_ok = pin_ok and all((local_bin / name).is_symlink() and
-                           within(local_bin / name, checkout) and
-                           (local_bin / name).resolve().relative_to(checkout).as_posix() in tracked and
-                           (local_bin / name).resolve().name == name and
-                           os.access(local_bin / name, os.X_OK) for name in linked)
-        links_ok = links_ok and broken == 0
-    except (OSError, UnicodeError, RuntimeError):
-        links_ok = False
-    add("local_bin.links", "ready" if links_ok else "failed",
-        "links-valid" if links_ok else "broken-managed-link",
-        "Managed executable directory links checked.", "Run account local-bin setup to repair links.",
-        broken_links=broken)
+    linked_commands = home / ".config/local-bin/linked-commands"
+    pin = Path(args.catalog).parent / "local-bin.ref"
+    if any(os.path.lexists(file) for file in (pin, manifest, linked_commands)):
+        check_local_bin(add, runner, home, env, local_bin, manifest, linked_commands)
     try:
         kind, command = catalog_app(args.catalog, args.harness)
     except (OSError, ValueError, TypeError):
@@ -286,15 +298,16 @@ def exit_code(report):
 
 def main():
     parser = argparse.ArgumentParser()
-    for key in ("account", "home", "harness", "catalog"):
+    for key in ("account", "home", "harness"):
         parser.add_argument("--" + key, required=True)
+    parser.add_argument("--catalog")
     parser.add_argument("--shell", default="/bin/zsh")
     parser.add_argument("--setup-results")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     if not NAME.fullmatch(args.account) or not NAME.fullmatch(args.harness):
         parser.error("account and harness must be safe names")
-    if not all(os.path.isabs(value) for value in (args.home, args.catalog, args.shell)):
+    if not all(os.path.isabs(value) for value in (args.home, args.shell)) or (args.catalog and not os.path.isabs(args.catalog)):
         parser.error("home, catalog, and shell must be absolute paths")
     if args.setup_results and not os.path.isabs(args.setup_results):
         parser.error("setup-results must be an absolute path")

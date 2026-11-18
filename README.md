@@ -1,106 +1,31 @@
 # managed-machine
 
-Fresh-Mac bootstrap and fleet setup: Homebrew, zsh starter dotfiles, GitHub CLI over HTTPS, explicit opt-in SSH identity/signing/fleet enrollment, gitleaks git hooks, Proton Pass CLI, Meta Muse Code, Claude Code, Codex CLI, Antigravity CLI, Grok Build, Aider, Droid CLI, Goose CLI, OpenCode, OpenCode Desktop, Devin CLI, LM Studio, VS Code, Cursor, Claude, Antigravity, Rust (rustup), and host-to-host `authorized_keys` sync.
-
-This repo is the machine manager, distributed as a self-tapped Homebrew formula. Dotfiles and fleet state live in [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config). The formula bundles a read-only bootstrap seed, then setup scripts create and use a persistent writable checkout under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. Utility scripts live in [`qwts/local-bin`](https://github.com/qwts/local-bin), which the formula installs under `$(brew --prefix)/opt/managed-machine/libexec/legacy/local-bin` and `setup-bin` keeps at the pinned ref.
-
----
+Machine installs and manages software, configuration and agent accounts. The public macOS package includes the Machine CLI and its Homebrew integration. Organizations can supply their own configuration and software catalog.
 
 ## Install on a fresh Mac
 
-This repository is public, but installing needs GitHub access to the `qwts`
-organization: the formula's `managed-machine-config` and `local-bin`
-resources are private repositories. The installer is therefore fetched
-through an authenticated GitHub CLI ([install `gh`](https://cli.github.com)
-and run `gh auth login` first):
+On an Apple Silicon Mac running macOS 15 or later, open Terminal and run the public installer. On a Mac without Homebrew, use the administrator account that will own Homebrew.
 
 ```bash
 (
   installer="$(mktemp "${TMPDIR:-/tmp}/managed-machine-install.XXXXXX")" || exit 1
   trap 'rm -f "$installer"' EXIT
-  if gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh >"$installer"; then
-    bash "$installer"
-  else
-    fetch_status=$?
-    echo "Error: installer download failed; nothing was executed. See gh's error above." >&2
-    exit "$fetch_status"
-  fi
+  curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/true-line/agent-bot-machine/main/install.sh -o "$installer" &&
+    /bin/bash "$installer"
 )
 ```
 
-A failed download exits before Bash runs and removes the temporary file, including
-when GitHub returns a JSON error body for invalid or expired credentials. In a
-human Terminal, use `gh auth status` to check authentication and
-`gh auth login -h github.com` to sign in again if needed, then retry. A successful
-download runs the installer and preserves its exit status.
+The installer downloads the public package from [true-line/agent-bot-machine](https://github.com/true-line/agent-bot-machine). If Homebrew already belongs to another administrator, macOS asks permission to run Homebrew in that account. A successful install prints a confirmation. The confirmation includes the installed version. Run `managed-machine --update` to update Machine from its public tap.
 
-The installer:
-1. Installs Homebrew if missing.
-2. Verifies Homebrew prefix ownership: an admin-group owner (typically `admin`)
-   is preserved. The installer never `chown`s `/opt/homebrew` to a non-admin
-   invoking user. Mutating `brew` commands run as the prefix owner through the
-   macOS authorization dialog.
-3. Installs `gh` if missing, verifies GitHub authentication, and wires gh as the
-   git credential helper so private repositories clone over HTTPS — no SSH key
-   is needed, and none is provisioned; SSH enrollment is a separate explicit
-   step (`managed-machine ssh enroll`).
-4. Taps `qwts/managed-machine` over authenticated HTTPS, trusts the tap when
-   Homebrew requires explicit tap trust (announced, scoped to this tap), and
-   installs the formula.
-5. Runs `managed-machine --bootstrap`. Administrator dialogs during this run are part of the install. Steps that cannot finish in this run are skipped, not failed, and do not assign a follow-up command.
+### Delivery channels
 
-If `managed-machine` is already installed, the installer updates it and tells you to use the CLI directly.
+| Platform | Install method |
+|---|---|
+| macOS 15+ on Apple Silicon (`darwin/arm64`) | [Public installer](install.sh) with the [Homebrew formula](Formula/managed-machine.rb). |
+| Linux (`linux/amd64`, `linux/arm64`) | [install-core.sh](install-core.sh) verifies the release archive against `SHA256SUMS` and installs to `$HOME/.local/bin` by default. |
+| Windows (`windows/amd64`, `windows/arm64`) | [install-core.ps1](install-core.ps1) verifies the release ZIP against `SHA256SUMS` and installs to `%LOCALAPPDATA%\Programs\managed-machine` by default. |
 
-### GeniusBar, agent-bot and agent-comms: a manual install
-
-managed-machine sets up the machine and its apps. It does not install, update or wire agent tooling: GeniusBar, `agent-bot` and `agent-comms`. On a new Mac, after the bootstrap:
-
-1. Download the latest signed `GeniusBar_<version>_universal_signed.dmg` from the [qwts/GeniusBar releases](https://github.com/qwts/GeniusBar/releases) and drag GeniusBar.app to /Applications.
-2. Open GeniusBar and finish its first-run setup.
-3. Click **Command-line tools…** in the popup footer to put the bundled `agent-bot` and `agent-comms` on your PATH (wrappers in `~/.local/bin`).
-
-In-app updates keep all three current. managed-machine leaves those wrappers and GeniusBar's PATH line in `~/.zprofile` alone, and an `agent-bot` or `agent-comms` installed some other way (Homebrew, say) is not touched either.
-
-### Delivery channels per target (`darwin`, `linux`, `windows`)
-
-| Target | Supported channel | Installed binary & resources |
-|---|---|---|
-| `darwin/arm64` (macOS 15 Sequoia+) | Homebrew formula (`qwts/managed-machine`, [`Formula/managed-machine.rb`](Formula/managed-machine.rb)) via [`install.sh`](install.sh) or `brew install qwts/managed-machine/managed-machine` | Installs the SHA-256-pinned `core` resource (introduced in `v0.9.0` with `depends_on arch: :arm64` and `depends_on macos: :sequoia`, and promoted to the installed entry point in `v0.11.0`, S8 D3) as `bin/managed-machine` from `managed-machine_<X.Y.Z>_darwin_arm64.tar.gz`, stages the legacy macOS Bash tree (`legacy/bin/managed-machine`, `legacy/setup-*`, `legacy/lib`, `legacy/scripts/*`, `legacy/git-hooks/*`) plus the private `managed-machine-config` seed and `local-bin` resources under `libexec/legacy`, and writes the transitional `libexec/scripts/update` re-exec shim alongside `libexec/VERSION`, `libexec/skills/managed-machine`, and `libexec/RELEASE_COMMIT`. |
-| `linux/amd64`, `linux/arm64` | Release archive (`managed-machine_<X.Y.Z>_linux_<arch>.tar.gz` + `SHA256SUMS`) and [`install-core.sh`](install-core.sh) | Fetches `SHA256SUMS` from `MANAGED_MACHINE_RELEASE_BASE` (default `https://github.com/qwts/managed-machine/releases/latest/download`, or `--release-base <https-url-or-abs-dir>`), verifies the archive SHA-256 digest before extraction, and installs `managed-machine` atomically into `--prefix` (default `$HOME/.local/bin`) without elevating or editing `PATH` or shell profiles. Refuses `darwin` with exit 2 naming the formula. |
-| `windows/amd64`, `windows/arm64` | Release zip (`managed-machine_<X.Y.Z>_windows_<arch>.zip` + `SHA256SUMS`) and [`install-core.ps1`](install-core.ps1) | Fetches `SHA256SUMS` from `-ReleaseBase` / `$env:MANAGED_MACHINE_RELEASE_BASE` (default `https://github.com/qwts/managed-machine/releases/latest/download`), verifies the zip SHA-256 digest with `Get-FileHash -Algorithm SHA256` before extraction, and installs `managed-machine.exe` atomically into `-Prefix` (default `%LOCALAPPDATA%\Programs\managed-machine`) without elevating or editing `PATH`, shell profiles, or the Windows registry. |
-
-If Homebrew reports `managed-machine--local-bin` and `terminal prompts disabled`,
-keep the existing Homebrew cache. The formula pins the tools shipped with its
-config. For Machine 0.11.5, if the existing cache lacks the pin, fetch that tag
-once from the Homebrew owner's Terminal with its configured Git credentials:
-
-```sh
-git -C "$(brew --cache)/managed-machine--local-bin--git" fetch --no-recurse-submodules https://github.com/qwts/local-bin.git tag v0.2.1
-brew install true-line/agent-bot-machine/managed-machine
-```
-
-Homebrew verifies the tag's commit against the formula. This recovery applies
-to an existing Git cache (the failing command in the log is `git fetch`).
-
-
-#### Manual `managed-machine-config` clone on Linux and Windows
-
-The bundled `managed-machine-config` seed is a Homebrew formula mechanism on `darwin/arm64` and exists on no other target. On Linux and Windows, clone the private [`qwts/managed-machine-config`](https://github.com/qwts/managed-machine-config) repository by hand into `<state>/managed-machine-config` (or point `MANAGED_MACHINE_POLICY_DIR` at an existing checkout):
-
-- **Linux (`linux/amd64`, `linux/arm64`)**:
-  ```sh
-  ./install-core.sh [--prefix "$HOME/.local/bin"]
-  git clone https://github.com/qwts/managed-machine-config.git \
-    "${XDG_DATA_HOME:-$HOME/.local/share}/managed-machine/managed-machine-config"
-  ```
-- **Windows (`windows/amd64`, `windows/arm64`)**:
-  ```powershell
-  .\install-core.ps1 [-Prefix "$env:LOCALAPPDATA\Programs\managed-machine"]
-  git clone https://github.com/qwts/managed-machine-config.git `
-    "$env:LOCALAPPDATA\managed-machine\managed-machine-config"
-  ```
-
----
+All platforms use the [public Machine releases](https://github.com/true-line/agent-bot-machine/releases). To use an existing policy checkout with the portable core, point `MANAGED_MACHINE_POLICY_DIR` at its directory.
 
 ## Usage
 
@@ -141,13 +66,13 @@ Bare `managed-machine status [--json|--human]` is served by the portable Go core
 
 All setup scripts are safe to re-run.
 
-`managed-machine setup` with no name — or an invalid name — prints every setup name with a ✓ beside the ones already installed: a Homebrew receipt plus the app bundle for signed casks, a Team ID-verified bundle for vendor DMGs, a formula receipt, the CLI command on `PATH` for CLI rows, or the marker each infrastructure script checks (`~/.nvm/nvm.sh`, the local-bin manifest, and so on). The mark only appears for states the installer itself would call done — a receiptless app occupier or an unverified bundle shows no ✓. The listing refreshes the managed-machine-config checkout pull-only first, so catalog rows merged upstream appear without waiting for `setup-gh` to run.
+`managed-machine setup` with no name — or an invalid name — prints every setup name with a ✓ beside the ones already installed: a Homebrew receipt plus the app bundle for signed casks, a Team ID-verified bundle for vendor DMGs, a formula receipt, the CLI command on `PATH` for CLI rows, or the marker each infrastructure script checks (`~/.nvm/nvm.sh`, the local-bin manifest, and so on). The mark only appears for states the installer itself would call done — a receiptless app occupier or an unverified bundle shows no ✓. Fleet catalog entries come from the configured checkout.
 
-Which desktop apps and CLIs to install is declared in `managed-machine-config/apps.json`. managed-machine ships the install engines (signed cask, direct vendor DMG, official CLI, `brew-formula` for `homebrew/core`, and so on). After an app is present, bootstrap runs `managed-machine-config/config/<name>` when that script exists — configuration only, never install. Catalog rows install on bootstrap and `--update` unless they set `"auto": false`; those are `managed-machine setup <name>` only. Adding ChatGPT is a catalog row (and an optional config script); it does not require a managed-machine release. A new *kind* of installer does.
+Fleet owners declare their own desktop apps and CLIs in the optional config checkout’s `apps.json`. managed-machine ships the install engines (signed cask, direct vendor DMG, official CLI, `brew-formula` for `homebrew/core`, and so on). After an app is present, fleet bootstrap runs `config/<name>` from that checkout when that script exists — configuration only, never install. Catalog rows install on bootstrap and `--update` unless they set `"auto": false`; those are `managed-machine setup <name>` only. Adding ChatGPT is a catalog row (and an optional config script); it does not require a managed-machine release. A new *kind* of installer does.
 
 ### Agent utility tools
 
-The catalog also carries CLI tools agents rely on. `taplo` is the fleet's TOML parser: agents read machine TOML (`~/.config/agent-sop/config.toml`, `~/.config/managed-machine/machine.toml`) with `taplo get -f <file>` — `taplo get -f ~/.config/agent-sop/config.toml -o json` dumps JSON, `taplo get -f <file> 'repos.org'` extracts one value.
+A fleet catalog can include CLI tools. For example, with `taplo` installed, agents read machine TOML (`~/.config/agent-sop/config.toml`, `~/.config/managed-machine/machine.toml`) with `taplo get -f <file>` — `taplo get -f ~/.config/agent-sop/config.toml -o json` dumps JSON, `taplo get -f <file> 'repos.org'` extracts one value.
 
 `ripgrep` (`rg`), `fd`, and `ast-grep` (`sg`) cover repository search without whole-file reads: `rg -n <pattern>`, `fd <name>`, `sg -p '<pattern>'`.
 
@@ -321,7 +246,7 @@ At least one purpose flag is required; purposes are never silently enabled toget
 
 - `--authentication` creates (or reuses) `~/.ssh/id_rsa_github`, adds the `Host github.com` block to `~/.ssh/config` when absent, loads the key into `ssh-agent`/Keychain, uploads the public key as a GitHub *authentication* key, and sets `gh`'s `git_protocol` to `ssh`.
 - `--signing` uploads the same public key as a GitHub *signing* key, enables global SSH commit/tag signing (`gpg.format`, `user.signingkey`, `commit.gpgsign`, `tag.gpgSign`, `gpg.ssh.allowedSignersFile`), refreshes the managed `allowed_signers` block from the fleet registry, and adds the local key outside that block so this machine's own commits verify even without fleet enrollment.
-- `--fleet` writes local identity state to `~/.config/managed-machine/machine.toml`, registers the machine in the private `managed-machine-config/fleet/machines/` registry, publishes managed fleet state, and syncs local `authorized_keys`.
+- `--fleet` writes local identity state to `~/.config/managed-machine/machine.toml`, registers the machine under `fleet/machines/` in the selected fleet checkout, publishes managed fleet state, and syncs local `authorized_keys`.
 
 Before any change the command prints the plan — local account, home, GitHub login, key fingerprint or creation intent, and the selected purposes — then asks through the macOS authorization dialog, which names the same account, login, and purposes. Cancellation, a headless/noninteractive session, or an identity mismatch leaves all state unchanged and reports that no enrollment occurred. There is no `--yes` and no environment opt-out; an agent session, an account in the OS-level `agents` group, or an account named in the agent roster is refused before any dialog.
 
@@ -337,9 +262,9 @@ Machine IDs are stable, filesystem-safe forms of the SSH public-key SHA-256 fing
 
 Commit signatures verify locally as well as on GitHub: `--signing` sets `gpg.ssh.allowedSignersFile` to `~/.ssh/allowed_signers` and rewrites a `# BEGIN managed-machine` block in that file from the fleet registry, one entry per machine key under the configured git email principal. Lines outside the block are never touched, and re-running `ssh enroll --signing` (or `fleet remove`) refreshes the block after fleet changes, so `git log --show-signature` verifies commits from every registered machine.
 
-On the first fleet enrollment, existing keys in `managed-machine-config/ssh/authorized_keys` are imported as legacy machine records before that file is regenerated. Registration and removal stage only fleet machine records and the generated allowlist, create a commit using the configured Git identity, and push automatically. Concurrent joins rebase unique machine records and regenerate `authorized_keys`; unrelated changes or non-generated conflicts stop without being staged. Default setup only *refreshes* the config checkout (fetch + rebase when clean); publishing managed fleet state always goes through `ssh enroll --fleet` or `managed-machine fleet`.
+On the first fleet enrollment, existing keys in `managed-machine-config/ssh/authorized_keys` are imported as legacy machine records before that file is regenerated. Registration and removal stage only fleet machine records and the generated allowlist, create a commit using the configured Git identity, and push automatically. Concurrent joins rebase unique machine records and regenerate `authorized_keys`; unrelated changes or non-generated conflicts stop without being staged. Once a fleet is selected, setup only *refreshes* its checkout (fetch + rebase when clean); publishing managed fleet state always goes through `ssh enroll --fleet` or `managed-machine fleet`.
 
-The default writable checkout is `$XDG_DATA_HOME/managed-machine/managed-machine-config` when `XDG_DATA_HOME` is set, or `~/.local/share/managed-machine/managed-machine-config` otherwise. Set `CONFIG_REPO_ROOT` to use an explicit existing checkout, or `MANAGED_MACHINE_CONFIG_REPO_URL` to change the repository cloned from the bundled seed. Embedded credentials in HTTP remote URLs are rejected.
+The default writable checkout is `$XDG_DATA_HOME/managed-machine/managed-machine-config` when `XDG_DATA_HOME` is set, or `~/.local/share/managed-machine/managed-machine-config` otherwise. Set `CONFIG_REPO_ROOT` to use an explicit existing checkout, or `MANAGED_MACHINE_CONFIG_REPO_URL` to select the fleet repository. Embedded credentials in HTTP remote URLs are rejected.
 
 ```bash
 managed-machine fleet --keys
@@ -350,7 +275,7 @@ managed-machine fleet remove sha256-... --revoke-github
 
 Removal deletes and publishes the exact registry entry, regenerates fleet/local `authorized_keys`, and removes local `machine.toml` when decommissioning the current machine. GitHub authentication and signing keys are retained unless `--revoke-github` is supplied. Revocation runs only after the fleet removal is pushed; if GitHub revocation fails, the public key is retained under `~/.config/managed-machine/pending-github-key-revocations/` so rerunning the same command can finish safely.
 
-The private config repository is the supported fleet backend. Gist, synced-folder, and database backends are intentionally deferred.
+An administrator-selected Git repository is the supported fleet backend. Gist, synced-folder, and database backends are intentionally deferred.
 
 ---
 
@@ -382,13 +307,13 @@ managed-machine account doctor qwts-claude-agent --json
 
 The public forms are `managed-machine account setup <active-existing-roster-account> [--json]` and `managed-machine account doctor <account> [--json]`. These commands require the target account's UID and HOME, or explicit administrator authorization through the existing cross-account mechanism. Merely changing HOME does not authorize another account, and there is no passwordless `su` path.
 
-`account setup` prepares only the selected account's shell/local-bin configuration and roster-selected harness, using the bundled config seed where available without requiring human GitHub login. A harness with a separate CLI setup uses that CLI target (`codex-cli` or `kiro-cli` rather than its dotfile or IDE setup). Shared Homebrew, formulae, and casks remain **admin-owned prerequisites**: the account flow does not mutate Homebrew as the agent or change its ownership. Desktop casks remain machine-wide in `/Applications`. Missing bundles or unsupported catalog installers report pending work or failure rather than silently succeeding. The account flow does not run human `setup-gh`, SSH setup, fleet registration, full bootstrap, or `--update`, and it does not install unrelated harnesses. Generic `config/<name>` post-install scripts are not run in account mode: the harness uses its native defaults rather than inheriting potentially human-specific setup actions. Identity runtime installation, App credential seeding, and identity wiring are outside managed-machine account setup.
+`account setup` prepares only the selected account's shell/local-bin configuration and roster-selected harness, using explicitly provisioned fleet sources. A harness with a separate CLI setup uses that CLI target (`codex-cli` or `kiro-cli` rather than its dotfile or IDE setup). Shared Homebrew, formulae, and casks remain **admin-owned prerequisites**: the account flow does not mutate Homebrew as the agent or change its ownership. Desktop casks remain machine-wide in `/Applications`. Missing bundles or unsupported catalog installers report pending work or failure rather than silently succeeding. The account flow does not run human `setup-gh`, SSH setup, fleet registration, full bootstrap, or `--update`, and it does not install unrelated harnesses. Generic `config/<name>` post-install scripts are not run in account mode: the harness uses its native defaults rather than inheriting potentially human-specific setup actions. Identity runtime installation, App credential seeding, and identity wiring are outside managed-machine account setup.
 
 `account doctor` is a **live, read-only** per-account check of the shell environment and selected harness; it does not install or repair anything. It does not inspect or claim identity readiness. Both commands use the same readiness report, with optional machine-readable JSON. Exit status is `0` for `ready`, `75` for `pending_user_action`, and `1` for `not_ready` (failed required checks). In a headless session, readiness requiring a GUI login remains `pending_user_action`, not an installation failure or a false ready result. Vendor sign-in and identity runtime readiness are outside this report. Complete automated readiness currently covers supported account-local CLI harnesses; shared-formula and desktop-only rows require admin/attended verification and are not certified ready here.
 
-On later runs, the default persistent account config can fast-forward from a newer clean bundled seed using local-only Git transport. Dirty or divergent target changes are preserved and reported for reconciliation; an explicit target-owned `CONFIG_REPO_ROOT` is an override, not silently refreshed. If no seed is available, an existing valid checkout is retained with an explicit no-refresh notice.
+On later runs, the default persistent account config can fast-forward from a newer explicitly provisioned clean seed using local-only Git transport. Dirty or divergent target changes are preserved and reported for reconciliation; an explicit target-owned `CONFIG_REPO_ROOT` is an override, not silently refreshed. If no seed is available, an existing valid checkout is retained with an explicit no-refresh notice.
 
-Doctor requires local-bin's recorded commit and canonical checkout path, verifies the checkout is still at that commit with clean Git state, and checks managed command links against its tracked executable files. Older ref-only manifests need account setup to establish this evidence. Readiness covers only checks owned by managed-machine; it makes no identity or credential readiness claim.
+When fleet policy selects local-bin, doctor checks its recorded commit and canonical checkout path, verifies the checkout is still at that commit with clean Git state, and checks managed command links against its tracked executable files. Older ref-only manifests need account setup to establish this evidence. Readiness covers only checks owned by managed-machine; it makes no identity or credential readiness claim.
 
 Setup reruns its preparation and live checks even if an older harness success marker exists: cached success is not proof of current readiness. `add-agent <slug> --with-harness` delegates to this account setup phase through its existing administrator authorization. Without `--with-harness`, provisioning retains its opt-in behavior and does not run account setup. Use `managed-machine account doctor <account>` to check live per-account readiness. IDE-bound harnesses stay attended-only (ENG-0339 §8); log into the account to finish GUI-dependent readiness.
 
@@ -398,19 +323,19 @@ Decommissioning an account (`remove-agent`) is deliberately deferred: stop sessi
 
 ---
 
-## Pinning local-bin
+## Optional fleet tools
 
-`managed-machine-config/local-bin.ref` records the local-bin ref this machine should run. The pin must be an **immutable ref** — a git tag (e.g. `v0.1.0`) or a commit SHA — so re-running setup with the same pin is reproducible. A moving branch fails with a clear error; the explicit escape hatch for a one-off run is:
+To add a fleet tool collection, set `LOCAL_BIN_REPO` to its clone URL and put its version in `local-bin.ref` in the fleet config checkout. Use `ZSH_FUNCTIONS_REPO` and `zsh-functions.ref` for shell functions. Existing tool checkouts can reuse their origin. New tool checkouts live in the invoking user’s Machine data directory. The pin must be an **immutable ref** — a git tag (e.g. `v0.1.0`) or a commit SHA — so re-running setup with the same pin is reproducible. A moving branch fails with a clear error; the explicit escape hatch for a one-off run is:
 
 ```bash
 MANAGED_MACHINE_ALLOW_BRANCH_PIN=1 managed-machine setup bin
 ```
 
-`setup-bin` checks out the pinned ref (skipping `git fetch` entirely when the immutable pin is already checked out) and runs local-bin's `install`. In a Homebrew install where `libexec/legacy/local-bin` is prefix-owned, advancing an unsatisfied pin requests administrator authorization to run mutating git operations as the prefix owner, securely forwarding the invoking user's GitHub credentials through a temporary credential helper (never exposing tokens in argv) so private repository checkouts authenticate successfully. Downstream `install` symlinks into `~/.local/bin` as the invoking user. Every run records the pin and the exact commit it resolved to in mode-600 `~/.config/managed-machine/local-bin.manifest`, which is never committed.
+`setup-bin` checks out the pinned ref (skipping `git fetch` entirely when the immutable pin is already checked out) and runs local-bin's `install`. For an older install that still has a prefix-owned `libexec/legacy/local-bin` checkout, advancing an unsatisfied pin requests administrator authorization to run mutating git operations as the prefix owner, securely forwarding the invoking user's GitHub credentials through a temporary credential helper (never exposing tokens in argv) so private repository checkouts authenticate successfully. Downstream `install` symlinks into `~/.local/bin` as the invoking user. Every run records the pin and the exact commit it resolved to in mode-600 `~/.config/managed-machine/local-bin.manifest`, which is never committed.
 
 GeniusBar's "Install command-line tools" writes `~/.local/bin/agent-bot` and `agent-comms` as small sh wrappers marked `# geniusbar-cli-tool`, and adds a PATH line under the same marker to `~/.zprofile`. Those belong to GeniusBar. managed-machine installs no agent-bot or agent-comms of its own. `setup-bin` refuses, before linking anything, when a local-bin tool would replace a GeniusBar wrapper, and `setup-zsh` neither counts GeniusBar's marked PATH line as stale nor drops it when it rewrites `~/.zprofile` for another reason.
 
-`setup-zsh-functions` mirrors `setup-bin` for `qwts/zsh-functions`: it checks out the pinned ref from `managed-machine-config/zsh-functions.ref` (same immutable-ref rule and branch-pin rejection) and runs that repo's `install`, recording mode-600 `~/.config/managed-machine/zsh-functions.manifest`. Prefix-owned checkouts escalate through the same authorization path.
+`setup-zsh-functions` mirrors `setup-bin` for the configured shell functions repository: it checks out the pinned ref from `managed-machine-config/zsh-functions.ref` (same immutable-ref rule and branch-pin rejection) and runs that repo's `install`, recording mode-600 `~/.config/managed-machine/zsh-functions.manifest`. Prefix-owned checkouts escalate through the same authorization path.
 
 Override the pin for a single run:
 
@@ -428,7 +353,7 @@ Bump the pin by editing `managed-machine-config/local-bin.ref` and committing it
 managed-machine --update
 ```
 
-Runs `brew update`, upgrades `managed-machine` if a new version is available (both under one administrator approval when Homebrew belongs to another account; if you decline any dialog during the run, no later step asks again), then re-runs safe setup steps (`setup-gh`, `setup-zsh`, `setup-bin`, `setup-zsh-functions`). Every step's outcome is recorded in `~/.config/managed-machine/update.manifest` (same shape as the bootstrap manifest) and shown by `managed-machine status --section update`; a failed step no longer stops the steps after it, and the run exits nonzero at the end naming what failed. An update authenticates to GitHub as you throughout (brew fetches the private fleet taps with your `gh` token, `setup-gh` checks and refreshes your account), so it refuses to run from an agent session (Claude Code, Codex, Cursor, Copilot, Devin, or a `qwts-*-agent` account) before spending any dialog: the human's GitHub credentials are not available to the session or account, so brew would fetch private taps unauthenticated and `setup-gh` would abort. Run `--update` from a human Terminal in the owner's account. When brew does fail to authenticate a private tap (as the prefix owner without your token), managed-machine says so and tells you not to untap it, instead of relaying brew's untap advice. The persistent private checkout survives formula upgrades and is synchronized before zsh templates and the local-bin/zsh-functions pins are read. `setup-zsh` refreshes stale PATH profiles and is a no-op on already-guarded files. Update does not install, upgrade, pin, bootstrap, or repair agent-bot, regardless of whether it is absent, Homebrew-installed, or supplied by another tool. Existing interposition is left intact.
+Run updates from a human Terminal. The Homebrew prefix stays under its administrator owner. A machine with fleet configuration can also refresh the selected configuration and tools. Existing fleet data stays outside the Homebrew package.
 
 Managed-machine no longer owns agent-bot installation, upgrades, pinning, machine wiring, account credential seeding, or GitHub CLI interposition. The retired setup commands explain this boundary and leave existing runtime state untouched.
 
@@ -453,41 +378,10 @@ repaired, and setup fails if the check still cannot pass.
 
 ## Releasing a new version
 
-Releases use a two-step pull-request and tag workflow (`scripts/release prepare vX.Y.Z` followed, after PR merge and explicit owner confirmation, by `scripts/release tag vX.Y.Z`; the bare `scripts/release vX.Y.Z` form is retired):
-
-1. **Prepare (`scripts/release prepare vX.Y.Z`)**:
-   ```bash
-   scripts/release prepare vX.Y.Z
-   ```
-   Run from a clean `main` checkout at `origin/main` with a clean sibling `managed-machine-config` checkout on `main` at `origin/main` (override path with `MANAGED_MACHINE_CONFIG_DIR`) and `GOTOOLCHAIN=local` Go 1.27.3 installed. The script refuses a dirty working tree, a non-`main` branch, `main` behind or ahead of `origin/main`, a version outside `skills/managed-machine/SKILL.md`'s `qwts-versions` (ENG-0055), or an existing `vX.Y.Z` tag. It tags the private `managed-machine-config` checkout at `vX.Y.Z` and pushes that tag, runs `go run ./cmd/mm-release build -version X.Y.Z -out <tmp>/dist` to build the five deterministic archives and `SHA256SUMS`, creates branch `release/vX.Y.Z`, writes `VERSION` and `Formula/managed-machine.rb` (`tag`, `version`, `depends_on arch: :arm64`, `depends_on macos: :sequoia`, `managed-machine-config` `tag` and `revision`, the `core` resource `url` and `sha256`, the S8 D3 install block installing `core` as `bin/managed-machine`, staging the legacy tree and private resources under `libexec/legacy`, and writing the transitional `libexec/scripts/update` re-exec shim, plus the `#{bin}/managed-machine --version` test assertion), verifies the formula pin with `go run ./cmd/mm-release verify -dist <tmp>/dist -formula Formula/managed-machine.rb -require-pin`, commits `Release vX.Y.Z`, pushes `release/vX.Y.Z` to `origin` (`origin/main` and repository tags remain unchanged), and prints the `gh pr create` command. Re-running `scripts/release prepare vX.Y.Z` resumes idempotently.
-
-2. **Review**:
-   Open the release pull request (`gh pr create --base main --head release/vX.Y.Z --title "Release vX.Y.Z" --body "Release vX.Y.Z"`). On the pull request, `.github/workflows/go-core.yml` runs `mm-release build` and `mm-release verify -formula Formula/managed-machine.rb -require-pin` (enforced whenever `VERSION` changes) along with all five native target gates. Any branch or pull request can also be exercised end to end without publishing by triggering `.github/workflows/release.yml` via `workflow_dispatch` with `publish: false`, which runs the `gates` job and skips `publish`. Review and merge the pull request into `main`.
-
-3. **Confirm**:
-   Wait for the owner's explicit confirmation on the merged release pull request before pushing the release tag.
-
-4. **Tag (`scripts/release tag vX.Y.Z`)**:
-   ```bash
-   scripts/release tag vX.Y.Z
-   ```
-   After the owner's explicit confirmation, run `scripts/release tag vX.Y.Z` from a clean `main` checkout at `origin/main`. The script verifies `HEAD == origin/main`, `VERSION == X.Y.Z`, consistent `Formula/managed-machine.rb` fields, the S8 D3 install block and `#{bin}/managed-machine --version` test assertion, the `core` resource `url` and `sha256` pin, `managed-machine-config` tag `vX.Y.Z` on `origin` pointing at the formula's pinned revision, and no existing `vX.Y.Z` tag, then creates the annotated tag `vX.Y.Z` at `HEAD` and pushes `refs/tags/vX.Y.Z` only.
-
-5. **Publish (`.github/workflows/release.yml`)**:
-   Pushing `vX.Y.Z` triggers `.github/workflows/release.yml` (top-level `permissions: contents: read`). The `gates` job invokes `./.github/workflows/go-core.yml` (`on: workflow_call`) on the tagged revision. Once `gates` passes, the `publish` job (the sole job with `permissions: contents: write`) checks out with `persist-credentials: false`, downloads `dist`, the five `release-gate-*` records and `support-matrix.md`, requires `git tag --points-at HEAD` to contain `v$(cat VERSION)`, re-runs `go run ./cmd/mm-release verify -dist dist -formula Formula/managed-machine.rb -require-pin`, and runs:
-   ```bash
-   gh release create "$TAG" dist/* support-matrix.md release-gate-*.json --verify-tag --title "$TAG" --generate-notes
-   ```
-   authenticated with `GITHUB_TOKEN` (`${{ github.token }}`).
-
-6. **Asset-upload window**:
-   No separate tap update exists: the Homebrew tap is this repository (`qwts/managed-machine`), so `brew update && brew upgrade managed-machine` follows the git tag on `Formula/managed-machine.rb`. During the minutes between the `vX.Y.Z` tag push and the `publish` job completing the asset upload on GitHub Releases, the tag exists in git while the formula's `core` archive URL (`https://github.com/qwts/managed-machine/releases/download/vX.Y.Z/managed-machine_X.Y.Z_darwin_arm64.tar.gz`) does not yet resolve. Wait for `.github/workflows/release.yml` to finish publishing before running `brew upgrade managed-machine`, `install-core.sh`, or `install-core.ps1`.
-
-7. **Verify (`sha256sum -c SHA256SUMS`)**:
-   Download the release archives and `SHA256SUMS` from the published GitHub release and verify their checksums:
-   ```bash
-   sha256sum -c SHA256SUMS
-   ```
+1. Submit the intended Machine version in `.github/machine-release-version`. When the reviewed PR merges to `main`, Sign builds the five platform archives at that commit. The protected release environment gates Developer ID signing and Apple notarization.
+2. Run `scripts/release prepare vX.Y.Z` on clean, current `main`. It verifies the signed draft against a deterministic build, updates `VERSION` and the Homebrew formula's signed archive digest, and prepares the release branch. Only the public Machine repository participates.
+3. Review the release PR and its native checks. After it merges and publication is authorized, `scripts/release tag vX.Y.Z` verifies the formula pin against the signed draft again and pushes the annotated Machine tag.
+4. The tag triggers the Release workflow. It verifies the artifacts, attaches the platform check results and publishes the signed draft. The formula and archive installers are ready for upgrades once that workflow succeeds.
 
 ---
 
@@ -571,4 +465,4 @@ managed-machine/
 
 The portable Go core (`module github.com/qwts/managed-machine` in `go.mod`, with entry point `cmd/managed-machine` and packages under `internal/`) lives at the repository root and is documented in [`docs/go-core.md`](docs/go-core.md). Run `go test ./...` (`go test ./internal/...`) and `go run ./cmd/managed-machine platform` from the repository root.
 
-Local identity and manifests live under `~/.config/managed-machine/`; the private config git checkout lives under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The NVM initialization block uses `# BEGIN nvm` markers and manages `NVM_DIR` (default `~/.nvm`). The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). All three blocks are guarded so nested shells that inherit PATH never prepend a duplicate entry (the nvm block loads `nvm.sh --no-use` when `node` already resolves under `NVM_DIR`, and activates normally otherwise so the configured version wins over a system node). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `ssh enroll --fleet` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.
+Local identity and manifests live under `~/.config/managed-machine/`; an opted-in fleet’s default config checkout lives under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise. The `~/.local/bin` PATH block in `~/.zshrc` uses the `# BEGIN local-bin` markers (shared with local-bin's `install`) so existing machines need no PATH migration. The NVM initialization block uses `# BEGIN nvm` markers and manages `NVM_DIR` (default `~/.nvm`). The cargo PATH block uses `# BEGIN rustup` markers and honors `CARGO_HOME` (default `~/.cargo`). All three blocks are guarded so nested shells that inherit PATH never prepend a duplicate entry (the nvm block loads `nvm.sh --no-use` when `node` already resolves under `NVM_DIR`, and activates normally otherwise so the configured version wins over a system node). The `~/.ssh/authorized_keys` block uses `# BEGIN managed-machine` markers; `ssh enroll --fleet` rewrites the legacy `# BEGIN local-bin new-machine` block in place on first sync.

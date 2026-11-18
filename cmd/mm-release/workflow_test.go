@@ -221,7 +221,7 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		sawSignedVerify   bool
 		sawPublishedDraft bool
 	)
-	const wantSignedVerify = `go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -formula Formula/managed-machine.rb -require-pin`
+	const wantSignedVerify = `go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -require-keyd -formula Formula/managed-machine.rb -require-pin`
 	const wantPublish = `gh release edit "$TAG" --draft=false --verify-tag`
 	for i, step := range pubJob.Steps {
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {

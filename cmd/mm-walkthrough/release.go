@@ -48,7 +48,7 @@ import (
 //   - recovery           (all five targets)
 //   - upgrade-from-bash  (darwin/arm64; n-a on Linux and Windows)
 //   - upgrade-from-v0.10 (darwin/arm64; n-a on Linux and Windows)
-//   - private-seed       (darwin/arm64; n-a on Linux and Windows)
+//   - public-package       (darwin/arm64; n-a on Linux and Windows)
 //   - dispatcher         (darwin/arm64; n-a on Linux and Windows)
 //   - guards             (all five targets)
 
@@ -103,7 +103,7 @@ const (
 	caseReleaseRecovery          = "recovery"
 	caseReleaseUpgradeFromBash   = "upgrade-from-bash"
 	caseReleaseUpgradeFromV010   = "upgrade-from-v0.10"
-	caseReleasePrivateSeed       = "private-seed"
+	caseReleasePublicPackage     = "public-package"
 	caseReleaseDispatcher        = "dispatcher"
 	caseReleaseGuards            = "guards"
 )
@@ -122,7 +122,7 @@ var releaseCaseNames = []string{
 	caseReleaseRecovery,
 	caseReleaseUpgradeFromBash,
 	caseReleaseUpgradeFromV010,
-	caseReleasePrivateSeed,
+	caseReleasePublicPackage,
 	caseReleaseDispatcher,
 	caseReleaseGuards,
 }
@@ -150,7 +150,7 @@ func countRemovedLegacyRoutes() int {
 	return n
 }
 
-// Synthetic marker strings placed inside the synthetic private-seed fixture
+// Synthetic marker strings placed inside the synthetic historical seed fixture
 // files (D7). The gate's zero-hit grep proves that neither the core state
 // directory nor the encoded evidence record ever carries any seed marker.
 const (
@@ -168,7 +168,7 @@ var releaseSentinels = []string{
 
 func isMacOSOnlyReleaseCase(name string) bool {
 	switch name {
-	case caseReleaseUpgradeFromBash, caseReleaseUpgradeFromV010, caseReleasePrivateSeed, caseReleaseDispatcher:
+	case caseReleaseUpgradeFromBash, caseReleaseUpgradeFromV010, caseReleasePublicPackage, caseReleaseDispatcher:
 		return true
 	default:
 		return false
@@ -176,13 +176,14 @@ func isMacOSOnlyReleaseCase(name string) bool {
 }
 
 type releaseGateOptions struct {
-	binPath    string
-	target     string
-	revision   string
-	distDir    string
-	version    string
-	repoRoot   string
-	compatPath string
+	binPath      string
+	target       string
+	revision     string
+	distDir      string
+	version      string
+	repoRoot     string
+	compatPath   string
+	brewTestKeyd string
 }
 
 type releaseHarness struct {
@@ -196,6 +197,7 @@ type releaseHarness struct {
 	releaseVer         string
 	upgradeVer         string
 	upgradeDistDir     string
+	brewTestKeydSHA    string
 	artifact           ReleaseArtifact
 	osVer              string
 	toolchain          string
@@ -210,14 +212,13 @@ type releaseHarness struct {
 	seedFixtureKey fleetKeyPair
 	hostStateKey   fleetKeyPair
 
-	// Populated on darwin/* for upgrade-from-bash, private-seed and dispatcher.
+	// Populated on darwin/* for upgrade-from-bash, public-package and dispatcher.
 	bashHome                string
 	bashStubBin             string
 	keyDir                  string
 	fakeOriginBare          string
 	fakeOriginWork          string
 	localBinBare            string
-	localBinRev             string
 	checkoutClone           string
 	commitA                 string
 	commitB                 string
@@ -404,6 +405,12 @@ func newReleaseHarness(opts releaseGateOptions) (*releaseHarness, error) {
 	if err := rh.prepareDist(opts.distDir, opts.version, opts.binPath, initialBinRaw); err != nil {
 		os.RemoveAll(h.root)
 		return nil, err
+	}
+	if opts.brewTestKeyd != "" {
+		if err := rh.prepareBrewTestPackage(opts.brewTestKeyd); err != nil {
+			os.RemoveAll(h.root)
+			return nil, err
+		}
 	}
 	if err := rh.writeKeyDirectory(); err != nil {
 		os.RemoveAll(h.root)
@@ -742,7 +749,51 @@ func compileCoreBinary(repoRoot, ver, goos, goarch, outPath string) error {
 
 var releaseArchiveEpoch = time.Date(1980, time.January, 1, 0, 0, 0, 0, time.UTC)
 
+// prepareBrewTestPackage gives only the Homebrew upgrade tests a local
+// package containing the unmodified CI core and the runner-built keyd. The
+// deterministic dist and its evidence digest remain the release gate input.
+func (h *releaseHarness) prepareBrewTestPackage(keydPath string) error {
+	if h.target != "darwin/arm64" {
+		return errors.New("-homebrew-test-keyd requires darwin/arm64")
+	}
+	keyd, err := os.ReadFile(keydPath)
+	if err != nil {
+		return err
+	}
+	if len(keyd) == 0 {
+		return errors.New("Homebrew test keyd is empty")
+	}
+	name := targetArchiveName(h.upgradeVer, h.target)
+	core, err := extractArchiveBinaryBytes(filepath.Join(h.upgradeDistDir, name))
+	if err != nil {
+		return err
+	}
+	license, err := os.ReadFile(filepath.Join(h.repoRoot, "LICENSE"))
+	if err != nil {
+		return err
+	}
+	pkg, err := packReleaseTarGzWithKeyd("managed-machine", core, bytes.ReplaceAll(license, []byte("\r\n"), []byte("\n")), keyd)
+	if err != nil {
+		return err
+	}
+	fixtureDir := filepath.Join(h.root, "unsigned-homebrew-fixture")
+	if err := os.MkdirAll(fixtureDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(fixtureDir, name), pkg, 0o600); err != nil {
+		return err
+	}
+	h.upgradeDistDir = fixtureDir
+	h.brewTestKeydSHA = sum(keyd)
+	h.step("Homebrew package fixture", "unsigned CI package with runner-built keyd; sha256 "+sum(pkg), true)
+	return nil
+}
+
 func packReleaseTarGz(binName string, binBytes, licBytes []byte) ([]byte, error) {
+	return packReleaseTarGzWithKeyd(binName, binBytes, licBytes, nil)
+}
+
+func packReleaseTarGzWithKeyd(binName string, binBytes, licBytes, keyd []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	gz, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 	if err != nil {
@@ -762,6 +813,9 @@ func packReleaseTarGz(binName string, binBytes, licBytes []byte) ([]byte, error)
 	items := []item{
 		{name: "LICENSE", mode: 0o644, data: licBytes},
 		{name: binName, mode: 0o755, data: binBytes},
+	}
+	if keyd != nil {
+		items = append(items, item{name: "agent-bot-keyd", mode: 0o700, data: keyd})
 	}
 	for _, it := range items {
 		hdr := &tar.Header{
@@ -880,6 +934,7 @@ func releaseCmd(args []string) error {
 	dist := fl.String("dist", "", "release dist directory containing SHA256SUMS and archives")
 	ver := fl.String("version", "", "release version X.Y.Z under test")
 	repo := fl.String("repo", "", "optional repository root checkout path")
+	brewTestKeyd := fl.String("homebrew-test-keyd", "", "runner-built keyd for the unsigned macOS Homebrew packaging fixture only")
 	compat := fl.String("compat", "", "optional F01 compatibility harness output file (macOS)")
 	if err := fl.Parse(args); err != nil {
 		return err
@@ -896,13 +951,14 @@ func releaseCmd(args []string) error {
 		}
 	}
 	h, b, err := runReleaseGateWith(releaseGateOptions{
-		binPath:    absBin,
-		target:     *tgt,
-		revision:   *rev,
-		distDir:    *dist,
-		version:    *ver,
-		repoRoot:   *repo,
-		compatPath: *compat,
+		binPath:      absBin,
+		target:       *tgt,
+		revision:     *rev,
+		distDir:      *dist,
+		version:      *ver,
+		repoRoot:     *repo,
+		compatPath:   *compat,
+		brewTestKeyd: *brewTestKeyd,
 	})
 	if err != nil {
 		return err
@@ -1077,7 +1133,7 @@ func (h *releaseHarness) run() {
 	h.runUpgrade()
 	h.runUpgradeFromBash()
 	h.runUpgradeFromV010()
-	h.runPrivateSeed()
+	h.runPublicPackage()
 	h.runDispatcher()
 	h.runRecovery()
 	h.runGuards()
@@ -2912,7 +2968,7 @@ func (h *releaseHarness) grepStateAndCaptures() string {
 		filepath.Join(h.root, "recovery", "state"),
 		filepath.Join(h.bashHome, "Library", "Application Support", "managed-machine"),
 		filepath.Join(h.root, "v010-upgrade-home", "Library", "Application Support", "managed-machine"),
-		filepath.Join(h.root, "private-seed-home", "Library", "Application Support", "managed-machine"),
+		filepath.Join(h.root, "public-package-home", "Library", "Application Support", "managed-machine"),
 		filepath.Join(h.root, "dispatcher-home", "Library", "Application Support", "managed-machine"),
 	} {
 		if hit := grepFleetTree(dir, "state", h.stateForbidden); hit != "" {
@@ -2937,7 +2993,7 @@ func (h *releaseHarness) grepStateAndCaptures() string {
 // accompanying provider-gate and install-gate records) belong together: one per
 // first-release target, the same source revision and version, every gate with
 // result pass, every release case present, the four macOS cases
-// (`upgrade-from-bash`, `upgrade-from-v0.10`, `private-seed`, `dispatcher`)
+// (`upgrade-from-bash`, `upgrade-from-v0.10`, `public-package`, `dispatcher`)
 // recorded `ok` on `darwin/*` and `n-a` with the first-release reason on the
 // other four targets,
 // every portable case recorded `ok`/`intact` on all five, every artifact.sha256
@@ -3086,7 +3142,7 @@ func releaseAggregateCmd(args []string) error {
 					problems = append(problems, fmt.Sprintf("%s: case %s detail %q does not record %d removed routes", ev.Target, c.Case, c.Detail, releaseWantRemovedRoutes))
 				}
 				if c.Observed == "n-a" {
-					problems = append(problems, fmt.Sprintf("%s: case %s is \"n-a\"; only upgrade-from-bash, upgrade-from-v0.10, private-seed and dispatcher may be n-a", ev.Target, c.Case))
+					problems = append(problems, fmt.Sprintf("%s: case %s is \"n-a\"; only upgrade-from-bash, upgrade-from-v0.10, public-package and dispatcher may be n-a", ev.Target, c.Case))
 				}
 			}
 

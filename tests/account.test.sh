@@ -102,6 +102,7 @@ agent_account_is_admin() { return 1; }
 agent_account_home() { printf '%s\n' "$HOME"; }
 account_prepare_config() { export CONFIG_REPO_ROOT="$TEST_DIR/config"; printf config >>"$TEST_DIR/steps"; }
 account_prepare_shell() { printf shell >>"$TEST_DIR/steps"; return 1; }
+touch "$TEST_DIR/config/local-bin.ref" "$TEST_DIR/config/zsh-functions.ref"
 account_prepare_local_bin() { printf bin >>"$TEST_DIR/steps"; return 75; }
 account_prepare_zsh_functions() { printf zshfuncs >>"$TEST_DIR/steps"; return 75; }
 account_harness_setup() { printf harness >>"$TEST_DIR/steps"; }

@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Ensure zsh-functions is cloned at the pinned ref and installed.
 #
-# managed-machine consumes zsh-functions as a package: it keeps the repo in the
-# managed-machine libexec directory (or a sibling repo in development), checks
-# out the ref recorded in zsh-functions.ref, then runs zsh-functions's own
-# install script to link functions, zsh-profile, and the managed loader block.
+# Reuse an existing checkout or clone the selected repository into the user's
+# data directory. The fleet pin selects the ref for the tool's install script.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -13,30 +11,16 @@ source "$REPO_ROOT/lib/install.sh"
 
 CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
 
-# In a Homebrew install zsh-functions lives next to the setup scripts under
-# libexec/legacy/zsh-functions. In a git clone (where REPO_ROOT is <repo>/legacy)
-# it lives as a sibling repo (<repo>/../zsh-functions). Override with
-# ZSH_FUNCTIONS_DIR if needed.
-if [[ -z "${ZSH_FUNCTIONS_DIR:-}" ]]; then
-    if [[ -d "$REPO_ROOT/managed-machine-config" ]]; then
-        ZSH_FUNCTIONS_DIR="$REPO_ROOT/zsh-functions"
-    else
-        ZSH_FUNCTIONS_DIR="$(managed_machine_sibling_repo_dir zsh-functions)"
-    fi
-fi
-
-ZSH_FUNCTIONS_REPO="${ZSH_FUNCTIONS_REPO:-https://github.com/qwts/zsh-functions.git}"
-ZSH_FUNCTIONS_DIR="${ZSH_FUNCTIONS_DIR:-}"
-
-# A checkout directory must always resolve; there is no legacy default.
-if [[ -z "$ZSH_FUNCTIONS_DIR" ]]; then
-    echo "Error: could not determine ZSH_FUNCTIONS_DIR" >&2
-    exit 1
-fi
+ZSH_FUNCTIONS_DIR="${ZSH_FUNCTIONS_DIR:-$(managed_machine_tool_checkout zsh-functions)}"
+ZSH_FUNCTIONS_REPO="${ZSH_FUNCTIONS_REPO:-}"
 
 REF_FILE="$CONFIG_REPO_ROOT/zsh-functions.ref"
 
 if [[ ! -f "$REF_FILE" ]]; then
+    if [[ "${MANAGED_MACHINE_IN_BATCH_RUN:-}" == 1 ]]; then
+        echo "Skipped zsh-functions: no pin in the selected fleet."
+        exit "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
+    fi
     echo "Error: missing pin file $REF_FILE" >&2
     exit 1
 fi
@@ -141,7 +125,7 @@ resolve_target_owner() {
 clone_zsh_functions_repo() {
     local parent="$1" repo="$2" target="$3"
     mkdir -p "$parent"
-    git clone "$repo" "$target"
+    git clone -- "$repo" "$target"
 }
 
 update_zsh_functions_repo() {
@@ -201,6 +185,10 @@ EOF
 # resource archive), we use it as-is and only run git operations when .git
 # exists.
 if [[ ! -d "$ZSH_FUNCTIONS_DIR" ]]; then
+    if [[ -z "$ZSH_FUNCTIONS_REPO" ]]; then
+        echo "Set ZSH_FUNCTIONS_REPO to the repository for zsh-functions, or ZSH_FUNCTIONS_DIR to an existing checkout." >&2
+        exit 1
+    fi
     echo "Cloning zsh-functions into $ZSH_FUNCTIONS_DIR..."
     parent_dir="$(dirname "$ZSH_FUNCTIONS_DIR")"
     parent_owner="$(resolve_target_owner "$ZSH_FUNCTIONS_DIR")"
@@ -218,7 +206,7 @@ if [[ ! -d "$ZSH_FUNCTIONS_DIR" ]]; then
         fi
     else
         mkdir -p "$parent_dir"
-        git clone "$ZSH_FUNCTIONS_REPO" "$ZSH_FUNCTIONS_DIR"
+        git clone -- "$ZSH_FUNCTIONS_REPO" "$ZSH_FUNCTIONS_DIR"
     fi
 fi
 

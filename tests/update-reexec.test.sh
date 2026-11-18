@@ -70,6 +70,7 @@ cat >>"$LIBEXEC/lib/install.sh" <<'HELPERS'
 brew_run() { brew "$@"; }
 # One authorization phase: record each call, then run it in-process.
 brew_run_script() { printf 'phase %s\n' "$1" >>"$PHASES"; /bin/sh -c "$1"; }
+managed_machine_config_selected() { return 0; }
 managed_machine_config_repo_dir() { printf '%s\n' "$CONFIG_DIR"; }
 managed_machine_config_dir() { printf '%s\n' "$CONFIG_DIR"; }
 # The real detector lives in lib/elevate.sh (tested there); the fixture
@@ -403,6 +404,7 @@ chmod +x "$PLAN_BIN/osascript" "$PLAN_BIN/uname" "$PLAN_BIN/gh" "$PLAN_BIN/brew"
 : >"$OSA_LOG"
 env -u CLAUDECODE \
     HOME="$PLAN_HOME" \
+    CONFIG_REPO_ROOT="$PLAN_CONFIG_REPO" \
     MANAGED_MACHINE_CONFIG_DIR="$PLAN_CONFIG_REPO" \
     MANAGED_MACHINE_PLAN_CONFIRM=y \
     MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
@@ -425,6 +427,7 @@ grep -q '^cursor	' "$PLAN_HOME/.config/managed-machine/declined-apps.manifest"
 : >"$OSA_LOG"
 env -u CLAUDECODE \
     HOME="$PLAN_HOME" \
+    CONFIG_REPO_ROOT="$PLAN_CONFIG_REPO" \
     MANAGED_MACHINE_CONFIG_DIR="$PLAN_CONFIG_REPO" \
     MANAGED_MACHINE_PLAN_CONFIRM=y \
     MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
@@ -453,6 +456,7 @@ grep -Fq 'not installed (declined)' "$PLAN_TEST/second-update.out"
 : >"$OSA_LOG"
 env -u CLAUDECODE \
     HOME="$PLAN_HOME" \
+    CONFIG_REPO_ROOT="$PLAN_CONFIG_REPO" \
     MANAGED_MACHINE_CONFIG_DIR="$PLAN_CONFIG_REPO" \
     MANAGED_MACHINE_PLAN_CONFIRM=y \
     MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
@@ -479,6 +483,7 @@ rm -rf "$PLAN_APPS/Cursor.app"
 : >"$OSA_LOG"
 if env -u CLAUDECODE \
     HOME="$PLAN_HOME" \
+    CONFIG_REPO_ROOT="$PLAN_CONFIG_REPO" \
     MANAGED_MACHINE_CONFIG_DIR="$PLAN_CONFIG_REPO" \
     MANAGED_MACHINE_ASSUME_SYSTEM_BREW=1 \
     MANAGED_MACHINE_BREW_OWNER=otheradmin \
@@ -534,6 +539,7 @@ done
 cat >>"$LIBEXEC/legacy/lib/install.sh" <<'HELPERS'
 brew_run() { brew "$@"; }
 brew_run_script() { printf 'phase %s\n' "$1" >>"$PHASES"; /bin/sh -c "$1"; }
+managed_machine_config_selected() { return 0; }
 managed_machine_config_repo_dir() { printf '%s\n' "$CONFIG_DIR"; }
 managed_machine_config_dir() { printf '%s\n' "$CONFIG_DIR"; }
 managed_machine_agent_session() { [[ "${CLAUDECODE:-}" == 1 ]]; }

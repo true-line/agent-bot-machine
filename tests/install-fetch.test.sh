@@ -17,34 +17,37 @@ for doc in README.md skills/managed-machine/SKILL.md; do
 done
 sed -n '/^#   ($/,/^#   )$/s/^#   //p' "$ROOT/install.sh" >"$TEST_DIR/install.sh.command"
 for command in "$TEST_DIR/"*.command; do
-    grep -Fq 'repos/qwts/managed-machine/contents/install.sh' "$command" || fail "missing command: $command"
+    grep -Fq 'https://raw.githubusercontent.com/true-line/agent-bot-machine/main/install.sh' "$command" || fail "missing command: $command"
     cmp -s "$TEST_DIR/README.md.command" "$command" || fail "install command copies disagree"
 done
 
-cat >"$TEST_DIR/bin/gh" <<'EOF'
+cat >"$TEST_DIR/bin/curl" <<'EOF'
 #!/usr/bin/env bash
-[[ "$*" == 'api -H Accept: application/vnd.github.raw repos/qwts/managed-machine/contents/install.sh' ]] || exit 99
+[[ "$1 $2 $3 $4" == "--proto =https --proto-redir =https" ]] || exit 98
+shift 4
+[[ $# == 4 && "$1" == -fsSL && "$2" == 'https://raw.githubusercontent.com/true-line/agent-bot-machine/main/install.sh' && "$3" == -o ]] || exit 99
+exec >"$4"
 case "$FETCH_CASE" in
     success|installer-failure)
         printf 'echo installed >>"$EXECUTION_MARKER"\nexit %s\n' "$INSTALLER_STATUS"
         ;;
     json-failure)
-        printf '{\n  "message": "Bad credentials",\n  "status": "401"\n}\n'
-        echo 'gh: Bad credentials (HTTP 401)' >&2
+        printf '{\n  "message": "Unavailable",\n  "status": "503"\n}\n'
+        echo 'curl: Unavailable (HTTP 503)' >&2
         exit 1
         ;;
     executable-failure)
         # A partial or otherwise failed response may itself be valid shell.
         printf 'echo unexpected >>"$EXECUTION_MARKER"\n'
-        echo 'gh: failed download' >&2
+        echo 'curl: failed download' >&2
         exit 7
         ;;
 esac
 EOF
-chmod +x "$TEST_DIR/bin/gh"
+chmod +x "$TEST_DIR/bin/curl"
 
 
-# Keep zsh startup files from reordering PATH ahead of the offline gh stub.
+# Keep zsh startup files from reordering PATH ahead of the offline curl stub.
 shells=(bash)
 if command -v zsh >/dev/null 2>&1; then shells+=(zsh); fi
 for shell in "${shells[@]}"; do
@@ -69,8 +72,7 @@ for shell in "${shells[@]}"; do
                     ;;
                 *)
                     [[ ! -e "$TEST_DIR/executed" ]] || fail "failed response was executed"
-                    grep -Fq 'gh:' "$TEST_DIR/err" || fail "original fetch error lost"
-                    grep -Fq 'nothing was executed' "$TEST_DIR/err" || fail "missing fetch failure diagnostic"
+                    grep -Fq 'curl:' "$TEST_DIR/err" || fail "original fetch error lost"
                     if grep -Eq 'command not found|syntax error' "$TEST_DIR/err"; then fail "JSON reached Bash"; fi
                     ;;
             esac

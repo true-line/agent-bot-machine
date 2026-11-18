@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ALLOW_PROTOCOL=file
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"
@@ -75,27 +75,6 @@ git -C "$FIXTURE" add . && git -C "$FIXTURE" commit --quiet -m seed
 git -C "$FIXTURE" branch -M main
 git -C "$FIXTURE" remote add origin "$REMOTE"
 git -C "$FIXTURE" push --quiet -u origin main
-SEED_MAIN_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
-
-# Sibling managed-machine-config fixture and bare remote.
-CONFIG_FIXTURE="$TEST_DIR/managed-machine-config"
-CONFIG_REMOTE="$TEST_DIR/config-origin.git"
-git init --quiet --bare --initial-branch=main "$CONFIG_REMOTE"
-git init --quiet "$CONFIG_FIXTURE"
-git -C "$CONFIG_FIXTURE" config user.name 'managed-machine test'
-git -C "$CONFIG_FIXTURE" config user.email 'managed-machine-test@example.invalid'
-git -C "$CONFIG_FIXTURE" config commit.gpgsign false
-git -C "$CONFIG_FIXTURE" config tag.gpgsign false
-export GIT_CONFIG_GLOBAL="$TEST_DIR/gitconfig"
-git config --global url."$REMOTE".insteadOf https://github.com/qwts/local-bin.git
-printf '%.12s\n' "$SEED_MAIN_SHA" >"$CONFIG_FIXTURE/local-bin.ref"
-printf '{}\n' >"$CONFIG_FIXTURE/apps.json"
-git -C "$CONFIG_FIXTURE" add . && git -C "$CONFIG_FIXTURE" commit --quiet -m seed
-git -C "$CONFIG_FIXTURE" branch -M main
-git -C "$CONFIG_FIXTURE" remote add origin "$CONFIG_REMOTE"
-git -C "$CONFIG_FIXTURE" push --quiet -u origin main
-config_sha() { git -C "$CONFIG_FIXTURE" rev-parse HEAD; }
-
 run_release() {
     (cd "$FIXTURE" && /bin/bash "$ROOT/scripts/release" "$@")
 }
@@ -171,25 +150,21 @@ if git -C "$FIXTURE" rev-parse --verify --quiet refs/heads/release/v9.9.8 >/dev/
 fi
 
 # 2. `scripts/release prepare v9.9.9`: creates release/v9.9.9, writes VERSION
-# and Formula/managed-machine.rb (tag, version, arm64/sequoia, config tag+sha,
-# core URL+sha256 from real mm-release build), tags managed-machine-config,
+# and Formula/managed-machine.rb (tag, version, arm64/sequoia, and the core
+# URL+sha256 from the real mm-release build),
 # commits "Release v9.9.9" on release/v9.9.9, pushes the branch only (origin
 # main and tags of this repository unchanged), and prints the gh pr create line.
 run_release prepare v9.9.9 >"$TEST_DIR/prepare.out"
-grep -Fq "revision: \"$SEED_MAIN_SHA\"" "$FIXTURE/Formula/managed-machine.rb"
 [[ "$(git -C "$FIXTURE" rev-parse --abbrev-ref HEAD)" == 'release/v9.9.9' ]]
 [[ "$(cat "$FIXTURE/VERSION")" == '9.9.9' ]]
 grep -qE '^[[:space:]]*tag:[[:space:]]*"v9\.9\.9"' "$FIXTURE/Formula/managed-machine.rb"
 grep -qE '^[[:space:]]*version "9\.9\.9"' "$FIXTURE/Formula/managed-machine.rb"
 grep -qE '^[[:space:]]*depends_on arch: :arm64$' "$FIXTURE/Formula/managed-machine.rb"
 grep -qE '^[[:space:]]*depends_on macos: :sequoia$' "$FIXTURE/Formula/managed-machine.rb"
-grep -Fq 'url "https://github.com/qwts/managed-machine/releases/download/v9.9.9/managed-machine_9.9.9_darwin_arm64.tar.gz"' "$FIXTURE/Formula/managed-machine.rb"
+grep -Fq 'url "https://github.com/true-line/agent-bot-machine/releases/download/v9.9.9/managed-machine_9.9.9_darwin_arm64.tar.gz"' "$FIXTURE/Formula/managed-machine.rb"
 grep -qE '^[[:space:]]*sha256 "[0-9a-f]{64}"$' "$FIXTURE/Formula/managed-machine.rb"
-grep -qE "^[[:space:]]*revision:[[:space:]]*\"$(config_sha)\"" "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'legacy = libexec / "legacy"' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq '(legacy / "bin").install "legacy/bin/managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
-grep -Fq 'resource("managed-machine-config").stage(legacy / "managed-machine-config")' "$FIXTURE/Formula/managed-machine.rb"
-grep -Fq 'resource("local-bin").stage(legacy / "local-bin")' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq '(libexec / "scripts/update").write' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'exec "$(dirname "$0")/../legacy/scripts/update" "$@"' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'chmod 0755, libexec / "scripts/update"' "$FIXTURE/Formula/managed-machine.rb"
@@ -241,10 +216,7 @@ if git -C "$FIXTURE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null; the
     fail "prepare must not create local tag v9.9.9"
 fi
 
-# Private config repo was tagged at v9.9.9 and pushed to config-origin.git.
-git --git-dir="$CONFIG_REMOTE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null
-[[ "$(git -C "$CONFIG_FIXTURE" rev-parse "refs/tags/v9.9.9^{commit}")" == "$(config_sha)" ]]
-
+# The fixture has no private checkout and permits only local Git transports.
 [[ "$(grep -c '^workflow run sign.yml' "$FAKE_GH_STATE/calls")" == 2 ]]
 
 # 2b. A second run of `prepare v9.9.9` resumes idempotently (both from the
@@ -307,24 +279,22 @@ grep -Fq 'Formula/managed-machine.rb disagrees with v9.9.9' "$TEST_DIR/tag-badfo
 git -C "$FIXTURE" reset --quiet --hard "$SAVED_MAIN_SHA"
 git -C "$FIXTURE" push --quiet --force origin main
 
-# 3f. Refuses when the private origin lacks tag v9.9.9 or points at another revision.
-git --git-dir="$CONFIG_REMOTE" update-ref -d refs/tags/v9.9.9
-if run_release tag v9.9.9 >"$TEST_DIR/tag-noconfigtag.out" 2>&1; then
-    fail "expected tag when private origin lacks tag v9.9.9 to fail"
+# 3f. Refuse an unrelated resource on an otherwise valid release.
+python3 - "$FIXTURE/Formula/managed-machine.rb" <<'PYTHON'
+from pathlib import Path
+import sys
+formula = Path(sys.argv[1])
+formula.write_text(formula.read_text().replace('  resource "core" do',
+    '  resource "organization-only" do\n    url "https://example.invalid/fleet"\n  end\n\n  resource "core" do'))
+PYTHON
+git -C "$FIXTURE" commit --quiet -am 'Fixture adds a non-public resource'
+git -C "$FIXTURE" push --quiet origin main
+if run_release tag v9.9.9 >"$TEST_DIR/tag-extra-resource.out" 2>&1; then
+    fail "expected tag to reject extra formula resource"
 fi
-grep -Fq 'managed-machine-config tag v9.9.9 was not found on origin' "$TEST_DIR/tag-noconfigtag.out"
-
-git -C "$CONFIG_FIXTURE" commit --quiet --allow-empty -m 'other-config-commit'
-WRONG_CONFIG_SHA="$(git -C "$CONFIG_FIXTURE" rev-parse HEAD)"
-git -C "$CONFIG_FIXTURE" push --quiet --force origin "$WRONG_CONFIG_SHA:refs/tags/v9.9.9"
-git -C "$CONFIG_FIXTURE" reset --quiet --hard HEAD~1
-if run_release tag v9.9.9 >"$TEST_DIR/tag-wrongconfigtag.out" 2>&1; then
-    fail "expected tag when private origin tag points at wrong revision to fail"
-fi
-grep -Fq 'managed-machine-config tag v9.9.9 on origin points at' "$TEST_DIR/tag-wrongconfigtag.out"
-
-# Restore the valid config tag on private origin.
-git -C "$CONFIG_FIXTURE" push --quiet --force origin "refs/tags/v9.9.9"
+grep -Fq 'Formula/managed-machine.rb disagrees with v9.9.9' "$TEST_DIR/tag-extra-resource.out"
+git -C "$FIXTURE" reset --quiet --hard "$SAVED_MAIN_SHA"
+git -C "$FIXTURE" push --quiet --force origin main
 
 # 3g. Refuses when the signed draft is missing, or when its darwin archive is
 # the unsigned build.
@@ -387,7 +357,7 @@ git -C "$FIXTURE_SIGNED" branch -M main
 git -C "$FIXTURE_SIGNED" remote add origin "$REMOTE_SIGNED"
 git -C "$FIXTURE_SIGNED" push --quiet -u origin main
 
-(cd "$FIXTURE_SIGNED" && MANAGED_MACHINE_CONFIG_DIR="$CONFIG_FIXTURE" /bin/bash "$ROOT/scripts/release" prepare v7.7.7 >"$TEST_DIR/signed-prepare.out" 2>&1) || {
+(cd "$FIXTURE_SIGNED" && /bin/bash "$ROOT/scripts/release" prepare v7.7.7 >"$TEST_DIR/signed-prepare.out" 2>&1) || {
     echo 'expected prepare to succeed with commit.gpgsign enabled' >&2
     cat "$TEST_DIR/signed-prepare.out" >&2
     exit 1
@@ -395,7 +365,7 @@ git -C "$FIXTURE_SIGNED" push --quiet -u origin main
 git -C "$FIXTURE_SIGNED" checkout --quiet main
 git -C "$FIXTURE_SIGNED" merge --quiet --ff-only release/v7.7.7
 git -C "$FIXTURE_SIGNED" push --quiet origin main
-(cd "$FIXTURE_SIGNED" && MANAGED_MACHINE_CONFIG_DIR="$CONFIG_FIXTURE" /bin/bash "$ROOT/scripts/release" tag v7.7.7 >"$TEST_DIR/signed-tag.out" 2>&1) || {
+(cd "$FIXTURE_SIGNED" && /bin/bash "$ROOT/scripts/release" tag v7.7.7 >"$TEST_DIR/signed-tag.out" 2>&1) || {
     echo 'expected tag to succeed with tag.gpgsign enabled' >&2
     cat "$TEST_DIR/signed-tag.out" >&2
     exit 1
@@ -425,7 +395,7 @@ class ManagedMachine < Formula
     url "https://github.com/qwts/managed-machine-config.git",
         using:    :git,
         tag:      "v9.9.9",
-        revision: "$(config_sha)",
+        revision: "1111111111111111111111111111111111111111",
         shallow:  false
   end
 
@@ -476,6 +446,9 @@ git -C "$FIXTURE" commit --quiet -am 'Seed S6 D4 formula layout'
 git -C "$FIXTURE" push --quiet origin main
 
 run_release prepare v9.9.11 >"$TEST_DIR/prepare-911.out"
+if grep -Eq 'managed-machine-config|local-bin' "$FIXTURE/Formula/managed-machine.rb"; then
+    fail "expected a legacy release formula to migrate to the public core alone"
+fi
 grep -Fq '# Installed as bin/managed-machine; legacy Bash tree staged under libexec/legacy.' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq '(legacy / "bin").install "legacy/bin/managed-machine"' "$FIXTURE/Formula/managed-machine.rb"
 grep -Fq 'exec "$(dirname "$0")/../legacy/scripts/update" "$@"' "$FIXTURE/Formula/managed-machine.rb"

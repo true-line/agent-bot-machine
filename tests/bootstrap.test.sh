@@ -94,6 +94,8 @@ file_mode() {
     fi
 }
 
+export CONFIG_REPO_ROOT="$CONFIG_REPO"
+
 # Noninteractive mode skips only steps that need a dialog, runs the rest,
 # and does not assign follow-up setup commands.
 HOME="$TEST_HOME" "$FIXTURE/scripts/bootstrap" --non-interactive >"$TEST_ROOT/noninteractive.out" 2>&1

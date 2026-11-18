@@ -391,20 +391,20 @@ func testFormulaPinVerification(t *testing.T, distDir, version, darwinDigest str
 	makeFormula := func(tag, ver, coreSHA string) string {
 		p := filepath.Join(t.TempDir(), "managed-machine.rb")
 		content := fmt.Sprintf(`class ManagedMachine < Formula
-  url "https://github.com/qwts/managed-machine.git",
+  url "https://github.com/true-line/agent-bot-machine.git",
       using: :git,
       tag:   %q
   version %q
 
-  resource "managed-machine-config" do
-    url "https://github.com/qwts/managed-machine-config.git",
+  resource "test-fixture" do
+    url "https://example.org/test-fixture.git",
         using:    :git,
         tag:      %q,
         revision: "0123456789abcdef0123456789abcdef01234567"
   end
 
   resource "core" do
-    url "https://github.com/qwts/managed-machine/releases/download/%s/managed-machine_%s_darwin_arm64.tar.gz"
+    url "https://github.com/true-line/agent-bot-machine/releases/download/%s/managed-machine_%s_darwin_arm64.tar.gz"
     sha256 %q
   end
 end

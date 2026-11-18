@@ -240,7 +240,7 @@ EOF
 cat >"$FAKE_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STATE/gh.log"
-if [[ "$*" == *repos/qwts/qwts-agent-org/contents/governance/organization-profile.json* ]]; then
+if [[ "$*" == *repos/example/fleet/contents/organization-profile.json* ]]; then
     [[ "${GH_REFRESH_FAIL:-}" != 1 ]] || exit 1
     if [[ "${GH_REFRESH_HANG:-}" == 1 ]]; then sleep 60; fi
     cat "$STATE/refreshed-profile"
@@ -250,6 +250,7 @@ fi
 echo 'https://avatars.githubusercontent.com/in/777?v=4'
 EOF
 cp "$PROFILE" "$STATE/refreshed-profile"
+export MANAGED_MACHINE_ORG_PROFILE_API=repos/example/fleet/contents/organization-profile.json
 chmod +x "$FAKE_BIN"/*
 
 # Rewrites under test: absolute tool paths and system directories become the
@@ -395,7 +396,7 @@ EOF
 cp "$PROFILE" "$STATE/refreshed-profile"
 env -u MANAGED_MACHINE_ORG_PROFILE HOME="$STALE_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" \
     /bin/bash "$TEST_DIR/add-agent" --all >"$TEST_DIR/refreshed.out" 2>&1
-grep -Fq '==> roster source: authoritative organization profile via gh api (repos/qwts/qwts-agent-org/contents/governance/organization-profile.json)' "$TEST_DIR/refreshed.out"
+grep -Fq '==> roster source: authoritative organization profile via gh api (repos/example/fleet/contents/organization-profile.json)' "$TEST_DIR/refreshed.out"
 grep -Fq '==> roster: 3 total (2 active, 1 retired)' "$TEST_DIR/refreshed.out"
 grep -Fq '==> provisioning 2 agent accounts: you-goose-agent you-codex-agent' "$TEST_DIR/refreshed.out"
 grep -q -- '-addUser you-goose-agent' "$STATE/sysadminctl.log"

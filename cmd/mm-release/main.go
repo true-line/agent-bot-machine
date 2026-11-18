@@ -5,7 +5,7 @@
 //	mm-release build -version <X.Y.Z> -out <dir>
 //	mm-release verify -dist <dir> [-formula <path> -require-pin]
 //	mm-release repack -dist <dir> -tree <dir> -out <dir>
-//	mm-release verify-signed -unsigned <dir> -signed <dir> -team <ID> [-formula <path> -require-pin]
+//	mm-release verify-signed -unsigned <dir> -signed <dir> -team <ID> [-require-keyd] [-formula <path> -require-pin]
 package main
 
 import (
@@ -36,7 +36,7 @@ import (
 const usageText = "usage: mm-release build -version <X.Y.Z> -out <dir>\n" +
 	"       mm-release verify -dist <dir> [-formula <path> -require-pin]\n" +
 	"       mm-release repack -dist <dir> -tree <dir> -out <dir>\n" +
-	"       mm-release verify-signed -unsigned <dir> -signed <dir> -team <ID> [-formula <path> -require-pin]"
+	"       mm-release verify-signed -unsigned <dir> -signed <dir> -team <ID> [-require-keyd] [-formula <path> -require-pin]"
 
 // archiveEpoch is the constant modification time written to every tar and zip
 // entry (1980-01-01T00:00:00Z, the earliest instant MS-DOS zip represents; D3).

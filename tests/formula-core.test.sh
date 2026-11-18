@@ -2,12 +2,11 @@
 # S6 R04/R05 (D3, D4, D11): `scripts/release prepare v<VERSION>` on a temp copy
 # of the repository writes Formula/managed-machine.rb with arm64 + macOS 15
 # Sequoia constraints, pins the darwin_arm64 core archive resource by URL and
-# sha256, stages it to libexec/core/managed-machine (mode 0755), keeps the two
-# private resources and every installed path unchanged, asserts the core and
+# sha256, installs the public core without private resources, asserts the core and
 # dispatcher version checks in test do, and passes mm-release verify
 # -require-pin against a local build.
 set -euo pipefail
-export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ALLOW_PROTOCOL=file
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(tr -d '[:space:]' <"$ROOT/VERSION")"
@@ -36,12 +35,9 @@ ln -s "$ROOT/tests/fixtures/fake-gh" "$STUB_BIN/gh"
 export FAKE_GH_STATE="$TEST_DIR/fake-gh" FAKE_GH_ROOT="$ROOT" MANAGED_MACHINE_RELEASE_POLL_SECONDS=0
 export PATH="$STUB_BIN:$PATH"
 
-# Seed a temp copy of the repository and a temp sibling managed-machine-config
-# repository with local bare remotes.
+# Exercise prepare using only the public Machine repository fixture.
 REMOTE="$TEST_DIR/origin.git"
 REPO="$TEST_DIR/repo"
-CONFIG_REMOTE="$TEST_DIR/config-origin.git"
-CONFIG_REPO="$TEST_DIR/managed-machine-config"
 
 git init --quiet --bare --initial-branch=main "$REMOTE"
 git init --quiet "$REPO"
@@ -61,33 +57,7 @@ git -C "$REPO" branch -M main
 git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push --quiet -u origin main
 
-git init --quiet --bare --initial-branch=main "$CONFIG_REMOTE"
-git init --quiet "$CONFIG_REPO"
-git -C "$CONFIG_REPO" config user.name 'managed-machine test'
-git -C "$CONFIG_REPO" config user.email 'managed-machine-test@example.invalid'
-git -C "$CONFIG_REPO" config commit.gpgsign false
-git -C "$CONFIG_REPO" config tag.gpgsign false
-# Reuse the synthetic Machine origin as the private tools remote for this test.
-export GIT_CONFIG_GLOBAL="$TEST_DIR/gitconfig"
-git config --global url."$REMOTE".insteadOf https://github.com/qwts/local-bin.git
-git -C "$REPO" tag -a fixture-tools -m fixture
-git -C "$REPO" push --quiet origin refs/tags/fixture-tools
-printf 'main\n' >"$CONFIG_REPO/local-bin.ref"
-printf '{}\n' >"$CONFIG_REPO/apps.json"
-git -C "$CONFIG_REPO" add . && git -C "$CONFIG_REPO" commit --quiet -m seed
-git -C "$CONFIG_REPO" branch -M main
-git -C "$CONFIG_REPO" remote add origin "$CONFIG_REMOTE"
-git -C "$CONFIG_REPO" push --quiet -u origin main
-
-if (cd "$REPO" && /bin/bash "$ROOT/scripts/release" prepare "$VERSION") >"$TEST_DIR/refusal" 2>&1; then
-    fail "release accepted a moving local-bin branch"
-fi
-grep -Fq 'local-bin.ref must resolve to a tag or commit' "$TEST_DIR/refusal"
-printf 'fixture-tools\n' >"$CONFIG_REPO/local-bin.ref"
-git -C "$CONFIG_REPO" commit --quiet -am 'pin tools'
-git -C "$CONFIG_REPO" push --quiet origin main
-
-(cd "$REPO" && MANAGED_MACHINE_CONFIG_DIR="$CONFIG_REPO" /bin/bash "$ROOT/scripts/release" prepare "$VERSION" >"$TEST_DIR/prepare.out")
+(cd "$REPO" && /bin/bash "$ROOT/scripts/release" prepare "$VERSION" >"$TEST_DIR/prepare.out")
 
 FORMULA="$REPO/Formula/managed-machine.rb"
 [[ -f "$FORMULA" ]] || fail "prepared Formula/managed-machine.rb is missing"
@@ -139,24 +109,8 @@ for line in lines:
             continue
         current_lines.append(line)
 
-for required_res in ("managed-machine-config", "local-bin", "core"):
-    if required_res not in resources:
-        raise SystemExit(f'missing resource "{required_res}" in {formula_path}')
-
-# Private resources stay unchanged.
-cfg_block = resources["managed-machine-config"]
-if 'url "https://github.com/qwts/managed-machine-config.git"' not in cfg_block:
-    raise SystemExit("managed-machine-config url changed")
-if f'tag:      "v{version}"' not in cfg_block:
-    raise SystemExit("managed-machine-config tag missing")
-if not re.search(r'revision:\s*"[0-9a-f]{40}"', cfg_block):
-    raise SystemExit("managed-machine-config revision missing")
-
-lb_block = resources["local-bin"]
-if 'url "https://github.com/qwts/local-bin.git"' not in lb_block:
-    raise SystemExit("local-bin url changed")
-if 'branch:' in lb_block or not re.search(r'revision:\s*"[0-9a-f]{40}"', lb_block):
-    raise SystemExit("local-bin must use an immutable revision")
+if set(resources) != {"core"}:
+    raise SystemExit(f"expected only the public core resource in {formula_path}, got {list(resources)}")
 
 # 4. Core resource URL names v<VERSION> and managed-machine_<VERSION>_darwin_arm64.tar.gz,
 #    and pins a 64-hex sha256.
@@ -166,7 +120,7 @@ if not url_match:
     raise SystemExit('resource "core" has no url')
 core_url = url_match.group(1)
 want_archive = f"managed-machine_{version}_darwin_arm64.tar.gz"
-want_url = f"https://github.com/qwts/managed-machine/releases/download/v{version}/{want_archive}"
+want_url = f"https://github.com/true-line/agent-bot-machine/releases/download/v{version}/{want_archive}"
 if f"/v{version}/" not in core_url:
     raise SystemExit(f'core resource url {core_url!r} does not name v{version}')
 if not core_url.endswith("/" + want_archive):
@@ -209,10 +163,6 @@ for snippet in (
     'legacy.install "legacy/lib"',
     '(legacy / "scripts").install Dir["legacy/scripts/*"]',
     '(legacy / "git-hooks").install Dir["legacy/git-hooks/*"]',
-    '(legacy / "managed-machine-config").mkpath',
-    'resource("managed-machine-config").stage(legacy / "managed-machine-config")',
-    '(legacy / "local-bin").mkpath',
-    'resource("local-bin").stage(legacy / "local-bin")',
     '(libexec / "scripts").mkpath',
     '(libexec / "scripts/update").write',
     'exec "$(dirname "$0")/../legacy/scripts/update" "$@"',
@@ -238,10 +188,6 @@ if pre_p01_install is not None:
         'libexec.install "lib"',
         '(libexec / "scripts").install Dir["scripts/*"]',
         '(libexec / "git-hooks").install Dir["git-hooks/*"]',
-        '(libexec / "managed-machine-config").mkpath',
-        'resource("managed-machine-config").stage(libexec / "managed-machine-config")',
-        '(libexec / "local-bin").mkpath',
-        'resource("local-bin").stage(libexec / "local-bin")',
         '(libexec / "core").mkpath',
         'resource("core").stage',
         '(libexec / "core").install "managed-machine"',
@@ -311,8 +257,6 @@ PY
 
 verify_formula_structure "$ROOT/Formula/managed-machine.rb" "$VERSION"
 verify_formula_structure "$FORMULA" "$VERSION"
-grep -Fq 'tag:      "fixture-tools"' "$FORMULA"
-grep -Fq "revision: \"$(git -C "$REPO" rev-parse 'fixture-tools^{commit}')\"" "$FORMULA"
 
 # Exercise `def install` and `test do` in Ruby for both the repository's
 # current formula (covering both branches while the guard exists) and the
@@ -322,17 +266,16 @@ if command -v ruby >/dev/null 2>&1; then
     (cd "$ROOT" && go build -ldflags "-X main.version=$VERSION" -o "$CORE_BIN" ./cmd/managed-machine)
 
     for target_formula in "$ROOT/Formula/managed-machine.rb" "$FORMULA"; do
-        ruby - "$target_formula" "$ROOT" "$TEST_DIR" "$CORE_BIN" "$VERSION" "$CONFIG_REPO" <<'RB'
+        ruby - "$target_formula" "$ROOT" "$TEST_DIR" "$CORE_BIN" "$VERSION" <<'RB'
 require "fileutils"
 require "open3"
 require "pathname"
 require "tmpdir"
 
-formula_path, repo_root, test_dir, core_bin, version_str, config_repo = ARGV
+formula_path, repo_root, test_dir, core_bin, version_str = ARGV
 formula_src = File.read(formula_path)
 has_guard = formula_src.include?('if File.exist?("legacy/bin/managed-machine")')
 ENV["HOME"] = File.join(test_dir, "home")
-ENV["CONFIG_REPO_ROOT"] = config_repo
 ENV["GIT_TERMINAL_PROMPT"] = "0"
 ENV["PATH"] = "/usr/bin:/bin"
 FileUtils.mkdir_p(ENV["HOME"])
@@ -367,21 +310,18 @@ module Utils
 end
 
 class StubResource
-  def initialize(name, core_bin)
+  def initialize(name, core_bin, with_helper)
     @name = name
+    @with_helper = with_helper
     @core_bin = core_bin
   end
 
-  def stage(target = nil)
-    if target
-      Pathname.new(target.to_s).mkpath
-      File.write((Pathname.new(target.to_s) / ".staged").to_s, @name)
-    else
-      Dir.mktmpdir("core-stage") do |dir|
-        FileUtils.cp(@core_bin, File.join(dir, "managed-machine"))
-        File.write(File.join(dir, "agent-bot-keyd"), "fixture keyd\n")
-        Dir.chdir(dir) { yield }
-      end
+  def stage
+    raise "unexpected resource #{@name}" unless @name == "core"
+    Dir.mktmpdir("core-stage") do |dir|
+      FileUtils.cp(@core_bin, File.join(dir, "managed-machine"))
+      File.write(File.join(dir, "agent-bot-keyd"), "fixture keyd\n") if @with_helper
+      Dir.chdir(dir) { yield }
     end
   end
 end
@@ -406,13 +346,14 @@ class Formula
 
   attr_reader :libexec, :bin, :buildpath, :prefix
 
-  def initialize(prefix_dir, build_dir, core_bin, ver)
+  def initialize(prefix_dir, build_dir, core_bin, ver, with_helper: true)
     @prefix = Pathname.new(prefix_dir)
     @libexec = Pathname.new(prefix_dir) / "libexec"
     @bin = Pathname.new(prefix_dir) / "bin"
     @buildpath = Pathname.new(build_dir)
     @core_bin = core_bin
     @ver = ver
+    @with_helper = with_helper
   end
 
   def version
@@ -420,7 +361,7 @@ class Formula
   end
 
   def resource(name)
-    StubResource.new(name, @core_bin)
+    StubResource.new(name, @core_bin, @with_helper)
   end
 
   def cp(src, dst)
@@ -448,6 +389,10 @@ class Formula
     raise "assert_predicate(#{path}, #{pred}) failed" unless path.public_send(pred)
   end
 
+  def refute_predicate(path, pred)
+    raise "refute_predicate(#{path}, #{pred}) failed" if path.public_send(pred)
+  end
+
   def assert_equal(expected, actual)
     raise "assert_equal failed: expected #{expected.inspect}, got #{actual.inspect}" unless expected == actual
   end
@@ -460,6 +405,7 @@ post_build = Dir.mktmpdir("build-post-p01-", test_dir)
 post_prefix = Dir.mktmpdir("prefix-post-p01-", test_dir)
 FileUtils.cp_r(File.join(repo_root, "legacy"), File.join(post_build, "legacy"))
 FileUtils.cp(File.join(repo_root, "VERSION"), File.join(post_build, "VERSION"))
+FileUtils.cp(File.join(repo_root, "install.sh"), File.join(post_build, "install.sh"))
 FileUtils.mkdir_p(File.join(post_build, "skills"))
 FileUtils.cp_r(File.join(repo_root, "skills", "managed-machine"), File.join(post_build, "skills", "managed-machine"))
 system("git", "-C", post_build, "init", "--quiet")
@@ -476,12 +422,28 @@ Dir.chdir(post_build) do
   raise "expected libexec/legacy to exist in post-P01 install" unless (f.libexec / "legacy").exist?
   raise "expected libexec/legacy/bin/managed-machine to be executable" unless (f.libexec / "legacy/bin/managed-machine").executable?
   raise "expected libexec/scripts/update shim to be executable" unless (f.libexec / "scripts/update").executable?
+  source_is_go_only = version_str == "0.11.5" && formula_path == File.join(repo_root, "Formula/managed-machine.rb")
+  updater = f.libexec / "install.sh"
+  if source_is_go_only
+    raise "staged the old fleet updater" if updater.exist?
+  else
+    raise "missing public updater" unless updater.executable? && updater.binread == File.binread("install.sh")
+  end
   helper = f.bin / "agent-bot-keyd"
   raise "expected private installed helper" unless (helper.stat.mode & 0o7777) == 0o700
   raise "expected packaged executable helper" unless helper.executable? && helper.read == "fixture keyd\n"
   File.chmod(0o755, helper)
   f.post_install
   raise "expected private helper after post_install" unless (helper.stat.mode & 0o7777) == 0o700
+  # The published 0.11.5 archive shipped only the Go executable.
+  if source_is_go_only
+    legacy_prefix = Dir.mktmpdir("go-only-prefix-", test_dir)
+    go_only = ManagedMachine.new(legacy_prefix, post_build, core_bin, version_str, with_helper: false)
+    go_only.install
+    go_only.post_install
+    raise "expected Go-only public install" unless (go_only.bin / "managed-machine").executable?
+    raise "unexpected helper in Go-only install" if (go_only.bin / "agent-bot-keyd").exist?
+  end
   f.instance_eval(&ManagedMachine.test_block)
 end
 
@@ -549,7 +511,7 @@ fi
 DIST_DIR="$TEST_DIR/dist"
 SIGNED_DIR="$FAKE_GH_STATE/releases/v$VERSION"
 (cd "$ROOT" && go run ./cmd/mm-release build -version "$VERSION" -out "$DIST_DIR")
-(cd "$ROOT" && go run ./cmd/mm-release verify-signed -unsigned "$DIST_DIR" -signed "$SIGNED_DIR" -team Z5DM34QS5U -formula "$FORMULA" -require-pin >/dev/null)
+(cd "$ROOT" && go run ./cmd/mm-release verify-signed -unsigned "$DIST_DIR" -signed "$SIGNED_DIR" -team Z5DM34QS5U -require-keyd -formula "$FORMULA" -require-pin >/dev/null)
 if (cd "$ROOT" && go run ./cmd/mm-release verify -dist "$DIST_DIR" -formula "$FORMULA" -require-pin >/dev/null 2>&1); then
     fail "expected the prepared formula to pin the signed darwin archive, not the unsigned build"
 fi
@@ -558,7 +520,7 @@ fi
 BAD_FORMULA="$TEST_DIR/bad-managed-machine.rb"
 sed -E '/resource "core"/,/^  end/ s/sha256 "[0-9a-f]{64}"/sha256 "0000000000000000000000000000000000000000000000000000000000000000"/' \
     "$FORMULA" >"$BAD_FORMULA"
-if (cd "$ROOT" && go run ./cmd/mm-release verify-signed -unsigned "$DIST_DIR" -signed "$SIGNED_DIR" -team Z5DM34QS5U -formula "$BAD_FORMULA" -require-pin >/dev/null 2>&1); then
+if (cd "$ROOT" && go run ./cmd/mm-release verify-signed -unsigned "$DIST_DIR" -signed "$SIGNED_DIR" -team Z5DM34QS5U -require-keyd -formula "$BAD_FORMULA" -require-pin >/dev/null 2>&1); then
     fail "expected mm-release verify-signed -require-pin to fail on wrong core sha256"
 fi
 

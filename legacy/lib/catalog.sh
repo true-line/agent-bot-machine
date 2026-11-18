@@ -5,11 +5,7 @@
 catalog_file() {
     local repo="${CONFIG_REPO_ROOT:-}"
     if [[ -z "$repo" ]]; then
-        if [[ -n "${REPO_ROOT:-}" && -f "$REPO_ROOT/../managed-machine-config/apps.json" ]]; then
-            repo="$REPO_ROOT/../managed-machine-config"
-        elif [[ -f "$(managed_machine_config_checkout_dir)/apps.json" ]]; then
-            repo="$(managed_machine_config_checkout_dir)"
-        fi
+        repo="$(existing_managed_machine_config_repo_dir 2>/dev/null)" || return 1
     fi
     [[ -n "$repo" && -f "$repo/apps.json" ]] || return 1
     printf '%s/apps.json\n' "$repo"
@@ -19,11 +15,7 @@ catalog_config_script() {
     local name="$1"
     local repo="${CONFIG_REPO_ROOT:-}"
     if [[ -z "$repo" ]]; then
-        if [[ -n "${REPO_ROOT:-}" && -d "$REPO_ROOT/../managed-machine-config/config" ]]; then
-            repo="$REPO_ROOT/../managed-machine-config"
-        elif [[ -d "$(managed_machine_config_checkout_dir)/config" ]]; then
-            repo="$(managed_machine_config_checkout_dir)"
-        fi
+        repo="$(existing_managed_machine_config_repo_dir 2>/dev/null)" || return 1
     fi
     [[ -n "$repo" && -x "$repo/config/$name" ]] || return 1
     printf '%s/config/%s\n' "$repo" "$name"

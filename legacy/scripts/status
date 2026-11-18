@@ -34,19 +34,9 @@ Options:
 EOF
 }
 
-# Peek at the persistent/sibling checkout without materializing or syncing it.
+# Inspect the operator's configured checkout or its usual persistent path.
 status_config_checkout() {
-    local sibling
-    if [[ -n "${CONFIG_REPO_ROOT:-}" ]]; then
-        printf '%s\n' "$CONFIG_REPO_ROOT"
-        return 0
-    fi
-    sibling="$REPO_ROOT/../managed-machine-config"
-    if [[ -f "$sibling/local-bin.ref" ]]; then
-        printf '%s\n' "$sibling"
-        return 0
-    fi
-    printf '%s\n' "$(managed_machine_config_checkout_dir)"
+    printf '%s\n' "${CONFIG_REPO_ROOT:-$(managed_machine_config_checkout_dir)}"
 }
 
 toml_field() {

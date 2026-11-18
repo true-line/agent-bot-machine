@@ -5,7 +5,7 @@ license: MIT
 metadata:
   qwts-contract: "1"
   qwts-cli: "managed-machine"
-  qwts-versions: ">=0.11.0 <0.12.0"
+  qwts-versions: ">=0.11.0 <0.12.1"
   qwts-validated: "0.11.0"
   qwts-side-effects: "destructive"
 ---
@@ -16,34 +16,18 @@ Bootstrap and manage a macOS machine using the `managed-machine` Homebrew formul
 
 ## Install (fresh Mac)
 
-Installing needs qwts org access (the formula's config and local-bin resources are private); fetch the installer through an authenticated GitHub CLI (`gh auth login` first):
+On macOS 15 or later on Apple Silicon, use the public Machine installer. For the first Homebrew installation, run it in the administrator account that will own Homebrew.
 
 ```bash
 (
   installer="$(mktemp "${TMPDIR:-/tmp}/managed-machine-install.XXXXXX")" || exit 1
   trap 'rm -f "$installer"' EXIT
-  if gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh >"$installer"; then
-    bash "$installer"
-  else
-    fetch_status=$?
-    echo "Error: installer download failed; nothing was executed. See gh's error above." >&2
-    exit "$fetch_status"
-  fi
+  curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/true-line/agent-bot-machine/main/install.sh -o "$installer" &&
+    /bin/bash "$installer"
 )
 ```
 
-A failed download exits before Bash runs and removes the temporary file. For invalid or expired credentials in a human Terminal, check `gh auth status`, sign in again with `gh auth login -h github.com` if needed, and retry. A successful download preserves the installer's exit status.
-
-The installer checks brew ownership, verifies gh authentication and wires gh as the git credential helper (private repos clone over HTTPS; no SSH key is required or created — SSH enrollment is the explicit `managed-machine ssh enroll` step), taps `qwts/managed-machine`, trusts the tap when Homebrew requires it, installs the formula, and runs `managed-machine --bootstrap`. Administrator dialogs during that run are part of the install. Steps that cannot finish are skipped, not failed, and do not assign a follow-up command.
-
-On a Mac where agent-bot's gh shim is on PATH, gh refuses an agent session the human's login (`agent-bot: ... refusing stock human gh`). The install and `setup gh` are then human-Terminal steps: stop and ask the owner to run them. Do not run `gh auth login`. The installer reports this case instead of asking for a login.
-
-If brew is installed but owned by another admin-group user (typically `admin`),
-the installer leaves that ownership in place and runs mutating brew commands as
-that owner through the macOS authorization dialog. It never `chown`s the prefix
-to a non-admin invoking user.
-
-GeniusBar, `agent-bot` and `agent-comms` are not part of this install: the owner installs GeniusBar by hand and uses its **Command-line tools…** for the two CLIs. Do not install or repair them through managed-machine.
+The installer taps `true-line/agent-bot-machine` and installs its public formula. If an existing Homebrew installation belongs to another administrator, macOS requests authorization to run Homebrew as its owner. The installer reports the installed version. Use `managed-machine --update` for public Machine updates. Organization bootstrap is a separate operation that requires the owner's configuration.
 
 ## If the install fails
 
@@ -158,7 +142,7 @@ Catalog-only harnesses have no script; `managed-machine setup <name>` resolves c
 
 ## Dependencies
 
-- Dotfiles/config sourced from a persistent private checkout under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise; the brew-bundled copy is read-only seed data
+- Optional organization bootstrap reads dotfiles and configuration from a separately configured checkout under `$XDG_DATA_HOME/managed-machine/` when set, or `~/.local/share/managed-machine/` otherwise.
 - local-bin kept at the pinned ref from `managed-machine-config/local-bin.ref`
 - No secrets in repo; auth/keys generated per machine or from macOS Keychain
 

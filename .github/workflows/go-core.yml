@@ -25,6 +25,9 @@ on:
       - 'VERSION'
       - 'LICENSE'
       - 'Formula/**'
+      - 'install.sh'
+      - 'install-core.sh'
+      - 'install-core.ps1'
       - '.github/workflows/go-core.yml'
       - 'legacy/**'
       - 'scripts/**'
@@ -74,7 +77,7 @@ jobs:
           fi
           changed="$(git diff --name-only HEAD^1 HEAD)"
           echo "changed files:"; echo "$changed"
-          re='^(cmd/|internal/|keyd/|Formula/|legacy/|scripts/|tests/)|^(go\.mod|go\.sum|VERSION|LICENSE|\.github/workflows/go-core\.yml)$'
+          re='^(cmd/|internal/|keyd/|Formula/|legacy/|scripts/|tests/)|^(go\.mod|go\.sum|install\.sh|install-core\.(sh|ps1)|VERSION|LICENSE|\.github/workflows/go-core\.yml)$'
           if printf '%s\n' "$changed" | grep -Eq "$re"; then go=true; else go=false; fi
           echo "go=$go" >> "$GITHUB_OUTPUT"; echo "go=$go"
 
@@ -185,9 +188,14 @@ jobs:
         run: |
           cargo test --locked --bin agent-bot-keyd server::tests::foreign_presence_item_survives_refused_owner_request -- --ignored --exact
           cargo test --locked --bin agent-bot-keyd tests::presence_key_marks_a_readable_item_with_untrusted_access -- --ignored --exact
-      - name: Test the prepared Homebrew formula on macOS
+      - name: Test the public installer and prepared Homebrew formula on macOS
         if: matrix.os == 'darwin'
-        run: (cd "$RUNNER_TEMP" && bash "$GITHUB_WORKSPACE/tests/formula-core.test.sh")
+        working-directory: ${{ runner.temp }}
+        run: |
+          bash "$GITHUB_WORKSPACE/tests/install-fetch.test.sh"
+          bash "$GITHUB_WORKSPACE/tests/install-docs.test.sh"
+          bash "$GITHUB_WORKSPACE/tests/public-fleet-opt-in.test.sh"
+          bash "$GITHUB_WORKSPACE/tests/formula-core.test.sh"
       - name: Formatting
         run: |
           unformatted="$(gofmt -l .)"
@@ -568,10 +576,23 @@ jobs:
           bash tests/host-state-characterization.test.sh | tee -a f01-compat.txt
           bash tests/catalog-characterization.test.sh | tee -a f01-compat.txt
           bash tests/fleet-cutover-characterization.test.sh | tee -a f01-compat.txt
+      - name: Build unsigned keyd for the macOS Homebrew package test
+        if: matrix.os == 'darwin'
+        working-directory: keyd
+        env:
+          RUSTUP_TOOLCHAIN: "1.96.1"
+          CARGO_TARGET_DIR: ${{ runner.temp }}/brew-test-keyd
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          cargo build --release --locked --bin agent-bot-keyd
       - name: S6 release gate (${{ matrix.target }})
         run: |
           version="$(tr -d '[:space:]' <VERSION)"
-          compat=(); [ -f f01-compat.txt ] && compat=(-compat f01-compat.txt)
+          options=()
+          if [[ -f f01-compat.txt ]]; then options+=(-compat f01-compat.txt); fi
+          if [[ "${{ matrix.os }}" == darwin ]]; then
+            options+=(-homebrew-test-keyd "$RUNNER_TEMP/brew-test-keyd/release/agent-bot-keyd")
+          fi
           go build -o "./mm-walkthrough$(go env GOEXE)" ./cmd/mm-walkthrough
           ./mm-walkthrough release \
             -dist dist \
@@ -579,7 +600,7 @@ jobs:
             -target '${{ matrix.target }}' \
             -source-revision '${{ github.sha }}' \
             -evidence "release-gate-${{ matrix.os }}-${{ matrix.arch }}.json" \
-            ${compat[@]+"${compat[@]}"}
+            ${options[@]+"${options[@]}"}
       - name: Attach the release gate evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

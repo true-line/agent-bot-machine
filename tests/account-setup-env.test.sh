@@ -15,6 +15,7 @@ cp "$ROOT/setup-bin" "$TEMP/runtime/setup-bin"
 cp "$ROOT/setup-zsh-functions" "$TEMP/runtime/setup-zsh-functions"
 source "$ROOT/lib/account-setup.sh"
 seed="$TEMP/runtime/managed-machine-config"
+export MANAGED_MACHINE_CONFIG_REPO_URL="https://fleet.example.invalid/config.git"
 binseed="$TEMP/runtime/local-bin"
 for name in .zshrc .zprofile .zshenv; do
     printf 'export FIXTURE_SHELL=1\n' >"$seed/dotfiles/zsh/$name"
@@ -74,8 +75,22 @@ git -C "$fnseed" -c commit.gpgsign=false commit -qm newer
 git -C "$fnseed" branch -M main
 printf 'v0.1.0\n' >"$seed/zsh-functions.ref"
 git init -q "$seed"
+git -C "$seed" remote add origin "$MANAGED_MACHINE_CONFIG_REPO_URL"
 git -C "$seed" add .
 git -C "$seed" -c commit.gpgsign=false commit -qm config
+# A nearby checkout does not select a fleet on a fresh install.
+(
+    unset MANAGED_MACHINE_CONFIG_REPO_URL
+    result=0; account_config_source "$TEMP/runtime" >/dev/null 2>&1 || result=$?
+    [[ "$result" == 75 ]]
+    result=0; account_prepare_config "$TEMP/runtime" >/dev/null 2>&1 || result=$?
+    [[ "$result" == 75 && ! -e "$HOME/.local" ]]
+)
+(
+    export MANAGED_MACHINE_CONFIG_REPO_URL=https://other.example.invalid/fleet
+    status=0; account_config_source "$TEMP/runtime" >/dev/null 2>&1 || status=$?
+    [[ "$status" == 75 && ! -e "$HOME/.local" ]]
+)
 [[ "$(account_config_source "$TEMP/runtime")" == "$seed" ]]
 [[ ! -e "$HOME/.local" ]]
 printf 'exit 99\n' >"$TEMP/inherited-bash-env"
@@ -100,6 +115,13 @@ mkdir -p "$HOME/.local/bin" "$TEMP/shared"
 printf 'shared executable\n' >"$TEMP/shared/agent-bot"
 ln -s "$TEMP/shared/agent-bot" "$HOME/.local/bin/agent-bot"
 ln -s /unreadable/human/private-tool "$HOME/.local/bin/unrelated-tool"
+(
+    export LOCAL_BIN_REPO=https://other.example.invalid/tools ZSH_FUNCTIONS_REPO="$TEMP/no-such-checkout"
+    status=0; account_prepare_local_bin "$TEMP/runtime" >/dev/null 2>&1 || status=$?
+    [[ "$status" == 75 && ! -e "$HOME/installer-ran" ]]
+    status=0; account_prepare_zsh_functions "$TEMP/runtime" >/dev/null 2>&1 || status=$?
+    [[ "$status" == 75 && ! -e "$HOME/zf-installer-ran" ]]
+)
 account_prepare_local_bin "$TEMP/runtime"
 [[ "$(readlink "$HOME/.local/bin/agent-bot")" == "$TEMP/shared/agent-bot" ]]
 [[ "$(readlink "$HOME/.local/bin/unrelated-tool")" == /unreadable/human/private-tool ]]
@@ -108,6 +130,7 @@ account_prepare_local_bin "$TEMP/runtime"
 [[ "$(git -C "$binseed" rev-parse HEAD)" == "$seed_head" ]]
 [[ -z "$(git -C "$binseed" status --porcelain)" ]]
 [[ "$(git -C "$HOME/.local/share/managed-machine/local-bin/$pin" rev-parse HEAD)" == "$pin" ]]
+[[ "$(git -C "$HOME/.local/share/managed-machine/local-bin/$pin" remote get-url origin)" == "$binseed" ]]
 account_prepare_zsh_functions "$TEMP/runtime"
 [[ "$(git -C "$HOME/.local/share/managed-machine/zsh-functions/$fnpin" rev-parse HEAD)" == "$fnpin" ]]
 [[ -e "$HOME/zf-installer-ran" ]]
@@ -119,6 +142,15 @@ if [[ -x /opt/homebrew/bin/brew || -x /usr/local/bin/brew ]]; then
 else
     ! grep -qxF '# BEGIN brew' "$ZDOTDIR/.zshenv"
 fi
+# Old account-managed checkouts retain their immutable pin across public-only
+# package upgrades, even after legacy bundled sources disappear.
+mkdir -p "$TEMP/upgraded/runtime"
+cp -R "$ROOT/lib" "$TEMP/upgraded/runtime/lib"
+cp "$ROOT/setup-bin" "$ROOT/setup-zsh-functions" "$TEMP/upgraded/runtime"
+account_prepare_local_bin "$TEMP/upgraded/runtime"
+account_prepare_zsh_functions "$TEMP/upgraded/runtime"
+[[ "$(git -C "$HOME/.local/share/managed-machine/local-bin/$pin" rev-parse HEAD)" == "$pin" ]]
+[[ "$(git -C "$HOME/.local/share/managed-machine/zsh-functions/$fnpin" rev-parse HEAD)" == "$fnpin" ]]
 export XDG_DATA_HOME="$HOME/xdg"
 account_prepare_zsh_functions "$TEMP/runtime"
 [[ -e "$XDG_DATA_HOME/zsh/functions/stub_fn" ]] || { echo 'FAIL: XDG functions dir missed' >&2; exit 1; }
@@ -229,7 +261,7 @@ printf 'missing-tag\n' >"$CONFIG_REPO_ROOT/local-bin.ref"
 status=0
 account_prepare_local_bin "$TEMP/runtime" 2>"$TEMP/pending" || status=$?
 [[ "$status" == 75 ]]
-grep -q 'update managed-machine bundled local-bin' "$TEMP/pending"
+grep -q 'set LOCAL_BIN_REPO to an offline checkout' "$TEMP/pending"
 printf 'main\n' >"$CONFIG_REPO_ROOT/local-bin.ref"
 status=0
 account_prepare_local_bin "$TEMP/runtime" 2>/dev/null || status=$?
@@ -243,7 +275,7 @@ printf 'missing-tag\n' >"$CONFIG_REPO_ROOT/zsh-functions.ref"
 status=0
 account_prepare_zsh_functions "$TEMP/runtime" 2>"$TEMP/zf-pending" || status=$?
 [[ "$status" == 75 ]]
-grep -q 'update managed-machine bundled zsh-functions' "$TEMP/zf-pending"
+grep -q 'set ZSH_FUNCTIONS_REPO to an offline checkout' "$TEMP/zf-pending"
 printf 'main\n' >"$CONFIG_REPO_ROOT/zsh-functions.ref"
 status=0
 account_prepare_zsh_functions "$TEMP/runtime" 2>/dev/null || status=$?
@@ -279,7 +311,27 @@ if LOCAL_BIN_DIR="$binseed" account_prepare_local_bin "$TEMP/runtime" 2>/dev/nul
 mkdir -p "$HOME/bad"
 ln -s "$TEMP" "$HOME/bad/escape"
 if XDG_DATA_HOME="$HOME/bad/escape" CONFIG_REPO_ROOT= account_prepare_config "$TEMP/runtime" 2>/dev/null; then exit 1; fi
-mkdir -p "$TEMP/dev/runtime" "$TEMP/dev/managed-machine-config/.git"
+mkdir -p "$TEMP/dev/runtime"
+git init -q "$TEMP/dev/managed-machine-config"
+git -C "$TEMP/dev/managed-machine-config" remote add origin "$MANAGED_MACHINE_CONFIG_REPO_URL"
 [[ "$(CONFIG_REPO_ROOT= XDG_DATA_HOME="$HOME/unused" account_config_source "$TEMP/dev/runtime")" == "$TEMP/dev/managed-machine-config" ]]
 [[ ! -e "$HOME/unused" ]]
+# A local fleet catalog can configure an account without a remote, dotfiles,
+# local-bin, zsh-functions, or a package-manager seed.
+(
+    export HOME="$TEMP/public-account" CONFIG_REPO_ROOT="$TEMP/public-account/fleet"
+    unset MANAGED_MACHINE_CONFIG_REPO_URL XDG_DATA_HOME ZDOTDIR LOCAL_BIN_DIR ZSH_FUNCTIONS_DIR
+    mkdir -p "$CONFIG_REPO_ROOT"
+    git init -q "$CONFIG_REPO_ROOT"
+    printf '{"apps":[]}\n' >"$CONFIG_REPO_ROOT/apps.json"
+    git -C "$CONFIG_REPO_ROOT" add apps.json
+    git -C "$CONFIG_REPO_ROOT" -c commit.gpgsign=false commit -qm 'public catalog'
+    printf 'alias keep=true\n' >"$HOME/.zshrc"
+    account_prepare_environment "$TEMP/runtime" >/dev/null
+    [[ -d "$HOME/.local/bin" && ! -e "$HOME/.config/local-bin" ]]
+    [[ ! -e "$HOME/.config/managed-machine/local-bin.manifest" ]]
+    [[ ! -e "$HOME/.config/managed-machine/zsh-functions.manifest" ]]
+    grep -qxF 'alias keep=true' "$HOME/.zshrc"
+    grep -qxF '# BEGIN local-bin' "$HOME/.zshenv"
+)
 printf 'account setup environment tests passed\n'
