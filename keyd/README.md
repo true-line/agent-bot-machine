@@ -86,8 +86,7 @@ refuses them rather than adopt them:
   key set. Removing the item returns it to "never approved", and the owner
   records their keys again with `agent-bot owner enroll`.
 
-All three are ordinary login-keychain generic passwords under service
-`agent-bot.keyd`, removable with `security delete-generic-password`.
+These records are login Keychain generic passwords under service `agent-bot.keyd`.
 
 ## Sockets
 
@@ -221,10 +220,9 @@ pin but never stand in for one. When the two disagree the owner settles it
 through the administrator dialog, and only a refusal leaves the action refused
 (#753).
 
-When nobody can be asked here (no GUI session, or no login password), keyd
-answers error `-32001`, and agent-bot falls back to its administrator dialog.
-A person's cancel, failure or timeout is error `-32000`, and agent-bot does
-not ask again.
+When the Mac cannot ask its owner (for example, there is no GUI session),
+keyd returns `-32001` and Identity 0.15.20 refuses the routine owner action.
+Cancelling, failing or timing out during the owner prompt returns `-32000`.
 
 ## The owner's statement keys
 
