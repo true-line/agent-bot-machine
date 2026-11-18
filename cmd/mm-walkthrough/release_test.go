@@ -933,6 +933,70 @@ exit 1
 	}
 }
 
+// Exercise the probe with the packaged shell dispatch on Unix, including
+// paths with spaces and the opt symlink that Homebrew uses on macOS.
+func TestInstalledUpdateEntry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Homebrew installer uses Bash")
+	}
+	repo, err := findReleaseRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	h := &releaseHarness{
+		installHarness: &installHarness{root: root, log: filepath.Join(root, "guard.log")},
+		repoRoot:       repo, upgradeVer: "0.12.1",
+	}
+	if err := installGateSentinelsFor(filepath.Join(root, "sentinels"), h.log, releaseSentinels); err != nil {
+		t.Fatal(err)
+	}
+	keg := filepath.Join(root, "Machine keg")
+	if err := copyTree(filepath.Join(repo, "legacy"), filepath.Join(keg, "libexec", "legacy")); err != nil {
+		t.Fatal(err)
+	}
+	opt := filepath.Join(root, "opt link")
+	if err := os.Symlink(keg, opt); err != nil {
+		t.Fatal(err)
+	}
+	installer, err := os.ReadFile(filepath.Join(repo, "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed := filepath.Join(keg, "libexec", "install.sh")
+	if err := os.WriteFile(installed, installer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	actual := filepath.Join(keg, "libexec", "legacy", "bin", "managed-machine")
+	if err := h.checkInstalledUpdateEntry(opt, actual, root); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(h.log); !os.IsNotExist(err) && (err != nil || len(got) != 0) {
+		t.Fatalf("unexpected guarded commands: %q (%v)", got, err)
+	}
+
+	// An identical script at a different path and the right script without
+	// --update both emit the expected platform error. Neither proves dispatch.
+	other := filepath.Join(root, "other.sh")
+	if err := os.WriteFile(other, installer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, entry string }{
+		{"wrong script", `exec /bin/bash "$(dirname "$0")/other.sh" "$@"`},
+		{"missing argument", `exec /bin/bash "$(dirname "$0")/Machine keg/libexec/install.sh"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := filepath.Join(root, "incorrect-dispatcher")
+			if err := writeExecutableAtomically(bin, []byte("#!/bin/sh\n"+tc.entry+"\n")); err != nil {
+				t.Fatal(err)
+			}
+			if err := h.checkInstalledUpdateEntry(opt, bin, root); err == nil {
+				t.Fatal("incorrect dispatch passed")
+			}
+		})
+	}
+}
+
 // installFakeBrewForTest writes a self-contained fake `brew` script under a
 // temporary Homebrew prefix inside t.TempDir() so `upgrade-from-bash`,
 // `public-package`, and `dispatcher` can be unit-tested end-to-end on macOS
