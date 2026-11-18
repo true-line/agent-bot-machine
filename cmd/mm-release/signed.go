@@ -95,8 +95,8 @@ func repackCmd(args []string, stdout io.Writer) error {
 }
 
 // readTree takes each file's mode from the unsigned archive rather than the
-// filesystem, which on Windows has no executable bit; files signing added are
-// 0644.
+// filesystem, which on Windows has no executable bit. The added custody helper
+// is private to the Homebrew prefix owner.
 func readTree(root string, unsigned map[string]archiveEntry) ([]archiveEntry, error) {
 	var entries []archiveEntry
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -126,7 +126,7 @@ func readTree(root string, unsigned map[string]archiveEntry) ([]archiveEntry, er
 		if prev, ok := unsigned[name]; ok {
 			mode = prev.Mode
 		} else if name == "agent-bot-keyd" {
-			mode = 0o755
+			mode = 0o700
 		}
 		entries = append(entries, archiveEntry{Name: name, Mode: mode, Data: data})
 		return nil
@@ -209,6 +209,9 @@ func verifySignedCmd(args []string, stdout io.Writer) error {
 }
 
 func compareSignedDarwin(unsigned, signed map[string]archiveEntry, team string) error {
+	if helper, ok := signed["agent-bot-keyd"]; ok && helper.Mode != 0o700 {
+		return fmt.Errorf("agent-bot-keyd: mode %#o, want 0700 for admin-only custody", helper.Mode)
+	}
 	for name, u := range unsigned {
 		s, ok := signed[name]
 		if !ok {

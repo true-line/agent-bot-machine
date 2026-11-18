@@ -17,6 +17,7 @@ type Caller struct {
 	Home           string
 	RegisteredHome string
 	PrefixOwner    string
+	DarwinAdmin    bool
 	Env            map[string]string
 }
 

@@ -390,7 +390,7 @@ d3_install_block = """  def install
       bin.install "managed-machine"
       chmod 0755, bin / "managed-machine"
       bin.install "agent-bot-keyd"
-      chmod 0755, bin / "agent-bot-keyd"
+      chmod 0700, bin / "agent-bot-keyd"
     end
     bin.install_symlink "managed-machine" => "agent-machine"
 
@@ -403,6 +403,10 @@ d3_install_block = """  def install
       commit = Utils.safe_popen_read("git", "-C", buildpath, "rev-parse", "HEAD").strip
       (libexec / "RELEASE_COMMIT").write "#{commit.match?(/\\A\\h{40}\\z/) ? commit : "unknown"}\\n"
     end
+  end
+
+  def post_install
+    chmod 0700, bin / "agent-bot-keyd"
   end
 
   test do"""
@@ -423,7 +427,7 @@ d3_test_block = """  test do
     assert_match "managed-machine", help_output
     assert_match "status", help_output
     assert_match "[legacy] adopt", help_output
-    assert_predicate bin/"agent-bot-keyd", :executable?
+    assert_equal 0700, (bin/"agent-bot-keyd").stat.mode & 07777
     assert_predicate libexec/"legacy/setup-hostname", :executable?
     assert_predicate libexec/"scripts/update", :executable?
 
@@ -545,7 +549,8 @@ for snippet in (
     'bin.install "managed-machine"',
     'chmod 0755, bin / "managed-machine"',
     'bin.install "agent-bot-keyd"',
-    'assert_predicate bin/"agent-bot-keyd", :executable?',
+    'chmod 0700, bin / "agent-bot-keyd"',
+    'assert_equal 0700, (bin/"agent-bot-keyd").stat.mode & 07777',
     'bin.install_symlink "managed-machine" => "agent-machine"',
     'cp "VERSION", legacy / "VERSION"',
     'assert_match "[legacy] adopt", help_output',

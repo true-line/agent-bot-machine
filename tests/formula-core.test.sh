@@ -208,6 +208,7 @@ for snippet in (
     'bin.install "managed-machine"',
     'chmod 0755, bin / "managed-machine"',
     'bin.install "agent-bot-keyd"',
+    'chmod 0700, bin / "agent-bot-keyd"',
     'bin.install_symlink "managed-machine" => "agent-machine"',
     'cp "VERSION", legacy / "VERSION"',
     'libexec.install "VERSION"',
@@ -460,7 +461,11 @@ Dir.chdir(post_build) do
   raise "expected libexec/legacy/bin/managed-machine to be executable" unless (f.libexec / "legacy/bin/managed-machine").executable?
   raise "expected libexec/scripts/update shim to be executable" unless (f.libexec / "scripts/update").executable?
   helper = f.bin / "agent-bot-keyd"
+  raise "expected private installed helper" unless (helper.stat.mode & 0o7777) == 0o700
   raise "expected packaged executable helper" unless helper.executable? && helper.read == "fixture keyd\n"
+  File.chmod(0o755, helper)
+  f.post_install
+  raise "expected private helper after post_install" unless (helper.stat.mode & 0o7777) == 0o700
   f.instance_eval(&ManagedMachine.test_block)
 end
 

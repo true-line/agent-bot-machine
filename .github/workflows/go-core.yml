@@ -194,6 +194,11 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test -count=1 ./...
+      - name: Check custody helper access across macOS accounts
+        if: matrix.os == 'darwin'
+        env:
+          MM_KEYD_CUSTODY_TEST: '1'
+        run: bash tests/keyd-custody-macos.test.sh
       - name: Machine daemon phase script
         run: bash tests/machine-daemon.test.sh
       - name: Build the native binary

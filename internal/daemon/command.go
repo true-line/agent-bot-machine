@@ -43,6 +43,9 @@ HQ's agent-daemon key is the intended caller: pair --enroll HEX
 --fingerprint HEX --client agent-daemon enrolls it and binds it to the
 dedicated HQ account when the machine has one, or to --user NAME. A bound
 key is accepted only from that account; uid=any means it is not bound.
+On macOS pair --pin-owner BASE64 sets the independently verified owner
+public key once. Subsequent HQ enrollment requires --owner-challenge,
+then --owner-proof JSON for that challenge from the owner approval client.
 The terminal client is a debug tool and is off by default. install --debug
 turns it on, and install without --debug turns it off again. While it is
 on, the next human status mints client.key at home and the daemon adopts
@@ -59,15 +62,18 @@ description. Nothing is registered with a system service manager.`,
 	}
 }
 
-func run(deps Deps, ctx cli.Context, args []string) cli.Result {
+func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	var verb, enroll, fingerprint, clientName, userName string
 	var enrollSet, fingerprintSet, userSet, debug bool
+	var owner ownerPairOptions
 	clientName = "terminal"
 	if d := command.Parse(args, command.Spec{
 		Positional:     &verb,
 		PositionalName: "daemon verb",
-		Bools:          map[string]*bool{"--debug": &debug},
+		Bools:          map[string]*bool{"--debug": &debug, "--owner-challenge": &owner.challenge},
 		Values: map[string]command.Flag{
+			"--pin-owner":   {Value: &owner.pin, Set: &owner.pinSet},
+			"--owner-proof": {Value: &owner.proof, Set: &owner.proofSet},
 			"--enroll":      {Value: &enroll, Set: &enrollSet},
 			"--fingerprint": {Value: &fingerprint, Set: &fingerprintSet},
 			"--client":      {Value: &clientName},
@@ -98,6 +104,12 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if goos == "" {
 		goos = hostOS()
 	}
+	if owner.pinSet || owner.challenge || owner.proofSet {
+		if goos != "darwin" || verb != "pair" || (owner.pinSet && (enrollSet || fingerprintSet || userSet || clientName != "terminal" || owner.challenge || owner.proofSet)) ||
+			(!owner.pinSet && (!hqEnroll || (owner.challenge && owner.proofSet))) {
+			return cli.Result{Diagnostic: command.UsageErr("use pair --pin-owner KEY or pair --enroll HEX --fingerprint SHA --client agent-daemon with --owner-challenge or --owner-proof JSON on macOS")}
+		}
+	}
 	caller, err := deps.caller()
 	if verb != "status" && verb != "receipts" {
 		if err != nil {
@@ -106,7 +118,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		}
 		switch verb {
 		case "pair":
-			if enrollSet {
+			if enrollSet || owner.pinSet {
 				if msg := caller.Refuse(); msg != "" {
 					d := diag.New(diag.DaemonCallerRefused, msg)
 					return cli.Result{Diagnostic: &d}
@@ -214,6 +226,32 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "stopped")
 		return cli.Result{Records: []*output.Record{rec}}
 	case "pair":
+		if goos == "darwin" && (owner.pinSet || hqEnroll) {
+			// Serialize the first pin with legacy enrollment as well. Once a
+			// pin exists every HQ enrollment on this host needs owner presence.
+			if _, err := ensureStateDirAndPeers(stateDir(root)); err != nil {
+				return serviceFailed(err)
+			}
+			unlock, err := lockOwnerPairing(stateDir(root))
+			if err != nil {
+				return serviceFailed(err)
+			}
+			defer func() {
+				if err := unlock(); err != nil && result.Diagnostic == nil {
+					result = serviceFailed(fmt.Errorf("close owner enrollment lock: %w", err))
+				}
+			}()
+			existing, err := readOwnerPairState(stateDir(root))
+			if err != nil {
+				return serviceFailed(err)
+			}
+			if existing != nil || owner.pinSet || owner.challenge || owner.proofSet {
+				if caller.PrefixOwner == "" || !caller.DarwinAdmin {
+					return ownerPairRefused("owner presence enrollment requires the Homebrew prefix owner's macOS admin account")
+				}
+				return ownerPair(root, caller, existing, owner, enroll, fingerprint, userName)
+			}
+		}
 		if enrollSet {
 			if fingerprint == "" {
 				return cli.Result{Diagnostic: command.UsageErr("pair --enroll needs --fingerprint")}

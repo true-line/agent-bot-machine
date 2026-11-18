@@ -60,6 +60,41 @@ direction (#446) still applies: no `.app` bundle, no Secure Enclave, no
 ACL as the login-keychain design; it is created and unlocked in-process so
 the daemon can pair without a GUI keychain prompt.
 
+### Owner approval for a new HQ pairing
+
+The owner approval client runs in the signed-in user session and uses a separate
+Secure Enclave key. Machine verifies its proof in the Homebrew prefix owner's
+admin account. The Machine daemon continues to use its dedicated keychain for
+its own Ed25519 identity. [D4 and the cross-account channel](cross-account-channel.md#s5--agent-bot-is-the-control-plane-other-repos-p7p8)
+
+For a fresh enrollment obtain the owner's P-256 public key directly from the
+independently verified, provisioned owner client. The prefix owner runs
+`managed-machine daemon pair --pin-owner BASE64`. Obtain HQ's Ed25519 public
+key and SHA-256 fingerprint from the provisioned HQ service. In the prefix
+owner's account run:
+
+```sh
+managed-machine daemon pair --client agent-daemon --enroll "$hq_key" --fingerprint "$hq_fingerprint" --owner-challenge
+```
+
+Pass the JSON challenge to the owner client. The owner checks the intended Machine
+and HQ identities and approves the pairing. Submit the resulting public proof
+as the prefix owner:
+
+```sh
+managed-machine daemon pair --client agent-daemon --enroll "$hq_key" --fingerprint "$hq_fingerprint" --owner-proof "$proof"
+```
+
+A challenge is valid for two minutes; requesting a replacement invalidates
+its predecessor. Machine checks the signature under its existing owner pin and
+binds the accepted HQ key to the local `_agent-bot-hq` UID. An existing HQ
+enrollment needs a separate authorized transition. Replacing the owner key
+also requires a separate rotation procedure. On hosts with an owner pin, only
+signed `status` and `receipts` from that HQ account are currently authorized.
+Additional verbs require their own action-specific presence checks before
+they can be enabled. A signature verifies possession of the pinned key;
+provisioning and physical qualification establish its hardware provenance.
+
 **Dedicated-keychain ACL threat model.** The self-only `SecAccessRef` ACL
 prevents silent reads or ACL changes by other processes running as the
 prefix owner. The keychain file is `0600` in a `0700` directory. Another local

@@ -49,3 +49,8 @@ The published implementation includes App-level custody, create-only
 imports and owner-pin attestations. Signed owner-challenge routes remain off
 in the runtime by default. Signer configuration and deployment are tracked
 separately in GeniusBar #336; this snapshot does not change owner settings.
+
+When syncing this crate, preserve Machine's macOS account gate in
+`src/account.rs` and its call at process entry. The custody binary runs
+under the administrator who owns Homebrew, including when invoked directly
+from a second copy of the release archive.

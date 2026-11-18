@@ -62,9 +62,10 @@ type Pairing struct {
 	Terminal ed25519.PublicKey
 	// AgentDaemon is HQ's key. When AgentDaemonBound is set the gate
 	// accepts it only from AgentDaemonUID, the HQ account.
-	AgentDaemon      ed25519.PublicKey
-	AgentDaemonUID   int
-	AgentDaemonBound bool
+	AgentDaemon           ed25519.PublicKey
+	AgentDaemonUID        int
+	AgentDaemonBound      bool
+	OwnerPresenceRequired bool
 }
 
 // Stage records a replacement key and keeps Live authoritative.
@@ -160,6 +161,16 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if id, msg := membersFields(req, raw); id != "" {
 		return req, id, msg
 	}
+	if g.Dir != "" {
+		pairing, err := loadPairing(g.Dir)
+		if err != nil {
+			return req, diag.DaemonUnknownKey, "pairing state could not be read: " + err.Error()
+		}
+		g.Pairing = pairing
+	}
+	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" {
+		return req, diag.DaemonPeerRefused, "this command requires its own owner presence proof"
+	}
 	if req.Verb == "bootstrap" {
 		if g.Dir == "" {
 			return req, diag.DaemonPeerRefused, "bootstrap needs daemon state"
@@ -168,13 +179,6 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 			return req, diag.DaemonPeerRefused, err.Error()
 		}
 		return req, "", ""
-	}
-	if g.Dir != "" {
-		pairing, err := loadPairing(g.Dir)
-		if err != nil {
-			return req, diag.DaemonUnknownKey, "pairing state could not be read: " + err.Error()
-		}
-		g.Pairing = pairing
 	}
 	if !g.Pairing.allows(ed25519.PublicKey(pub)) {
 		return req, diag.DaemonUnknownKey, "request key is not the live pairing"

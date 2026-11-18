@@ -97,7 +97,7 @@ class ManagedMachine < Formula
       chmod 0755, bin / "managed-machine"
       if File.exist?("agent-bot-keyd")
         bin.install "agent-bot-keyd"
-        chmod 0755, bin / "agent-bot-keyd"
+        chmod 0700, bin / "agent-bot-keyd"
       end
     end
     bin.install_symlink "managed-machine" => "agent-machine"
@@ -113,7 +113,14 @@ class ManagedMachine < Formula
     end
   end
 
+  def post_install
+    helper = bin/"agent-bot-keyd"
+    chmod 0700, helper if helper.exist?
+  end
+
   test do
+    helper = bin/"agent-bot-keyd"
+    assert_equal 0700, helper.stat.mode & 07777 if helper.exist?
     help_output = shell_output("#{bin}/managed-machine --help")
     assert_match "managed-machine", help_output
     assert_match "status", help_output

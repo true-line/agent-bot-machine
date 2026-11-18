@@ -248,7 +248,21 @@ func currentCaller(environ []string) (daemon.Caller, error) {
 	if err != nil {
 		return daemon.Caller{}, err
 	}
+	var darwinAdmin bool
+	if runtime.GOOS == "darwin" {
+		group, err := user.LookupGroup("admin")
+		groups, groupErr := os.Getgroups()
+		if err == nil && groupErr == nil && uid == os.Getuid() && uid == os.Geteuid() {
+			for _, id := range append(groups, os.Getegid()) {
+				if strconv.Itoa(id) == group.Gid {
+					darwinAdmin = true
+					break
+				}
+			}
+		}
+	}
 	return daemon.Caller{
+		DarwinAdmin:    darwinAdmin,
 		Username:       u.Username,
 		UID:            uid,
 		Home:           home,
