@@ -1866,9 +1866,8 @@ func (h *releaseHarness) runBashDispatcherConfigACT04(binPath, homeDir, brewPref
 	return ""
 }
 
-// checkInstalledUpdateEntry checks the bundled public installer, then uses a
-// Bash startup hook to stop the installed --update route at that script before
-// it can contact Homebrew or request any approval.
+// checkInstalledUpdateEntry runs the installed dispatcher and stops the actual
+// packaged installer at its platform check, before it can call Homebrew.
 func (h *releaseHarness) checkInstalledUpdateEntry(keg, bin, prefix string) error {
 	installer := filepath.Join(keg, "libexec", "install.sh")
 	installed, err := os.ReadFile(installer)
@@ -1888,19 +1887,26 @@ func (h *releaseHarness) checkInstalledUpdateEntry(keg, bin, prefix string) erro
 	if !bytes.Equal(source, installed) {
 		return errors.New("installed public installer differs from the candidate source")
 	}
-	hook := filepath.Join(h.root, "probe-update-entry.bash")
-	if err := write(hook, `if [[ "$0" -ef "$MM_EXPECT_INSTALLER" ]]; then
-    [[ $# == 1 && "$1" == --update ]] || exit 78
-    echo "public installer received --update"
-    exit 77
+	// The installer calls uname -s before looking up Homebrew, including its
+	// absolute /opt/homebrew path. Report an unsupported OS to stop there.
+	// Identify its invoking script by inode so opt symlinks and spaces work.
+	probe := filepath.Join(h.root, "sentinels", "uname")
+	if err := writeExecutableAtomically(probe, []byte(`#!/bin/bash
+parent=$(/bin/ps -ww -p "$PPID" -o command=)
+script=${parent#/bin/bash }
+if [[ $# == 1 && "$1" == -s && "$script" != "$parent" && "$script" == *' --update' && "${script% --update}" -ef "$MM_EXPECT_INSTALLER" ]]; then
+    echo 'walkthrough: packaged installer received --update' >&2
 fi
-`); err != nil {
+echo walkthrough-unsupported
+`)); err != nil {
 		return err
 	}
-	env := []string{"MANAGED_MACHINE_CONFIG_REPO_URL=", "BASH_ENV=" + hook, "MM_EXPECT_INSTALLER=" + installer}
+	defer os.Remove(probe)
+	env := []string{"MANAGED_MACHINE_CONFIG_REPO_URL=", "MM_EXPECT_INSTALLER=" + installer}
 	code, out, stderr := h.execManagedMachineClean(bin, filepath.Join(h.root, "public-update-home"), prefix, true, env, "--update")
-	if code != 77 || !strings.Contains(string(out), "public installer received --update") {
-		return fmt.Errorf("installed --update did not reach the public installer (exit %d): %s", code, firstLineOf(stderr, out))
+	if code != 1 || !bytes.Contains(stderr, []byte("walkthrough: packaged installer received --update")) ||
+		!bytes.Contains(stderr, []byte("Machine's macOS installer requires an Apple Silicon Mac.")) {
+		return fmt.Errorf("installed --update did not reach the public installer platform check (exit %d): %s", code, firstLineOf(stderr, out))
 	}
 	return nil
 }
