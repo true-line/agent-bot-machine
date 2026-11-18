@@ -85,11 +85,49 @@ pub const PRESENCE_ACCOUNT: &str = "presence-key";
 pub const OWNER_PINS_ACCOUNT: &str = "owner-pins";
 pub const APP_SERVICE: &str = "agent-bot.keyd.app";
 
-/// The marker on a store error meaning the item is there but is not one keyd
-/// controls (#753), as against a keychain that could not be read at all. A
-/// caller that can replace the item — `owner/pin` over the daemon key — may
-/// treat it as absent; a caller that cannot, fails on it.
-const UNTRUSTED_ITEM: &str = "not one agent-bot-keyd controls";
+/// A readable item with an ACL keyd rejects is distinct from a failed
+/// Keychain lookup. The presence-key CLI preserves that distinction for Identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoreError {
+    Untrusted { account: String },
+    Failed(String),
+}
+
+impl StoreError {
+    pub fn is_untrusted(&self) -> bool {
+        matches!(self, Self::Untrusted { .. })
+    }
+}
+
+impl std::fmt::Display for StoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Untrusted { account } => write!(
+                f,
+                "the keychain item for {account} is not one agent-bot-keyd controls, so its value was refused"
+            ),
+            Self::Failed(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<String> for StoreError {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+
+impl From<&str> for StoreError {
+    fn from(message: &str) -> Self {
+        Self::Failed(message.to_owned())
+    }
+}
+
+impl From<StoreError> for String {
+    fn from(error: StoreError) -> Self {
+        error.to_string()
+    }
+}
 
 pub fn item(agent_id: &str, app: &str) -> Result<(String, String), &'static str> {
     if !is_agent_id(agent_id) || !is_app_slug(app) {
@@ -110,7 +148,7 @@ pub fn app_item(app: &str) -> Result<(String, String), &'static str> {
 
 /// Raw generic-password access; everything above it is shared.
 pub trait Items: Send + Sync {
-    fn read(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, String>;
+    fn read(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, StoreError>;
     fn write(&self, service: &str, account: &str, value: &[u8]) -> Result<(), String>;
     /// Atomically adds an absent item; false means it already exists unchanged.
     fn insert(&self, service: &str, account: &str, value: &[u8]) -> Result<bool, String>;
@@ -205,8 +243,8 @@ impl Store {
         // the item would be the one refusing to run.
         let value = match self.items.read(PIN_SERVICE, PIN_ACCOUNT) {
             Ok(value) => value,
-            Err(error) if error.contains(UNTRUSTED_ITEM) => None,
-            Err(error) => return Err(error),
+            Err(StoreError::Untrusted { .. }) => None,
+            Err(error) => return Err(error.into()),
         };
         let Some(value) = value else {
             return Ok(None);
@@ -224,7 +262,7 @@ impl Store {
             .write(PIN_SERVICE, PIN_ACCOUNT, STANDARD.encode(key).as_bytes())
     }
 
-    fn stored_presence_seed(&self) -> Result<Option<[u8; 32]>, String> {
+    fn stored_presence_seed(&self) -> Result<Option<[u8; 32]>, StoreError> {
         let Some(mut value) = self.items.read(PIN_SERVICE, PRESENCE_ACCOUNT)? else {
             return Ok(None);
         };
@@ -234,11 +272,11 @@ impl Store {
         let seed: Result<[u8; 32], _> = raw.as_slice().try_into();
         raw.fill(0);
         seed.map(Some)
-            .map_err(|_| "presence key is malformed".to_owned())
+            .map_err(|_| "presence key is malformed".into())
     }
 
     /// keyd's presence signing seed, atomically made and kept on first use.
-    pub fn presence_seed(&self) -> Result<[u8; 32], String> {
+    pub fn presence_seed(&self) -> Result<[u8; 32], StoreError> {
         if let Some(seed) = self.stored_presence_seed()? {
             return Ok(seed);
         }
@@ -254,7 +292,7 @@ impl Store {
         inserted?;
         // A concurrent request won. Never replace its key or sign with ours.
         self.stored_presence_seed()?
-            .ok_or_else(|| "presence key disappeared during initialization".to_owned())
+            .ok_or_else(|| "presence key disappeared during initialization".into())
     }
 
     /// The digest and generation of the key set the owner last approved;
@@ -317,7 +355,7 @@ pub struct OwnerPins {
 /// can carry.
 #[cfg(target_os = "macos")]
 pub mod keychain {
-    use super::{Items, PIN_SERVICE, UNTRUSTED_ITEM};
+    use super::{Items, StoreError, PIN_SERVICE};
     use core_foundation::array::CFArray;
     use core_foundation::base::{CFType, TCFType};
     use core_foundation::data::CFData;
@@ -1003,12 +1041,6 @@ pub mod keychain {
         service != PIN_SERVICE
     }
 
-    fn untrusted(account: &str) -> String {
-        format!(
-            "the keychain item for {account} is {UNTRUSTED_ITEM}: any process in this account can change it, so its value was refused"
-        )
-    }
-
     /// The login keychain, or (tests) a keychain file of its own.
     pub struct Keychain {
         path: Option<PathBuf>,
@@ -1062,7 +1094,7 @@ pub mod keychain {
     }
 
     impl Items for Keychain {
-        fn read(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
+        fn read(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, StoreError> {
             no_prompts()?;
             let keychain = self.open()?;
             let Some((password, item)) = self.find(&keychain, service, account)? else {
@@ -1074,7 +1106,9 @@ pub mod keychain {
             // An item from before the access list was locked, or one another
             // process planted. Either way keyd did not make it.
             if !recreatable(service) {
-                return Err(untrusted(account));
+                return Err(StoreError::Untrusted {
+                    account: account.to_owned(),
+                });
             }
             let value = password.to_vec();
             drop(password);
@@ -1308,7 +1342,7 @@ pub mod tests {
     pub struct Memory(pub Arc<Mutex<MemoryItems>>);
 
     impl Items for Memory {
-        fn read(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
+        fn read(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, StoreError> {
             Ok(self
                 .0
                 .lock()
@@ -1641,9 +1675,7 @@ pub mod tests {
                 let refused = items.read(PIN_SERVICE, account);
                 assert!(refused.is_err(), "an untrusted {account} is not read");
                 assert!(
-                    refused
-                        .unwrap_err()
-                        .contains("not one agent-bot-keyd controls"),
+                    matches!(refused.unwrap_err(), StoreError::Untrusted { account: refused_account } if refused_account == account),
                     "and the refusal says why"
                 );
             }

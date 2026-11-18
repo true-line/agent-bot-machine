@@ -179,10 +179,12 @@ jobs:
         if: matrix.os == 'darwin'
         working-directory: keyd
         run: cargo test --locked
-      - name: Verify a refused presence request preserves the old Keychain item
+      - name: Verify presence refusals in disposable Keychains
         if: matrix.os == 'darwin'
         working-directory: keyd
-        run: cargo test --locked --bin agent-bot-keyd server::tests::foreign_presence_item_survives_refused_owner_request -- --ignored --exact
+        run: |
+          cargo test --locked --bin agent-bot-keyd server::tests::foreign_presence_item_survives_refused_owner_request -- --ignored --exact
+          cargo test --locked --bin agent-bot-keyd tests::presence_key_marks_a_readable_item_with_untrusted_access -- --ignored --exact
       - name: Test the prepared Homebrew formula on macOS
         if: matrix.os == 'darwin'
         run: (cd "$RUNNER_TEMP" && bash "$GITHUB_WORKSPACE/tests/formula-core.test.sh")

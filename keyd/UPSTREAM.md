@@ -32,6 +32,9 @@ Machine backports the 0.2.1 Keychain ACL change and its tests from
 [Identity commit a08a2004](https://github.com/true-line/agent-bot-identity/commit/a08a2004b8beee6f5aa4bb7c0f02b9f6efd15cbf),
 including the [Core Foundation parsing fix](https://github.com/true-line/agent-bot-identity/commit/8d83f8f8f332ef2a44c5241f9e73efeba8ee10d0).
 This updates the bundled helper version to 0.2.1 on the base described above.
+Machine also carries the typed Keychain read error from Identity
+`3ced60eb1cfbbcfd640876a1904f59089e530f4b` and the `presence-key` exit
+status from `484133d00d5224de882f0c36e0cdb190aa7e427d`.
 
 agent-bot-machine builds and signs this source with the agent-machine
 Developer ID. Fetching the JavaScript component alone does not update the

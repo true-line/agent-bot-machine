@@ -376,7 +376,7 @@ impl Keyd {
         let outcome = self
             .store
             .presence_seed()
-            .map_err(Refusal::Declined)
+            .map_err(|error| Refusal::Declined(error.to_string()))
             .and_then(|seed| {
                 self.consent.ask(&presence::reason(action))?;
                 // Stamped at the owner's answer, not the request: the prompt
@@ -1902,6 +1902,13 @@ mod tests {
             let mut candidate = keyd(true);
             candidate.consent = Box::new(Arc::clone(&consent));
             candidate.store = Store::new(Box::new(keychain::Keychain::at(path.to_owned())));
+            // macOS denies this lookup before keyd can inspect the ACL.
+            // A closed Keychain and an item bound to another code identity
+            // can both produce a read failure. Neither establishes that the
+            // item has an untrusted ACL.
+            let error = crate::presence_key_line(&candidate.store).unwrap_err();
+            assert!(!error.is_untrusted(), "{error}");
+            assert_eq!(crate::exit_status(&error), 1);
             let reply = presence(
                 &candidate,
                 json!({ "action": "pair the fixture machine", "nonce": "abcdefghijklmnopqrstuvwx" }),
@@ -2002,7 +2009,11 @@ mod tests {
         }
 
         impl Items for FreshPresence {
-            fn read(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
+            fn read(
+                &self,
+                service: &str,
+                account: &str,
+            ) -> Result<Option<Vec<u8>>, crate::store::StoreError> {
                 let value = self.items.read(service, account)?;
                 if service == PIN_SERVICE && account == PRESENCE_ACCOUNT && value.is_none() {
                     // Every first request observes absence before any can create it.

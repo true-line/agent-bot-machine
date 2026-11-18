@@ -178,6 +178,8 @@ the draft instead of creating a release.
   item. After the bundled helper refuses an owner request, the original writer
   must still find the same value. [Machine #507](https://github.com/true-line/agent-bot-machine/issues/507)
   tracks the owner-approved migration and subsequent public-key continuity check.
+  The same job checks that the CLI classifies a readable item with an untrusted
+  access list as exit 3 and preserves its original contents.
 
 ## Replay
 
