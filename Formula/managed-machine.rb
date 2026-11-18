@@ -13,8 +13,8 @@ class ManagedMachine < Formula
   homepage "https://github.com/true-line/agent-bot-machine"
   url "https://github.com/true-line/agent-bot-machine.git",
       using: :git,
-      tag:   "v0.11.5"
-  version "0.11.5"
+      tag:   "v0.12.1"
+  version "0.12.1"
   license "MIT"
 
   depends_on arch: :arm64
@@ -23,14 +23,13 @@ class ManagedMachine < Formula
   # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, S8 D3).
   # Installed as bin/managed-machine; legacy Bash tree staged under libexec/legacy.
   resource "core" do
-    url "https://github.com/true-line/agent-bot-machine/releases/download/v0.11.5/managed-machine_0.11.5_darwin_arm64.tar.gz"
-    sha256 "7a92990f3f63b500759ce50a52b53c4389dd8483720ea48f747a8b293c356f25"
+    url "https://github.com/true-line/agent-bot-machine/releases/download/v0.12.1/managed-machine_0.12.1_darwin_arm64.tar.gz"
+    sha256 "31223ec824721b226a6b7f3049dc19fc971b4e359ee729f0db79f3920314bc4e"
   end
 
   def install
     libexec.mkpath
-    # The 0.11.5 source archive contains the former fleet bootstrap.
-    libexec.install "install.sh" unless version.to_s == "0.11.5"
+    libexec.install "install.sh"
     legacy = libexec / "legacy"
     legacy.mkpath
 
@@ -56,10 +55,8 @@ class ManagedMachine < Formula
     resource("core").stage do
       bin.install "managed-machine"
       chmod 0755, bin / "managed-machine"
-      if File.exist?("agent-bot-keyd")
-        bin.install "agent-bot-keyd"
-        chmod 0700, bin / "agent-bot-keyd"
-      end
+      bin.install "agent-bot-keyd"
+      chmod 0700, bin / "agent-bot-keyd"
     end
     bin.install_symlink "managed-machine" => "agent-machine"
 
@@ -75,18 +72,16 @@ class ManagedMachine < Formula
   end
 
   def post_install
-    helper = bin/"agent-bot-keyd"
-    chmod 0700, helper if helper.exist?
+    chmod 0700, bin / "agent-bot-keyd"
   end
 
   test do
-    refute_predicate libexec/"install.sh", :exist? if version.to_s == "0.11.5"
-    helper = bin/"agent-bot-keyd"
-    assert_equal 0700, helper.stat.mode & 07777 if helper.exist?
+    assert_predicate libexec/"install.sh", :executable?
     help_output = shell_output("#{bin}/managed-machine --help")
     assert_match "managed-machine", help_output
     assert_match "status", help_output
     assert_match "[legacy] adopt", help_output
+    assert_equal 0700, (bin/"agent-bot-keyd").stat.mode & 07777
     assert_predicate libexec/"legacy/setup-hostname", :executable?
     assert_predicate libexec/"scripts/update", :executable?
 
