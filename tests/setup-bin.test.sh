@@ -273,9 +273,7 @@ ln -s /opt/homebrew/bin/agent-comms "$TEST_HOME/.local/bin/agent-comms"
 LOCAL_BIN_DIR="$ARCHIVE_DIR" run_setup >"$TEST_DIR/geniusbar-other.out"
 grep -Fq 'ran' "$INSTALL_LOG"
 
-# 12. In a post-P01 source checkout (<repo>/legacy), default sibling resolution
-# finds <repo>/../managed-machine-config and <repo>/../local-bin when neither
-# CONFIG_REPO_ROOT nor LOCAL_BIN_DIR is set.
+# 12. A sibling tool and config are used only when explicitly selected.
 CHECKOUT_WS="$TEST_DIR/checkout-ws"
 mkdir -p "$CHECKOUT_WS/managed-machine/legacy/lib"
 git init --quiet "$CHECKOUT_WS/managed-machine"
@@ -289,7 +287,14 @@ configure_test_repo "$CHECKOUT_WS/local-bin"
 git -C "$CHECKOUT_WS/local-bin" checkout --quiet v1.0.0
 rm -f "$TEST_HOME/.local/bin/agent-bot" "$TEST_HOME/.local/bin/agent-comms"
 : >"$INSTALL_LOG"
+if env -i HOME="$TEST_HOME" PATH="/usr/bin:/bin" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+    /bin/bash "$CHECKOUT_WS/managed-machine/legacy/setup-bin" >"$TEST_DIR/checkout-unselected.out" 2>&1; then
+    echo "unexpected automatic fleet selection" >&2
+    exit 1
+fi
+[[ ! -s "$INSTALL_LOG" ]]
 env -i HOME="$TEST_HOME" PATH="/usr/bin:/bin" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+    CONFIG_REPO_ROOT="$CHECKOUT_WS/managed-machine-config" LOCAL_BIN_DIR="$CHECKOUT_WS/local-bin" \
     /bin/bash "$CHECKOUT_WS/managed-machine/legacy/setup-bin" >"$TEST_DIR/checkout-sibling.out" 2>&1
 grep -Fq 'ran' "$INSTALL_LOG"
 grep -qxF "checkout=$(cd "$CHECKOUT_WS/local-bin" && pwd -P)" "$MANIFEST"

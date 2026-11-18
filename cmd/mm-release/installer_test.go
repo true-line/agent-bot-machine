@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -107,10 +108,8 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 	version, distDir := buildRepoReleaseDist(t)
 	formulaPath := filepath.Join(repoRoot, "Formula", "managed-machine.rb")
 
-	// 1. mm-release verify -dist distDir passes, and when a candidate R05 formula
-	//    is generated in t.TempDir() from the repository formula plus the R05
-	//    core resource patch content (never editing the repository file),
-	//    mm-release verify -require-pin passes against that generated formula.
+	// Verify the unsigned local release, then use its digest in a temporary
+	// copy of the formula. The committed formula pins the signed archive.
 	var outBuf, errBuf bytes.Buffer
 	if code := run([]string{"verify", "-dist", distDir}, &outBuf, &errBuf); code != 0 {
 		t.Fatalf("mm-release verify failed (exit %d): %s", code, errBuf.String())
@@ -123,14 +122,18 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 	baseFormulaText := strings.ReplaceAll(string(rawFormula), "\r\n", "\n")
 
 	wantCoreArchive := fmt.Sprintf("managed-machine_%s_darwin_arm64.tar.gz", version)
-	wantCoreURL := fmt.Sprintf("https://github.com/qwts/managed-machine/releases/download/v%s/%s", version, wantCoreArchive)
+	wantCoreURL := fmt.Sprintf("https://github.com/true-line/agent-bot-machine/releases/download/v%s/%s", version, wantCoreArchive)
 	darwinArchiveBytes, err := os.ReadFile(filepath.Join(distDir, wantCoreArchive))
 	if err != nil {
 		t.Fatal(err)
 	}
 	darwinSHA := sha256Hex(darwinArchiveBytes)
 
-	candidateFormulaText := applyR05FormulaPatch(t, baseFormulaText, wantCoreURL, darwinSHA)
+	archivePin := regexp.MustCompile(`(?m)^(\s*url "` + regexp.QuoteMeta(wantCoreURL) + `"\n\s*sha256 ")[0-9a-f]{64}"$`)
+	if !archivePin.MatchString(baseFormulaText) {
+		t.Fatalf("formula does not pin the public Darwin archive %q with SHA-256", wantCoreURL)
+	}
+	candidateFormulaText := archivePin.ReplaceAllString(baseFormulaText, "${1}"+darwinSHA+`"`)
 	candidateFormulaPath := filepath.Join(t.TempDir(), "managed-machine.rb")
 	if err := os.WriteFile(candidateFormulaPath, []byte(candidateFormulaText), 0o644); err != nil {
 		t.Fatal(err)
@@ -145,8 +148,6 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 	for _, snippet := range []string{
 		"depends_on arch: :arm64",
 		"depends_on macos: :sequoia",
-		`resource "managed-machine-config" do`,
-		`resource "local-bin" do`,
 		`resource "core" do`,
 		`url "` + wantCoreURL + `"`,
 		`(legacy / "bin").install "legacy/bin/managed-machine"`,
@@ -154,8 +155,6 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 		`legacy.install "legacy/lib"`,
 		`(legacy / "scripts").install Dir["legacy/scripts/*"]`,
 		`(legacy / "git-hooks").install Dir["legacy/git-hooks/*"]`,
-		`resource("managed-machine-config").stage(legacy / "managed-machine-config")`,
-		`resource("local-bin").stage(legacy / "local-bin")`,
 		`resource("core").stage`,
 		`bin.install "managed-machine"`,
 		`chmod 0755, bin / "managed-machine"`,
@@ -166,7 +165,13 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 		`shell_output("#{bin}/managed-machine version")`,
 	} {
 		if !strings.Contains(candidateFormulaText, snippet) {
-			t.Errorf("generated R05 candidate formula missing required snippet %q", snippet)
+			t.Errorf("candidate formula missing required snippet %q", snippet)
+		}
+	}
+
+	for _, name := range []string{"managed-machine-config", "local-bin"} {
+		if strings.Contains(baseFormulaText, `resource "`+name+`"`) {
+			t.Errorf("public formula fetches the private resource %q", name)
 		}
 	}
 
@@ -183,24 +188,11 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 	collapsed := !strings.Contains(baseFormulaText, transitional[0])
 	for _, snippet := range transitional {
 		if strings.Contains(candidateFormulaText, snippet) == collapsed {
-			t.Errorf("generated R05 candidate formula has a partial transitional block (collapsed=%v): %q", collapsed, snippet)
+			t.Errorf("candidate formula has a partial transitional block (collapsed=%v): %q", collapsed, snippet)
 		}
 	}
 
-	// 2. Verify install.sh has no Linux or Windows installer logic and keeps all
-	//    non-comment lines intact.
-	rawInstallSh, err := os.ReadFile(filepath.Join(repoRoot, "install.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	installShText := strings.ReplaceAll(string(rawInstallSh), "\r\n", "\n")
-	if !strings.Contains(installShText, "install-core.sh") || !strings.Contains(installShText, "install-core.ps1") {
-		t.Errorf("install.sh comments should reference install-core.sh and install-core.ps1")
-	}
-
-	// 3. Verify README.md documents the three channels per target (with the
-	//    macOS formula channel gaining the core resource in the v0.9.0 release PR)
-	//    and the manual managed-machine-config clone on Linux and Windows.
+	// The public guide identifies the install channel for each supported target.
 	rawReadme, err := os.ReadFile(filepath.Join(repoRoot, "README.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +200,6 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 	readmeText := string(rawReadme)
 	for _, want := range []string{
 		"darwin/arm64",
-		"v0.9.0",
 		"linux/amd64",
 		"linux/arm64",
 		"windows/amd64",
@@ -216,17 +207,14 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 		"Formula/managed-machine.rb",
 		"install-core.sh",
 		"install-core.ps1",
-		"managed-machine-config",
-		"XDG_DATA_HOME",
-		"LOCALAPPDATA",
 	} {
 		if !strings.Contains(readmeText, want) {
 			t.Errorf("README.md missing expected delivery documentation %q", want)
 		}
 	}
 
-	// 4. Verify both installer scripts exist at the repository root and carry the
-	//    required D4 contract elements without forbidden elevation or profile edits.
+	// Verify both installer scripts exist at the repository root and carry the
+	// required D4 contract elements without forbidden elevation or profile edits.
 	rawCoreSh, err := os.ReadFile(filepath.Join(repoRoot, "install-core.sh"))
 	if err != nil {
 		t.Fatal(err)
@@ -235,7 +223,7 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 	for _, want := range []string{
 		"#!/bin/sh",
 		"MANAGED_MACHINE_RELEASE_BASE",
-		"https://github.com/qwts/managed-machine/releases/latest/download",
+		`release_base="https://github.com/true-line/agent-bot-machine/releases/latest/download"`,
 		"SHA256SUMS",
 		"--proto '=https'",
 		"--proto-redir '=https'",
@@ -260,7 +248,7 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 		"$ReleaseBase",
 		"$Prefix",
 		"MANAGED_MACHINE_RELEASE_BASE",
-		"https://github.com/qwts/managed-machine/releases/latest/download",
+		`$ReleaseBase = "https://github.com/true-line/agent-bot-machine/releases/latest/download"`,
 		"SHA256SUMS",
 		"Get-FileHash",
 		"SHA256",
@@ -282,38 +270,6 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 			t.Errorf("install-core.ps1 contains forbidden construct %q", forbidden)
 		}
 	}
-}
-
-func applyR05FormulaPatch(t *testing.T, baseFormula, coreURL, coreSHA string) string {
-	t.Helper()
-	out := baseFormula
-	if !strings.Contains(out, "depends_on arch: :arm64") {
-		out = strings.Replace(out, "  license \"MIT\"\n", "  license \"MIT\"\n\n  depends_on arch: :arm64\n  depends_on macos: :sequoia\n", 1)
-	}
-	coreBlock := fmt.Sprintf("  # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, S8 D3).\n"+
-		"  # Installed as bin/managed-machine; legacy Bash tree staged under libexec/legacy.\n"+
-		"  resource \"core\" do\n"+
-		"    url %q\n"+
-		"    sha256 %q\n"+
-		"  end\n", coreURL, coreSHA)
-	if start := strings.Index(out, "  resource \"core\" do\n"); start >= 0 {
-		endRel := strings.Index(out[start:], "  end\n")
-		if endRel < 0 {
-			t.Fatalf("unterminated resource \"core\" block in Formula/managed-machine.rb")
-		}
-		end := start + endRel + len("  end\n")
-		inner := fmt.Sprintf("  resource \"core\" do\n    url %q\n    sha256 %q\n  end\n", coreURL, coreSHA)
-		out = out[:start] + inner + out[end:]
-	} else {
-		out = strings.Replace(out, "  # No depends_on — setup scripts handle their own deps (brew, gh, etc.)\n", coreBlock, 1)
-	}
-	if !strings.Contains(out, "(legacy / \"bin\").install \"legacy/bin/managed-machine\"") {
-		t.Fatalf("Formula/managed-machine.rb is missing S8 D3 install block `(legacy / \"bin\").install \"legacy/bin/managed-machine\"`")
-	}
-	if !strings.Contains(out, "#{bin}/managed-machine --version") {
-		t.Fatalf("Formula/managed-machine.rb is missing S8 D3 test assertion `#{bin}/managed-machine --version`")
-	}
-	return out
 }
 
 // extractTarGzBinary extracts the managed-machine binary bytes from a .tar.gz archive.

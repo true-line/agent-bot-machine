@@ -1,587 +1,147 @@
 #!/usr/bin/env bash
-# One-shot macOS (darwin/arm64) bootstrap installer for managed-machine.
-#
-# On macOS (darwin/arm64), the Homebrew formula (Formula/managed-machine.rb) is
-# the sole supported channel and installs the prebuilt Go core as
-# bin/managed-machine alongside the legacy macOS Bash tree and private seed
-# resources under libexec/legacy. On Linux (linux/amd64, linux/arm64) use
-# install-core.sh; on Windows (windows/amd64, windows/arm64) use
-# install-core.ps1.
-#
-# Installing needs qwts org access: the formula's managed-machine-config and
-# local-bin resources are private. Fetch the installer through an
-# authenticated GitHub CLI; execute it only after a successful download:
+# Install the public Machine Homebrew formula on Apple Silicon.
 #
 #   (
 #     installer="$(mktemp "${TMPDIR:-/tmp}/managed-machine-install.XXXXXX")" || exit 1
 #     trap 'rm -f "$installer"' EXIT
-#     if gh api -H "Accept: application/vnd.github.raw" repos/qwts/managed-machine/contents/install.sh >"$installer"; then
-#       bash "$installer"
-#     else
-#       fetch_status=$?
-#       echo "Error: installer download failed; nothing was executed. See gh's error above." >&2
-#       exit "$fetch_status"
-#     fi
+#     curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/true-line/agent-bot-machine/main/install.sh -o "$installer" &&
+#       /bin/bash "$installer"
 #   )
-#
-# Flow:
-#   1. Ensure Homebrew is installed. Prefix ownership stays with an admin-group
-#      user (typically `admin`); this installer never chown's it to the
-#      invoking user.
-#   2. Ensure gh is installed and authenticated, and wire gh as the git
-#      credential helper so private HTTPS clones work. No SSH key is created;
-#      SSH enrollment is the explicit `managed-machine ssh enroll` step.
-#   3. If managed-machine is already installed: ensure tap is present, update,
-#      and tell the user to use it directly.
-#   4. If not installed: tap over authenticated HTTPS, trust the tap when
-#      Homebrew requires it, install, and run managed-machine --bootstrap.
 set -euo pipefail
+export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 GIT_TERMINAL_PROMPT=0
 
-TAP="qwts/managed-machine"
-REPO_URL="https://github.com/qwts/managed-machine.git"
+TAP="true-line/agent-bot-machine"
+REPO_URL="https://github.com/true-line/agent-bot-machine.git"
+FORMULA="$TAP/managed-machine"
 
-err() { echo "Error: $*" >&2; }
+die() { echo "Error: $*" >&2; exit 1; }
 
-# Resolve brew prefix (common macOS locations).
-brew_prefix() {
-    if command -v brew >/dev/null 2>&1; then
-        brew --prefix
-    elif [[ -x /opt/homebrew/bin/brew ]]; then
-        /opt/homebrew/bin/brew --prefix
-    elif [[ -x /usr/local/bin/brew ]]; then
-        /usr/local/bin/brew --prefix
-    else
-        return 1
-    fi
-}
-
-# 1. Ensure Homebrew is present.
-# When /opt is admin-owned, the install must run as the preferred brew owner
-# (typically `admin`) via the authorization dialog, not as the invoking user.
-ensure_brew_installed() {
-    if command -v brew >/dev/null 2>&1; then
-        return 0
-    fi
-    # Check direct prefixes even if not on PATH
-    if [[ -x /opt/homebrew/bin/brew ]]; then
-        eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null)" || true
-        if command -v brew >/dev/null 2>&1; then
-            return 0
-        fi
-    fi
-    if [[ -x /usr/local/bin/brew ]]; then
-        eval "$(/usr/local/bin/brew shellenv 2>/dev/null)" || true
-        if command -v brew >/dev/null 2>&1; then
-            return 0
-        fi
-    fi
-    local owner current
-    owner="$(preferred_brew_owner)"
-    current="$(whoami)"
-    if [[ "$owner" != "$current" ]]; then
-        if ! command -v osascript >/dev/null 2>&1; then
-            err "Homebrew not installed and prefix should be owned by '$owner' — re-run from a GUI session so the administrator dialog can install as $owner."
-            exit 1
-        fi
-        echo "Homebrew not found. Installing as $owner (administrator dialog)..."
-        # install.sh has its own elevate helpers; use run_as_brew_owner-style elevation
-        # by invoking the brew installer as the owner via osascript
-        local owner_home
-        owner_home="$(/usr/bin/dscl . -read "/Users/$owner" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
-        if [[ -z "$owner_home" || ! -d "$owner_home" ]]; then
-            if [[ -x /opt/homebrew/bin/brew ]]; then
-                owner_home=/opt/homebrew/var/mm-home
-            elif [[ -x /usr/local/bin/brew ]]; then
-                owner_home=/usr/local/var/mm-home
-            else
-                owner_home=/tmp/mm-home-$owner
-            fi
-        fi
-        local sudo_owner
-        sudo_owner="$(sudo_user_arg "$owner")"
-        osascript \
-            -e 'on run argv' \
-            -e 'set lbl to item 1 of argv' \
-            -e 'set cmd to ""' \
-            -e 'repeat with i from 2 to count of argv' \
-            -e 'set cmd to cmd & quoted form of (item i of argv as text) & " "' \
-            -e 'end repeat' \
-            -e 'do shell script cmd with prompt ("managed-machine needs administrator access to " & lbl & ".") with administrator privileges' \
-            -e 'end run' \
-            "install Homebrew as $owner" /usr/bin/sudo -u "$sudo_owner" /usr/bin/env \
-            HOME="$owner_home" \
-            PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/dev/null
-    else
-        echo "Homebrew not found. Installing..."
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    fi
-    # Source brew shellenv so this script can use it immediately
-    local prefix
-    prefix="$(brew_prefix)" || {
-        err "could not locate brew after install"
-        exit 1
-    }
-    # shellcheck disable=SC1090
-    eval "$("$prefix/bin/brew" shellenv)"
-}
-
-# 2. Homebrew prefix stays with an admin-group owner. Never chown it to a
-# non-admin invoking user — that was the old installer, and it broke
-# multi-user prefixes owned by `admin`.
-prefix_owner() {
-    local prefix="$1"
-    local owner
-    owner="$(stat -f '%Su' "$prefix" 2>/dev/null || stat -c '%U' "$prefix" 2>/dev/null || true)"
-    owner="${owner//[()]/}"
-    printf '%s\n' "$owner"
-}
-
-resolve_owner_to_name() {
-    local owner="$1"
-    local clean="${owner//[()]/}"
-    if [[ "$clean" =~ ^[0-9]+$ ]]; then
-        local admin_uid
-        admin_uid="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
-        if [[ -n "$admin_uid" && "$clean" == "$admin_uid" ]]; then
-            printf 'admin\n'
-            return 0
-        fi
-        local resolved
-        resolved="$(id -nu "$clean" 2>/dev/null || true)"
-        if [[ -n "$resolved" && "$resolved" != "$clean" ]]; then
-            printf '%s\n' "$resolved"
-            return 0
-        fi
-        resolved="$(/usr/bin/dscl . -search /Users UniqueID "$clean" 2>/dev/null | /usr/bin/awk 'NR==1{print $1}' || true)"
-        if [[ -n "$resolved" && "$resolved" != "$clean" ]]; then
-            printf '%s\n' "$resolved"
-            return 0
-        fi
-    fi
-    printf '%s\n' "$owner"
-}
-
-sudo_user_arg() {
-    local user="$1"
-    local clean="${user//[()]/}"
-    if [[ "$clean" =~ ^[0-9]+$ ]]; then
-        local resolved
-        resolved="$(resolve_owner_to_name "$clean")"
-        if [[ "$resolved" != "$clean" && "$resolved" != "$user" ]]; then
-            printf '%s\n' "$resolved"
-            return 0
-        fi
-        # Fall back to numeric sudo syntax
-        printf '#%s\n' "$clean"
-        return 0
-    fi
-    printf '%s\n' "$user"
-}
-
-user_in_admin_group() {
-    local user="$1"
-    local clean="${user//[()]/}"
-    if [[ "$clean" =~ ^[0-9]+$ ]]; then
-        local admin_uid
-        admin_uid="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
-        if [[ -n "$admin_uid" && "$clean" == "$admin_uid" ]]; then
-            return 0
-        fi
-    fi
+in_admin_group() {
     local groups
-    groups="$(id -nG "$user" 2>/dev/null || true)"
-    [[ " $groups " == *" admin "* ]] && return 0
-    if [[ "$user" == "admin" && -d /Users/admin ]]; then
-        return 0
-    fi
-    if [[ "$clean" =~ ^[0-9]+$ ]]; then
-        local admin_uid2
-        admin_uid2="$(stat -f '%u' /Users/admin 2>/dev/null || true)"
-        if [[ -n "$admin_uid2" && "$admin_uid2" == "$clean" ]]; then
-            return 0
-        fi
-        local prefix_uid
-        prefix_uid="$(stat -f '%u' /opt/homebrew 2>/dev/null || stat -f '%u' /usr/local 2>/dev/null || stat -f '%u' /opt 2>/dev/null || true)"
-        if [[ -n "$prefix_uid" && "$prefix_uid" == "$clean" ]]; then
-            if [[ -d /Users/admin ]]; then
-                return 0
-            fi
-            local prefix_group
-            prefix_group="$(stat -f '%Sg' /opt/homebrew 2>/dev/null || stat -f '%Sg' /usr/local 2>/dev/null || stat -f '%Sg' /opt 2>/dev/null || true)"
-            [[ "$prefix_group" == "admin" ]] && return 0
-        fi
-    fi
-    return 1
+    groups="$(id -nG "$1")" || return 1
+    [[ " $groups " == *" admin "* ]]
 }
 
-preferred_brew_owner() {
-    if id -u admin >/dev/null 2>&1 && user_in_admin_group admin; then
-        printf 'admin\n'
-        return 0
-    fi
-    if [[ -d /Users/admin ]]; then
-        printf 'admin\n'
-        return 0
-    fi
-    # Also check prefix owner is admin-group (handles /opt when prefix not yet created)
-    local owner
-    owner="$(prefix_owner "$(brew_prefix 2>/dev/null || echo /opt/homebrew)" 2>/dev/null || true)"
-    if [[ -z "$owner" ]]; then
-        for p in /opt/homebrew /usr/local /opt; do
-            if [[ -e "$p" ]]; then
-                owner="$(stat -f '%Su' "$p" 2>/dev/null || true)"
-                owner="${owner//[()]/}"
-                [[ -n "$owner" ]] && break
-            fi
-        done
-    fi
-    if [[ -n "$owner" ]] && user_in_admin_group "$owner"; then
-        local resolved
-        resolved="$(resolve_owner_to_name "$owner")"
-        printf '%s\n' "$resolved"
-        return 0
-    fi
-    printf '%s\n' "$(whoami)"
+# Refresh only Machine's tap. Leave a locally modified, divergent or
+# differently sourced checkout for its administrator to reconcile.
+refresh_machine_tap() {
+    local dir="$1" repo_url="$2" owner_uid="$3" head branch origin dirty
+    [[ -d "$dir/.git" && ! -L "$dir/.git" ]] || die "Expected a Git checkout at $dir."
+    [[ "$(/usr/bin/stat -f '%u' "$dir")" == "$owner_uid" && "$(/usr/bin/stat -f '%u' "$dir/.git")" == "$owner_uid" ]] ||
+        die "The Homebrew administrator must own the Machine tap and its Git directory."
+    local git_cmd=(/usr/bin/git -c core.hooksPath=/dev/null -c credential.helper= -C "$dir")
+    [[ "$("${git_cmd[@]}" rev-parse --show-toplevel)" == "$dir" ]] || die "Invalid Machine tap directory."
+    origin="$("${git_cmd[@]}" remote get-url origin)"
+    [[ "${origin%.git}" == "${repo_url%.git}" ]] || die "Machine's tap must use the public remote $repo_url."
+    branch="$("${git_cmd[@]}" symbolic-ref --quiet --short HEAD)" || die "Machine's tap is on a detached commit."
+    [[ "$branch" == main ]] || die "Machine's tap must be on main to update."
+    dirty="$("${git_cmd[@]}" status --porcelain=v1 --untracked-files=all)"
+    [[ -z "$dirty" ]] || die "Machine's tap contains local changes. Resolve them before updating."
+    "${git_cmd[@]}" fetch --no-tags --no-recurse-submodules "$repo_url" refs/heads/main
+    head="$("${git_cmd[@]}" rev-parse --verify FETCH_HEAD^{commit})"
+    "${git_cmd[@]}" merge-base --is-ancestor HEAD "$head" || die "Machine's tap contains commits outside public main."
+    "${git_cmd[@]}" merge --ff-only "$head"
 }
 
-# Write the invoking user's gh token to a 600 file. A root helper (keep in
-# sync with lib/brew-github-auth-run) copies it into an owner-only dir and
-# runs brew as that owner so the token never appears in osascript/sudo argv.
-write_brew_github_auth_run() {
-    cat >"$1" <<'ROOT'
-#!/bin/sh
-# Keep in sync with lib/brew-github-auth-run. osascript admin and
-# sudo -H -u admin are login-less; the brew owner often has a stub home.
-# Do not inherit TMPDIR: the owner cannot traverse another user's /var/folders.
-# brew re-execs with env -i; GIT_CONFIG_* is dropped, so install ~/.gitconfig.
-set -eu
-PATH=/usr/sbin:/usr/bin:/bin
-TMPDIR=/tmp
-export PATH TMPDIR
-if [ $# -lt 3 ]; then
-    echo "Usage: brew-github-auth-run <owner> <tokenfile> <command> [args...]" >&2
-    exit 1
-fi
-owner=$1
-tokenfile=$2
-shift 2
-if [ ! -r "$tokenfile" ]; then
-    echo "Error: GitHub token file is not readable" >&2
-    exit 1
-fi
-owner_home=$(/usr/bin/dscl . -read "/Users/$owner" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')
-if [ -z "$owner_home" ] || [ ! -d "$owner_home" ]; then
-    if [ -x /opt/homebrew/bin/brew ]; then
-        owner_home=/opt/homebrew/var/mm-home
-    elif [ -x /usr/local/bin/brew ]; then
-        owner_home=/usr/local/var/mm-home
+install_formula() {
+    local brew="$1" tap="$2" repo_url="$3" formula="$4" owner_uid="$5"
+    local repo dir commands formulae
+    repo="$("$brew" --repository)"
+    [[ -n "$repo" ]] || die "Could not locate the Homebrew repository."
+    repo="$(cd "$repo" && pwd -P)"
+    dir="$repo/Library/Taps/true-line/homebrew-agent-bot-machine"
+    local parent
+    for parent in "$repo/Library" "$repo/Library/Taps" "$repo/Library/Taps/true-line"; do
+        [[ ! -L "$parent" ]] || die "Unexpected symbolic link at $parent."
+    done
+    if [[ -e "$dir" || -L "$dir" ]]; then
+        [[ "$(cd "$dir" && pwd -P)" == "$dir" ]] || die "Machine's tap must be under $repo/Library/Taps."
+        refresh_machine_tap "$dir" "$repo_url" "$owner_uid"
+    fi
+    commands="$("$brew" commands --quiet)"
+    if grep -qx trust <<<"$commands"; then
+        "$brew" trust "$repo_url"
+    fi
+    if [[ ! -d "$dir" ]]; then
+        "$brew" tap "$tap" "$repo_url"
+    fi
+    formulae="$("$brew" list -1 --formula --full-name)"
+    if grep -Fxq "$formula" <<<"$formulae"; then
+        # Homebrew treats a current formula as a successful upgrade. A pin
+        # can also skip an upgrade, so confirm that no update is outstanding.
+        "$brew" upgrade "$formula"
+        "$brew" outdated --formula --quiet "$formula" || die "Homebrew could not confirm Machine is current."
     else
-        owner_home=/tmp/mm-home-$owner
+        "$brew" install "$formula"
     fi
-    /bin/mkdir -p "$owner_home"
-    /usr/sbin/chown "$owner" "$owner_home"
-    /bin/chmod 700 "$owner_home"
-fi
-umask 077
-workdir=$(/usr/bin/mktemp -d /tmp/mm-gh-auth.XXXXXX)
-gitconfig_home=$owner_home/.gitconfig
-created_gitconfig=
-cleanup() {
-    if [ -n "${created_gitconfig:-}" ]; then
-        /bin/rm -f "$gitconfig_home"
-    elif [ -f "$gitconfig_home" ] && [ ! -L "$gitconfig_home" ]; then
-        # git config --file rewrites through a lock+rename: run it as the
-        # owner and re-assert ownership so the file is never left root-owned.
-        # A symlinked .gitconfig is never followed as root.
-        /usr/bin/sudo -u "$owner" /usr/bin/git config --file "$gitconfig_home" --unset-all include.path "$workdir/gitconfig" 2>/dev/null || true
-        /usr/sbin/chown "$owner" "$gitconfig_home" 2>/dev/null || true
-        /bin/chmod 600 "$gitconfig_home" 2>/dev/null || true
-    fi
-    /bin/rm -rf "$workdir"
-}
-trap cleanup EXIT INT TERM
-/usr/sbin/chown "$owner" "$workdir"
-/bin/chmod 700 "$workdir"
-/bin/cp "$tokenfile" "$workdir/token"
-cd /tmp
-/usr/sbin/chown "$owner" "$workdir/token"
-/bin/chmod 600 "$workdir/token"
-cat >"$workdir/cred" <<EOF
-#!/bin/sh
-if [ "\$1" = get ]; then
-    printf 'username=x-access-token\\n'
-    printf 'password=%s\\n' "\$(cat '$workdir/token')"
-fi
-EOF
-cat >"$workdir/gitconfig" <<EOF
-[credential "https://github.com"]
-	helper = $workdir/cred
-EOF
-if [ -L "$gitconfig_home" ]; then
-    echo "Error: $gitconfig_home is a symlink — refusing to follow it as root" >&2
-    exit 1
-fi
-if [ -f "$gitconfig_home" ]; then
-    # A file a previous helper left root-owned (the state this change repairs)
-    # is normalized before the owner-side git config below: sudo -u cannot
-    # read a root-owned 600 file, and set -e would abort the whole auth run.
-    /usr/sbin/chown "$owner" "$gitconfig_home"
-    /bin/chmod 600 "$gitconfig_home"
-fi
-if [ ! -e "$gitconfig_home" ]; then
-    /bin/cp "$workdir/gitconfig" "$gitconfig_home"
-    created_gitconfig=1
-else
-    # The lock+rename rewrite runs as the owner so an existing .gitconfig is
-    # never left root-owned.
-    /usr/bin/sudo -u "$owner" /usr/bin/git config --file "$gitconfig_home" --add include.path "$workdir/gitconfig"
-fi
-/usr/sbin/chown "$owner" "$gitconfig_home" "$workdir/gitconfig"
-/bin/chmod 600 "$gitconfig_home" "$workdir/gitconfig"
-cat >"$workdir/run" <<EOF
-#!/bin/sh
-set -eu
-umask 022
-PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin
-export PATH
-token=\$(cat '$workdir/token')
-export HOMEBREW_GITHUB_API_TOKEN=\$token
-export GH_TOKEN=\$token
-export GIT_CONFIG_COUNT=1
-export GIT_CONFIG_KEY_0=credential.https://github.com.helper
-export GIT_CONFIG_VALUE_0='$workdir/cred'
-exec "\$@"
-EOF
-/usr/sbin/chown "$owner" "$workdir/cred" "$workdir/run"
-/bin/chmod 700 "$workdir/cred" "$workdir/run"
-umask 022
-/usr/bin/sudo -u "$owner" /usr/bin/env \
-    HOME="$owner_home" \
-    PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
-    "$workdir/run" "$@"
-ROOT
 }
 
-# Run brew (or any command) as the prefix owner when this user does not own it.
-run_as_brew_owner() {
-    local prefix owner token tokenfile helper old_umask
-    prefix="$(brew_prefix)" || {
-        err "could not locate brew prefix"
-        exit 1
-    }
-    owner="$(prefix_owner "$prefix")"
-    owner="$(resolve_owner_to_name "$owner")"
-    if [[ -z "$owner" || "$owner" == "$(whoami)" ]]; then
-        "$@"
+# Keep the tap and package transaction in the existing prefix owner's
+# account. Pass the same installer functions by value so the authorization
+# dialog never runs a caller-writable temporary script by pathname.
+run_install() {
+    if [[ "$owner_uid" == "$caller_uid" ]]; then
+        install_formula "$brew" "$TAP" "$REPO_URL" "$FORMULA" "$owner_uid"
         return
     fi
-    if [[ "$1" == brew ]]; then
-        shift
-        set -- "$prefix/bin/brew" "$@"
-    fi
-    if ! command -v osascript >/dev/null 2>&1; then
-        err "Homebrew prefix ($prefix) is owned by '$owner', not you ($(whoami)). Re-run from a GUI session so the administrator dialog can run brew as $owner."
-        exit 1
-    fi
-    echo "Homebrew prefix ($prefix) is owned by '$owner' — requesting administrator authorization to run brew as $owner..."
-    token=""
-    if command -v gh >/dev/null 2>&1; then
-        token="$(gh auth token 2>/dev/null || true)"
-    fi
-    if [[ -z "$token" ]]; then
-        local owner_home sudo_owner2
-        sudo_owner2="$(sudo_user_arg "$owner")"
-        owner_home="$(/usr/bin/dscl . -read "/Users/$owner" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
-        if [[ -z "$owner_home" || ! -d "$owner_home" ]]; then
-            owner_home="$prefix/var/mm-home"
+    local brew_shell='set -euo pipefail
+        cd /
+        if [[ ! -d "$HOME" || ! -w "$HOME" ]]; then
+            HOME=/opt/homebrew/var/mm-home
+            (umask 077 && /bin/mkdir -p "$HOME")
         fi
-        osascript \
-            -e 'on run argv' \
-            -e 'set lbl to item 1 of argv' \
-            -e 'set cmd to ""' \
-            -e 'repeat with i from 2 to count of argv' \
-            -e 'set cmd to cmd & quoted form of (item i of argv as text) & " "' \
-            -e 'end repeat' \
-            -e 'do shell script cmd with prompt ("managed-machine needs administrator access to " & lbl & ".") with administrator privileges' \
-            -e 'end run' \
-            "run brew as $owner" /usr/bin/sudo -u "$sudo_owner2" /usr/bin/env \
-            HOME="$owner_home" \
-            PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin \
-            "$@" >/dev/null
-        return
-    fi
-    old_umask="$(umask)"
-    umask 077
-    tokenfile="$(mktemp "${TMPDIR:-/tmp}/mm-gh-token.XXXXXX")"
-    helper="$(mktemp "${TMPDIR:-/tmp}/mm-gh-run.XXXXXX")"
-    # shellcheck disable=SC2064
-    trap 'rm -f "$tokenfile" "$helper"; trap - RETURN' RETURN
-    printf '%s\n' "$token" >"$tokenfile"
-    chmod 600 "$tokenfile"
-    write_brew_github_auth_run "$helper"
-    chmod 700 "$helper"
-    umask "$old_umask"
-    osascript \
+        export HOME PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin TMPDIR=/tmp
+        export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 GIT_TERMINAL_PROMPT=0'
+    brew_shell+=$'\n'"$(declare -f die refresh_machine_tap install_formula)"$'\n''install_formula /opt/homebrew/bin/brew "$@"'
+    /usr/bin/osascript \
         -e 'on run argv' \
-        -e 'set lbl to item 1 of argv' \
-        -e 'set cmd to ""' \
-        -e 'repeat with i from 2 to count of argv' \
+        -e 'set cmd to "cd / && /usr/bin/sudo -H -u " & quoted form of (item 1 of argv) & " -- /bin/bash -c " & quoted form of (item 2 of argv) & " machine-brew "' \
+        -e 'repeat with i from 3 to count of argv' \
         -e 'set cmd to cmd & quoted form of (item i of argv as text) & " "' \
         -e 'end repeat' \
-        -e 'do shell script cmd with prompt ("managed-machine needs administrator access to " & lbl & ".") with administrator privileges' \
-        -e 'end run' \
-        "run brew as $owner" /bin/sh "$helper" "$owner" "$tokenfile" "$@" >/dev/null
-}
-
-ensure_brew_ownership() {
-    local prefix owner preferred
-    prefix="$(brew_prefix)" || {
-        err "could not locate brew prefix"
-        exit 1
-    }
-    owner="$(prefix_owner "$prefix")"
-    if [[ -z "$owner" ]]; then
-        err "could not determine owner of $prefix"
-        exit 1
-    fi
-    preferred="$(preferred_brew_owner)"
-    if user_in_admin_group "$owner"; then
-        echo "Homebrew prefix ($prefix) is owned by '$owner' — leaving ownership unchanged"
-        return 0
-    fi
-    if [[ "$owner" == "$(whoami)" ]]; then
-        echo "Homebrew prefix ($prefix) is owned by you ($(whoami)); preferred owner is '$preferred'."
-        echo "managed-machine will migrate ownership on bootstrap rather than taking the prefix now."
-        return 0
-    fi
-    cat >&2 <<EOF
-Error: Homebrew prefix ($prefix) is owned by '$owner', not you ($(whoami)).
-Installs run as the prefix owner through the administrator dialog. If that
-owner is wrong, fix it as an administrator, then re-run this installer.
-EOF
-    exit 1
-}
-
-# 3. Ensure gh is installed, authenticated, and wired into git credentials.
-#
-# The tap and its formula resources are private HTTPS repositories. gh's git
-# credential helper is the one authentication mechanism they rely on; SSH is
-# never required to install, and enrolling it is a separate explicit human
-# action (`managed-machine ssh enroll`).
-ensure_gh_access() {
-    if ! command -v gh >/dev/null 2>&1; then
-        echo "Installing GitHub CLI (needed to access the private tap)..."
-        run_as_brew_owner brew install gh
-    fi
-    # Check only the ACTIVE account: `gh auth status` exits nonzero when any
-    # stale or inactive account sits in the keyring, which must not block an
-    # install that has usable active credentials.
-    local active refusal status_err
-    status_err="$(mktemp)"
-    active="$(
-        gh auth status -h github.com --json hosts --jq '
-            (.hosts["github.com"] // [])[]
-            | select(.active == true)
-            | .login
-        ' 2>"$status_err" || true
-    )"
-    refusal="$(grep -m 1 '^agent-bot:' "$status_err" || true)"
-    rm -f "$status_err"
-    # An agent-bot gh shim withholds the human's login from an agent session
-    # and says so on stderr. Logging in again cannot help; the install has to
-    # run where the human's gh is available (#108).
-    if [[ -z "$active" && -n "$refusal" ]]; then
-        cat >&2 <<EOF
-Error: the gh on PATH ($(command -v gh)) refused this session:
-
-  $refusal
-
-The installer needs your own GitHub login, which agent-bot does not hand
-to an agent session. Run the installer from a human Terminal in the
-owner's account. Running gh auth login here will not help.
-EOF
-        exit 1
-    fi
-    if [[ -z "$active" ]]; then
-        cat >&2 <<'EOF'
-Error: GitHub CLI has no active authenticated account, and the
-managed-machine formula installs private qwts repositories. Authenticate
-first, then re-run this installer:
-
-  gh auth login -h github.com
-EOF
-        exit 1
-    fi
-    gh auth setup-git -h github.com
-    echo "GitHub CLI authenticated as $active; git will use gh credentials for github.com over HTTPS."
-}
-
-# 4. Ensure the tap is present, trusted, and updated.
-ensure_tap_trusted() {
-    # Newer Homebrew refuses to load formulae from untrusted third-party taps.
-    # Trust exactly this tap, and say so; older Homebrew has no trust command.
-    if brew commands 2>/dev/null | grep -qx "trust"; then
-        echo "Trusting Homebrew tap $TAP (scoped to this tap only)..."
-        # A user/repo name matches only a tap on its default remote; this tap
-        # is on a custom remote, so its URL is the reference that counts.
-        run_as_brew_owner brew trust "$TAP" "$REPO_URL"
-    fi
-}
-
-ensure_tap() {
-    # Trust must precede the tap itself: `brew tap` loads every formula as a
-    # syntax check, and that load is refused while the tap is untrusted.
-    ensure_tap_trusted
-    if ! brew tap-info "$TAP" 2>/dev/null | grep -q "Installed"; then
-        echo "Tapping $TAP over authenticated HTTPS..."
-        run_as_brew_owner brew tap "$TAP" "$REPO_URL"
-    fi
-    run_as_brew_owner brew update >/dev/null 2>&1 || true
-}
-
-# 5. Is managed-machine already installed via brew?
-is_managed_machine_installed() {
-    brew list --versions managed-machine >/dev/null 2>&1
+        -e 'do shell script cmd with prompt "Install or update Machine with Homebrew in the Homebrew administrator account." with administrator privileges' \
+        -e 'end run' "#$owner_uid" "$brew_shell" "$TAP" "$REPO_URL" "$FORMULA" "$owner_uid"
 }
 
 main() {
-    ensure_brew_installed
-    ensure_brew_ownership
-    ensure_gh_access
-    ensure_tap
+    [[ $# == 0 || ( $# == 1 && "${1:-}" == --update ) ]] || die "Usage: install.sh [--update]"
+    [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || die "Machine's macOS installer requires an Apple Silicon Mac."
+    local major
+    major="$(sw_vers -productVersion)"
+    [[ "${major%%.*}" =~ ^[0-9]+$ && "${major%%.*}" -ge 15 ]] || die "Machine requires macOS 15 or later."
 
-    if is_managed_machine_installed; then
-        echo "Upgrading managed-machine..."
-        run_as_brew_owner brew upgrade managed-machine 2>/dev/null || true
-        cat <<EOF
-
-managed-machine is installed and up to date. Use it directly:
-
-  managed-machine --bootstrap  # run full bootstrap
-  managed-machine --update     # brew update + safe setup re-runs
-  managed-machine status       # installed versions and pins
-  managed-machine setup <name> # run one setup script (bin or setup-bin)
-  managed-machine adopt        # take over vendor-installed desktop apps
-  managed-machine --help       # show usage
-
-EOF
-        exit 0
+    local caller_uid owner_uid owner brew prefix installer
+    caller_uid="$(id -u)"
+    [[ "$caller_uid" != 0 ]] || die "Open Terminal as the Homebrew administrator and run the installer without sudo."
+    if [[ -x /opt/homebrew/bin/brew ]]; then
+        brew=/opt/homebrew/bin/brew
+    elif command -v brew >/dev/null 2>&1; then
+        brew="$(command -v brew)"
+    else
+        in_admin_group "$(id -un)" || die "To install Homebrew, run this installer from the administrator account that will own it."
+        if [[ -d /opt/homebrew && "$(/usr/bin/stat -f '%u' /opt/homebrew)" != "$caller_uid" ]]; then
+            die "Run this installer from the administrator account that owns /opt/homebrew."
+        fi
+        installer="$(mktemp "${TMPDIR:-/tmp}/homebrew-install.XXXXXX")"
+        (trap 'rm -f "$installer"' EXIT
+         curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o "$installer"
+         /bin/bash "$installer")
+        brew=/opt/homebrew/bin/brew
+    fi
+    prefix="$("$brew" --prefix)"
+    owner_uid="$(/usr/bin/stat -f '%u' "$prefix")"
+    [[ "$owner_uid" =~ ^[0-9]+$ && "$owner_uid" != 0 ]] || die "Homebrew's prefix must be owned by a non-root administrator."
+    owner="$(id -nu "$owner_uid")"
+    in_admin_group "$owner" || die "Homebrew's prefix ($prefix) must be owned by an administrator."
+    if [[ "$owner_uid" != "$caller_uid" && ( "$prefix" != /opt/homebrew || "$brew" != /opt/homebrew/bin/brew ) ]]; then
+        die "Run this installer as $owner to use Homebrew at $prefix."
     fi
 
-    echo "Installing managed-machine..."
-    run_as_brew_owner brew install managed-machine
-
-    echo "Running managed-machine --bootstrap (terminal mode auto-detected)..."
-    managed-machine --bootstrap
-
-    cat <<EOF
-
-managed-machine installed and bootstrapped. Future updates:
-
-  managed-machine --update
-
-EOF
+    run_install
+    local installed="$prefix/opt/managed-machine/bin/managed-machine"
+    local version
+    version="$("$installed" --version)"
+    echo "Machine $version installed. To check it again, run $installed --version."
 }
 
 main "$@"

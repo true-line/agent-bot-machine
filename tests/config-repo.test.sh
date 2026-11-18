@@ -249,25 +249,28 @@ unset -f config_repo_owner
 # shellcheck source=lib/config-repo.sh
 source "$ROOT/lib/config-repo.sh"
 
-# In a source checkout (REPO_ROOT is <repo>/legacy inside a git checkout <repo>),
-# both managed_machine_config_repo_dir and existing_managed_machine_config_repo_dir
-# resolve the sibling managed-machine-config repo at <repo>/../managed-machine-config.
+# A sibling checkout and an old bundled seed alone do not enroll a clean
+# account, including when invoked from a development checkout.
 CHECKOUT_WS="$TEST_ROOT/checkout-ws"
 mkdir -p "$CHECKOUT_WS/managed-machine/legacy"
 git init --quiet "$CHECKOUT_WS/managed-machine"
 git clone --quiet "$REMOTE" "$CHECKOUT_WS/managed-machine-config"
-resolved_from_checkout="$(
-    unset CONFIG_REPO_ROOT
+(
+    unset CONFIG_REPO_ROOT MANAGED_MACHINE_CONFIG_REPO_URL
+    export XDG_DATA_HOME="$TEST_ROOT/clean-data"
     REPO_ROOT="$CHECKOUT_WS/managed-machine/legacy"
-    managed_machine_config_repo_dir
-)"
-[[ "$(cd "$resolved_from_checkout" && pwd -P)" == "$(cd "$CHECKOUT_WS/managed-machine-config" && pwd -P)" ]]
-existing_from_checkout="$(
+    git() { echo unexpected-git >>"$TEST_ROOT/unselected-git"; return 90; }
+    ! managed_machine_config_selected
+    if managed_machine_config_repo_dir || existing_managed_machine_config_repo_dir; then exit 1; fi
+    [[ ! -e "$XDG_DATA_HOME" && ! -e "$TEST_ROOT/unselected-git" ]]
+)
+(
+    unset MANAGED_MACHINE_CONFIG_REPO_URL
+    CONFIG_REPO_ROOT="$CHECKOUT_WS/managed-machine-config"
+    [[ "$(managed_machine_config_repo_dir)" == "$CONFIG_REPO_ROOT" ]]
     unset CONFIG_REPO_ROOT
-    REPO_ROOT="$CHECKOUT_WS/managed-machine/legacy"
-    existing_managed_machine_config_repo_dir
-)"
-[[ "$(cd "$existing_from_checkout" && pwd -P)" == "$(cd "$CHECKOUT_WS/managed-machine-config" && pwd -P)" ]]
+    [[ "$(managed_machine_config_repo_dir)" == "$EXPECTED_CHECKOUT" ]]
+)
 
 # Git 2.35+ rejects a real prefix-owned seed without safe.directory. The
 # cellar path is the production case; skip when the formula is not installed.

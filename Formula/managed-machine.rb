@@ -2,27 +2,16 @@
 # frozen_string_literal: true
 
 # Managed-machine Homebrew formula.
-# Self-tap: brew tap qwts/managed-machine https://github.com/qwts/managed-machine.git
+# Self-tap: brew tap true-line/agent-bot-machine https://github.com/true-line/agent-bot-machine.git
 # Then: brew install managed-machine
 #
-# All repository URLs are authenticated HTTPS (gh's git credential helper),
-# never SSH: the formula and its resources are fetched before setup-gh has
-# provisioned any SSH key.
+# The public formula installs only the Machine release and its orchestration files.
 #
-# The formula installs the managed-machine orchestration files and bundles
-# managed-machine-config as a read-only bootstrap seed and local-bin as a
-# working git repo under libexec.
-# Formula upgrades replace orchestration and bundled seeds. Persistent private
-# config remains outside the Homebrew prefix and synchronizes through git.
-#
-# To release a new version:
-#   1. Commit the code changes and update the :tag below.
-#   2. Push the new tag.
-#   3. Push the formula update.
+# Prepare the reviewed release branch with scripts/release prepare vX.Y.Z.
 class ManagedMachine < Formula
   desc "Fresh-Mac bootstrap and fleet setup orchestration"
-  homepage "https://github.com/qwts/managed-machine"
-  url "https://github.com/qwts/managed-machine.git",
+  homepage "https://github.com/true-line/agent-bot-machine"
+  url "https://github.com/true-line/agent-bot-machine.git",
       using: :git,
       tag:   "v0.11.5"
   version "0.11.5"
@@ -31,38 +20,17 @@ class ManagedMachine < Formula
   depends_on arch: :arm64
   depends_on macos: :sequoia
 
-  # Dotfiles/config repo. Installed as a read-only seed; managed-machine creates
-  # the writable persistent checkout outside the Homebrew prefix. Pinned to a
-  # tag+revision on that repo — scripts/release tags managed-machine-config at
-  # the release version and rewrites both fields, so a release ships a known
-  # catalog snapshot instead of whatever main is at install time.
-  resource "managed-machine-config" do
-    url "https://github.com/qwts/managed-machine-config.git",
-        using:    :git,
-        tag:      "v0.11.5",
-        revision: "33c185503927616a50695dcc1e044c762715afab",
-        shallow:  false
-  end
-
-  # Utility scripts repo. Installed as a working git clone so setup-bin can
-  # use the immutable config seed pin without refreshing a moving branch.
-  resource "local-bin" do
-    url "https://github.com/qwts/local-bin.git",
-        using:    :git,
-        tag:      "v0.2.1",
-        revision: "34b38897002b8f0042958ea4d2c47a40b3961bca",
-        shallow:  false
-  end
-
   # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, S8 D3).
   # Installed as bin/managed-machine; legacy Bash tree staged under libexec/legacy.
   resource "core" do
-    url "https://github.com/qwts/managed-machine/releases/download/v0.11.5/managed-machine_0.11.5_darwin_arm64.tar.gz"
+    url "https://github.com/true-line/agent-bot-machine/releases/download/v0.11.5/managed-machine_0.11.5_darwin_arm64.tar.gz"
     sha256 "7a92990f3f63b500759ce50a52b53c4389dd8483720ea48f747a8b293c356f25"
   end
 
   def install
     libexec.mkpath
+    # The 0.11.5 source archive contains the former fleet bootstrap.
+    libexec.install "install.sh" unless version.to_s == "0.11.5"
     legacy = libexec / "legacy"
     legacy.mkpath
 
@@ -73,15 +41,7 @@ class ManagedMachine < Formula
     (legacy / "scripts").install Dir["legacy/scripts/*"]
     (legacy / "git-hooks").install Dir["legacy/git-hooks/*"]
 
-    # Bundle a managed-machine-config seed and the local-bin working repo under libexec/legacy.
-    (legacy / "managed-machine-config").mkpath
-    resource("managed-machine-config").stage(legacy / "managed-machine-config")
-
-    (legacy / "local-bin").mkpath
-    resource("local-bin").stage(legacy / "local-bin")
-
-    # Transitional --update re-exec shim across the v0.10.x -> v0.11.0 layout
-    # inversion (S8 D3(e)); removed in v0.12.0.
+    # Older installations re-exec this path after a Homebrew upgrade.
     (libexec / "scripts").mkpath
     (libexec / "scripts/update").write <<~SH
       #!/usr/bin/env bash
@@ -120,6 +80,7 @@ class ManagedMachine < Formula
   end
 
   test do
+    refute_predicate libexec/"install.sh", :exist? if version.to_s == "0.11.5"
     helper = bin/"agent-bot-keyd"
     assert_equal 0700, helper.stat.mode & 07777 if helper.exist?
     help_output = shell_output("#{bin}/managed-machine --help")

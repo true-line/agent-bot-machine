@@ -145,6 +145,15 @@ run_one() {
     fi
 }
 
+if managed_machine_config_selected; then
+    CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)" || exit 1
+    [[ -n "$CONFIG_REPO_ROOT" ]] || exit 1
+else
+    CONFIG_REPO_ROOT=""
+    SETUP_SCRIPTS=(setup-brew setup-nvm setup-git-hooks setup-rust)
+fi
+export CONFIG_REPO_ROOT REPO_ROOT
+
 preflight_names=()
 preflight_reasons=()
 if [[ "$mode" == "noninteractive" ]]; then
@@ -180,12 +189,6 @@ preflight_reason_for() {
     return 1
 }
 
-CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)" || {
-    echo "Error: could not resolve managed-machine-config" >&2
-    exit 1
-}
-export CONFIG_REPO_ROOT REPO_ROOT
-
 auto_app_names=()
 while IFS= read -r app_name; do
     [[ -n "$app_name" ]] || continue
@@ -199,7 +202,8 @@ if [[ "$mode" == "interactive" ]] && declare -F bootstrap_build_plan >/dev/null;
     MANAGED_MACHINE_ELEVATION_DECLINED_FILE="$plan_session_dir/declined"
     export MANAGED_MACHINE_ELEVATION_DECLINED_FILE
 
-    plan_steps=(migrations "${SETUP_SCRIPTS[@]}")
+    plan_steps=("${SETUP_SCRIPTS[@]}")
+    if [[ -n "$CONFIG_REPO_ROOT" ]]; then plan_steps=(migrations "${plan_steps[@]}"); fi
     if [[ ${#auto_app_names[@]} -gt 0 ]]; then
         for app_name in "${auto_app_names[@]}"; do
             plan_steps+=("setup-$app_name")
@@ -227,17 +231,22 @@ if [[ "$mode" == "interactive" ]] && declare -F bootstrap_build_plan >/dev/null;
     export MANAGED_MACHINE_APPROVED_PLAN_FILE MANAGED_MACHINE_PLAN_SESSION_DIR MANAGED_MACHINE_PLAN_ID
 fi
 
-echo "==> migrations"
-migrations_status=0
-if MANAGED_MACHINE_CURRENT_STEP=migrations MANAGED_MACHINE_IN_BATCH_RUN=1 MANAGED_MACHINE_BOOTSTRAP_MODE="$mode" run_managed_machine_migrations; then
-    record_status complete migrations "$(complete_detail_for migrations)"
-else
-    migrations_status=$?
-    if [[ "$migrations_status" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" || "$migrations_status" -eq "$MANAGED_MACHINE_SKIPPED_EXIT" ]]; then
-        record_status skipped migrations "not part of this install"
+if [[ -n "$CONFIG_REPO_ROOT" ]]; then
+    echo "==> migrations"
+    migrations_status=0
+    if MANAGED_MACHINE_CURRENT_STEP=migrations MANAGED_MACHINE_IN_BATCH_RUN=1 MANAGED_MACHINE_BOOTSTRAP_MODE="$mode" run_managed_machine_migrations; then
+        record_status complete migrations "$(complete_detail_for migrations)"
     else
-        record_status failed migrations "exit status $migrations_status"
+        migrations_status=$?
+        if [[ "$migrations_status" -eq "$MANAGED_MACHINE_DEFERRED_EXIT" || "$migrations_status" -eq "$MANAGED_MACHINE_SKIPPED_EXIT" ]]; then
+            record_status skipped migrations "not part of this install"
+        else
+            record_status failed migrations "exit status $migrations_status"
+        fi
     fi
+
+else
+    record_status skipped migrations "no fleet configuration selected"
 fi
 
 for name in "${SETUP_SCRIPTS[@]}"; do

@@ -2,7 +2,7 @@
 # core on Windows (windows/amd64, windows/arm64; S6 R04, decision D4).
 #
 # Fetches SHA256SUMS from -ReleaseBase / $env:MANAGED_MACHINE_RELEASE_BASE
-# (default: https://github.com/qwts/managed-machine/releases/latest/download,
+# (default: https://github.com/true-line/agent-bot-machine/releases/latest/download,
 # or any https:// URL or absolute directory), selects the _windows_<arch>.zip
 # archive for the host, verifies its SHA-256 digest with Get-FileHash before
 # extracting anything, and installs managed-machine.exe atomically into -Prefix
@@ -35,7 +35,7 @@ Options:
   -Prefix <dir>              Installation directory (default: %LOCALAPPDATA%\Programs\managed-machine)
   -ReleaseBase <url-or-dir>  Release base URL (https://...) or absolute directory
                              (default: `$env:MANAGED_MACHINE_RELEASE_BASE or
-                             https://github.com/qwts/managed-machine/releases/latest/download)
+                             https://github.com/true-line/agent-bot-machine/releases/latest/download)
   -Help                      Show this help and exit
 "@
 }
@@ -135,7 +135,7 @@ if ([string]::IsNullOrEmpty($ReleaseBase)) {
     if ($null -ne $env:MANAGED_MACHINE_RELEASE_BASE) {
         $ReleaseBase = $env:MANAGED_MACHINE_RELEASE_BASE
     } else {
-        $ReleaseBase = "https://github.com/qwts/managed-machine/releases/latest/download"
+        $ReleaseBase = "https://github.com/true-line/agent-bot-machine/releases/latest/download"
     }
 }
 

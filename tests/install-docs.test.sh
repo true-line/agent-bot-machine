@@ -1,92 +1,217 @@
 #!/usr/bin/env bash
-# Installing needs qwts org access (the formula's config and local-bin
-# resources are private): every documented install path must be an
-# authenticated fetch, and no bootstrap-time repository URL may require SSH
-# before setup-gh has provisioned a key.
+# Exercise the public installer without a network, a real prefix or account changes.
 set -euo pipefail
-export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-
+host_os="$(uname -s)"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TEST_DIR="$(mktemp -d)"
+TEST_DIR="$(cd "$TEST_DIR" && pwd -P)"
+trap 'rm -rf "$TEST_DIR"' EXIT
+mkdir "$TEST_DIR/bin"
+export LOG="$TEST_DIR/brew.log"
+export PATH="$TEST_DIR/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PREFIX="$TEST_DIR/homebrew"
+export TAPDIR="$PREFIX/Library/Taps/true-line/homebrew-agent-bot-machine"
+export UPSTREAM="$TEST_DIR/upstream"
+export ORIGIN="https://github.com/true-line/agent-bot-machine.git"
+export FORMULA="true-line/agent-bot-machine/managed-machine"
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME=fixture GIT_COMMITTER_NAME=fixture
+export GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_EMAIL=fixture@example.invalid
+/usr/bin/git init -q -b main "$UPSTREAM"
+/usr/bin/git -C "$UPSTREAM" commit -q --allow-empty -m first
+mkdir -p "$PREFIX/bin"
+# Redirect Apple's fixed paths into this fixture on both macOS and Linux.
+sed -e "s|/opt/homebrew|$PREFIX|g" -e "s|/usr/bin/osascript|$TEST_DIR/bin/osascript|g" -e "s|/usr/bin/git|$TEST_DIR/bin/git|g" -e "s|/usr/bin/stat|$TEST_DIR/bin/stat|g" "$ROOT/install.sh" > "$TEST_DIR/install.sh"
 
-INSTALL_API_PATH='repos/qwts/managed-machine/contents/install.sh'
-
-# README and the skill document the same authenticated installer command.
-grep -q "$INSTALL_API_PATH" "$ROOT/README.md"
-grep -q "$INSTALL_API_PATH" "$ROOT/skills/managed-machine/SKILL.md"
-grep -q "$INSTALL_API_PATH" "$ROOT/install.sh"
-
-# An unauthenticated raw.githubusercontent.com fetch would start an install
-# that then fails at the private resources; it must not be documented as an
-# install path anywhere.
-if grep -rn 'raw.githubusercontent.com/qwts' "$ROOT/README.md" "$ROOT/skills/managed-machine/SKILL.md" "$ROOT/install.sh"; then
-    echo 'unauthenticated raw.githubusercontent.com install path is documented' >&2
-    exit 1
-fi
-
-# Bootstrap-time repository URLs are authenticated HTTPS, never SSH. Match
-# concrete repository URLs only: lib/config-repo.sh legitimately pattern-matches
-# the SSH form to migrate legacy remotes.
-for f in install.sh Formula/managed-machine.rb legacy/setup-bin legacy/lib/config-repo.sh; do
-    if grep -n 'git@github.com:qwts' "$ROOT/$f"; then
-        echo "SSH repository URL in $f runs before setup-gh provisions SSH" >&2
-        exit 1
+cat > "$TEST_DIR/bin/uname" <<'STUB'
+#!/bin/sh
+case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; *) exit 1 ;; esac
+STUB
+cat > "$TEST_DIR/bin/sw_vers" <<'STUB'
+#!/bin/sh
+echo 15.7
+STUB
+cat > "$TEST_DIR/bin/id" <<'STUB'
+#!/bin/sh
+case "$1" in
+  -u) echo "${CALLER_UID:-501}" ;;
+  -nu|-un) echo brewowner ;;
+  -nG) echo "${ACCOUNT_GROUPS:-staff admin}" ;;
+  *) exit 1 ;;
+esac
+STUB
+cat > "$TEST_DIR/bin/stat" <<'STUB'
+#!/bin/sh
+[ "$1 $2" = "-f %u" ] || exit 1
+case "$3" in
+    "$PREFIX") echo "${OWNER_UID:-501}" ;;
+    "$TAPDIR"|"$TAPDIR/.git") echo "${TAP_UID:-501}" ;;
+    *) exit 1 ;;
+esac
+STUB
+cat > "$TEST_DIR/bin/git" <<'STUB'
+#!/bin/bash
+# Exercise actual Git topology and fast-forward checks with a local remote.
+args=("$@")
+for i in "${!args[@]}"; do
+    if [[ "${args[$i]}" == "$ORIGIN" ]]; then
+        [[ "${FAIL_FETCH:-0}" == 0 ]] || exit 17
+        args[$i]="$UPSTREAM"
     fi
 done
-
-# The installer authenticates gh and wires the git credential helper before
-# tapping and installing the private formula resources.
-grep -q 'gh auth setup-git' "$ROOT/install.sh"
-grep -q 'ensure_gh_access' "$ROOT/install.sh"
-
-# When agent-bot's gh shim refuses the session, ensure_gh_access names the
-# refusal and the human-Terminal remedy, not gh auth login (#108). A plain
-# missing login still gets the gh auth login advice.
-GH_TEST_DIR="$(mktemp -d)"
-trap 'rm -rf "$GH_TEST_DIR"' EXIT
-mkdir -p "$GH_TEST_DIR/bin"
-cat >"$GH_TEST_DIR/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-if [[ -n "${GH_STUB_REFUSE:-}" ]]; then
-    echo 'agent-bot: qwts-claude-agent is outside bot territory — refusing stock human gh' >&2
-    exit 1
+exec /usr/bin/git "${args[@]}"
+STUB
+cat > "$PREFIX/bin/brew" <<'STUB'
+#!/bin/sh
+set -eu
+[ "$HOMEBREW_NO_AUTO_UPDATE" = 1 ] && [ "$GIT_TERMINAL_PROMPT" = 0 ] || exit 92
+if [ "${BREW_FAIL:-}" = "$1" ]; then exit 13; fi
+case "$*" in
+  --prefix|--repository) echo "$PREFIX" ;;
+  'commands --quiet') echo trust ;;
+  'list -1 --formula --full-name') [ ! -e "$PREFIX/installed" ] || echo "$FORMULA" ;;
+  "outdated --formula --quiet $FORMULA") if [ "${PINNED:-0}" = 1 ]; then echo "$FORMULA"; exit 1; fi ;;
+  "trust $ORIGIN") echo "$*" >> "$LOG" ;;
+  "tap true-line/agent-bot-machine $ORIGIN")
+     echo "$*" >> "$LOG"
+     mkdir -p "$(dirname "$TAPDIR")"
+     /usr/bin/git clone -q "$UPSTREAM" "$TAPDIR"
+     /usr/bin/git -C "$TAPDIR" remote set-url origin "$ORIGIN" ;;
+  "install $FORMULA"|"upgrade $FORMULA")
+     echo "$*" >> "$LOG"
+     : > "$PREFIX/installed"
+     mkdir -p "$PREFIX/opt/managed-machine/bin"
+     printf '#!/bin/sh\necho 0.12.0\n' > "$PREFIX/opt/managed-machine/bin/managed-machine"
+     chmod +x "$PREFIX/opt/managed-machine/bin/managed-machine" ;;
+  *) echo "unexpected brew invocation: $*" >&2; exit 9 ;;
+esac
+STUB
+cat > "$TEST_DIR/bin/osascript" <<'STUB'
+#!/bin/sh
+set -eu
+: > "$SCRIPT_FILE"
+while [ "$1" = '-e' ]; do printf '%s\n' "$2" >> "$SCRIPT_FILE"; shift 2; done
+if [ -x /usr/bin/osacompile ] && [ ! -e "$SCRIPT_FILE.scpt" ]; then
+    /usr/bin/osacompile -o "$SCRIPT_FILE.scpt" "$SCRIPT_FILE"
 fi
-exit 1
-EOF
-chmod +x "$GH_TEST_DIR/bin/gh"
-sed -n '/^ensure_gh_access() {$/,/^}$/p' "$ROOT/install.sh" >"$GH_TEST_DIR/ensure_gh_access.sh"
-grep -q '^ensure_gh_access()' "$GH_TEST_DIR/ensure_gh_access.sh"
-for mode in refused missing; do
-    if PATH="$GH_TEST_DIR/bin:/usr/bin:/bin" GH_STUB_REFUSE="$([[ "$mode" == refused ]] && echo 1)" \
-        bash -c 'source "$1"; ensure_gh_access' _ "$GH_TEST_DIR/ensure_gh_access.sh" \
-        >"$GH_TEST_DIR/$mode.out" 2>&1; then
-        echo "expected ensure_gh_access to fail ($mode)" >&2
-        exit 1
-    fi
-done
-grep -Fq 'refused this session' "$GH_TEST_DIR/refused.out"
-grep -Fq 'agent-bot: qwts-claude-agent is outside bot territory' "$GH_TEST_DIR/refused.out"
-grep -Fq 'human Terminal' "$GH_TEST_DIR/refused.out"
-! grep -q '^  gh auth login' "$GH_TEST_DIR/refused.out"
-grep -Fq 'no active authenticated account' "$GH_TEST_DIR/missing.out"
-grep -q '^  gh auth login -h github.com' "$GH_TEST_DIR/missing.out"
+[ "$1" = '#501' ]
+shift
+printf '%s\n' approved >>"$AUTH_LOG"
+# Run the real unprivileged shell fragment with a stub home. Its Homebrew
+# path already points to this test's isolated prefix.
+script=$1
+shift
+unset HOMEBREW_NO_AUTO_UPDATE GIT_TERMINAL_PROMPT
+HOME="$PREFIX/absent" /bin/bash -c "$script" machine-brew "$@"
+STUB
+chmod +x "$TEST_DIR/bin/"* "$PREFIX/bin/brew"
+export AUTH_LOG="$TEST_DIR/auth.log" SCRIPT_FILE="$TEST_DIR/prompt.applescript"
+cat > "$TEST_DIR/expected" <<'EXPECTED'
+trust https://github.com/true-line/agent-bot-machine.git
+tap true-line/agent-bot-machine https://github.com/true-line/agent-bot-machine.git
+install true-line/agent-bot-machine/managed-machine
+EXPECTED
 
-# Private brew operations run as the prefix owner must carry the invoking
-# user's GitHub credentials without putting the token in process arguments.
-grep -q 'write_brew_github_auth_run' "$ROOT/install.sh"
-grep -q 'mm-gh-token' "$ROOT/install.sh"
+bash "$TEST_DIR/install.sh"
+cmp "$LOG" "$TEST_DIR/expected"
+[[ ! -e "$AUTH_LOG" ]]
+# The other account must refresh only public main, and only upgrade Machine.
+/usr/bin/git -C "$UPSTREAM" commit -q --allow-empty -m second
+: > "$LOG"
+CALLER_UID=502 bash "$TEST_DIR/install.sh" --update
+printf '%s\n' "trust $ORIGIN" "upgrade $FORMULA" > "$TEST_DIR/upgrade"
+cmp "$LOG" "$TEST_DIR/upgrade"
+[[ "$(wc -l < "$AUTH_LOG")" -eq 1 && -d "$PREFIX/var/mm-home" ]]
+[[ "$(/usr/bin/git -C "$TAPDIR" rev-parse HEAD)" == "$(/usr/bin/git -C "$UPSTREAM" rev-parse HEAD)" ]]
+
+# Ordinary install also refreshes an existing tap and lets Homebrew
+# converge only this formula.
+/usr/bin/git -C "$UPSTREAM" commit -q --allow-empty -m third
+: > "$LOG"
+bash "$TEST_DIR/install.sh"
+cmp "$LOG" "$TEST_DIR/upgrade"
+[[ "$(/usr/bin/git -C "$TAPDIR" rev-parse HEAD)" == "$(/usr/bin/git -C "$UPSTREAM" rev-parse HEAD)" ]]
+
+assert_update_refused() {
+    : > "$LOG"
+    if bash "$TEST_DIR/install.sh" --update >"$TEST_DIR/result" 2>&1; then
+        echo "Unexpected update for $1" >&2; exit 1
+    fi
+    [[ ! -s "$LOG" ]]
+}
+touch "$TAPDIR/dirty"
+assert_update_refused dirty
+rm "$TAPDIR/dirty"
+/usr/bin/git -C "$TAPDIR" remote set-url origin https://example.invalid/foreign.git
+assert_update_refused foreign
+/usr/bin/git -C "$TAPDIR" remote set-url origin "$ORIGIN"
+/usr/bin/git -C "$TAPDIR" switch --detach -q
+assert_update_refused detached
+/usr/bin/git -C "$TAPDIR" switch -q main
+TAP_UID=502 assert_update_refused foreign-owner
+FAIL_FETCH=1 assert_update_refused failed-fetch
+/usr/bin/git -C "$TAPDIR" commit -q --allow-empty -m local
+assert_update_refused ahead
+# This checkout is a disposable test fixture.
+/usr/bin/git -C "$TAPDIR" reset -q --hard HEAD^
+mv "$TAPDIR" "$TEST_DIR/moved-tap"
+ln -s "$TEST_DIR/moved-tap" "$TAPDIR"
+assert_update_refused symlinked
+rm "$TAPDIR"
+mv "$TEST_DIR/moved-tap" "$TAPDIR"
+
+for refusal in 'CALLER_UID=0' 'OWNER_UID=0' 'ACCOUNT_GROUPS=staff'; do
+    : > "$LOG"
+    if env "$refusal" bash "$TEST_DIR/install.sh" >"$TEST_DIR/result" 2>&1; then
+        echo "Unexpected success for $refusal" >&2; exit 1
+    fi
+    [[ ! -s "$LOG" ]]
+done
+if BREW_FAIL=upgrade bash "$TEST_DIR/install.sh" >"$TEST_DIR/result" 2>&1; then
+    echo 'An installation error must propagate' >&2; exit 1
+fi
+! grep -Fq 'Machine 0.12.0 installed.' "$TEST_DIR/result" || exit 1
+if PINNED=1 bash "$TEST_DIR/install.sh" --update >"$TEST_DIR/result" 2>&1; then
+    echo "A pin blocking the update must not report success" >&2; exit 1
+fi
+
+# A new Mac obtains Homebrew only as the intended administrator. A failed
+# fetch must not execute even a complete-looking script left in the temp file.
+mv "$PREFIX/bin/brew" "$TEST_DIR/homebrew-fixture"
+mv "$TAPDIR" "$TEST_DIR/prior-tap"
+rm "$PREFIX/installed"
+cat > "$TEST_DIR/bin/curl" <<'STUB'
+#!/bin/sh
+set -eu
+[ "$1 $2 $3 $4" = "--proto =https --proto-redir =https" ]
+shift 4
+[ "$1" = '-fsSL' ] && [ "$2" = 'https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh' ] && [ "$3" = '-o' ]
+printf '%s\n' 'cp "$BREW_FIXTURE" "$PREFIX/bin/brew"' >"$4"
+exit "${FETCH_EXIT:-0}"
+STUB
+chmod +x "$TEST_DIR/bin/curl"
+export BREW_FIXTURE="$TEST_DIR/homebrew-fixture"
+if FETCH_EXIT=7 bash "$TEST_DIR/install.sh" >"$TEST_DIR/result" 2>&1; then exit 1; fi
+[[ ! -e "$PREFIX/bin/brew" ]]
+if ACCOUNT_GROUPS=staff bash "$TEST_DIR/install.sh" >"$TEST_DIR/result" 2>&1; then exit 1; fi
+[[ ! -e "$PREFIX/bin/brew" ]]
+: > "$LOG"
+bash "$TEST_DIR/install.sh"
+cmp "$LOG" "$TEST_DIR/expected"
+
+# Private configuration and credential management are optional legacy workflows.
+if grep -nE 'qwts/|(^|[[:space:]])gh[[:space:]]|--bootstrap|local-bin' "$ROOT/install.sh"; then
+    echo 'The public installer must work without organization setup' >&2; exit 1
+fi
+
 grep -q 'brew-github-auth-run' "$ROOT/legacy/lib/brew.sh"
-if grep -n 'HOMEBREW_GITHUB_API_TOKEN=\${token}' "$ROOT/install.sh" "$ROOT/legacy/lib/brew.sh"; then
+if grep -n 'HOMEBREW_GITHUB_API_TOKEN=\${token}' "$ROOT/legacy/lib/brew.sh"; then
     echo 'GitHub token must not be interpolated into argv' >&2
     exit 1
 fi
-if grep -n 'github_auth_env_for_brew_owner' "$ROOT/install.sh"; then
-    echo 'argv-based github_auth_env_for_brew_owner should be gone' >&2
-    exit 1
-fi
 
-# osascript admin / stub brew-owner homes have no PATH. The helper and the
-# installer heredoc must use absolute chown and export a usable PATH.
-for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-run" "$ROOT/legacy/lib/elevate-plan-run" "$ROOT/install.sh"; do
+# Legacy helper processes may have an empty PATH. They must use absolute chown and export a usable PATH.
+for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-run" "$ROOT/legacy/lib/elevate-plan-run"; do
     grep -q '/usr/sbin/chown' "$f" || {
         echo "missing /usr/sbin/chown in $f" >&2
         exit 1
@@ -103,20 +228,20 @@ for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-ru
     # must exist on macOS (e.g. touch is /usr/bin/touch, never /bin/touch).
     while IFS= read -r tool; do
         [[ -n "$tool" ]] || continue
-        if [[ ! -x "$tool" ]]; then
+        if [[ "$host_os" == Darwin && ! -x "$tool" ]]; then
             echo "$f references $tool which does not exist (single tool was run natively)" >&2
             exit 1
         fi
     done < <(grep -oE '(^|[[:space:]])/(usr/sbin|usr/bin|bin)/[A-Za-z0-9._-]+' "$f" | grep -oE '^/(usr/sbin|usr/bin|bin)/[A-Za-z0-9._-]+$' | sort -u)
 done
-if grep -nE '/usr/bin/sudo -H -u' "$ROOT/legacy/lib/elevate.sh" "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-run" "$ROOT/install.sh"; then
+if grep -nE '/usr/bin/sudo -H -u' "$ROOT/legacy/lib/elevate.sh" "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-run"; then
     echo 'sudo -H -u resets a stub brew-owner home to an empty shell' >&2
     exit 1
 fi
 
 # After chown to the brew owner, that user cannot traverse the invoking
 # user's /var/folders TMPDIR. The helper workdir must be created under /tmp.
-for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-run" "$ROOT/install.sh"; do
+for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-run"; do
     grep -q 'TMPDIR=/tmp' "$f" || {
         echo "missing TMPDIR=/tmp in $f" >&2
         exit 1
@@ -130,20 +255,13 @@ for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-ru
         exit 1
     fi
 done
-for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-run" "$ROOT/legacy/lib/elevate-plan-run" "$ROOT/install.sh"; do
+for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/legacy/lib/npm-public-run" "$ROOT/legacy/lib/elevate-plan-run"; do
     grep -q '^cd /tmp$' "$f" || {
         echo "missing cd /tmp in $f (dropped-privilege commands fail when caller PWD is mode 0700)" >&2
         exit 1
     }
 done
 
-# run_as_brew_owner is called more than once (tap, trust, update). A RETURN
-# trap that is not cleared fires on the next function return with tokenfile
-# unset under set -u.
-if ! grep -q "rm -f \"\$tokenfile\" \"\$helper\"; trap - RETURN" "$ROOT/install.sh"; then
-    echo 'install.sh RETURN trap must clear itself after removing the token file' >&2
-    exit 1
-fi
 if ! grep -q "rm -f \"\$tokenfile\"; trap - RETURN" "$ROOT/legacy/lib/brew.sh"; then
     echo 'lib/brew.sh RETURN trap must clear itself after removing the token file' >&2
     exit 1
@@ -151,7 +269,7 @@ fi
 
 # brew re-execs with env -i and drops GIT_CONFIG_*/GH_TOKEN. The helper must
 # install a HOME .gitconfig so the private resource fetches can authenticate.
-for f in "$ROOT/legacy/lib/brew-github-auth-run" "$ROOT/install.sh"; do
+for f in "$ROOT/legacy/lib/brew-github-auth-run"; do
     grep -q 'gitconfig_home=$owner_home/.gitconfig' "$f" || {
         echo "missing owner HOME gitconfig install in $f" >&2
         exit 1

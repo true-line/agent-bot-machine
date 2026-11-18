@@ -150,6 +150,7 @@ func verifySignedCmd(args []string, stdout io.Writer) error {
 	signedDir := fs.String("signed", "", "signed dist directory")
 	team := fs.String("team", "", "Developer ID Team ID the signatures must name")
 	formulaPath := fs.String("formula", "", "path to Formula/managed-machine.rb")
+	requireKeyd := fs.Bool("require-keyd", false, "require the custody helper shipped by current Machine releases")
 	requirePin := fs.Bool("require-pin", false, "require the formula's tag, version and core sha256 to match the signed darwin archive")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -190,6 +191,9 @@ func verifySignedCmd(args []string, stdout io.Writer) error {
 	signedEntries, err := readTarGzFile(filepath.Join(*signedDir, darwinName))
 	if err != nil {
 		return fmt.Errorf("signed %s: %w", darwinName, err)
+	}
+	if _, ok := signedEntries["agent-bot-keyd"]; *requireKeyd && !ok {
+		return fmt.Errorf("%s: missing required custody helper agent-bot-keyd", darwinName)
 	}
 	if err := compareSignedDarwin(unsignedEntries, signedEntries, *team); err != nil {
 		return fmt.Errorf("%s: %w", darwinName, err)

@@ -2,13 +2,11 @@
 
 ## Intent
 
-`setup-bin` must work from a Homebrew install. The bundled `libexec/local-bin` is prefix-owned; Git 2.35+ refuses that from the invoking user, and mutating git operations (`clone`, `fetch`, `checkout`, `pull`) fail with permission denied unless run as the prefix owner.
+`setup-bin` must work from a Homebrew install. On older installations, the bundled `libexec/local-bin` is prefix-owned. Git 2.35+ refuses that from the invoking user, and mutating git operations (`clone`, `fetch`, `checkout`, `pull`) fail with permission denied unless run as the prefix owner.
 
-The Homebrew formula carries the same utility revision as its config seed.
-Release preparation resolves the seed's `local-bin.ref` to a full commit and
-also pins the tag when one is named. Homebrew can reuse that ref in its Git
-cache while offline. An empty cache still requires authorized read access to
-the private repository. The full staged clone remains available to account setup.
+Machine releases and the public Homebrew formula have no external tools
+resource. The prefix-ownership rules below apply to an opted-in fleet that
+supplies its own tools checkout, including existing installations.
 
 ## Target
  
@@ -17,7 +15,7 @@ the private repository. The full staged clone remains available to account setup
  - Securely forward the invoking user's GitHub credentials to the elevated runner via `brew-github-auth-run` and a temporary credential helper without placing tokens in argv.
  - When the pin is already satisfied, skip fetch and do not prompt for administrator authorization.
   - Downstream `install` (symlinking into `~/.local/bin` and updating `~/.zshrc`) and pin manifest recording always run unprivileged as the invoking user.
-  - `setup-zsh-functions` mirrors this entire contract for `qwts/zsh-functions` (pin `zsh-functions.ref`, manifest `zsh-functions.manifest`): same safe.directory trust, same elevation path, same satisfied-pin skip. Covered by `tests/setup-zsh-functions.test.sh` (pin mechanics); the elevation paths are shared-helper code covered once by `tests/setup-bin.test.sh`.
+  - `setup-zsh-functions` uses the same ownership rules for the fleet’s shell functions checkout (pin `zsh-functions.ref`, manifest `zsh-functions.manifest`): same safe.directory trust, same elevation path, same satisfied-pin skip. Covered by `tests/setup-zsh-functions.test.sh` (pin mechanics); the elevation paths are shared-helper code covered once by `tests/setup-bin.test.sh`.
  
  ## Acceptance
  

@@ -41,6 +41,8 @@ with open(path, "r+b") as fh:
     fh.seek(-10, os.SEEK_END)
     fh.write(b"Z5DM34QS5U")
 PY
+    # Stand in for the second signed Mach-O produced on the macOS runner.
+    cp "$work/tree/managed-machine" "$work/tree/agent-bot-keyd"
     rm -rf "$out"
     (cd "$root" && GOTOOLCHAIN=local go run ./cmd/mm-release repack -dist "$work/unsigned" -tree "$work/tree" -out "$out") >/dev/null
     rm -rf "$work"

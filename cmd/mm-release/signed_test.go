@@ -324,3 +324,28 @@ func TestVerifySignedRefusesAccessibleCustodyHelper(t *testing.T) {
 		}
 	}
 }
+
+func TestReleaseVerificationRequiresCustodyHelper(t *testing.T) {
+	dir := t.TempDir()
+	code := bytes.Repeat([]byte{0x42}, 128)
+	unsigned := filepath.Join(dir, "unsigned")
+	signed := filepath.Join(dir, "signed")
+	writeArchiveDist(t, unsigned, "1.2.3", unsignedDarwin(syntheticMacho(code, []byte("adhoc"))))
+	binary := syntheticMacho(code, []byte("developer id "+testTeam))
+	entries := signedTree(binary)
+	writeArchiveDist(t, signed, "1.2.3", entries)
+
+	args := []string{"-unsigned", unsigned, "-signed", signed, "-team", testTeam}
+	if err := verifySignedCmd(args, &bytes.Buffer{}); err != nil {
+		t.Fatalf("inspect historical Go-only archive: %v", err)
+	}
+	args = append(args, "-require-keyd")
+	if err := verifySignedCmd(args, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "missing required custody helper") {
+		t.Fatalf("new release without helper: %v", err)
+	}
+	entries = append(entries, archiveEntry{Name: "agent-bot-keyd", Mode: 0o700, Data: binary})
+	writeArchiveDist(t, signed, "1.2.3", entries)
+	if err := verifySignedCmd(args, &bytes.Buffer{}); err != nil {
+		t.Fatalf("new release with signed private helper: %v", err)
+	}
+}

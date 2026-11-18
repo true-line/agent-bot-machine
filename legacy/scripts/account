@@ -176,7 +176,8 @@ PY
 
 account_collect_json() {
     local account="$1" harness="$2" catalog="${3:-}" results="${4:-}"
-    local -a args=(--account "$account" --home "$HOME" --harness "$harness" --catalog "${catalog:-/nonexistent/apps.json}" --shell /bin/zsh --json)
+    local -a args=(--account "$account" --home "$HOME" --harness "$harness" --shell /bin/zsh --json)
+    [[ -z "$catalog" ]] || args+=(--catalog "$catalog")
     [[ -z "$results" ]] || args+=(--setup-results "$results")
     python3 "$REPO_ROOT/lib/account-readiness.py" "${args[@]}"
 }
@@ -186,10 +187,14 @@ account_setup_current() (
     results="$(mktemp)"
     trap 'rm -f "$results"' EXIT
     printf '[]\n' >"$results"
-    if account_record_step "$results" config 'Refresh the bundled configuration as its owner, then rerun account setup.' account_prepare_config "$REPO_ROOT"; then
+    if account_record_step "$results" config 'Select a target-owned fleet checkout with CONFIG_REPO_ROOT, then rerun account setup.' account_prepare_config "$REPO_ROOT"; then
         account_record_step "$results" shell 'Review conflicting shell profiles, then rerun account setup.' account_prepare_shell "$REPO_ROOT" || true
-        account_record_step "$results" local-bin 'Refresh the reviewed local-bin bundle/pin as its owner, then rerun account setup.' account_prepare_local_bin "$REPO_ROOT" || true
-        account_record_step "$results" zsh-functions 'Refresh the reviewed zsh-functions bundle/pin as its owner, then rerun account setup.' account_prepare_zsh_functions "$REPO_ROOT" || true
+        if account_component_selected local-bin; then
+            account_record_step "$results" local-bin 'Check the selected local-bin checkout and its immutable pin, then rerun account setup.' account_prepare_local_bin "$REPO_ROOT" || true
+        fi
+        if account_component_selected zsh-functions; then
+            account_record_step "$results" zsh-functions 'Check the selected zsh-functions checkout and its immutable pin, then rerun account setup.' account_prepare_zsh_functions "$REPO_ROOT" || true
+        fi
         account_record_step "$results" harness "Resolve the selected harness prerequisite, then run managed-machine account setup $account." account_harness_setup "$harness" || true
     fi
     catalog_source="${CONFIG_REPO_ROOT:-$(account_config_source "$REPO_ROOT" 2>/dev/null || true)}"
@@ -284,7 +289,7 @@ account_main() {
     if [[ "${MANAGED_MACHINE_ACCOUNT_CONTEXT:-}" != 1 ]]; then
         local -a clean=("HOME=$home" "USER=$account" "LOGNAME=$account" 'SHELL=/bin/zsh' 'PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' 'MANAGED_MACHINE_ACCOUNT_CONTEXT=1' 'MANAGED_MACHINE_BOOTSTRAP_MODE=noninteractive' 'GIT_TERMINAL_PROMPT=0')
         local key value
-        for key in ZDOTDIR XDG_DATA_HOME XDG_CONFIG_HOME XDG_STATE_HOME CLAUDE_CONFIG_DIR MANAGED_MACHINE_ORG_PROFILE; do
+        for key in ZDOTDIR XDG_DATA_HOME XDG_CONFIG_HOME XDG_STATE_HOME CLAUDE_CONFIG_DIR MANAGED_MACHINE_ORG_PROFILE CONFIG_REPO_ROOT MANAGED_MACHINE_CONFIG_REPO_URL LOCAL_BIN_REPO HOME_BIN_REPO ZSH_FUNCTIONS_REPO; do
             value="${!key:-}"
             [[ -z "$value" ]] || clean+=("$key=$value")
         done

@@ -186,12 +186,8 @@ func (h *releaseHarness) runGitIsolated(dir string, args ...string) (string, err
 	return strings.TrimSpace(o.String()), nil
 }
 
-// ensureCandidateFormulaBase returns the candidate Formula/managed-machine.rb
-// content for targetVer. If rawFormula does not yet carry the S6 R05 `core`
-// resource block (because scripts/release prepare runs in the release PR), it
-// adds depends_on arch: :arm64, depends_on macos: :sequoia, resource "core",
-// libexec/core staging and the core test assertions, and updates version/tag
-// to targetVer.
+// ensureCandidateFormulaBase sets the candidate version for the local upgrade
+// while preserving the public formula's installation code.
 func ensureCandidateFormulaBase(rawFormula, targetVer string) (string, error) {
 	out := strings.ReplaceAll(rawFormula, "\r\n", "\n")
 	if targetVer == "" {
@@ -199,41 +195,14 @@ func ensureCandidateFormulaBase(rawFormula, targetVer string) (string, error) {
 	}
 
 	// Ensure main url tag and version match targetVer in the base formula.
-	mainTagRe := regexp.MustCompile(`(?m)^(\s*url "https://github\.com/qwts/managed-machine\.git",\n\s*using:\s*:git,\n\s*tag:\s*)"v[^"]+"`)
+	mainTagRe := regexp.MustCompile(`(?m)^(\s*url "https://github\.com/(?:qwts/managed-machine|true-line/agent-bot-machine)\.git",\n\s*using:\s*:git,\n\s*tag:\s*)"v[^"]+"`)
 	out = mainTagRe.ReplaceAllString(out, `${1}"v`+targetVer+`"`)
 	verRe := regexp.MustCompile(`(?m)^(\s*version )"[^"]+"`)
 	out = verRe.ReplaceAllString(out, `${1}"`+targetVer+`"`)
 
-	if !strings.Contains(out, `resource "core" do`) {
-		wantCoreURL := fmt.Sprintf("https://github.com/qwts/managed-machine/releases/download/v%s/managed-machine_%s_darwin_arm64.tar.gz", targetVer, targetVer)
-		placeholderSHA := strings.Repeat("0", 64)
-		out = strings.Replace(out,
-			"  license \"MIT\"\n",
-			"  license \"MIT\"\n\n  depends_on arch: :arm64\n  depends_on macos: :sequoia\n",
-			1)
-		coreBlock := fmt.Sprintf("  # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, decisions D3/D4).\n"+
-			"  # Staged to libexec/core/managed-machine beside the Bash dispatcher.\n"+
-			"  resource \"core\" do\n"+
-			"    url %q\n"+
-			"    sha256 %q\n"+
-			"  end\n", wantCoreURL, placeholderSHA)
-		if strings.Contains(out, "  # No depends_on — setup scripts handle their own deps (brew, gh, etc.)\n") {
-			out = strings.Replace(out, "  # No depends_on — setup scripts handle their own deps (brew, gh, etc.)\n", coreBlock, 1)
-		} else {
-			out = strings.Replace(out, "  def install\n", coreBlock+"\n  def install\n", 1)
-		}
-		stageBlock := "    resource(\"local-bin\").stage(libexec / \"local-bin\")\n\n" +
-			"    # Stage the compiled Go core binary into libexec/core/managed-machine.\n" +
-			"    (libexec / \"core\").mkpath\n" +
-			"    resource(\"core\").stage do\n" +
-			"      (libexec / \"core\").install \"managed-machine\"\n" +
-			"      chmod 0755, libexec / \"core/managed-machine\"\n" +
-			"    end\n"
-		out = strings.Replace(out, "    resource(\"local-bin\").stage(libexec / \"local-bin\")\n", stageBlock, 1)
-		testBlock := "    assert_match \"unknown setup name\", invalid\n\n" +
-			"    assert_equal version.to_s, shell_output(\"#{libexec}/core/managed-machine --version\").strip\n" +
-			"    shell_output(\"#{bin}/managed-machine version\")\n"
-		out = strings.Replace(out, "    assert_match \"unknown setup name\", invalid\n", testBlock, 1)
+	resources := regexp.MustCompile(`(?m)^\s*resource\s+"([^"]+)"\s+do\s*$`).FindAllStringSubmatch(out, -1)
+	if len(resources) != 1 || resources[0][1] != "core" {
+		return "", errors.New("candidate formula must declare only the public core resource")
 	}
 
 	for _, req := range []string{
@@ -256,7 +225,7 @@ func deriveOldFormula(baseFormula, checkoutDir, configRepoDir, configRev, localB
 	out := strings.ReplaceAll(baseFormula, "\r\n", "\n")
 
 	// 1. Main formula URL (keeps its tag: "v0.8.12", "v0.9.0", or "v0.10.0").
-	mainRe := regexp.MustCompile(`(?m)^(\s*url )"https://github\.com/qwts/managed-machine\.git"(,\n\s*using:\s*:git,\n\s*tag:\s*"v[0-9]+\.[0-9]+\.[0-9]+")`)
+	mainRe := regexp.MustCompile(`(?m)^(\s*url )"https://github\.com/(?:qwts/managed-machine|true-line/agent-bot-machine)\.git"(,\n\s*using:\s*:git,\n\s*tag:\s*"v[0-9]+\.[0-9]+\.[0-9]+")`)
 	if !mainRe.MatchString(out) {
 		return "", errors.New("old formula missing expected main url/tag block")
 	}
@@ -296,37 +265,17 @@ func deriveOldFormula(baseFormula, checkoutDir, configRepoDir, configRev, localB
 
 // deriveCandidateFormula rewrites only the URLs and pins in the candidate
 // Formula/managed-machine.rb content per D6.
-func deriveCandidateFormula(baseFormula, checkoutDir, candidateSHA, configRepoDir, configTag, configRev, localBinDir, localBinRev, coreArchivePath, coreSHA256 string) (string, error) {
+func deriveCandidateFormula(baseFormula, checkoutDir, candidateSHA, coreArchivePath, coreSHA256 string) (string, error) {
 	out := strings.ReplaceAll(baseFormula, "\r\n", "\n")
 
 	// 1. Main formula URL -> file://<checkout>, revision: "<candidate sha>".
-	mainRe := regexp.MustCompile(`(?m)^(\s*url )"https://github\.com/qwts/managed-machine\.git",\n(\s*)using:\s*:git,\n(\s*)(?:tag|revision):\s*"[^"]+"`)
+	mainRe := regexp.MustCompile(`(?m)^(\s*url )"https://github\.com/(?:qwts/managed-machine|true-line/agent-bot-machine)\.git",\n(\s*)using:\s*:git,\n(\s*)(?:tag|revision):\s*"[^"]+"`)
 	if !mainRe.MatchString(out) {
 		return "", errors.New("candidate formula missing expected main url block")
 	}
 	out = mainRe.ReplaceAllString(out, `${1}"file://`+filepath.ToSlash(checkoutDir)+`",`+"\n"+`${2}using:    :git,`+"\n"+`${3}revision: "`+candidateSHA+`"`)
 
-	// 2. managed-machine-config resource URL, tag and revision.
-	cfgRe := regexp.MustCompile(`(?m)(resource "managed-machine-config" do\n\s*url )"https://github\.com/qwts/managed-machine-config\.git"(,\n\s*using:\s*:git,\n\s*tag:\s*)"[^"]+"(,\n\s*revision:\s*)"[0-9a-f]{40}"`)
-	if !cfgRe.MatchString(out) {
-		return "", errors.New("candidate formula missing expected managed-machine-config resource block")
-	}
-	out = cfgRe.ReplaceAllString(out, `${1}"file://`+filepath.ToSlash(configRepoDir)+`"${2}"v`+configTag+`"${3}"`+configRev+`"`)
-
-	// 3. Mirror the production pin shape with the synthetic tools repo's ref.
-	lbRe := regexp.MustCompile(`(?m)(resource "local-bin" do\n\s*url )"https://github\.com/qwts/local-bin\.git"(,\n\s*using:\s*:git,\n)(?:(\s*tag:\s*)"[^"]+",\n)?(\s*revision:\s*)"[0-9a-f]{40}"`)
-	lb := lbRe.FindStringSubmatch(out)
-	if lb == nil {
-		return "", errors.New("candidate formula missing pinned local-bin resource block")
-	}
-	localTag := ""
-	if lb[3] != "" {
-		localTag = lb[3] + `"v1.2.4",` + "\n"
-	}
-	fixture := lb[1] + `"file://` + filepath.ToSlash(localBinDir) + `"` + lb[2] + localTag + lb[4] + `"` + localBinRev + `"`
-	out = strings.Replace(out, lb[0], fixture, 1)
-
-	// 4. core resource URL and sha256.
+	// Point the core resource at the verified local archive.
 	coreRe := regexp.MustCompile(`(?m)(resource "core" do\n\s*url )"[^"]+"(\n\s*sha256 )"[0-9a-f]{64}"`)
 	if !coreRe.MatchString(out) {
 		return "", errors.New("candidate formula missing expected core resource block")
@@ -408,8 +357,10 @@ func assertFormulaDiffersOnlyInURLs(baseFormula, derivedFormula string) error {
 	if strings.TrimSpace(baseFormula) == strings.TrimSpace(derivedFormula) {
 		return errors.New("derived formula did not rewrite URLs")
 	}
-	if strings.Contains(derivedFormula, `url "https://github.com/qwts/`) {
-		return errors.New("derived formula still contains a remote GitHub URL")
+	for _, line := range strings.Split(derivedFormula, "\n") {
+		if decl := strings.TrimSpace(line); strings.HasPrefix(decl, "url ") && !strings.HasPrefix(decl, `url "file://`) {
+			return errors.New("derived formula still contains a non-local URL")
+		}
 	}
 	skBase := formulaSkeleton(baseFormula)
 	skDerived := formulaSkeleton(derivedFormula)
@@ -644,7 +595,16 @@ path: %q
 	}
 	// Fetch tags from repoRoot in case any tag was not copied by clone.
 	_, _ = h.runGitIsolated(checkoutClone, "fetch", "--quiet", "--tags", "origin")
-	_ = copyTree(filepath.Join(h.repoRoot, "legacy"), filepath.Join(checkoutClone, "legacy"))
+	if err := copyTree(filepath.Join(h.repoRoot, "legacy"), filepath.Join(checkoutClone, "legacy")); err != nil {
+		return err
+	}
+	installer, err := os.ReadFile(filepath.Join(h.repoRoot, "install.sh"))
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(checkoutClone, "install.sh"), installer, 0o755); err != nil {
+		return err
+	}
 	_ = os.RemoveAll(filepath.Join(checkoutClone, "bin"))
 	_ = os.RemoveAll(filepath.Join(checkoutClone, "lib"))
 	_ = os.RemoveAll(filepath.Join(checkoutClone, "git-hooks"))
@@ -680,11 +640,6 @@ path: %q
 		return err
 	}
 
-	localBinRev, err := h.runGitIsolated(localBinBare, "rev-parse", "refs/tags/v1.2.4^{commit}")
-	if err != nil {
-		return err
-	}
-	h.localBinRev = localBinRev
 	h.localBinBare = localBinBare
 	h.fakeOriginBare = fakeOriginBare
 	h.fakeOriginWork = fakeOriginWork
@@ -1002,9 +957,9 @@ func copyTree(srcDir, dstDir string) error {
 
 // ensureStagedTrees guarantees that h.stagedOld/opt/managed-machine (v0.9.0
 // layout with seed at commitA) and h.stagedNew/opt/managed-machine (candidate
-// layout with seed at commitC and bin/managed-machine + libexec/legacy) exist.
+// public layout with bin/managed-machine and libexec/legacy) exist.
 // When upgrade-from-bash ran first, these are already copies of the
-// Homebrew-staged kegs; when private-seed or dispatcher runs standalone in unit
+// Homebrew-staged kegs; when public-package or dispatcher runs standalone in unit
 // tests, this materializes the exact formula layout from the local repositories.
 func (h *releaseHarness) ensureStagedTrees() error {
 	if err := h.setupSyntheticRepos(); err != nil {
@@ -1018,7 +973,7 @@ func (h *releaseHarness) ensureStagedTrees() error {
 	}
 	newOpt := filepath.Join(h.stagedNew, "opt", "managed-machine")
 	if _, err := os.Stat(filepath.Join(newOpt, "bin", "managed-machine")); err != nil {
-		if err := h.stageFormulaTreeFromGit(newOpt, "HEAD", h.commitC, true); err != nil {
+		if err := h.stageFormulaTreeFromGit(newOpt, "HEAD", "", true); err != nil {
 			return fmt.Errorf("stage candidate tree: %w", err)
 		}
 	}
@@ -1084,17 +1039,6 @@ func (h *releaseHarness) stageFormulaTreeFromGit(optDir, checkoutRef, seedCommit
 					return err
 				}
 			}
-		}
-		seedDest := filepath.Join(legacyDir, "managed-machine-config")
-		if _, err := h.runGitIsolated(h.root, "clone", "--quiet", "--no-hardlinks", h.fakeOriginBare, seedDest); err != nil {
-			return err
-		}
-		if _, err := h.runGitIsolated(seedDest, "checkout", "--quiet", "--detach", seedCommit); err != nil {
-			return err
-		}
-		lbDest := filepath.Join(legacyDir, "local-bin")
-		if _, err := h.runGitIsolated(h.root, "clone", "--quiet", "--no-hardlinks", h.localBinBare, lbDest); err != nil {
-			return err
 		}
 		if vBytes, err := os.ReadFile(filepath.Join(tmpCheckout, "VERSION")); err == nil {
 			if err := os.WriteFile(filepath.Join(libexecDir, "VERSION"), vBytes, 0o644); err != nil {
@@ -1242,7 +1186,7 @@ func (h *releaseHarness) runUpgradeFromBash() {
 		return
 	}
 	coreSHA := sum(coreArchiveBytes)
-	newDerived, err := deriveCandidateFormula(candBase, h.checkoutClone, candidateSHA, h.fakeOriginBare, h.upgradeVer, h.commitC, h.localBinBare, h.localBinRev, coreArchive, coreSHA)
+	newDerived, err := deriveCandidateFormula(candBase, h.checkoutClone, candidateSHA, coreArchive, coreSHA)
 	if err != nil {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
@@ -1355,7 +1299,10 @@ func (h *releaseHarness) runUpgradeFromBash() {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 1 (catalog list --json) exited %d: %s", code, firstLineOf(errOut, cl1Bytes)))
 		return
 	}
-	_ = copyTree(filepath.Join(brewPrefix, "opt", "managed-machine"), filepath.Join(h.stagedOld, "opt", "managed-machine"))
+	if err := copyTree(filepath.Join(brewPrefix, "opt", "managed-machine"), filepath.Join(h.stagedOld, "opt", "managed-machine")); err != nil {
+		h.recordCase(name, "ok", observedFailed, false, "copy installed old keg: "+err.Error())
+		return
+	}
 	h.step("upgrade-from-bash step 1 (v0.9.0)", "installed v0.9.0, materialized checkout from seed, recorded setup --list --json, catalog list --json and status --json", true)
 
 	// (2) brew upgrade --formula <new> takes Homebrew's upgrade path (opt link repointed, old keg retained).
@@ -1374,12 +1321,19 @@ func (h *releaseHarness) runUpgradeFromBash() {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 opt link target = %q (%v), want Cellar/managed-machine/%s", linkTarget, err, h.upgradeVer))
 		return
 	}
+	if err := checkPublicKeg(optLink, h.brewTestKeydSHA); err != nil {
+		h.recordCase(name, "ok", observedFailed, false, err.Error())
+		return
+	}
 	oldKegDir := filepath.Join(brewPrefix, "Cellar", "managed-machine", "0.9.0")
 	if _, err := os.Stat(oldKegDir); err != nil {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 old 0.9.0 keg was not retained at %s: %v", oldKegDir, err))
 		return
 	}
-	_ = copyTree(filepath.Join(brewPrefix, "opt", "managed-machine"), filepath.Join(h.stagedNew, "opt", "managed-machine"))
+	if err := copyTree(filepath.Join(brewPrefix, "opt", "managed-machine"), filepath.Join(h.stagedNew, "opt", "managed-machine")); err != nil {
+		h.recordCase(name, "ok", observedFailed, false, "copy installed new keg: "+err.Error())
+		return
+	}
 
 	// --version through the installed core binary.
 	code, vOut, vErr = h.execManagedMachineClean(installedBin, h.bashHome, brewPrefix, false, nil, "--version")
@@ -1592,8 +1546,8 @@ func (h *releaseHarness) runUpgradeFromBash() {
 // the published v0.10.0 core archive verified against its formula SHA-256,
 // upgrades to the candidate, and asserts the libexec/scripts/update shim exists
 // and resolves to legacy/scripts/update, fleet --keys and setup --list --json
-// unchanged across the upgrade, the seed present at
-// libexec/legacy/managed-machine-config, and no libexec/core left behind.
+// unchanged across the upgrade, and the candidate free of private resources
+// and the old libexec/core path.
 func (h *releaseHarness) runUpgradeFromV010() {
 	const name = caseReleaseUpgradeFromV010
 	if !strings.HasPrefix(h.target, "darwin/") {
@@ -1656,7 +1610,7 @@ func (h *releaseHarness) runUpgradeFromV010() {
 		return
 	}
 	candCoreSHA := sum(candCoreBytes)
-	newDerived, err := deriveCandidateFormula(candBase, h.checkoutClone, candidateSHA, h.fakeOriginBare, h.upgradeVer, h.commitC, h.localBinBare, h.localBinRev, candCoreArchive, candCoreSHA)
+	newDerived, err := deriveCandidateFormula(candBase, h.checkoutClone, candidateSHA, candCoreArchive, candCoreSHA)
 	if err != nil {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
@@ -1789,6 +1743,11 @@ func (h *releaseHarness) runUpgradeFromV010() {
 		return
 	}
 
+	if err := h.checkInstalledUpdateEntry(optLink, installedBin, brewPrefix); err != nil {
+		h.recordCase(name, "ok", observedFailed, false, err.Error())
+		return
+	}
+
 	// Assert fleet --keys and setup --list --json are unchanged across the upgrade.
 	code, fkAfter, errOut := h.execManagedMachineClean(installedBin, v010Home, brewPrefix, true, nil, "fleet", "--keys")
 	if code != 0 || len(errOut) != 0 {
@@ -1806,21 +1765,15 @@ func (h *releaseHarness) runUpgradeFromV010() {
 		return
 	}
 
-	// Assert seed is present at libexec/legacy/managed-machine-config and no libexec/core is left behind in the linked opt prefix or candidate keg.
+	// Inspect the linked candidate keg after the real Homebrew upgrade.
 	code, optPfxOut, optPfxErr := h.runBrew("--prefix", "managed-machine")
 	if code != 0 || strings.TrimSpace(string(optPfxOut)) == "" {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 (brew --prefix managed-machine) exited %d: %s", code, firstLineOf(optPfxErr, optPfxOut)))
 		return
 	}
 	linkedOptPrefix := strings.TrimSpace(string(optPfxOut))
-	legacySeedDir := filepath.Join(linkedOptPrefix, "libexec", "legacy", "managed-machine-config")
-	seedHead, err := h.runGitIsolated(legacySeedDir, "rev-parse", "HEAD")
-	if err != nil || seedHead != h.commitC {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 seed at libexec/legacy/managed-machine-config HEAD = %q (%v), want %s", seedHead, err, h.commitC))
-		return
-	}
-	if _, err := os.Stat(filepath.Join(linkedOptPrefix, "libexec", "managed-machine-config")); !errors.Is(err, os.ErrNotExist) {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("step 2 unexpected top-level libexec/managed-machine-config: %v", err))
+	if err := checkPublicKeg(linkedOptPrefix, h.brewTestKeydSHA); err != nil {
+		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
 	if _, err := os.Stat(filepath.Join(linkedOptPrefix, "libexec", "core")); !errors.Is(err, os.ErrNotExist) {
@@ -1851,7 +1804,7 @@ func (h *releaseHarness) runUpgradeFromV010() {
 	}
 
 	h.recordCase(name, "ok", "ok", true,
-		fmt.Sprintf("v0.10.0 -> %s verified via derived formulae; libexec/scripts/update shim resolved to legacy/scripts/update, fleet --keys and setup --list --json unchanged across upgrade, seed at libexec/legacy/managed-machine-config, no libexec/core left behind, brew list --versions hash %s unchanged",
+		fmt.Sprintf("v0.10.0 -> %s verified via derived formulae; libexec/scripts/update shim resolved to legacy/scripts/update, fleet --keys and setup --list --json unchanged across upgrade, candidate keg free of private fixtures and old libexec/core, brew list --versions hash %s unchanged",
 			h.upgradeVer, afterBrewHash[:12]))
 }
 
@@ -1913,10 +1866,95 @@ func (h *releaseHarness) runBashDispatcherConfigACT04(binPath, homeDir, brewPref
 	return ""
 }
 
-// runPrivateSeed implements the D7 macOS private-seed case: scenarios (a)-(f)
-// on the synthetic seed and fake origin (commits A, B, C).
-func (h *releaseHarness) runPrivateSeed() {
-	const name = caseReleasePrivateSeed
+// checkInstalledUpdateEntry checks the bundled public installer, then uses a
+// Bash startup hook to stop the installed --update route at that script before
+// it can contact Homebrew or request any approval.
+func (h *releaseHarness) checkInstalledUpdateEntry(keg, bin, prefix string) error {
+	installer := filepath.Join(keg, "libexec", "install.sh")
+	installed, err := os.ReadFile(installer)
+	if h.upgradeVer == "0.11.5" {
+		if !errors.Is(err, os.ErrNotExist) {
+			return errors.New("v0.11.5 must omit its historical fleet installer")
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	source, err := os.ReadFile(filepath.Join(h.repoRoot, "install.sh"))
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(source, installed) {
+		return errors.New("installed public installer differs from the candidate source")
+	}
+	hook := filepath.Join(h.root, "probe-update-entry.bash")
+	if err := write(hook, `if [[ "$0" -ef "$MM_EXPECT_INSTALLER" ]]; then
+    [[ $# == 1 && "$1" == --update ]] || exit 78
+    echo "public installer received --update"
+    exit 77
+fi
+`); err != nil {
+		return err
+	}
+	env := []string{"MANAGED_MACHINE_CONFIG_REPO_URL=", "BASH_ENV=" + hook, "MM_EXPECT_INSTALLER=" + installer}
+	code, out, stderr := h.execManagedMachineClean(bin, filepath.Join(h.root, "public-update-home"), prefix, true, env, "--update")
+	if code != 77 || !strings.Contains(string(out), "public installer received --update") {
+		return fmt.Errorf("installed --update did not reach the public installer (exit %d): %s", code, firstLineOf(stderr, out))
+	}
+	return nil
+}
+
+// checkPublicKeg rejects historical private trees, even dangling links, and
+// detects fixture contents installed under a different name.
+func checkPublicKeg(keg, expectedKeydSHA string) error {
+	root, err := filepath.EvalSymlinks(keg)
+	if err != nil {
+		return err
+	}
+	if expectedKeydSHA != "" {
+		keyd := filepath.Join(root, "bin", "agent-bot-keyd")
+		info, err := os.Lstat(keyd)
+		if err != nil {
+			return fmt.Errorf("public keg keyd: %w", err)
+		}
+		if info.Mode() != 0o700 {
+			return fmt.Errorf("public keg keyd mode %s, want regular file with 0700 permissions", info.Mode())
+		}
+		content, err := os.ReadFile(keyd)
+		if err != nil {
+			return err
+		}
+		if sum(content) != expectedKeydSHA {
+			return errors.New("public keg keyd differs from the CI package fixture")
+		}
+	}
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Name() == "managed-machine-config" || entry.Name() == "local-bin" {
+			return fmt.Errorf("public keg contains private resource %s", path)
+		}
+		if entry.Type().IsRegular() {
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			for _, marker := range []string{releaseSeedMarkerZSH, releaseSeedMarkerAuthKeys, "echo hello-fixture"} {
+				if bytes.Contains(content, []byte(marker)) {
+					return fmt.Errorf("public keg contains synthetic private fixture in %s", path)
+				}
+			}
+		}
+		return nil
+	})
+}
+
+// runPublicPackage checks a fresh unconfigured public install and upgrades
+// from historical formulae using synthetic local repositories.
+func (h *releaseHarness) runPublicPackage() {
+	const name = caseReleasePublicPackage
 	if !strings.HasPrefix(h.target, "darwin/") {
 		h.recordCase(name, "n-a", "n-a", true, releaseFirstReleaseReason)
 		return
@@ -1926,7 +1964,7 @@ func (h *releaseHarness) runPrivateSeed() {
 		return
 	}
 
-	seedHome := filepath.Join(h.root, "private-seed-home")
+	seedHome := filepath.Join(h.root, "public-package-home")
 	if err := h.seedBashFixtureHome(seedHome); err != nil {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
@@ -1934,7 +1972,52 @@ func (h *releaseHarness) runPrivateSeed() {
 	oldBin := filepath.Join(h.stagedOld, "opt", "managed-machine", "bin", "managed-machine")
 	newBin := filepath.Join(h.stagedNew, "opt", "managed-machine", "bin", "managed-machine")
 	oldSeedDir := filepath.Join(h.stagedOld, "opt", "managed-machine", "libexec", "managed-machine-config")
-	newSeedDir := filepath.Join(h.stagedNew, "opt", "managed-machine", "libexec", "legacy", "managed-machine-config")
+	newKeg := filepath.Join(h.stagedNew, "opt", "managed-machine")
+	if err := checkPublicKeg(newKeg, h.brewTestKeydSHA); err != nil {
+		h.recordCase(name, "ok", observedFailed, false, err.Error())
+		return
+	}
+	freshHome := filepath.Join(h.root, "public-fresh-home")
+	// Override the synthetic origin used by historical installations. On an
+	// upgrade, the existing user checkout should keep using its own origin.
+	noConfig := []string{"MANAGED_MACHINE_CONFIG_REPO_URL="}
+	code, out, errOut := h.execManagedMachineClean(newBin, freshHome, h.stagedNew, true, noConfig, "--version")
+	if code != 0 || strings.TrimSpace(string(out)) != h.upgradeVer {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("unconfigured public --version exited %d: %s", code, firstLineOf(errOut, out)))
+		return
+	}
+	trace := filepath.Join(freshHome, "git.trace")
+	code, out, errOut = h.execManagedMachineClean(newBin, freshHome, h.stagedNew, false, append(noConfig, "GIT_TRACE="+trace), "setup", "--list", "--json")
+	var setup struct {
+		Command string `json:"command"`
+		Names   []struct {
+			Name      string `json:"name"`
+			InCatalog bool   `json:"in_catalog"`
+		} `json:"names"`
+	}
+	if code != 0 || json.Unmarshal(out, &setup) != nil || setup.Command != "setup-list" || len(setup.Names) == 0 {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("unconfigured public setup --list --json exited %d: %s", code, firstLineOf(errOut, out)))
+		return
+	}
+	for _, entry := range setup.Names {
+		if entry.InCatalog {
+			h.recordCase(name, "ok", observedFailed, false, "unconfigured public setup reported a catalog entry: "+entry.Name)
+			return
+		}
+	}
+	traceData, err := os.ReadFile(trace)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		h.recordCase(name, "ok", observedFailed, false, err.Error())
+		return
+	}
+	if regexp.MustCompile(`(?m)built-in: git (clone|fetch|pull) `).Match(traceData) {
+		h.recordCase(name, "ok", observedFailed, false, "unconfigured public setup contacted a Git repository")
+		return
+	}
+	if _, err := os.Lstat(filepath.Join(freshHome, ".local", "share", "managed-machine", "managed-machine-config")); !errors.Is(err, os.ErrNotExist) {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("unexpected checkout in fresh public home: %v", err))
+		return
+	}
 	checkoutDir := filepath.Join(seedHome, ".local", "share", "managed-machine", "managed-machine-config")
 	wantOrigin := "file://" + filepath.ToSlash(h.fakeOriginBare)
 
@@ -1949,7 +2032,7 @@ func (h *releaseHarness) runPrivateSeed() {
 		h.recordCase(name, "ok", observedFailed, false, "snapshot old seed: "+err.Error())
 		return
 	}
-	code, out, errOut := h.execManagedMachineClean(oldBin, seedHome, h.stagedOld, false, nil, "setup", "--list")
+	code, out, errOut = h.execManagedMachineClean(oldBin, seedHome, h.stagedOld, false, nil, "setup", "--list")
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (a) setup --list exited %d: %s", code, firstLineOf(errOut, out)))
 		return
@@ -1982,42 +2065,32 @@ func (h *releaseHarness) runPrivateSeed() {
 
 	// (b) Clean checkout behind origin across the upgrade: the upgrade itself
 	// changes nothing in the checkout, and the next refresh (setup --list)
-	// fast-forwards to origin's main (commit B, then C), not to the seed pin (commit C).
+	// fast-forwards to the configured origin's main (commit B, then C).
 	if err := h.setFakeOriginMain(h.commitB); err != nil {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	if _, err := os.Stat(filepath.Join(h.stagedNew, "opt", "managed-machine", "libexec", "managed-machine-config")); !errors.Is(err, os.ErrNotExist) {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (b) unexpected seed at top-level libexec/managed-machine-config: %v", err))
-		return
-	}
-	newSeedBefore, err := h.snapshotGitCheckout(newSeedDir)
-	if err != nil {
-		h.recordCase(name, "ok", observedFailed, false, "snapshot candidate seed at libexec/legacy/managed-machine-config: "+err.Error())
-		return
-	}
-	newSeedHead, err := h.runGitIsolated(newSeedDir, "rev-parse", "HEAD")
-	if err != nil || newSeedHead != h.commitC {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (b) candidate seed HEAD = %q (%v), want commit C %s", newSeedHead, err, h.commitC))
-		return
-	}
 	// Before refresh on the upgraded formula, read-only command (--version) leaves checkout at A.
-	_, _, _ = h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, nil, "--version")
+	code, out, errOut = h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, noConfig, "--version")
+	if code != 0 {
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("upgraded --version exited %d: %s", code, firstLineOf(errOut, out)))
+		return
+	}
 	headBeforeRefresh, err := h.runGitIsolated(checkoutDir, "rev-parse", "HEAD")
 	if err != nil || headBeforeRefresh != h.commitA {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (b) checkout changed before refresh: %q, want %s", headBeforeRefresh, h.commitA))
 		return
 	}
-	// Next refresh (setup --list) fast-forwards to origin's main (commit B), NOT the seed pin (commit C).
-	code, out, errOut = h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, nil, "setup", "--list")
+	// Next refresh (setup --list) fast-forwards to the configured origin's main (commit B).
+	code, out, errOut = h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, noConfig, "setup", "--list")
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (b) setup --list (origin at B) exited %d: %s", code, firstLineOf(errOut, out)))
 		return
 	}
 	headAfterB, err := h.runGitIsolated(checkoutDir, "rev-parse", "HEAD")
 	if err != nil || headAfterB != h.commitB {
-		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (b) refresh landed on %q (%v), want origin/main commit B (%s) rather than seed pin C (%s)",
-			headAfterB, err, h.commitB, h.commitC))
+		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (b) refresh landed on %q (%v), want origin/main commit B (%s)",
+			headAfterB, err, h.commitB))
 		return
 	}
 	// Advance origin to C and refresh again -> fast-forwards to C.
@@ -2025,7 +2098,7 @@ func (h *releaseHarness) runPrivateSeed() {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	code, out, errOut = h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, nil, "setup", "--list")
+	code, out, errOut = h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, noConfig, "setup", "--list")
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (b) setup --list (origin at C) exited %d: %s", code, firstLineOf(errOut, out)))
 		return
@@ -2049,7 +2122,7 @@ func (h *releaseHarness) runPrivateSeed() {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	code, outText, errText := h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, nil, "setup", "--list")
+	code, outText, errText := h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, noConfig, "setup", "--list")
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (c) setup --list exited %d: %s", code, firstLineOf(errText, outText)))
 		return
@@ -2058,7 +2131,7 @@ func (h *releaseHarness) runPrivateSeed() {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (c) stderr did not report dirty checkout: %q", firstLineOf(errText)))
 		return
 	}
-	code, outJSON, errJSON := h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, nil, "setup", "--list", "--json")
+	code, outJSON, errJSON := h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, noConfig, "setup", "--list", "--json")
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (c) setup --list --json exited %d: %s", code, firstLineOf(errJSON, outJSON)))
 		return
@@ -2100,7 +2173,7 @@ func (h *releaseHarness) runPrivateSeed() {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
 	}
-	code, outText, errText = h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, nil, "setup", "--list")
+	code, outText, errText = h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, noConfig, "setup", "--list")
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (d) setup --list exited %d: %s", code, firstLineOf(errText, outText)))
 		return
@@ -2109,7 +2182,7 @@ func (h *releaseHarness) runPrivateSeed() {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (d) stderr did not report divergent rebase failure: %q", firstLineOf(errText)))
 		return
 	}
-	code, outJSON, errJSON = h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, nil, "setup", "--list", "--json")
+	code, outJSON, errJSON = h.execManagedMachineClean(newBin, seedHome, h.stagedNew, false, noConfig, "setup", "--list", "--json")
 	if code != 0 {
 		h.recordCase(name, "ok", observedFailed, false, fmt.Sprintf("scenario (d) setup --list --json exited %d: %s", code, firstLineOf(errJSON, outJSON)))
 		return
@@ -2181,19 +2254,8 @@ func (h *releaseHarness) runPrivateSeed() {
 		h.recordCase(name, "ok", observedFailed, false, "scenario (f) git or another guarded sentinel was started by the core: "+firstLineOf(b))
 		return
 	}
-	newSeedAfter, err := h.snapshotGitCheckout(newSeedDir)
-	if err != nil || newSeedAfter != newSeedBefore {
-		h.recordCase(name, "ok", observedFailed, false, "bundled seed under libexec/legacy/managed-machine-config was mutated")
-		return
-	}
-	newSeedPorcelain, err := h.runGitIsolated(newSeedDir, "status", "--porcelain")
-	if err != nil || newSeedPorcelain != "" {
-		h.recordCase(name, "ok", observedFailed, false, "bundled seed under libexec/legacy/managed-machine-config is dirty")
-		return
-	}
-
 	h.recordCase(name, "ok", "ok", true,
-		"synthetic seed scenarios (a)-(f) verified with seed at libexec/legacy/managed-machine-config: fresh materialization at commit A, upgrade fast-forward to B then C, dirty and divergent checkouts preserved and reported, older seed pin never rewinds live checkout, and core read policy with zero git sentinel invocations")
+		"public keg, unconfigured version and setup list verified; historical checkout upgraded from its configured origin, dirty and divergent checkouts preserved, core read policy without starting git")
 }
 
 // runDispatcher implements the S8 D6(a) macOS dispatcher case for the inverted

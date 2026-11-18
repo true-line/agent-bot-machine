@@ -368,11 +368,7 @@ bootstrap_inspect_step_for_plan() {
         setup-bin)
             local lb_dir="${LOCAL_BIN_DIR:-${HOME_BIN_DIR:-}}"
             if [[ -z "$lb_dir" ]]; then
-                if [[ -d "${REPO_ROOT:-}/managed-machine-config" ]]; then
-                    lb_dir="${REPO_ROOT}/local-bin"
-                elif [[ -n "${REPO_ROOT:-}" ]]; then
-                    lb_dir="${REPO_ROOT}/../local-bin"
-                fi
+                lb_dir="$(managed_machine_tool_checkout local-bin)"
             fi
             if [[ -n "$lb_dir" ]]; then
                 lb_dir="$(canonicalize_plan_path "$lb_dir")"
@@ -404,7 +400,7 @@ bootstrap_inspect_step_for_plan() {
                 fi
             fi
             if [[ "$lb_priv" -eq 1 ]]; then
-                local lb_repo="${LOCAL_BIN_REPO:-${HOME_BIN_REPO:-https://github.com/qwts/local-bin.git}}"
+                local lb_repo="${LOCAL_BIN_REPO:-${HOME_BIN_REPO:-}}"
                 local lb_extra="${lb_ref}|${MANAGED_MACHINE_ALLOW_BRANCH_PIN:-0}|${lb_pin_file}|${lb_repo}"
                 local summary="checkout local-bin@${lb_ref:-pinned} in $lb_dir (git as $lb_owner) and link ~/.local/bin"
                 bootstrap_plan_add_action "$session_dir" "setup-bin" "git-checkout-owner" "$lb_owner" "$lb_mode" "$lb_dir" "$lb_extra" "$summary"
@@ -416,11 +412,7 @@ bootstrap_inspect_step_for_plan() {
         setup-zsh-functions)
             local zf_dir="${ZSH_FUNCTIONS_DIR:-}"
             if [[ -z "$zf_dir" ]]; then
-                if [[ -d "${REPO_ROOT:-}/managed-machine-config" ]]; then
-                    zf_dir="${REPO_ROOT}/zsh-functions"
-                elif [[ -n "${REPO_ROOT:-}" ]]; then
-                    zf_dir="${REPO_ROOT}/../zsh-functions"
-                fi
+                zf_dir="$(managed_machine_tool_checkout zsh-functions)"
             fi
             if [[ -n "$zf_dir" ]]; then
                 zf_dir="$(canonicalize_plan_path "$zf_dir")"
@@ -452,7 +444,7 @@ bootstrap_inspect_step_for_plan() {
                 fi
             fi
             if [[ "$zf_priv" -eq 1 ]]; then
-                local zf_repo="${ZSH_FUNCTIONS_REPO:-https://github.com/qwts/zsh-functions.git}"
+                local zf_repo="${ZSH_FUNCTIONS_REPO:-}"
                 local zf_extra="${zf_ref}|${MANAGED_MACHINE_ALLOW_BRANCH_PIN:-0}|${zf_pin_file}|${zf_repo}"
                 local zf_summary="checkout zsh-functions@${zf_ref:-pinned} in $zf_dir (git as $zf_owner) and install ~/.config/zsh/functions"
                 bootstrap_plan_add_action "$session_dir" "setup-zsh-functions" "git-checkout-owner" "$zf_owner" "$zf_mode" "$zf_dir" "$zf_extra" "$zf_summary"

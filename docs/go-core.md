@@ -513,7 +513,7 @@ go build -o mmw ./cmd/mm-walkthrough && go build -o mm ./cmd/managed-machine
 ## The S6 release gate (issues #332, #335)
 
 S6 unifies release delivery across the five targets, adds the `bin/managed-machine`
-dispatcher on macOS, proves private-seed and upgrade compatibility, and proves
+dispatcher on macOS, proves public-package and upgrade compatibility, and proves
 interrupted-apply and plan-store recovery. `cmd/mm-walkthrough release` drives a
 built binary and local `dist/` directory through the fifteen D10 cases in an
 isolated harness and writes one sanitized `s6-release-gate` evidence record per
@@ -580,29 +580,31 @@ target:
     re-upgrade.
 12. `upgrade-from-bash` (`darwin/arm64` per D6; `n-a` with the reason
     `"first release; no upgrade path from an earlier release exists"` on the
-    other four targets): derives the `v0.8.12` and candidate formula files from
+    other four targets): derives the `v0.9.0` and candidate formula files from
     repository history by rewriting only URLs and pins to local bare
-    repositories and the local `dist/` archive, installs `v0.8.12` with
+    repositories and the local `dist/` archive, installs `v0.9.0` with
     `brew install --formula`, seeds the host-state fixture home, materializes the
     writable checkout from the synthetic seed, records `status --json`, upgrades
-    with `brew upgrade --formula` (repointing `opt` and retaining the `0.8.12`
+    with `brew upgrade --formula` (repointing `opt` and retaining the `0.9.0`
     keg), verifies `--version` through both entry points, verifies `status --json`
     matches with the version normalized while legacy manifests, `machine.toml`
     and the checkout remain untouched, runs new-core routes and the AC-T-04
-    `config` cycle through the dispatcher, downgrades to `v0.8.12` and
+    `config` cycle through the dispatcher, downgrades to `v0.9.0` and
     re-upgrades verifying `MM_CONFIG_NO_PLAN`, removes the keg at the end and
     verifies `brew list --versions` is unchanged by hash. Refuses outside a
     GitHub-hosted runner before starting `brew`.
-13. `private-seed` (`darwin/arm64` per D7; `n-a` with the reason on the other
-    four targets): builds in-process a synthetic seed repository and fake origin
-    with the private layout (commits A, B, C) and proves scenarios (a)–(f):
-    fresh install materialization at commit A on branch `main`, clean checkout
-    behind origin across the upgrade fast-forwarding to B then C on refresh,
-    dirty checkout preserved byte-identical and reported, divergent checkout
-    preserved and reported, older seed pin never rewinding a newer live checkout,
-    and the new core reading the materialized checkout as its policy directory
-    through the dispatcher while a `git` sentinel first on `PATH` is never
-    started.
+13. `public-package` (`darwin/arm64`) checks the installed candidate keg for
+    private repositories and fixture contents, and runs the public core in a
+    fresh home without a configured origin. Its setup list contains only shipped
+    scripts and performs no Git clone, fetch or pull. In macOS CI the Homebrew
+    fixture adds a locally built, unsigned keyd to the deterministic Go archive
+    in a temporary directory. The gate verifies its installed bytes and
+    owner-only `0700` permissions. Release publication independently verifies
+    the protected Sign workflow's signed draft against the formula pin.
+    For upgrades the test uses a historical
+    keg with a synthetic seed and a local origin. Clean checkouts follow the
+    configured origin, dirty and divergent checkouts retain local work, and
+    the core can read the configured policy without invoking Git.
 14. `dispatcher` (`darwin/arm64` per D5; `n-a` with the reason on the other four
     targets): proves every D5 new-core and legacy route through the installed
     `bin/managed-machine`, direct core `MM_LEGACY_ROUTE_UNSUPPORTED` (exit 2)
@@ -622,7 +624,7 @@ target:
 `release-aggregate` closes the gate over the five records: one per first-release
 target, one source revision, one version, every archive SHA-256 matching
 `SHA256SUMS`, every gate passed, `f01_compatibility: "pass"` on `darwin/arm64`,
-`upgrade-from-bash`, `private-seed` and `dispatcher` recorded `ok` on `darwin/*`
+`upgrade-from-bash`, `public-package` and `dispatcher` recorded `ok` on `darwin/*`
 and `n-a` with the exact reason on the other four targets, and the remaining
 twelve cases recorded `ok` on all five; when `-out support-matrix.md` and the
 S2/S3 `install-gate-*` and `provider-gate-*` records are given, it also writes

@@ -32,8 +32,7 @@ ensure_gh_auth() {
     echo "Authenticated as: $(gh_active_account)"
 }
 
-# Private HTTPS URLs (formula resources, bundled seeds) authenticate through
-# gh's git credential helper; keep it wired on every run.
+# Optional HTTPS fleet repositories authenticate through the configured helper.
 ensure_gh_git_credentials() {
     gh auth setup-git -h github.com
     echo "Configured: gh as git credential helper (github.com HTTPS)"
@@ -88,8 +87,10 @@ configure_git_identity
 # the local-bin pin. This is pull-only: committing or pushing managed fleet
 # state is reserved for `managed-machine ssh enroll --fleet` and
 # `managed-machine fleet`.
-CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
-refresh_managed_machine_config_repo "$CONFIG_REPO_ROOT"
+if managed_machine_config_selected; then
+    CONFIG_REPO_ROOT="$(managed_machine_config_repo_dir)"
+    refresh_managed_machine_config_repo "$CONFIG_REPO_ROOT"
+fi
 
 echo "GitHub CLI setup complete."
 echo "note: no SSH identity was created or changed. SSH enrollment is an"

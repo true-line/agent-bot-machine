@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Persistent managed-machine-config checkout and synchronization helpers.
 
-MANAGED_MACHINE_CONFIG_DEFAULT_REPO="https://github.com/qwts/managed-machine-config.git"
 MANAGED_MACHINE_CONFIG_DEFAULT_BRANCH="main"
 
 managed_machine_data_dir() {
@@ -12,8 +11,21 @@ managed_machine_config_checkout_dir() {
     printf '%s/managed-machine-config\n' "$(managed_machine_data_dir)"
 }
 
-managed_machine_config_repo_url() {
-    printf '%s\n' "${MANAGED_MACHINE_CONFIG_REPO_URL:-$MANAGED_MACHINE_CONFIG_DEFAULT_REPO}"
+# A clean Machine installation has no fleet. A previously materialized
+# per-user checkout is an existing selection; adjacent source trees are not.
+managed_machine_config_selected() {
+    [[ -n "${CONFIG_REPO_ROOT:-}${MANAGED_MACHINE_CONFIG_REPO_URL:-}" || -e "$(managed_machine_config_checkout_dir)" || -L "$(managed_machine_config_checkout_dir)" ]]
+}
+
+managed_machine_tool_checkout() {
+    local name="$1"
+    # Reuse an older bundled checkout only when it actually exists. New
+    # owner-selected tools live outside the Cellar in this user's data tree.
+    if [[ -d "${REPO_ROOT}/$name/.git" ]]; then
+        printf '%s/%s\n' "$REPO_ROOT" "$name"
+    else
+        printf '%s/%s\n' "$(managed_machine_data_dir)" "$name"
+    fi
 }
 
 managed_machine_config_branch() {
@@ -182,7 +194,7 @@ materialize_managed_machine_config_repo() {
         git -C "$tmp/repo" checkout --quiet -B "$(managed_machine_config_branch)" || return 1
     else
         echo "Cloning managed-machine-config into persistent storage..." >&2
-        if ! git clone --quiet "$repo_url" "$tmp/repo"; then
+        if ! git clone --quiet -- "$repo_url" "$tmp/repo"; then
             echo "Error: could not clone managed-machine-config" >&2
             return 1
         fi
@@ -197,76 +209,42 @@ materialize_managed_machine_config_repo() {
     echo "Persistent managed-machine-config checkout: $target" >&2
 }
 
-# In a source checkout REPO_ROOT is <repo>/legacy while <repo> is the git
-# checkout, so sibling repositories live at <repo>/../<name>. In flat fixtures
-# (or installed libexec/legacy) fall back to $REPO_ROOT/../<name>.
-managed_machine_sibling_repo_dir() {
-    local name="$1"
-    if [[ "$(basename "$REPO_ROOT")" == "legacy" && -e "$REPO_ROOT/../.git" ]]; then
-        printf '%s\n' "$REPO_ROOT/../../$name"
-    else
-        printf '%s\n' "$REPO_ROOT/../$name"
-    fi
-}
-
-# Resolve the private config checkout. Explicit overrides and sibling development
-# repos are used in place; a Homebrew-bundled checkout is copied once into
-# persistent user storage and is never mutated.
+# Materialize only an explicitly named origin. An existing checkout keeps
+# its origin when the caller has not configured a replacement.
 managed_machine_config_repo_dir() {
-    local sibling bundled target repo_url
-
+    local target repo_url
     if [[ -n "${CONFIG_REPO_ROOT:-}" ]]; then
         assert_managed_machine_config_repo "$CONFIG_REPO_ROOT" || return 1
         printf '%s\n' "$CONFIG_REPO_ROOT"
         return
     fi
-
-    sibling="$(managed_machine_sibling_repo_dir managed-machine-config)"
-    if [[ -e "$sibling/.git" ]]; then
-        assert_managed_machine_config_repo "$sibling" || return 1
-        printf '%s\n' "$sibling"
+    target="$(managed_machine_config_checkout_dir)"
+    repo_url="${MANAGED_MACHINE_CONFIG_REPO_URL:-}"
+    if [[ -z "$repo_url" ]]; then
+        existing_managed_machine_config_repo_dir
         return
     fi
-
-    bundled="$REPO_ROOT/managed-machine-config"
-    target="$(managed_machine_config_checkout_dir)"
-    repo_url="$(managed_machine_config_repo_url)"
-    if [[ -e "$bundled/.git" ]]; then
-        materialize_managed_machine_config_repo "$bundled" "$target" "$repo_url" || return 1
-    else
-        materialize_managed_machine_config_repo "" "$target" "$repo_url" || return 1
-    fi
+    materialize_managed_machine_config_repo "" "$target" "$repo_url" || return 1
     printf '%s\n' "$target"
 }
 
-# Resolve an already-materialized config checkout without creating directories,
-# cloning, or rewriting legacy remotes. Used by read-only inspection and
-# dry-run commands so they never mutate the filesystem or git configuration.
+# Read-only form: never clone or rewrite an origin.
 existing_managed_machine_config_repo_dir() {
-    local sibling target repo_url actual_url actual_path expected_path
-
+    local target repo_url actual_url actual_path expected_path
     if [[ -n "${CONFIG_REPO_ROOT:-}" ]]; then
         assert_managed_machine_config_repo "$CONFIG_REPO_ROOT" || return 1
         printf '%s\n' "$CONFIG_REPO_ROOT"
         return
     fi
-
-    sibling="$(managed_machine_sibling_repo_dir managed-machine-config)"
-    if [[ -e "$sibling/.git" ]]; then
-        assert_managed_machine_config_repo "$sibling" || return 1
-        printf '%s\n' "$sibling"
-        return
-    fi
-
     target="$(managed_machine_config_checkout_dir)"
-    repo_url="$(managed_machine_config_repo_url)"
-    config_repo_remote_has_no_credentials "$repo_url" || return 1
     if [[ ! -e "$target" ]]; then
-        echo "Error: managed-machine-config checkout does not exist: $target" >&2
+        echo "No fleet configuration selected. Set CONFIG_REPO_ROOT to your checkout or MANAGED_MACHINE_CONFIG_REPO_URL to its origin." >&2
         return 1
     fi
     assert_managed_machine_config_repo "$target" || return 1
     actual_url="$(git -C "$target" remote get-url origin 2>/dev/null || true)"
+    repo_url="${MANAGED_MACHINE_CONFIG_REPO_URL:-$actual_url}"
+    config_repo_remote_has_no_credentials "$repo_url" || return 1
     if [[ -z "$actual_url" ]]; then
         echo "Error: managed-machine-config has no origin remote: $target" >&2
         return 1

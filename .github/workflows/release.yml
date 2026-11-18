@@ -103,7 +103,7 @@ jobs:
           fi
           gh release download "$TAG" --dir signed --pattern 'managed-machine_*' --pattern SHA256SUMS
       - name: Verify the signed dist against the deterministic build and the formula pin
-        run: go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -formula Formula/managed-machine.rb -require-pin
+        run: go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -require-keyd -formula Formula/managed-machine.rb -require-pin
       - name: Publish the signed draft
         env:
           GH_TOKEN: ${{ github.token }}

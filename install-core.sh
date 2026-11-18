@@ -3,7 +3,7 @@
 # core on Linux (linux/amd64, linux/arm64; S6 R04, decision D4).
 #
 # Fetches SHA256SUMS from MANAGED_MACHINE_RELEASE_BASE (default:
-# https://github.com/qwts/managed-machine/releases/latest/download, or any
+# https://github.com/true-line/agent-bot-machine/releases/latest/download, or any
 # https:// URL or absolute directory), selects the _<os>_<arch>.tar.gz archive
 # for the host, verifies its SHA-256 digest before extracting anything, and
 # installs managed-machine atomically into --prefix (default: $HOME/.local/bin).
@@ -25,7 +25,7 @@ Options:
   --prefix <dir>              Installation directory (default: $HOME/.local/bin)
   --release-base <url-or-dir> Release base URL (https://...) or absolute directory
                               (default: $MANAGED_MACHINE_RELEASE_BASE or
-                              https://github.com/qwts/managed-machine/releases/latest/download)
+                              https://github.com/true-line/agent-bot-machine/releases/latest/download)
   -h, --help                  Show this help and exit
 EOF
 }
@@ -86,7 +86,7 @@ arch_lower="$(printf '%s' "$arch_raw" | tr '[:upper:]' '[:lower:]')"
 
 case "$os_lower" in
     darwin)
-        die_usage "macOS is supported through the Homebrew formula (qwts/managed-machine, Formula/managed-machine.rb); install-core.sh is for Linux targets only"
+        die_usage "macOS is supported through the Homebrew formula (true-line/agent-bot-machine, Formula/managed-machine.rb); install-core.sh is for Linux targets only"
         ;;
     linux)
         target_os="linux"
@@ -130,7 +130,7 @@ if [ "$release_base_set" -eq 0 ]; then
     if [ -n "${MANAGED_MACHINE_RELEASE_BASE+x}" ]; then
         release_base="$MANAGED_MACHINE_RELEASE_BASE"
     else
-        release_base="https://github.com/qwts/managed-machine/releases/latest/download"
+        release_base="https://github.com/true-line/agent-bot-machine/releases/latest/download"
     fi
 fi
 
