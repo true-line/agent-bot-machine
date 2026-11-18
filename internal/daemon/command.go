@@ -62,7 +62,7 @@ description. Nothing is registered with a system service manager.`,
 	}
 }
 
-func run(deps Deps, ctx cli.Context, args []string) cli.Result {
+func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	var verb, enroll, fingerprint, clientName, userName string
 	var enrollSet, fingerprintSet, userSet, debug bool
 	var owner ownerPairOptions
@@ -236,7 +236,11 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			if err != nil {
 				return serviceFailed(err)
 			}
-			defer unlock()
+			defer func() {
+				if err := unlock(); err != nil && result.Diagnostic == nil {
+					result = serviceFailed(fmt.Errorf("close owner enrollment lock: %w", err))
+				}
+			}()
 			existing, err := readOwnerPairState(stateDir(root))
 			if err != nil {
 				return serviceFailed(err)
