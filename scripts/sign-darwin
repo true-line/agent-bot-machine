@@ -35,7 +35,7 @@ tar -xzf "$unsigned/$archive" -C "$tree"
 
 (cd "$root/keyd" && cargo build --release --locked)
 cp "$root/keyd/target/release/agent-bot-keyd" "$tree/agent-bot-keyd"
-chmod 0755 "$tree/agent-bot-keyd"
+chmod 0700 "$tree/agent-bot-keyd"
 
 identity="$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" \
     | awk -v t="($team)" '/"Developer ID Application: / && index($0, t) { print $2; exit }')"

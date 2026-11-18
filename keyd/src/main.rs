@@ -21,6 +21,8 @@
 //! for which App) stays in agent-bot: keyd acts only on a grant the daemon
 //! signed with the key the owner pinned.
 
+#[cfg(target_os = "macos")]
+mod account;
 mod audit;
 mod consent;
 mod github;
@@ -120,6 +122,11 @@ fn serve(_: &Options, _: &paths::Paths) -> Result<(), String> {
 }
 
 fn main() -> ExitCode {
+    #[cfg(target_os = "macos")]
+    if let Err(message) = account::require_custodian() {
+        eprintln!("agent-bot-keyd: {message}");
+        return ExitCode::FAILURE;
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("--version") {
         println!("agent-bot-keyd {}", env!("CARGO_PKG_VERSION"));

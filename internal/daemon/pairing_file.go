@@ -296,6 +296,23 @@ func UnpairTerminal(root string) error {
 // is on. A legacy peer.pub is moved to peers/terminal.pub.
 // Old peer.* files beside an existing peers directory are refused.
 func loadPairing(dir string) (Pairing, error) {
+	ownerState, err := readOwnerPairState(dir)
+	if err != nil {
+		return Pairing{}, err
+	}
+	if ownerState != nil {
+		peers := filepath.Join(dir, "peers")
+		info, err := os.Lstat(peers)
+		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+			return Pairing{}, errors.New("owner-approved pairing requires the private peers directory")
+		}
+		key, err := ownerState.liveKey(peers)
+		if err != nil {
+			return Pairing{}, err
+		}
+		return Pairing{Live: key, AgentDaemon: key, AgentDaemonUID: ownerState.UID,
+			AgentDaemonBound: true, OwnerPresenceRequired: true}, nil
+	}
 	if err := migrateLegacyPairing(dir); err != nil {
 		return Pairing{}, err
 	}

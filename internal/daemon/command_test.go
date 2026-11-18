@@ -390,6 +390,8 @@ func TestDebugFlagsAreInstallOnly(t *testing.T) {
 
 func TestPairEnrollAgentDaemonReportsTheBinding(t *testing.T) {
 	root := t.TempDir()
+	deps := owner(root)
+	deps.GOOS = hostOS()
 	old := lookupUser
 	t.Cleanup(func() { lookupUser = old })
 	lookupUser = func(name string) (*user.User, error) {
@@ -403,21 +405,21 @@ func TestPairEnrollAgentDaemonReportsTheBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := []string{"pair", "--enroll", hex.EncodeToString(pub), "--fingerprint", publicFingerprint(pub), "--client", "agent-daemon"}
-	res := run(owner(root), cli.Context{}, args)
+	res := run(deps, cli.Context{}, args)
 	if res.Diagnostic != nil {
 		t.Fatal(res.Diagnostic.Message)
 	}
 	if got, _ := res.Records[0].Get("uid"); got != "any" {
 		t.Fatalf("uid with no HQ account: %v", got)
 	}
-	res = run(owner(root), cli.Context{}, append(args, "--user", "hq"))
+	res = run(deps, cli.Context{}, append(args, "--user", "hq"))
 	if res.Diagnostic != nil {
 		t.Fatal(res.Diagnostic.Message)
 	}
 	if got, _ := res.Records[0].Get("uid"); got != "777" {
 		t.Fatalf("uid with --user: %v", got)
 	}
-	res = run(owner(root), cli.Context{}, append(args, "--user", "ghost"))
+	res = run(deps, cli.Context{}, append(args, "--user", "ghost"))
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {
 		t.Fatalf("unknown --user: %#v", res.Diagnostic)
 	}

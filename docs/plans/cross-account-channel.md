@@ -213,7 +213,14 @@ P7: the `agent-daemon` client is part of HQ core in agent-bot-daemon
 over this channel, under the same rules. Key custody and signing move from
 keyd into agent-bot-machine (D4), so pairing does not go through
 agent-bot-keyd. Privileged and policy requests also carry the owner's
-presence signature, which agent-machine verifies (D4). P8: MCP
+presence signature, which agent-machine verifies (D4). The bundled custody
+helper runs only as the nonroot administrator who owns the Homebrew prefix.
+The signed archive and formula install the helper with mode `0700`. Release
+verification rejects candidate archives that carry it with any other mode.
+Before opening a socket or Keychain, the helper checks the process UID
+against the prefix owner and verifies macOS admin group membership.
+
+P8: MCP
 `machine_request` / `machine_result` / `machine_status` from
 agents.true-line.ai (true-line/agent-bot#66, #71) reach agent-machine only
 through HQ. HQ authorizes each request and alone signs it on this channel;

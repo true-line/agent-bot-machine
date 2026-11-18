@@ -302,3 +302,25 @@ func TestRepackRefusesSymlinks(t *testing.T) {
 		t.Fatalf("repack error = %v", err)
 	}
 }
+
+func TestRepackSetsPrivateCustodyHelperMode(t *testing.T) {
+	tree := t.TempDir()
+	writeTree(t, tree, []archiveEntry{{Name: "agent-bot-keyd", Mode: 0o755, Data: []byte("fixture")}})
+	entries, err := readTree(tree, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := entries[0].Mode; got != 0o700 {
+		t.Fatalf("repacked helper mode = %#o, want 0700", got)
+	}
+}
+
+func TestVerifySignedRefusesAccessibleCustodyHelper(t *testing.T) {
+	for _, mode := range []int64{0o644, 0o750, 0o755, 0o4700} {
+		helper := map[string]archiveEntry{"agent-bot-keyd": {Mode: mode}}
+		err := compareSignedDarwin(nil, helper, testTeam)
+		if err == nil || !strings.Contains(err.Error(), "want 0700 for admin-only custody") {
+			t.Fatalf("verify-signed accepted mode %#o or checked the wrong boundary: %v", mode, err)
+		}
+	}
+}
