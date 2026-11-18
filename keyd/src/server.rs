@@ -1875,6 +1875,59 @@ mod tests {
         .unwrap()
     }
 
+    /// Exercise the pre-migration owner RPC with an item owned by a different
+    /// executable. The Apple security tool stands in for the previous helper.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a disposable macOS Keychain"]
+    fn foreign_presence_item_survives_refused_owner_request() {
+        use crate::store::tests::with_temporary_keychain;
+        use crate::store::{keychain, PIN_SERVICE, PRESENCE_ACCOUNT};
+        use std::process::Command;
+
+        with_temporary_keychain(|path| {
+            let writer = "/usr/bin/security";
+            let item = ["-s", PIN_SERVICE, "-a", PRESENCE_ACCOUNT];
+            let fixture = STANDARD.encode([7_u8; 32]);
+            let created = Command::new(writer)
+                .arg("add-generic-password")
+                .args(item)
+                .args(["-T", writer, "-w", &fixture])
+                .arg(path)
+                .status()
+                .unwrap();
+            assert!(created.success());
+
+            let consent = Arc::new(Consenting::new(true));
+            let mut candidate = keyd(true);
+            candidate.consent = Box::new(Arc::clone(&consent));
+            candidate.store = Store::new(Box::new(keychain::Keychain::at(path.to_owned())));
+            let reply = presence(
+                &candidate,
+                json!({ "action": "pair the fixture machine", "nonce": "abcdefghijklmnopqrstuvwx" }),
+            );
+            assert_eq!(reply["error"]["code"], -32000);
+            assert!(reply["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("keychain"));
+            assert!(reply.get("result").is_none());
+            assert!(consent.asked.lock().unwrap().is_empty());
+
+            // Only the fixture writer reads back its synthetic value. If a
+            // failed request deletes or replaces it, this comparison fails.
+            let retained = Command::new(writer)
+                .arg("find-generic-password")
+                .args(item)
+                .arg("-w")
+                .arg(path)
+                .output()
+                .unwrap();
+            assert!(retained.status.success());
+            assert!(retained.stdout.trim_ascii_end() == fixture.as_bytes());
+        });
+    }
+
     #[test]
     fn signs_presence_only_when_the_owner_approves() {
         let consent = Arc::new(Consenting::new(true));
