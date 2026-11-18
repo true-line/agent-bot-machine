@@ -28,6 +28,7 @@ type workflowJob struct {
 }
 
 type workflowStep struct {
+	If   string            `yaml:"if"`
 	Name string            `yaml:"name"`
 	Uses string            `yaml:"uses"`
 	With map[string]any    `yaml:"with"`
@@ -313,7 +314,7 @@ func TestSignWorkflowContract(t *testing.T) {
 		t.Errorf("sign.permissions = %v, want {contents: write}", job.Permissions)
 	}
 	allowed := map[string]bool{
-		"MACOS_DEVID_P12": true, "MACOS_DEVID_P12_PASSWORD": true,
+		"MACOS_DEVID_P12": true, "MACOS_DEVID_P12_PASSWORD": true, "MACOS_PROVISION_PROFILE": true,
 		"NOTARY_KEY_P8": true, "NOTARY_KEY_ID": true, "NOTARY_ISSUER_ID": true,
 	}
 	seen := map[string]bool{}
@@ -331,6 +332,9 @@ func TestSignWorkflowContract(t *testing.T) {
 				continue
 			}
 			name := strings.TrimSuffix(strings.TrimPrefix(v, "${{ secrets."), " }}")
+			if name == "MACOS_PROVISION_PROFILE" && step.If != "inputs.artifact == 'owner-presence'" {
+				t.Errorf("sign step %d may read the profile on a Machine CLI release", i+1)
+			}
 			if !allowed[name] {
 				t.Errorf("sign step %d reads unexpected secret %q", i+1, v)
 			}
