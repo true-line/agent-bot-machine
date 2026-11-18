@@ -39,6 +39,9 @@ use std::sync::{Arc, Condvar, Mutex};
 
 const USAGE: &str = "usage: agent-bot-keyd serve [--state-dir DIR] [--keychain FILE] | mcp [--state-dir DIR] | presence-key [--keychain FILE] | --version";
 
+/// Identity 0.15.20 reserves exit 3 for a presence item whose ACL keyd rejects.
+const EXIT_UNTRUSTED_ITEM: u8 = 3;
+
 struct Options {
     command: String,
     state_dir: Option<PathBuf>,
@@ -78,16 +81,28 @@ fn items(options: &Options) -> Box<dyn store::Items> {
     }
 }
 
+/// The line `presence-key` prints: the public half of the store's seed.
+fn presence_key_line(store: &store::Store) -> Result<String, store::StoreError> {
+    Ok(presence::public_key(&store.presence_seed()?))
+}
+
 #[cfg(target_os = "macos")]
-fn presence_key(options: &Options) -> Result<(), String> {
-    let seed = store::Store::new(items(options)).presence_seed()?;
-    println!("{}", presence::public_key(&seed));
+fn presence_key(options: &Options) -> Result<(), store::StoreError> {
+    println!("{}", presence_key_line(&store::Store::new(items(options)))?);
     Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
-fn presence_key(_: &Options) -> Result<(), String> {
+fn presence_key(_: &Options) -> Result<(), store::StoreError> {
     Err("agent-bot-keyd keeps a presence key only on macOS".into())
+}
+
+fn exit_status(error: &store::StoreError) -> u8 {
+    if error.is_untrusted() {
+        EXIT_UNTRUSTED_ITEM
+    } else {
+        1
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -125,24 +140,72 @@ fn main() -> ExitCode {
         println!("agent-bot-keyd {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
-    let result = parse(&args).and_then(|options| {
-        let state = match &options.state_dir {
-            Some(dir) => dir.clone(),
-            None => paths::state_dir().map_err(str::to_owned)?,
-        };
-        let paths = paths::Paths::under(&state);
-        match options.command.as_str() {
-            "serve" => serve(&options, &paths),
-            "mcp" => relay::run(&paths.socket),
-            "presence-key" => presence_key(&options),
-            _ => Err(USAGE.into()),
-        }
-    });
+    let result = parse(&args)
+        .map_err(store::StoreError::from)
+        .and_then(|options| {
+            let state = match &options.state_dir {
+                Some(dir) => dir.clone(),
+                None => paths::state_dir()?,
+            };
+            let paths = paths::Paths::under(&state);
+            match options.command.as_str() {
+                "serve" => serve(&options, &paths).map_err(store::StoreError::from),
+                "mcp" => relay::run(&paths.socket).map_err(store::StoreError::from),
+                "presence-key" => presence_key(&options),
+                _ => Err(USAGE.into()),
+            }
+        });
     match result {
         Ok(()) => ExitCode::SUCCESS,
-        Err(message) => {
-            eprintln!("agent-bot-keyd: {message}");
-            ExitCode::FAILURE
+        Err(error) => {
+            eprintln!("agent-bot-keyd: {error}");
+            ExitCode::from(exit_status(&error))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use store::tests::Memory;
+    use store::{Items, PIN_SERVICE, PRESENCE_ACCOUNT};
+
+    #[test]
+    fn presence_key_first_use_and_ordinary_failures_keep_their_status() {
+        let items = Memory::default();
+        let store = store::Store::new(Box::new(items.clone()));
+        let public = presence_key_line(&store).unwrap();
+        assert_eq!(public, presence_key_line(&store).unwrap());
+
+        items
+            .write(PIN_SERVICE, PRESENCE_ACCOUNT, b"malformed")
+            .unwrap();
+        let error = presence_key_line(&store).unwrap_err();
+        assert_eq!(exit_status(&error), 1);
+        assert_eq!(error.to_string(), "presence key is malformed");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a disposable macOS Keychain"]
+    fn presence_key_marks_a_readable_item_with_untrusted_access() {
+        use security_framework::os::macos::keychain::SecKeychain;
+        use store::tests::with_temporary_keychain;
+
+        with_temporary_keychain(|path| {
+            let fixture = b"synthetic presence item";
+            let keychain = SecKeychain::open(path).unwrap();
+            keychain
+                .add_generic_password(PIN_SERVICE, PRESENCE_ACCOUNT, fixture)
+                .unwrap();
+            let store = store::Store::new(Box::new(store::keychain::Keychain::at(path.to_owned())));
+            let error = presence_key_line(&store).unwrap_err();
+            assert!(error.is_untrusted());
+            assert_eq!(exit_status(&error), 3, "Identity protocol exit status");
+            let (retained, _) = keychain
+                .find_generic_password(PIN_SERVICE, PRESENCE_ACCOUNT)
+                .unwrap();
+            assert_eq!(retained.as_ref(), fixture);
+        });
     }
 }

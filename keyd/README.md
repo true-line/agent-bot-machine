@@ -75,12 +75,12 @@ refuses them rather than adopt them:
   `pinned: false`, no grant verifies against the old value, and one
   `owner/pin` asks the owner and replaces the item with a locked one. Nothing
   has to be removed first.
-- `presence-key` — `agent-bot-keyd presence-key` fails, and owner actions fall
-  back to the administrator dialog. Removing the item lets keyd make a fresh
-  seed. That is a new presence key, so the next owner action finds the cache in
-  `<state>/keyd/presence.pub` disagreeing with the binary and asks the owner
-  through the administrator dialog; approving re-pins it, declining refuses the
-  action with `presence-pin-mismatch`.
+- `presence-key` — when keyd can read the item and rejects its access list,
+  `agent-bot-keyd presence-key` exits 3. Identity 0.15.20 reports
+  `keyd-untrusted` and refuses the action. A Keychain lookup that macOS
+  denies before keyd can inspect the item's access list returns exit 1.
+  Neither refusal replaces the presence key. A fresh seed would change its
+  public key and require re-pinning.
 - `owner-pins` — keyd refuses the record, so `owner/pins-status` and
   `owner/pins-attest` answer with an error rather than reporting an approved
   key set. Removing the item returns it to "never approved", and the owner
