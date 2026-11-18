@@ -4,9 +4,8 @@ overview: >-
   Ship the darwin core as a Developer ID signed and notarized managed-machine
   CLI binary, with no .app bundle, no keychain-access-groups entitlement, and
   no Secure Enclave wrap; store the daemon key in a dedicated file keychain
-  (`daemon.keychain-db`) with a self-only ACL. Signing happens during
-  `scripts/release prepare`, before the
-  formula pin, in an approval-gated GitHub environment.
+  (`daemon.keychain-db`) with a self-only ACL. A reviewed Machine version request on main starts signing before the Homebrew
+  digest is available. The signed draft supplies the digest for the release PR.
 related_prs: [440, 441, 451]
 related_issues: [442, 446]
 ---
@@ -151,13 +150,17 @@ datasize and `__LINKEDIT` vmsize/filesize may differ, the signature must end
 the file, and it must name the Team ID), with no extra files. With
 `-require-pin` the formula must pin the signed darwin digest.
 
-**Release flow.** `scripts/release prepare` builds the dist, reuses a draft
-that verifies or dispatches `sign.yml` at origin/main and waits for the run
-(the owner approves the deployment), verifies the draft, writes the formula
-with the signed digest, and commits `Release vX.Y.Z`. `scripts/release tag`
-rebuilds, downloads the draft and runs `verify-signed -require-pin` before
-pushing the tag. On the tag, `release.yml` verifies the same way and publishes
-the draft instead of creating a release.
+### Release automation
+
+A reviewed change to `.github/machine-release-version` starts Sign on main. Release preparation verifies the signed draft against the signing commit, including the owner-only custody helper, and opens the release PR. After merge and successful CI, the version-cut workflow checks the source, signed archive and formula pin before tagging the exact release commit. The tag triggers final verification and publication.
+
+The release workflows use three GitHub environments.
+
+- `release` holds the Apple signing and notarization credentials. Restrict deployments to the branch `main`. Normal Machine releases use the reviewed version change as authorization.
+- `release-manual` requires the designated owner reviewer for manual signing, including owner-presence builds and recovery. Restrict it to the branch `main`. This environment needs no secrets.
+- `version-cut` restricts release PR and tag automation to the branch `main`. The automation uses the repository installation of the release App and the `CHORES_DUMB_CLIENT_ID` and `CHORES_DUMB_PRIVATE_KEY` credentials. It creates signed release commits and pushes the tag with an installation token so the tag triggers the Release workflow.
+
+During migration, configure the manual gate and verify its required reviewer before removing the separate reviewer from `release`. The signing workflow must already be deployed on `main` before that change.
 
 ## Acceptance
 
@@ -190,10 +193,9 @@ the draft instead of creating a release.
 
 ## Replay
 
-1. On clean main, `scripts/release prepare vX.Y.Z`; approve the `release`
-   deployment when the script prints the run URL.
-2. Open and merge the printed release PR.
-3. With the owner's confirmation, `scripts/release tag vX.Y.Z`.
+1. Merge a reviewed change to the Machine version request. Check the Sign run for that commit.
+2. Compare the release PR’s Darwin archive digest with the signed draft and merge the PR after its checks pass.
+3. Confirm that the Release run on the annotated tag publishes the platform reports and promotes the draft.
 
 ### Signing the owner approval app (HQ #56)
 

@@ -166,9 +166,4 @@ On a standalone installation, the public updater refreshes Machine’s tap and u
 
 ## Release
 
-```bash
-scripts/release prepare vX.Y.Z
-scripts/release tag vX.Y.Z
-```
-
-Submit the intended version in `.github/machine-release-version` through a reviewed PR. Its merge starts protected signing. After the signed draft is available, run `scripts/release prepare vX.Y.Z` from clean, current `main`. It verifies the five archives against a deterministic build and pins the signed macOS archive in the release branch. After release PR review, merge and publication approval, `scripts/release tag vX.Y.Z` verifies the pin again and pushes the annotated tag in the Machine repository. The Release workflow verifies and publishes the signed draft.
+Include the intended CLI version in `.github/machine-release-version` in a reviewed change. Its merge starts signing. Automation verifies the signed draft and opens the release PR with `VERSION` and the Homebrew digest. Merging that PR authorizes the cut. After CI passes on the merge commit, automation tags it and publishes the verified archives. A manual Sign dispatch for recovery or the owner-presence app requires deployment approval.

@@ -378,10 +378,11 @@ repaired, and setup fails if the check still cannot pass.
 
 ## Releasing a new version
 
-1. Submit the intended Machine version in `.github/machine-release-version`. When the reviewed PR merges to `main`, Sign builds the five platform archives at that commit. The protected release environment gates Developer ID signing and Apple notarization.
-2. Run `scripts/release prepare vX.Y.Z` on clean, current `main`. It verifies the signed draft against a deterministic build, updates `VERSION` and the Homebrew formula's signed archive digest, and prepares the release branch. Only the public Machine repository participates.
-3. Review the release PR and its native checks. After it merges and publication is authorized, `scripts/release tag vX.Y.Z` verifies the formula pin against the signed draft again and pushes the annotated Machine tag.
-4. The tag triggers the Release workflow. It verifies the artifacts, attaches the platform check results and publishes the signed draft. The formula and archive installers are ready for upgrades once that workflow succeeds.
+1. Set `.github/machine-release-version` in a reviewed PR, typically alongside the change being released. The merge to `main` starts signing and notarization on macOS.
+2. After Sign succeeds, release automation checks the five archives against a deterministic build and opens a release PR with the new `VERSION` and signed Homebrew digest.
+3. Review and merge the release PR. Once CI passes on its merge commit, automation pushes the annotated Machine tag. The Release workflow verifies the signed draft again, attaches the five platform reports and publishes it.
+
+Manual Sign dispatches, including the owner-presence app, require a deployment review. Operators can use `scripts/release prepare` and `scripts/release tag` for recovery. [Signing and release configuration](docs/plans/macos-signing.md)
 
 ---
 

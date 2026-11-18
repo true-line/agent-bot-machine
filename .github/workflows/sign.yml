@@ -37,12 +37,49 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Verify the reviewed Machine request
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_PROTECTED" == true ]] || { echo "Signing requires a protected main branch" >&2; exit 1; }
+          pr="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls?per_page=100" |
+            jq -er --arg repo "$GITHUB_REPOSITORY" --arg sha "$GITHUB_SHA" '
+              [.[][] | select(.merged_at != null and .base.ref == "main" and
+                .base.repo.full_name == $repo and .merge_commit_sha == $sha)] | select(length == 1) | .[0]')"
+          number="$(jq -er .number <<<"$pr")"
+          head="$(jq -er .head.sha <<<"$pr")"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$number/files?per_page=100" |
+            jq -e 'any(.[][]; .filename == ".github/machine-release-version" and (.status == "added" or .status == "modified"))' >/dev/null
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$number/reviews?per_page=100" |
+            jq -e --arg head "$head" '
+              [.[][] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")] |
+              group_by(.user.id) | map(max_by(.id)) |
+              all(.[]; .state != "CHANGES_REQUESTED") and any(.[]; .state == "APPROVED" and .commit_id == $head)' >/dev/null
+      - name: Verify the manual approval environment
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/environments/release-manual" |
+            jq -e 'any(.protection_rules[]?; .type == "required_reviewers" and any(.reviewers[]?; .reviewer.id > 0))' >/dev/null || {
+              echo "Configure at least one required reviewer on the release-manual environment before manual signing" >&2
+              exit 1
+            }
       - id: version
         env:
           VERSION_INPUT: ${{ inputs.version }}
@@ -58,13 +95,34 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  sign:
+  manual-approval:
+    name: Approve manual signing
     needs: request
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: release-manual
+    permissions:
+      actions: read
+    steps:
+      - name: Confirm this run received manual approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" |
+            jq -e 'any(.[]; .state == "approved" and any(.environments[]?; .name == "release-manual"))' >/dev/null
+
+  sign:
+    needs: [request, manual-approval]
     concurrency:
       group: sign-${{ inputs.artifact || 'machine' }}-${{ needs.request.outputs.version }}
       cancel-in-progress: false
     name: sign (darwin/arm64)
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.request.result == 'success' &&
+      ((github.event_name == 'push' && needs.manual-approval.result == 'skipped') ||
+      (github.event_name == 'workflow_dispatch' && needs.manual-approval.result == 'success')) }}
     runs-on: macos-15
     timeout-minutes: 60
     environment: release
