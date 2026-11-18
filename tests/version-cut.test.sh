@@ -105,4 +105,20 @@ echo 0.13.0 >VERSION
 git add VERSION && git commit -qm 'Wrong release request'
 export GITHUB_SHA="$(git rev-parse HEAD)"
 refuses run candidate "$GITHUB_SHA"
+# The renderer may read an older signing tree, but its Go verifier runs in
+# the trusted workflow checkout even when that signing tree has its own module.
+root="$(dirname "$(dirname "$script")")"
+mkdir -p "$tmp/bin" skills/managed-machine
+printf '  qwts-versions: ">=0.11.0 <1.0.0"\n' >skills/managed-machine/SKILL.md
+echo 'module historical-fixture' >go.mod
+git add go.mod skills && git commit -qm 'Historical module fixture'
+cat >"$tmp/bin/go" <<'STUB'
+#!/bin/sh
+pwd > "$CHECK_VERIFIER_CWD"
+exit 1
+STUB
+chmod +x "$tmp/bin/go"
+export CHECK_VERIFIER_CWD="$tmp/verifier-cwd"
+refuses env PATH="$tmp/bin:$PATH" "$root/scripts/release" render v0.12.0 "$tmp/unsigned" "$tmp/signed"
+[[ "$(cat "$CHECK_VERIFIER_CWD")" == "$root" ]]
 echo 'version-cut tests passed'

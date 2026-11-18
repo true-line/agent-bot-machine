@@ -179,9 +179,14 @@ jobs:
       - name: Download the protected draft and verify each asset digest
         env:
           SIGN_BASE: ${{ steps.source.outputs.base }}
+          TAG: ${{ needs.identify.outputs.tag }}
           API_TOKEN: ${{ github.token }}
-        working-directory: ${{ runner.temp }}/cut-base
-        run: node "$GITHUB_WORKSPACE/scripts/prepare-release.mjs" download "$SIGN_BASE" "$RUNNER_TEMP/cut-signed"
+        run: |
+          node --input-type=module <<'JS'
+          import { download } from './scripts/prepare-release.mjs';
+          const { TAG, SIGN_BASE, RUNNER_TEMP } = process.env;
+          await download(TAG.slice(1), SIGN_BASE, RUNNER_TEMP + '/cut-signed');
+          JS
       - name: Verify the signed dist and reproduce the reviewed two-file release patch
         env:
           CUT: ${{ github.event.workflow_run.head_sha }}
