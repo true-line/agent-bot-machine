@@ -112,7 +112,7 @@ func TestDarwinPlanAndApplyCommands(t *testing.T) {
 	if got, _ := res.Records[0].Get("dir"); got != DarwinDir {
 		t.Errorf("dir = %v", got)
 	}
-	for _, args := range [][]string{{"plan", "--dir", "/run/x"}, {"plan", "--hq-service", "/tmp/service.json"}} {
+	for _, args := range [][]string{{"plan", "--dir", "/run/x"}} {
 		res := Command(d).Run(on(target.DarwinARM64), args)
 		if res.Diagnostic == nil || res.Diagnostic.ID != diag.MembersUnsupported {
 			t.Fatalf("%v: %+v", args, res.Diagnostic)

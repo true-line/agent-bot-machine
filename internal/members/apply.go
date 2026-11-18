@@ -74,7 +74,7 @@ func locked(field string) bool {
 // is one this tool wrote. It changes nothing.
 func Precheck(p Plan, r Root) error {
 	for _, s := range p.Steps {
-		if s.Kind == KindService && s.Target == hqSocketName {
+		if s.Kind == KindService && (s.Target == hqSocketName || s.Target == launchLabel) {
 			if err := r.PreflightHQ(); err != nil {
 				return err
 			}
@@ -191,6 +191,9 @@ func applyStep(s Step, h Host, r Root) error {
 			return r.WriteFile(s.Target, uint32(mode), s.Content, s.Target == SudoersPath)
 		}
 	case KindService:
+		if (s.Action == ActionCreate || s.Action == ActionWrite) && s.Target == launchLabel {
+			return r.ActivateHQ(s)
+		}
 		if s.Action == ActionWrite && s.Target == hqSocketName {
 			return r.ActivateHQ(s)
 		}
