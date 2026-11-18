@@ -1,6 +1,5 @@
 """Resolve the owner app's entitlements against a decoded Developer ID profile."""
 import datetime
-import hashlib
 import plistlib
 import re
 import sys
@@ -20,7 +19,7 @@ def resolve(profile, template, certificate):
         and profile.get("ProvisionsAllDevices") is True
         and "ProvisionedDevices" not in profile
         and profile["ExpirationDate"] > datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-        and any(hashlib.sha1(der).hexdigest().upper() == certificate for der in profile["DeveloperCertificates"])
+        and certificate in profile["DeveloperCertificates"]
         and rights.get("com.apple.developer.team-identifier") == TEAM
         and rights.get("com.apple.application-identifier") == group
         and not rights.get("com.apple.security.get-task-allow")
@@ -43,8 +42,10 @@ def resolve(profile, template, certificate):
 
 if __name__ == "__main__":
     try:
+        with open(sys.argv[3], "rb") as signer:
+            certificate = signer.read()
         with open(sys.argv[1], "rb") as profile, open(sys.argv[2], "rb") as template:
-            result = resolve(plistlib.load(profile), plistlib.load(template), sys.argv[3])
+            result = resolve(plistlib.load(profile), plistlib.load(template), certificate)
         plistlib.dump(result, sys.stdout.buffer)
     except (KeyError, TypeError, ValueError) as error:
         sys.exit(f"Invalid owner approval profile or entitlements: {error}")

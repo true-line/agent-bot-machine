@@ -5,7 +5,6 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 python3 - "$root/packaging/darwin/owner-profile.py" <<'PY'
 import copy
 import datetime
-import hashlib
 import runpy
 import sys
 
@@ -29,7 +28,7 @@ profile = {
     "ExpirationDate": datetime.datetime(2099, 1, 1),
     "DeveloperCertificates": [b"test certificate"], "Entitlements": rights,
 }
-cert = hashlib.sha1(b"test certificate").hexdigest().upper()
+cert = b"test certificate"
 for groups in ([group], [prefix + ".*"]):
     profile["Entitlements"]["keychain-access-groups"] = groups
     assert resolve(profile, template, cert)["keychain-access-groups"] == [group]
@@ -55,7 +54,7 @@ for field, value in [
     other = copy.deepcopy(profile)
     other["Entitlements"][field] = value
     refuse(other)
-refuse(profile, identity="0" * 40)
+refuse(profile, identity=b"other certificate")
 refuse(profile, requested=dict(template, **{"keychain-access-groups": ["*"]}))
 print("Owner profile accepted two permitted group forms and refused eleven incompatible inputs.")
 PY

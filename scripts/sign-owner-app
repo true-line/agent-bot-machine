@@ -11,8 +11,10 @@ team=Z5DM34QS5U
 identity="$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" |
     awk -v t="($team)" '/"Developer ID Application: / && index($0, t) { print $2; exit }')"
 [[ "$identity" =~ ^[0-9A-F]{40}$ ]] || { echo "Missing release Developer ID identity for $team" >&2; exit 1; }
+security find-certificate -p -c 'Developer ID Application:' "$SIGN_KEYCHAIN" |
+    openssl x509 -outform DER -out "$work/identity.der"
 python3 packaging/darwin/owner-profile.py "$work/profile.plist" \
-    owner-source/owner-presence-macos/OwnerPresence.entitlements "$identity" >"$work/entitlements.plist"
+    owner-source/owner-presence-macos/OwnerPresence.entitlements "$work/identity.der" >"$work/entitlements.plist"
 install -m 0644 "$work/owner.provisionprofile" "$app/Contents/embedded.provisionprofile"
 [[ "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" == "$bundle" ]]
 [[ "$(lipo -archs "$app/Contents/MacOS/agent-bot-owner-presence")" == arm64 ]]
@@ -22,6 +24,8 @@ codesign --force --timestamp --options runtime --keychain "$SIGN_KEYCHAIN" -s "$
     --entitlements "$work/entitlements.plist" "$app"
 requirement="anchor apple generic and identifier \"$bundle\" and certificate leaf[subject.OU] = \"$team\" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
 codesign --verify --deep --strict -R="$requirement" "$app"
+(cd "$work" && codesign -d --extract-certificates "$app")
+cmp "$work/codesign0" "$work/identity.der"
 codesign -d --entitlements - --xml "$app" >"$work/signed.plist"
 python3 - "$work/entitlements.plist" "$work/signed.plist" <<'PY'
 import plistlib, sys
