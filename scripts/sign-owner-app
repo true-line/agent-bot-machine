@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Called by Machine's protected Sign job after compiling the pinned Identity source.
+set -euo pipefail
+: "${RUNNER_TEMP:?}" "${SIGN_KEYCHAIN:?}" "${NOTARY_KEY_PATH:?}" "${NOTARY_KEY_ID:?}" "${NOTARY_ISSUER_ID:?}"
+version="${1:?release version required}"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+work="$RUNNER_TEMP/owner"
+app="$work/AgentBotOwnerPresence.app"
+bundle=ai.true-line.agent-bot-owner-presence
+team=Z5DM34QS5U
+identity="$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" |
+    awk -v t="($team)" '/"Developer ID Application: / && index($0, t) { print $2; exit }')"
+[[ "$identity" =~ ^[0-9A-F]{40}$ ]] || { echo "Missing release Developer ID identity for $team" >&2; exit 1; }
+security find-certificate -p -c 'Developer ID Application:' "$SIGN_KEYCHAIN" |
+    openssl x509 -outform DER -out "$work/identity.der"
+python3 packaging/darwin/owner-profile.py "$work/profile.plist" \
+    owner-source/owner-presence-macos/OwnerPresence.entitlements "$work/identity.der" >"$work/entitlements.plist"
+install -m 0644 "$work/owner.provisionprofile" "$app/Contents/embedded.provisionprofile"
+[[ "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" == "$bundle" ]]
+[[ "$(lipo -archs "$app/Contents/MacOS/agent-bot-owner-presence")" == arm64 ]]
+plutil -replace CFBundleShortVersionString -string "$version" "$app/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$version" "$app/Contents/Info.plist"
+codesign --force --timestamp --options runtime --keychain "$SIGN_KEYCHAIN" -s "$identity" \
+    --entitlements "$work/entitlements.plist" "$app"
+requirement="anchor apple generic and identifier \"$bundle\" and certificate leaf[subject.OU] = \"$team\" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
+codesign --verify --deep --strict -R="$requirement" "$app"
+(cd "$work" && codesign -d --extract-certificates "$app")
+cmp "$work/codesign0" "$work/identity.der"
+codesign -d --entitlements - --xml "$app" >"$work/signed.plist"
+python3 - "$work/entitlements.plist" "$work/signed.plist" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], "rb") as expected, open(sys.argv[2], "rb") as signed:
+    if plistlib.load(expected) != plistlib.load(signed):
+        sys.exit("Signed entitlements differ from the requested owner scope")
+PY
+ditto -c -k --keepParent "$app" "$work/submission.zip"
+xcrun notarytool submit "$work/submission.zip" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" \
+    --issuer "$NOTARY_ISSUER_ID" --wait --timeout 30m --output-format json >"$work/notary.json"
+rm -f "$NOTARY_KEY_PATH"
+[[ "$(plutil -extract status raw -o - "$work/notary.json")" == Accepted ]]
+for attempt in 1 2 3 4 5; do
+    if xcrun stapler staple "$app"; then break; fi
+    [[ "$attempt" != 5 ]] || exit 1
+    sleep 15
+done
+out="$RUNNER_TEMP/AgentBotOwnerPresence_${version}_darwin_arm64.zip"
+ditto -c -k --keepParent "$app" "$out"
+mkdir "$work/verify"
+ditto -x -k "$out" "$work/verify"
+delivered="$work/verify/AgentBotOwnerPresence.app"
+codesign --verify --deep --strict -R="$requirement" "$delivered"
+xcrun stapler validate "$delivered"
+assessment="$(spctl -a -t exec -vv "$delivered" 2>&1)"
+grep -Fq 'source=Notarized Developer ID' <<<"$assessment"
+grep -Fq "($team)" <<<"$assessment"
+(cd "$RUNNER_TEMP" && shasum -a 256 "${out##*/}" >"${out##*/}.sha256")

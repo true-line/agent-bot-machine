@@ -166,7 +166,7 @@ the draft instead of creating a release.
   passes.
 - `TestSignWorkflowContract` pins `sign.yml`: dispatch only, `main` only, the
   `release` environment, `contents: write` on the job alone, only the five
-  signing secrets through `env`, and no password-bearing `security` flags or
+  CLI signing secrets plus the profile on owner-app dispatches through `env`, and no password-bearing `security` flags or
   `-A` on the command line.
 - `tests/release.test.sh` and `tests/formula-core.test.sh` run `prepare` and
   `tag` against `tests/fixtures/fake-gh`: a failed signing run aborts prepare
@@ -185,3 +185,25 @@ the draft instead of creating a release.
    deployment when the script prints the run URL.
 2. Open and merge the printed release PR.
 3. With the owner's confirmation, `scripts/release tag vX.Y.Z`.
+
+### Signing the owner approval app (HQ #56)
+
+Machine's main-only **Sign** dispatch accepts `owner-presence` as an optional
+artifact. It builds the pinned Identity source on Apple Silicon, using the same
+reviewed release environment, Developer ID identity and notarization service
+as the CLI. The default dispatch still builds the five Machine archives.
+The app is the signed-in owner's approval client. The custody helper continues
+to run under the prefix owner's account.
+
+The existing release environment input `MACOS_PROVISION_PROFILE` from #441
+contains the base64 of the embeddable Developer ID distribution profile for
+`ai.true-line.agent-bot-owner-presence`. Only a distribution profile suitable
+for embedding in the delivered app belongs here. The signer checks the
+certificate, team, expiry, application identifier and authorized Keychain
+group. It signs with only the app's exact group. The profile for the retired
+`AgentBotMachine.app` has a different application identifier.
+
+After notarization, Machine staples the ticket, archives the app and checks
+the extracted copy with codesign, stapler and Gatekeeper. The dispatch creates
+a separate `owner-presence-vX.Y.Z` draft containing the zip and its SHA-256.
+Physical owner presence and the subsequent signed HQ response are pilot checks.
