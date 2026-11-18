@@ -296,7 +296,7 @@ func deriveOldFormula(baseFormula, checkoutDir, configRepoDir, configRev, localB
 
 // deriveCandidateFormula rewrites only the URLs and pins in the candidate
 // Formula/managed-machine.rb content per D6.
-func deriveCandidateFormula(baseFormula, checkoutDir, candidateSHA, configRepoDir, configTag, configRev, localBinDir, coreArchivePath, coreSHA256 string) (string, error) {
+func deriveCandidateFormula(baseFormula, checkoutDir, candidateSHA, configRepoDir, configTag, configRev, localBinDir, localBinRev, coreArchivePath, coreSHA256 string) (string, error) {
 	out := strings.ReplaceAll(baseFormula, "\r\n", "\n")
 
 	// 1. Main formula URL -> file://<checkout>, revision: "<candidate sha>".
@@ -313,12 +313,18 @@ func deriveCandidateFormula(baseFormula, checkoutDir, candidateSHA, configRepoDi
 	}
 	out = cfgRe.ReplaceAllString(out, `${1}"file://`+filepath.ToSlash(configRepoDir)+`"${2}"v`+configTag+`"${3}"`+configRev+`"`)
 
-	// 3. local-bin resource URL.
-	lbRe := regexp.MustCompile(`(?m)(resource "local-bin" do\n\s*url )"https://github\.com/qwts/local-bin\.git"`)
-	if !lbRe.MatchString(out) {
-		return "", errors.New("candidate formula missing expected local-bin resource block")
+	// 3. Mirror the production pin shape with the synthetic tools repo's ref.
+	lbRe := regexp.MustCompile(`(?m)(resource "local-bin" do\n\s*url )"https://github\.com/qwts/local-bin\.git"(,\n\s*using:\s*:git,\n)(?:(\s*tag:\s*)"[^"]+",\n)?(\s*revision:\s*)"[0-9a-f]{40}"`)
+	lb := lbRe.FindStringSubmatch(out)
+	if lb == nil {
+		return "", errors.New("candidate formula missing pinned local-bin resource block")
 	}
-	out = lbRe.ReplaceAllString(out, `${1}"file://`+filepath.ToSlash(localBinDir)+`"`)
+	localTag := ""
+	if lb[3] != "" {
+		localTag = lb[3] + `"v1.2.4",` + "\n"
+	}
+	fixture := lb[1] + `"file://` + filepath.ToSlash(localBinDir) + `"` + lb[2] + localTag + lb[4] + `"` + localBinRev + `"`
+	out = strings.Replace(out, lb[0], fixture, 1)
 
 	// 4. core resource URL and sha256.
 	coreRe := regexp.MustCompile(`(?m)(resource "core" do\n\s*url )"[^"]+"(\n\s*sha256 )"[0-9a-f]{64}"`)
@@ -674,6 +680,11 @@ path: %q
 		return err
 	}
 
+	localBinRev, err := h.runGitIsolated(localBinBare, "rev-parse", "refs/tags/v1.2.4^{commit}")
+	if err != nil {
+		return err
+	}
+	h.localBinRev = localBinRev
 	h.localBinBare = localBinBare
 	h.fakeOriginBare = fakeOriginBare
 	h.fakeOriginWork = fakeOriginWork
@@ -1231,7 +1242,7 @@ func (h *releaseHarness) runUpgradeFromBash() {
 		return
 	}
 	coreSHA := sum(coreArchiveBytes)
-	newDerived, err := deriveCandidateFormula(candBase, h.checkoutClone, candidateSHA, h.fakeOriginBare, h.upgradeVer, h.commitC, h.localBinBare, coreArchive, coreSHA)
+	newDerived, err := deriveCandidateFormula(candBase, h.checkoutClone, candidateSHA, h.fakeOriginBare, h.upgradeVer, h.commitC, h.localBinBare, h.localBinRev, coreArchive, coreSHA)
 	if err != nil {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
@@ -1645,7 +1656,7 @@ func (h *releaseHarness) runUpgradeFromV010() {
 		return
 	}
 	candCoreSHA := sum(candCoreBytes)
-	newDerived, err := deriveCandidateFormula(candBase, h.checkoutClone, candidateSHA, h.fakeOriginBare, h.upgradeVer, h.commitC, h.localBinBare, candCoreArchive, candCoreSHA)
+	newDerived, err := deriveCandidateFormula(candBase, h.checkoutClone, candidateSHA, h.fakeOriginBare, h.upgradeVer, h.commitC, h.localBinBare, h.localBinRev, candCoreArchive, candCoreSHA)
 	if err != nil {
 		h.recordCase(name, "ok", observedFailed, false, err.Error())
 		return
