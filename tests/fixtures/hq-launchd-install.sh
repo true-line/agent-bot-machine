@@ -22,12 +22,9 @@ cleanup_launch() {
 }
 trap cleanup_launch EXIT
 sudo chmod 0755 "$stage"
-fixture="$WORK/launch-fixture"
-if "$real_hq"; then
-    mkdir "$fixture"
-    bash "$ROOT/tests/fixtures/prepare-real-darwin-hq.sh" "$fixture"
-    runtime="$fixture/bin/node"
-else
+prepare_native_hq_fixture() {
+    local fixture="$1"
+    shift
     mkdir -p "$fixture/hq"/{hq,helpers,governance}
     touch "$fixture/hq/hq/main.mjs"
     printf '%s\n' 'exec(*ARGV.drop(1))' > "$fixture/hq/helpers/darwin-owner.rb"
@@ -39,19 +36,32 @@ os.chdir(sys.argv[1])
 with tarfile.open("approved.tar", "w", format=tarfile.USTAR_FORMAT) as archive:
     archive.add("hq")
 PYTAR
-    clang -Wall -Werror -o "$fixture/runtime" "$ROOT/tests/fixtures/hq-launchd-runtime.c"
-    runtime="$fixture/runtime"
-fi
-sudo install -m 0644 -o root -g wheel "$fixture/approved.tar" "$stage/approved.tar"
-sudo install -m 0755 -o root -g wheel "$runtime" "$stage/node"
-if "$real_hq"; then
-    (cd "$stage" && shasum -a 256 --check "$fixture/installed.sha256")
-fi
-sudo tar --no-same-owner -xf "$stage/approved.tar" -C "$stage"
+    clang -Wall -Werror "$@" -o "$fixture/runtime" "$ROOT/tests/fixtures/hq-launchd-runtime.c"
+}
+
+install_hq_fixture() {
+    local fixture="$1" runtime="$2" stage="$3" record="$4" checksums="${5:-}"
+    sudo install -m 0644 -o root -g wheel "$fixture/approved.tar" "$stage/approved.tar"
+    sudo install -m 0755 -o root -g wheel "$runtime" "$stage/node"
+    if [[ -n "$checksums" ]]; then
+        (cd "$stage" && shasum -a 256 --check "$checksums")
+    fi
+    sudo tar --no-same-owner -xf "$stage/approved.tar" -C "$stage"
+    jq -n --arg root "$stage" --arg a "$(shasum -a 256 "$stage/approved.tar" | awk '{print $1}')" \
+        --arg n "$(shasum -a 256 "$stage/node" | awk '{print $1}')" \
+        '{archive:($root+"/approved.tar"),release_dir:($root+"/hq"),artifact_sha256:$a,node:($root+"/node"),node_sha256:$n}' > "$record"
+}
+
+fixture="$WORK/launch-fixture"
 record="$WORK/hq-service.json"
-jq -n --arg root "$stage" --arg a "$(shasum -a 256 "$stage/approved.tar" | awk '{print $1}')" \
-    --arg n "$(shasum -a 256 "$stage/node" | awk '{print $1}')" \
-    '{archive:($root+"/approved.tar"),release_dir:($root+"/hq"),artifact_sha256:$a,node:($root+"/node"),node_sha256:$n}' > "$record"
+if "$real_hq"; then
+    mkdir "$fixture"
+    bash "$ROOT/tests/fixtures/prepare-real-darwin-hq.sh" "$fixture"
+    install_hq_fixture "$fixture" "$fixture/bin/node" "$stage" "$record" "$fixture/installed.sha256"
+else
+    prepare_native_hq_fixture "$fixture"
+    install_hq_fixture "$fixture" "$fixture/runtime" "$stage" "$record"
+fi
 # Exercise the actual first-HQ boundary on this throwaway runner. An
 # ephemeral software owner key qualifies transport and signature verification.
 # Secure Enclave presence remains a separate physical-Mac acceptance test.

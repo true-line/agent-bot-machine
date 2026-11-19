@@ -26,7 +26,12 @@ int main(int argc, char **argv) {
         if (fd < 0 || connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) return 3;
         FILE *response = fdopen(fd, "r"); char buf[512];
         if (!response || !fgets(buf, sizeof(buf), response)) return 4;
+#ifdef MM_FIXTURE_FAIL_OWNER_STATUS
+        // The owner reached the running fixture through its actual launchd socket.
+        return 42;
+#else
         puts(buf); return 0;
+#endif
     }
     // run --home <state> --owner-account <owner>
     if (argc != 7 || strcmp(argv[2], "run") || strcmp(argv[3], "--home") || strcmp(argv[5], "--owner-account")) return 5;

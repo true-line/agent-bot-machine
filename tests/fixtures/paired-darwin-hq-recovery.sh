@@ -100,25 +100,76 @@ if [[ -e "$socket" || -L "$socket" ]]; then
     sudo rm "$socket"
 fi
 paired_status
-plan_output="$("$MM" members plan --hq-service "$record")"
-row="${plan_output%%$'\n'*}"
-repair_id="$(jq -er '.plan_id' <<<"$row")"
-repair_digest="$(jq -er '.plan_digest' <<<"$row")"
-hq_machine hq-service-recovery export "$repair_id" --socket "$channel" > "$signer/repair.json"
-jq -e --arg id "$repair_id" --arg digest "$repair_digest" --arg machine "$machine_key" --arg hq "$hq_key" --arg owner "$pin" '
-    .body | .action=="hq-service-recovery" and .plan_id==$id and .plan_digest==$digest and
-    .machine_key==$machine and .hq_key==$hq and .owner_key==$owner and
-    (.plan_canonical|fromjson|.members==[] and [.steps[].kind]==["hq-account","service"] and
-      [.steps[].action]==["none","create"])
-' "$signer/repair.json" >/dev/null
-RECOVERY_SUBJECTS="$subjects" RECOVERY_OWNER="$signer/review-owner" \
-    python3 "$suite/terminal.py" "$stage/node" "$suite/review.mjs" "$signer/repair.json" \
-        "$machine_pin" "$signer/owner.raw" approve > "$signer/repair-proof.json"
-transfer="$stage/role-transfer"
-sudo install -d -o "$role" -g "$role" -m 0700 "$transfer"
-for file in repair.json repair-proof.json; do sudo install -o "$role" -g "$role" -m 0600 "$signer/$file" "$transfer/$file"; done
-hq_machine hq-service-recovery approve --challenge-file "$transfer/repair.json" --proof-file "$transfer/repair-proof.json" --socket "$channel" |
-    jq -e --arg id "$repair_id" --arg digest "$repair_digest" '.state=="approved" and .plan_id==$id and .plan_digest==$digest' >/dev/null
+# Returns the exact saved plan ID and digest in repair_id and repair_digest.
+approve_service_repair() {
+    local service_record="$1" plan_output row transfer file
+    plan_output="$("$MM" members plan --hq-service "$service_record")"
+    row="${plan_output%%$'\n'*}"
+    repair_id="$(jq -er '.plan_id' <<<"$row")"
+    repair_digest="$(jq -er '.plan_digest' <<<"$row")"
+    hq_machine hq-service-recovery export "$repair_id" --socket "$channel" > "$signer/repair.json"
+    jq -e --arg id "$repair_id" --arg digest "$repair_digest" --arg machine "$machine_key" --arg hq "$hq_key" --arg owner "$pin" --slurpfile record "$service_record" '
+        .body | .action=="hq-service-recovery" and .plan_id==$id and .plan_digest==$digest and
+        .machine_key==$machine and .hq_key==$hq and .owner_key==$owner and
+        (.plan_canonical|fromjson|.members==[] and [.steps[].kind]==["hq-account","service"] and
+          [.steps[].action]==["none","create"] and (.steps[1].content|fromjson|.service)==$record[0])
+    ' "$signer/repair.json" >/dev/null
+    RECOVERY_SUBJECTS="$subjects" RECOVERY_OWNER="$signer/review-owner" \
+        python3 "$suite/terminal.py" "$stage/node" "$suite/review.mjs" "$signer/repair.json" \
+            "$machine_pin" "$signer/owner.raw" approve > "$signer/repair-proof.json"
+    transfer="$stage/role-transfer-$repair_id"
+    sudo install -d -o "$role" -g "$role" -m 0700 "$transfer"
+    for file in repair.json repair-proof.json; do sudo install -o "$role" -g "$role" -m 0600 "$signer/$file" "$transfer/$file"; done
+    hq_machine hq-service-recovery approve --challenge-file "$transfer/repair.json" --proof-file "$transfer/repair-proof.json" --socket "$channel" |
+        jq -e --arg id "$repair_id" --arg digest "$repair_digest" '.state=="approved" and .plan_id==$id and .plan_digest==$digest' >/dev/null
+}
+
+# The test runtime returns 42 only after the approved owner's status client
+# receives a response from the service through the real launchd listener.
+rollback_fixture="$WORK/rollback-fixture"
+rollback_stage="$stage/rollback"
+rollback_record="$WORK/rollback-service.json"
+prepare_native_hq_fixture "$rollback_fixture" -DMM_FIXTURE_FAIL_OWNER_STATUS
+sudo install -d -m 0755 -o root -g wheel "$rollback_stage"
+install_hq_fixture "$rollback_fixture" "$rollback_fixture/runtime" "$rollback_stage" "$rollback_record"
+role_uid="$(id -u "$role")"
+role_home="$(attr "$role" NFSHomeDirectory)"
+home_id="$(sudo stat -f '%d:%i:%u:%g:%Lp' "$role_home")"
+approve_service_repair "$rollback_record"
+failed_id="$repair_id"
+if (cd "$signer" && sudo "$MM" members apply "$failed_id") > "$signer/failed-apply.log" 2>&1; then
+    fail 'the deliberately failing status probe unexpectedly succeeded'
+fi
+grep -Fq MM_MEMBERS_APPLY_FAILED "$signer/failed-apply.log" || fail 'wrong apply failure'
+grep -Fq 'query launched HQ as approved owner: sudo exit status 42' "$signer/failed-apply.log" || fail 'apply did not reach the test owner-status failure'
+failed_receipt="$RECEIPTS/$failed_id.json"
+[[ "$(sudo stat -f '%u' "$failed_receipt")" == 0 ]] || fail 'failed receipt is not root-owned'
+sudo jq -e --arg id "$failed_id" --arg digest "$repair_digest" --arg role "$role" --arg step "service $label" '
+    .result=="failed" and .plan_id==$id and .plan_digest==$digest and .hq_account==$role and .failed_at==$step
+' "$failed_receipt" >/dev/null
+refused MM_MEMBERS_NOT_APPROVED sudo "$MM" members apply "$failed_id"
+
+# Observe Machine's rollback before the fixture cleanup or positive repair.
+if sudo launchctl print "system/$label" > /dev/null 2>&1; then
+    fail 'Machine left its newly bootstrapped HQ job loaded'
+else
+    [[ "$?" == 113 ]] || fail 'could not verify absence of the HQ job'
+fi
+[[ ! -e "$plist" && ! -L "$plist" ]] || fail 'Machine left its newly installed plist'
+for ((i=0; i<60; i++)); do
+    [[ -e "$socket" || -L "$socket" ]] || break
+    sleep 0.05
+done
+[[ ! -e "$socket" && ! -L "$socket" ]] || fail 'rollback left the owner-control endpoint'
+[[ "$(id -u "$role")" == "$role_uid" && "$(attr "$role" NFSHomeDirectory)" == "$role_home" &&
+   "$(sudo stat -f '%d:%i:%u:%g:%Lp' "$role_home")" == "$home_id" ]] || fail 'rollback changed the HQ role or home'
+"$MM" daemon verify-identity | jq -e --arg pin "$machine_pin" '.state=="verified" and .fingerprint==$pin' >/dev/null
+[[ "$(hq_machine identity | jq -er '.public_key')" == "$hq_key" ]] || fail 'rollback changed the HQ identity'
+paired_status
+ok 'an approved service failure retained the paired role and rolled back its new launchd job and plist'
+
+approve_service_repair "$record"
+[[ "$repair_id" != "$failed_id" ]] || fail 'the successful repair reused the failed plan ID'
 (cd "$signer" && sudo "$MM" members apply "$repair_id")
 sudo jq -e --arg id "$repair_id" --arg digest "$repair_digest" --arg role "$role" \
     '.result=="applied" and .changes==1 and .plan_id==$id and .plan_digest==$digest and .hq_account==$role' \
