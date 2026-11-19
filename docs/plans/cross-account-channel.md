@@ -288,6 +288,17 @@ standard base64), decimal peer UID, original nonce, Unix seconds, option,
 three empty historical field slots, then labelled epoch and receipt lines
 as applicable. Both request transcripts use LF with no trailing newline.
 
+On pull requests, the macOS 15 runner installs the current public Homebrew
+formula and checks the linked Machine and keyd executables against the
+published release checksum, Developer ID requirements and installed modes.
+
+After the public Homebrew formula pins a compatible signed release, the
+`macOS 27 HQ installation` workflow can qualify that installation on a fresh
+runner. Supply `device_release_version`, the reviewed Darwin archive digest
+in `device_archive_sha256`, and `device_homebrew_install=true`. It compares
+both active keg executables to the signed archive before pairing a dedicated
+HQ role, verifying an enrollment proof, restarting Machine and revoking HQ.
+
 An administrator runs `managed-machine daemon revoke-hq` to disable the
 role immediately. The deny marker becomes visible before waiting for
 in-flight work. Machine rechecks the pair at dispatch, after keyd returns

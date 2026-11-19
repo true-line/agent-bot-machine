@@ -33,6 +33,10 @@ on:
       device_archive_sha256:
         description: Reviewed SHA-256 of the matching signed Darwin arm64 archive
         type: string
+      device_homebrew_install:
+        description: Test the public Homebrew installation of the specified signed release
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -49,7 +53,7 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Fetch the reviewed signed Machine release for optional hardware qualification
-        if: inputs.device_release_version != '' || inputs.device_archive_sha256 != ''
+        if: inputs.device_release_version != '' || inputs.device_archive_sha256 != '' || inputs.device_homebrew_install
         shell: bash
         env:
           MM_DEVICE_VERSION: ${{ inputs.device_release_version }}
@@ -60,11 +64,13 @@ jobs:
           archive="managed-machine_${MM_DEVICE_VERSION}_darwin_arm64.tar.gz"
           gh release download "v$MM_DEVICE_VERSION" --repo "$GITHUB_REPOSITORY" --pattern "$archive" --dir "$RUNNER_TEMP"
           [[ "$(shasum -a 256 "$RUNNER_TEMP/$archive" | awk '{print $1}')" == "$MM_DEVICE_SHA" ]]
+          echo "MM_HQ_DEVICE_VERSION=$MM_DEVICE_VERSION" >> "$GITHUB_ENV"
           echo "MM_HQ_DEVICE_ARCHIVE=$RUNNER_TEMP/$archive" >> "$GITHUB_ENV"
           echo "MM_HQ_DEVICE_SHA256=$MM_DEVICE_SHA" >> "$GITHUB_ENV"
       - name: Install the real HQ archive with a signed first-HQ approval
         shell: bash
         env:
+          MM_HQ_DEVICE_HOMEBREW: ${{ inputs.device_homebrew_install || 'false' }}
           MM_HQ_REQUIRE_SIP: ${{ inputs.require_sip || 'false' }}
           MM_MEMBERS_REAL_ACCOUNTS: '1'
           MM_MEMBERS_RUNNER: ${{ runner.environment }}
@@ -81,7 +87,7 @@ jobs:
   rollback-macos-15:
     name: HQ socket rollback on macOS 15
     runs-on: macos-15
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -98,3 +104,9 @@ jobs:
           sw_vers
           [[ "$(sw_vers -productVersion)" == 15.* ]]
           go test -v -count=1 -race ./internal/members -run '^TestRollbackOfObservedLaunchSocket$'
+      - name: Verify the current public Homebrew Machine and keyd
+        if: github.event_name == 'pull_request'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_ANALYTICS: '1'
+        run: bash tests/fixtures/public-homebrew-darwin-hq-device.sh

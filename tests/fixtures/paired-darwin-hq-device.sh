@@ -2,7 +2,7 @@
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
    "${MM_KEYD_CUSTODY_TEST:-}" == 1 && "${role:-}" == _agent-bot-hq &&
    "$DAEMON_ACCOUNT" == "$(id -un)" && "$(stat -f %u /opt/homebrew)" == "$(id -u)" ]] || exit 1
-sudo install -o root -g wheel -m 0644 "$ROOT/tests/fixtures/paired-darwin-hq-device.mjs" "$custody_dir/check.mjs"
+sudo install -o root -g wheel -m 0644 "$ROOT/tests/fixtures/paired-darwin-hq-device.mjs" "$stage/device-check.mjs"
 # The dedicated role has no ability to read or execute the administration helper.
 ! sudo -n -u "$role" test -r "$custody_dir/agent-bot-keyd" || fail 'role can read custody helper'
 ! sudo -n -u "$role" test -x "$custody_dir/agent-bot-keyd" || fail 'role can execute custody helper'
@@ -11,7 +11,7 @@ stop_fixture_machine
 "$MM" daemon verify-identity | jq -e --arg pin "$machine_pin" '.state=="verified" and .fingerprint==$pin' >/dev/null
 epoch="$(jq -er '.nonce' "$signer/pair.json")"
 role_check() {
-    (cd / && sudo -n -H -u "$role" -- /usr/bin/env GITHUB_ACTIONS=true "$stage/node" "$custody_dir/check.mjs" "$1" "$channel" "$epoch")
+    (cd / && sudo -n -H -u "$role" -- /usr/bin/env GITHUB_ACTIONS=true "$stage/node" "$stage/device-check.mjs" "$1" "$channel" "$epoch")
 }
 role_check outage
 # Explicit native initialization runs once as the prefix owner on a throwaway
