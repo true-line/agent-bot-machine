@@ -68,6 +68,9 @@ func ensureStateDirAndPeers(dir string) (string, error) {
 // makes the terminal key live. It refuses legacy peer.* files beside peers/
 // and unknown files in peers/.
 func PairTerminal(root string) (string, error) {
+	if err := checkChannelIdentity(root); err != nil {
+		return "", err
+	}
 	dir := stateDir(root)
 	if err := purgeLegacySharedState(dir, defaultLegacySharedDir(root), defaultKeyStore(filepath.Join(dir, "daemon.key"))); err != nil {
 		return "", err
@@ -301,17 +304,7 @@ func loadPairing(dir string) (Pairing, error) {
 		return Pairing{}, err
 	}
 	if ownerState != nil {
-		peers := filepath.Join(dir, "peers")
-		info, err := os.Lstat(peers)
-		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
-			return Pairing{}, errors.New("owner-approved pairing requires the private peers directory")
-		}
-		key, err := ownerState.liveKey(peers)
-		if err != nil {
-			return Pairing{}, err
-		}
-		return Pairing{Live: key, AgentDaemon: key, AgentDaemonUID: ownerState.UID,
-			AgentDaemonBound: true, OwnerPresenceRequired: true}, nil
+		return approvedHQPairing(dir, ownerState)
 	}
 	if err := migrateLegacyPairing(dir); err != nil {
 		return Pairing{}, err
@@ -359,6 +352,20 @@ func loadPairing(dir string) (Pairing, error) {
 		return Pairing{}, err
 	}
 	return pairing, nil
+}
+
+func approvedHQPairing(dir string, ownerState *ownerPairState) (Pairing, error) {
+	peers := filepath.Join(dir, "peers")
+	info, err := os.Lstat(peers)
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+		return Pairing{}, errors.New("owner-approved pairing requires the private peers directory")
+	}
+	key, err := ownerState.liveKey(peers)
+	if err != nil {
+		return Pairing{}, err
+	}
+	return Pairing{Live: key, AgentDaemon: key, AgentDaemonUID: ownerState.UID,
+		AgentDaemonBound: true, OwnerPresenceRequired: true, HQEpoch: ownerState.HQEpoch}, nil
 }
 
 func migrateLegacyPairing(dir string) error {

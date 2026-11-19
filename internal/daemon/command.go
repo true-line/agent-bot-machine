@@ -11,12 +11,14 @@ import (
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/diag"
+	"github.com/qwts/managed-machine/internal/members"
 	"github.com/qwts/managed-machine/internal/output"
 )
 
 // Deps is the testable surface of daemon install, uninstall, run, and status.
 type Deps struct {
 	command.Deps
+	MembersHost members.Host // nil reads the running host for first-HQ plans
 	GOOS        string
 	Executable  func() (string, error)
 	Caller      func() (Caller, error)
@@ -29,13 +31,16 @@ type Deps struct {
 	Reload func() error
 }
 
-// Command is `managed-machine daemon <run|install|start|stop|uninstall|status|receipts|pair|unpair>`.
+// Command is `managed-machine daemon <run|install|start|stop|uninstall|status|receipts|pair|unpair|revoke-hq|verify-identity>`.
 func Command(deps Deps) cli.Command {
 	return cli.Command{
 		Name:    "daemon",
 		Summary: "install and run the per-user agent-machine executor",
-		Usage: `managed-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpair
-agent-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpair
+		Usage: `managed-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpair|revoke-hq|verify-identity
+agent-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpair|revoke-hq|verify-identity
+
+revoke-hq immediately disables the enrolled HQ on this Machine. It is a local
+administrative action. The terminal pairing and the device key are preserved.
 
 install writes the per-user unit, loads it, and waits until the socket
 accepts. start does the same when the unit already exists. stop unloads it.
@@ -46,7 +51,25 @@ key is accepted only from that account; uid=any means it is not bound.
 On macOS pair --pin-owner BASE64 sets the independently verified owner
 public key once. Subsequent HQ enrollment requires --owner-challenge,
 then --owner-proof JSON for that challenge from the owner approval client.
-unpair revokes the terminal client. It also accepts --client terminal.
+Protected pairing defaults to the dedicated HQ role. To select a local
+non-administrator account, pass --user NAME on both steps and verify the
+numeric HQ UID displayed for owner approval.
+Before the dedicated HQ role exists, the prefix administrator can transfer
+a saved members plan to the owner approval client using these commands:
+  daemon first-hq export PLAN_ID
+  daemon first-hq approve PLAN_ID --proof-file PATH
+  daemon first-hq cancel PLAN_ID
+Export a single JSONL record with default output. Approval records consent
+for the separate human sudo members apply step. A new export supersedes
+any outstanding first-HQ challenge.
+Before first HQ enrollment, the prefix owner's daemon must have published its
+public key on the shared channel. If the installed daemon has never started,
+run managed-machine daemon start as the prefix owner, then request the challenge.
+For a paired macOS Machine, verify-identity checks this executable's access
+to the existing Machine signing identity without changing the key or service.
+Use daemon run --require-identity FINGERPRINT for a temporary replacement
+that must use that exact previously paired identity.
+unpair revokes the terminal client. It accepts at most one --client terminal.
 The terminal client is a debug tool and is off by default. install --debug
 turns it on, and install without --debug turns it off again. While it is
 on, the next human status mints client.key at home and the daemon adopts
@@ -64,9 +87,18 @@ description. Nothing is registered with a system service manager.`,
 }
 
 func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
-	var verb, enroll, fingerprint, clientName, userName string
+	if len(args) > 0 && args[0] == "verify-identity" {
+		if len(args) != 1 {
+			return cli.Result{Diagnostic: command.UsageErr("verify-identity takes no arguments")}
+		}
+		return verifyPairedIdentity(deps)
+	}
+	if len(args) > 0 && args[0] == "first-hq" {
+		return firstHQ(deps, args[1:])
+	}
+	var verb, enroll, fingerprint, clientName, userName, requiredIdentity string
+	var enrollSet, fingerprintSet, userSet, debug, identitySet bool
 	var clientCount int
-	var enrollSet, fingerprintSet, userSet, debug bool
 	var owner ownerPairOptions
 	clientName = "terminal"
 	if d := command.Parse(args, command.Spec{
@@ -74,23 +106,27 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		PositionalName: "daemon verb",
 		Bools:          map[string]*bool{"--debug": &debug, "--owner-challenge": &owner.challenge},
 		Values: map[string]command.Flag{
-			"--pin-owner":   {Value: &owner.pin, Set: &owner.pinSet},
-			"--owner-proof": {Value: &owner.proof, Set: &owner.proofSet},
-			"--enroll":      {Value: &enroll, Set: &enrollSet},
-			"--fingerprint": {Value: &fingerprint, Set: &fingerprintSet},
-			"--client":      {Value: &clientName, Count: &clientCount},
-			"--user":        {Value: &userName, Set: &userSet},
+			"--require-identity": {Value: &requiredIdentity, Set: &identitySet},
+			"--pin-owner":        {Value: &owner.pin, Set: &owner.pinSet},
+			"--owner-proof":      {Value: &owner.proof, Set: &owner.proofSet},
+			"--enroll":           {Value: &enroll, Set: &enrollSet},
+			"--fingerprint":      {Value: &fingerprint, Set: &fingerprintSet},
+			"--client":           {Value: &clientName, Count: &clientCount},
+			"--user":             {Value: &userName, Set: &userSet},
 		},
 	}); d != nil {
 		return cli.Result{Diagnostic: d}
 	}
 	switch verb {
-	case "run", "install", "start", "stop", "uninstall", "status", "receipts", "pair", "unpair":
+	case "run", "install", "start", "stop", "uninstall", "status", "receipts", "pair", "unpair", "revoke-hq":
 	default:
-		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, start, stop, uninstall, status, receipts, pair, or unpair")}
+		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, start, stop, uninstall, status, receipts, pair, unpair, or revoke-hq")}
+	}
+	if verb == "revoke-hq" && len(args) != 1 {
+		return cli.Result{Diagnostic: command.UsageErr("revoke-hq takes no flags or arguments")}
 	}
 	if verb == "unpair" && (clientName != "terminal" || clientCount > 1) {
-		return cli.Result{Diagnostic: command.UsageErr("use unpair or unpair --client terminal")}
+		return cli.Result{Diagnostic: command.UsageErr("unpair accepts at most one --client terminal; use revoke-hq for the enrolled HQ")}
 	}
 	if enrollSet && verb != "pair" {
 		return cli.Result{Diagnostic: command.UsageErr("--enroll is only valid with pair")}
@@ -102,12 +138,18 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		return cli.Result{Diagnostic: command.UsageErr("--debug is only valid with install")}
 	}
 	hqEnroll := verb == "pair" && enrollSet && clientName == "agent-daemon"
+	if userSet && hqEnroll && userName == "" {
+		return cli.Result{Diagnostic: command.UsageErr("--user requires a local account name")}
+	}
 	if userSet && !debug && !hqEnroll {
 		return cli.Result{Diagnostic: command.UsageErr("--user is only valid with install --debug or pair --enroll --client agent-daemon")}
 	}
 	goos := deps.GOOS
 	if goos == "" {
 		goos = hostOS()
+	}
+	if identitySet && (verb != "run" || goos != "darwin" || !exactKey(requiredIdentity)) {
+		return cli.Result{Diagnostic: command.UsageErr("--require-identity takes the paired Machine's lowercase SHA-256 fingerprint with daemon run on macOS")}
 	}
 	if owner.pinSet || owner.challenge || owner.proofSet {
 		if goos != "darwin" || verb != "pair" || (owner.pinSet && (enrollSet || fingerprintSet || userSet || clientName != "terminal" || owner.challenge || owner.proofSet)) ||
@@ -120,6 +162,12 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		if err != nil {
 			d := diag.New(diag.DaemonCallerRefused, err.Error())
 			return cli.Result{Diagnostic: &d}
+		}
+		if verb == "revoke-hq" && (caller.PrefixOwner == "" || goos == "darwin" && !caller.DarwinAdmin) {
+			return ownerPairRefused("revoking HQ requires the Machine administrator")
+		}
+		if identitySet && (caller.PrefixOwner == "" || !caller.DarwinAdmin) {
+			return ownerPairRefused("paired foreground startup requires the macOS prefix administrator")
 		}
 		switch verb {
 		case "pair":
@@ -225,7 +273,7 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "absent")
 		return cli.Result{Records: []*output.Record{rec}}
 	case "run":
-		if err := Run(context.Background(), root); err != nil {
+		if err := runService(context.Background(), root, requiredIdentity); err != nil {
 			return serviceFailed(err)
 		}
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "stopped")
@@ -306,6 +354,11 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		hint := enrollHint(pub, clientName)
 		rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "minted").Set("path", path).Set("public", hex.EncodeToString(pub)).Set("fingerprint", publicFingerprint(pub)).Set("enroll", hint)
 		return cli.Result{Records: []*output.Record{rec}, Human: "As the prefix owner run:\n" + hint + "\n"}
+	case "revoke-hq":
+		if err := revokeHQ(stateDir(root)); err != nil {
+			return serviceFailed(err)
+		}
+		return cli.Result{Records: []*output.Record{output.New().Set("service", "agent-machine").Set("client", "agent-daemon").Set("state", "revoked")}}
 	case "unpair":
 		if err := UnpairTerminal(root); err != nil {
 			return serviceFailed(err)
@@ -313,11 +366,14 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "revoked")
 		return cli.Result{Records: []*output.Record{rec}}
 	default:
-		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, start, stop, uninstall, status, receipts, pair, or unpair")}
+		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, start, stop, uninstall, status, receipts, pair, unpair, or revoke-hq")}
 	}
 }
 
 func ensureService(deps Deps, ctx cli.Context, goos, root, userName string, install, debug bool) cli.Result {
+	if err := checkChannelIdentity(root); err != nil {
+		return serviceFailed(err)
+	}
 	exec, err := deps.executable(ctx)
 	if err != nil {
 		return serviceFailed(err)

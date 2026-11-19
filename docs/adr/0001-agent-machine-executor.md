@@ -52,14 +52,23 @@ it is confirmed. The daemon reads the pairing files before each request, so
 other client stays live.
 
 The verbs are `status`, `receipts`, `plan`, `apply`, `update`, `catalog`,
-and `approve-members`. `approve-members` records a plan ID and digest for
+`members-plans`, `hq-service-recovery`, and `approve-members`. The read-only `members-plans` verb requires
+the enrolled HQ key and the OS UID of the platform’s current dedicated HQ account,
+matching both enrollment and socket credentials. It lists saved plan IDs
+or fetches a single canonical members plan, as specified in the
+[Machine channel plan](../plans/machine-daemon.md#closed-verb-set).
+Protected macOS `hq-service-recovery` records the same short-lived approval
+only after the enrolled role supplies the pinned owner's fresh, operation-bound
+proof for the saved two-step service plan. The human still runs root apply.
+`approve-members` records a plan ID and digest for
 the member accounts provisioner and starts no process
 ([member-accounts.md](../plans/member-accounts.md)).
 There is no shell verb and no SSH verb. Requests carry identifiers only.
 Unknown fields, unknown names, undeclared options, and undeclared targets are
 refused before a process starts. `catalog_key`, `floor`, and `envelope` are
 declared only on `catalog`. `plan_digest` is declared only on
-`approve-members`.
+`approve-members` and `hq-service-recovery`. The latter alone declares
+`challenge_nonce` and `owner_signature` on its documented operations.
 
 The control plane publishes the admin catalog. The signing key does not live
 next to the catalog. A present `catalog.json` is refused and the daemon does

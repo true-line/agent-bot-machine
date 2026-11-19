@@ -6,12 +6,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/members"
+	"github.com/qwts/managed-machine/internal/plan"
 )
 
 const maxMessage = 64 << 10
@@ -20,22 +23,30 @@ const timestampSkew = 5 * time.Minute
 // Request is one signed command. Fields the catalog did not declare are
 // rejected by DisallowUnknownFields before a signature is considered.
 type Request struct {
-	Verb       string           `json:"verb"`
-	Name       string           `json:"name,omitempty"`
-	Option     string           `json:"option,omitempty"`
-	Target     string           `json:"target,omitempty"`
-	PlanID     string           `json:"plan_id,omitempty"`
-	PlanDigest string           `json:"plan_digest,omitempty"`
-	Soul       string           `json:"soul,omitempty"`
-	Harness    string           `json:"harness,omitempty"`
-	SessionID  string           `json:"session_id,omitempty"`
-	CatalogKey *CatalogKey      `json:"catalog_key,omitempty"`
-	Floor      *CatalogFloor    `json:"floor,omitempty"`
-	Envelope   *CatalogEnvelope `json:"envelope,omitempty"`
-	Timestamp  int64            `json:"timestamp"`
-	Nonce      string           `json:"nonce"`
-	PublicKey  string           `json:"public_key"`
-	Signature  string           `json:"signature"`
+	Verb             string `json:"verb"`
+	Name             string `json:"name,omitempty"`
+	Option           string `json:"option,omitempty"`
+	Target           string `json:"target,omitempty"`
+	HQEpoch          string `json:"hq_epoch,omitempty"`
+	ReceiptBody      string `json:"receipt_body,omitempty"`
+	ReceiptJTI       string `json:"receipt_jti,omitempty"`
+	ReceiptKID       string `json:"receipt_kid,omitempty"`
+	ReceiptSignature string `json:"receipt_signature,omitempty"`
+	peerUID          int
+	ChallengeNonce   string           `json:"challenge_nonce,omitempty"`
+	OwnerSignature   string           `json:"owner_signature,omitempty"`
+	PlanID           string           `json:"plan_id,omitempty"`
+	PlanDigest       string           `json:"plan_digest,omitempty"`
+	Soul             string           `json:"soul,omitempty"`
+	Harness          string           `json:"harness,omitempty"`
+	SessionID        string           `json:"session_id,omitempty"`
+	CatalogKey       *CatalogKey      `json:"catalog_key,omitempty"`
+	Floor            *CatalogFloor    `json:"floor,omitempty"`
+	Envelope         *CatalogEnvelope `json:"envelope,omitempty"`
+	Timestamp        int64            `json:"timestamp"`
+	Nonce            string           `json:"nonce"`
+	PublicKey        string           `json:"public_key"`
+	Signature        string           `json:"signature"`
 }
 
 // Response is signed by the daemon. Signature is over the other fields.
@@ -66,6 +77,7 @@ type Pairing struct {
 	AgentDaemonUID        int
 	AgentDaemonBound      bool
 	OwnerPresenceRequired bool
+	HQEpoch               string
 }
 
 // Stage records a replacement key and keeps Live authoritative.
@@ -153,22 +165,41 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	}
 	g.seen[req.Nonce] = struct{}{}
 	if !knownVerb(req.Verb) {
-		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, approve-members, bootstrap"
+		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, members-plans, hq-service-recovery, hq-device, approve-members, bootstrap"
 	}
 	if id, msg := catalogFields(req, raw); id != "" {
+		return req, id, msg
+	}
+	if id, msg := deviceFields(req, raw); id != "" {
 		return req, id, msg
 	}
 	if id, msg := membersFields(req, raw); id != "" {
 		return req, id, msg
 	}
 	if g.Dir != "" {
-		pairing, err := loadPairing(g.Dir)
+		readPairing := loadPairing
+		if req.Verb == deviceVerb {
+			readPairing = currentDevicePairing
+		}
+		pairing, err := readPairing(g.Dir)
 		if err != nil {
 			return req, diag.DaemonUnknownKey, "pairing state could not be read: " + err.Error()
 		}
 		g.Pairing = pairing
 	}
-	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" {
+	if req.Verb == recoveryVerb && (!g.Pairing.OwnerPresenceRequired || runtime.GOOS != "darwin") {
+		return req, diag.DaemonPeerRefused, "service recovery requires the protected macOS pairing"
+	}
+	if req.Verb == deviceVerb && !devicePairAllows(g.Pairing, peerUID, ed25519.PublicKey(pub)) {
+		return req, diag.DaemonPeerRefused, "HQ device custody requires the approved HQ pairing"
+	}
+	if req.Verb == membersPlansVerb || req.Verb == recoveryVerb {
+		p := g.Pairing
+		if !p.AgentDaemonBound || p.AgentDaemonUID != peerUID || !p.AgentDaemon.Equal(ed25519.PublicKey(pub)) || !dedicatedMembersPlanPeer(peerUID) {
+			return req, diag.DaemonPeerRefused, "this command requires the enrolled HQ service account"
+		}
+	}
+	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" && req.Verb != membersPlansVerb && req.Verb != recoveryVerb && req.Verb != deviceVerb {
 		return req, diag.DaemonPeerRefused, "this command requires its own owner presence proof"
 	}
 	if req.Verb == "bootstrap" {
@@ -190,7 +221,27 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if g.Pairing.isTerminal(ed25519.PublicKey(pub)) && !terminalVerb(req.Verb) {
 		return req, diag.DaemonUnknownKey, "the terminal client key is only for update, status, and receipts"
 	}
+	req.peerUID = peerUID
 	return req, "", ""
+}
+
+// Legacy enrollment may bind agent-daemon to a custom account. Check the
+// current system role independently for this dedicated-account operation.
+func dedicatedMembersPlanPeer(uid int) bool {
+	var role string
+	switch runtime.GOOS {
+	case "darwin":
+		role = members.DarwinHQAccount
+	case "linux":
+		role = members.DefaultHQAccount
+	default:
+		return false
+	}
+	if uid <= 0 || uid == os.Geteuid() {
+		return false
+	}
+	account, err := lookupUser(role)
+	return err == nil && account.Username == role && account.Uid == strconv.Itoa(uid)
 }
 
 func terminalVerb(verb string) bool {
@@ -204,7 +255,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", approveMembersVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, deviceVerb, approveMembersVerb, "bootstrap":
 		return true
 	default:
 		return false
@@ -256,6 +307,36 @@ const approveMembersVerb = "approve-members"
 // or null value, and refuses everything but plan_id and plan_digest on
 // approve-members. Both identifiers must have their fixed forms.
 func membersFields(req Request, raw []byte) (string, string) {
+	if req.Verb == recoveryVerb {
+		if !validRecoveryRequest(req, raw) {
+			return diag.DaemonUndeclared, "invalid hq-service-recovery request"
+		}
+		return "", ""
+	}
+	if req.ChallengeNonce != "" || req.OwnerSignature != "" || hasRawField(raw, "challenge_nonce", "owner_signature") {
+		return diag.DaemonUndeclared, "recovery proof fields are not declared on this verb"
+	}
+
+	if req.Verb == membersPlansVerb {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return diag.DaemonUndeclared, "invalid members-plans request"
+		}
+		for k := range fields {
+			switch k {
+			case "verb", "option", "plan_id", "nonce", "timestamp", "public_key", "signature":
+			default:
+				return diag.DaemonUndeclared, "unexpected members-plans field"
+			}
+		}
+		_, hasID := fields["plan_id"]
+		if (req.Option != "list" && req.Option != "get") || ((hasID || req.Option == "get") && !plan.ValidID(req.PlanID)) ||
+			len(req.Nonce) > 128 || strings.ContainsAny(req.Nonce, "\r\n") {
+			return diag.DaemonUndeclared, "members-plans requires list with an optional cursor, or get with a plan ID"
+		}
+		return "", ""
+	}
+
 	if req.Verb != approveMembersVerb {
 		if req.PlanDigest != "" || hasRawField(raw, "plan_digest") {
 			return diag.DaemonUndeclared, "plan_digest is not declared on this verb"
@@ -281,6 +362,18 @@ func canonical(r Request) []byte {
 	}
 	if r.PlanDigest != "" {
 		parts = append(parts, "plan_digest", r.PlanDigest)
+	}
+	if r.ChallengeNonce != "" {
+		parts = append(parts, "challenge_nonce", r.ChallengeNonce)
+	}
+	if r.OwnerSignature != "" {
+		parts = append(parts, "owner_signature", r.OwnerSignature)
+	}
+	if r.Verb == deviceVerb && r.Option != "identity" {
+		parts = append(parts, "hq_epoch", r.HQEpoch)
+	}
+	if r.Verb == deviceVerb && (r.Option == "bind-enrollment" || r.Option == "bind-access") {
+		parts = append(parts, "receipt_body", r.ReceiptBody, "receipt_jti", r.ReceiptJTI, "receipt_kid", r.ReceiptKID, "receipt_signature", r.ReceiptSignature)
 	}
 	return []byte(strings.Join(parts, "\n"))
 }

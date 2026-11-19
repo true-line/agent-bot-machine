@@ -153,7 +153,7 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if err != nil || daemonDir == "" || daemonAccount == "" {
 		return failure(diag.MembersNotApproved, "agent-machine's state directory could not be located")
 	}
-	approval, why := loadApproval(h, daemonDir, daemonAccount, planID, deps.Time())
+	approval, why := loadApproval(h, daemonDir, daemonAccount, planID, platform, deps.Time())
 	if why != "" {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: %s", planID, why)
 	}
@@ -246,11 +246,17 @@ func encodeReceipt(r Receipt) []byte {
 // allow an apply, or "" when it does. The file and its directory must
 // belong to the daemon's account and be writable by nobody else: an
 // approval anyone else could write is not the daemon's word.
-func loadApproval(h Host, daemonDir, account, planID string, now time.Time) (Approval, string) {
+func loadApproval(h Host, daemonDir, account, planID, platform string, now time.Time) (Approval, string) {
 	for _, p := range []string{ApprovalsDir(daemonDir), ApprovalPath(daemonDir, planID)} {
 		e, ok, err := h.Lstat(p)
-		if err != nil || !ok {
-			return Approval{}, "there is no approval; approve it in the local web UI first"
+		if err != nil {
+			return Approval{}, "the approval cannot be read"
+		}
+		if !ok {
+			if platform == PlatformDarwin {
+				return Approval{}, "there is no approval. If this macOS Machine has an owner pin, use first-hq for the first dedicated HQ role or the paired HQ CLI's hq-service-recovery for its down service. See managed-machine members --help for approval routes"
+			}
+			return Approval{}, "there is no approval. Approve this plan in the local web UI's Approvals tab first"
 		}
 		isFile := p != ApprovalsDir(daemonDir)
 		if (isFile && !e.Regular) || (!isFile && !e.Dir) {

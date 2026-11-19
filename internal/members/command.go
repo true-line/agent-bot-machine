@@ -31,13 +31,14 @@ type Deps struct {
 func Command(deps Deps) cli.Command {
 	return cli.Command{
 		Name:    "members",
-		Summary: "Plan and apply the Linux harness accounts, endpoint directories and launch rule",
+		Summary: "Plan and apply HQ and harness accounts on Linux and macOS",
 		Usage:   usage,
 		Run:     func(ctx cli.Context, args []string) cli.Result { return run(deps, ctx, args) },
 	}
 }
 
 const usage = `Usage: managed-machine members plan [--hq-account <account>] (--hq-config <path> | --members <a,b,...>) [--dir <path>]
+       managed-machine members plan [--hq-service <record.json>]  (macOS dedicated HQ only)
        sudo managed-machine members apply <plan-id>
 
 Plan the account HQ runs in, one OS account per harness credential, the broker
@@ -54,8 +55,18 @@ accounts from --members or --hq-config. Each credential account has a
 private group and home and cannot log in. Add --hq-service to install the
 verified launchd service.
 
-apply needs root and an approval. The owner approves the plan's digest in
-the local web UI, then runs apply with sudo in their own terminal within
+apply needs root and owner approval of the exact plan ID and digest.
+On Linux and on macOS channels that accept approve-members, the owner uses
+the local web UI's Approvals tab.
+A macOS Machine with an owner pin supports two transfers for local owner review:
+  First dedicated HQ role: the prefix administrator exports the plan with
+  managed-machine daemon first-hq export <plan-id> and submits the owner proof
+  with managed-machine daemon first-hq approve <plan-id> --proof-file <path>.
+  Down service, healthy paired HQ role: the paired HQ CLI runs
+  machine hq-service-recovery export <plan-id> --socket <machine-socket>
+  and submits the returned owner proof through the same paired HQ CLI.
+Both transfers require a dedicated HQ-only plan without harness accounts.
+The prefix administrator then runs apply with sudo in their own terminal within
 ten minutes. apply builds the plan again from the host and runs only when
 its digest is the approved one. It takes a plan id and nothing else; no
 option skips the approval. An agent account or session is refused.
@@ -276,6 +287,13 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		Set("hq_account_dedicated", plan.SharedHQAdvice() == "").
 		SetOptional("advice", plan.SharedHQAdvice())}
 	for _, s := range plan.Steps {
+		if platform == PlatformDarwin && s.Kind == KindHQAccount && s.Target == DarwinHQAccount && s.Action == ActionCreate {
+			advice := "The prefix administrator can send this saved plan to the owner approval app with managed-machine daemon first-hq export " + planID
+			if len(plan.Members) != 0 {
+				advice = "First provision the dedicated HQ role with a members plan without harness accounts, then plan the harness accounts separately."
+			}
+			records[0].Set("advice", advice)
+		}
 		records = append(records, output.New().
 			Set("kind", s.Kind).
 			Set("target", s.Target).

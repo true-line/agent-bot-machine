@@ -120,7 +120,7 @@ type memKeyStore struct {
 	deletes int
 }
 
-func (m *memKeyStore) Load() ([]byte, bool, error) {
+func (m *memKeyStore) Load(repair bool) ([]byte, bool, error) {
 	if m.loadErr != nil {
 		return nil, false, m.loadErr
 	}

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -51,15 +52,41 @@ func writeChannelPub(dir string, priv ed25519.PrivateKey) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	path := filepath.Join(dir, "daemon.pub")
-	_ = os.Remove(path)
-	if err := os.WriteFile(path, pub, 0o644); err != nil {
+	// Publish only complete key bytes, without replacing a pin another
+	// startup may have published between the continuity check and this write.
+	f, err := os.CreateTemp(dir, ".daemon-pub-")
+	if err != nil {
 		return err
 	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(pub); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := stripDarwinACL(f.Name()); err != nil {
+		return err
+	}
+	if err := os.Chmod(f.Name(), 0o644); err != nil {
+		return err
+	}
+	if err := os.Link(f.Name(), filepath.Join(dir, "daemon.pub")); !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	existing, err := readPublishedKey(dir)
+	if err != nil {
+		return err
+	}
+	if !pub.Equal(existing) {
+		return errChannelIdentity
+	}
+	path := filepath.Join(dir, "daemon.pub")
 	if err := stripDarwinACL(path); err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o644)
+	return os.Chmod(path, 0644)
 }
 
 func defaultLegacySharedDir(root string) string {
@@ -154,32 +181,58 @@ func runProvider(root string, item Item) (provider.Provider, error) {
 	}
 }
 
+func serviceKey(root, requiredIdentity string) (ed25519.PrivateKey, error) {
+	dir := stateDir(root)
+	path := filepath.Join(dir, "daemon.key")
+	channel, legacy, store := ChannelDir(), defaultLegacySharedDir(root), defaultKeyStore(path)
+	key, err := pairedChannelKey(dir, channel, legacy, store)
+	if err != nil {
+		return nil, err
+	}
+	if requiredIdentity != "" {
+		if key == nil || publicFingerprint(key.Public().(ed25519.PublicKey)) != requiredIdentity {
+			zeroBytes(key)
+			return nil, errChannelIdentity
+		}
+	}
+	if key != nil {
+		return key, nil
+	}
+	if runtime.GOOS != "windows" && channel != "" {
+		if err := checkPublishedKey(dir, channel, legacy, store); err != nil {
+			return nil, err
+		}
+	}
+	if err := purgeLegacySharedState(dir, legacy, store); err != nil {
+		return nil, err
+	}
+	if _, err := ensureStateDirAndPeers(dir); err != nil {
+		return nil, err
+	}
+	return establishChannelKey(path, store, channel, true)
+}
+
 // Run listens on the per-user socket until ctx is cancelled. Each client's
 // public key is read from peers/<client>.pub before each request. A legacy
 // peer.pub is moved to peers/terminal.pub. Revoking one client refuses that
 // key and leaves the other client live. A confirmed replacement is accepted
 // on the next request. Receipts name this process's account.
 func Run(ctx context.Context, root string) error {
+	return runService(ctx, root, "")
+}
+
+func runService(ctx context.Context, root, requiredIdentity string) error {
 	dir := stateDir(root)
-	if err := purgeLegacySharedState(dir, defaultLegacySharedDir(root), defaultKeyStore(filepath.Join(dir, "daemon.key"))); err != nil {
-		return err
-	}
-	if _, err := ensureStateDirAndPeers(dir); err != nil {
-		return err
-	}
-	priv, err := loadOrCreateKey(filepath.Join(dir, "daemon.key"))
+	priv, err := serviceKey(root, requiredIdentity)
 	if err != nil {
 		return err
+	}
+	if requiredIdentity != "" && SocketListening(ChannelSocket()) {
+		return errors.New("the Machine channel still has a listener; stop its supervisor before foreground startup")
 	}
 	ln, err := listenForRun(dir)
 	if err != nil {
 		return err
-	}
-	if ch := ChannelDir(); ch != "" && runtime.GOOS != "windows" {
-		if err := writeChannelPub(ch, priv); err != nil {
-			ln.Close()
-			return err
-		}
 	}
 	pairing, err := loadPairing(dir)
 	if err != nil {
@@ -224,12 +277,19 @@ func Run(ctx context.Context, root string) error {
 		},
 	}
 	return Serve(ctx, ln, gate, priv, peerCred, Hooks{
-		Status:   func() (string, []byte, error) { return statusBody(dir) },
-		Receipts: func() ([]byte, error) { return receiptsBody(dir) },
-		Plan:     planner.Plan,
-		Apply:    planner.Apply,
-		Update:   planner.Update,
-		Catalog:  func(req Request) (string, string, string) { return session.accept(dir, req) },
+		Status:       func() (string, []byte, error) { return statusBody(dir) },
+		Receipts:     func() ([]byte, error) { return receiptsBody(dir) },
+		Plan:         planner.Plan,
+		Apply:        planner.Apply,
+		Update:       planner.Update,
+		Catalog:      func(req Request) (string, string, string) { return session.accept(dir, req) },
+		HQDevice:     func(req Request) Response { return requestHQDevice(ctx, root, priv, req, time.Now, runDeviceKeyd) },
+		MembersPlans: func(option, id string) ([]byte, error) { return readMembersPlans(root, option, id) },
+		ServiceRecovery: func(req Request) Response {
+			return recoverHQService(dir, priv.Public().(ed25519.PublicKey), req, time.Now, func(id, digest string, uid int) (string, error) {
+				return currentRecoveryPlan(root, account, id, digest, uid)
+			})
+		},
 		ApproveMembers: func(planID, digest string) ([]byte, string, string) {
 			return approveMembers(runtime.GOOS, dir, planID, digest, time.Now())
 		},
