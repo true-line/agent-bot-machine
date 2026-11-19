@@ -58,6 +58,14 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 			res = bootstrapReply(priv)
 		} else {
 			res = hooks.reply(req)
+			if req.Verb == deviceVerb && res.OK {
+				unlock, err := lockDeviceDelivery(g.Dir, req, res.Body)
+				if err != nil {
+					res = deviceUnavailable()
+				} else {
+					defer unlock()
+				}
+			}
 		}
 	}
 	res.RequestNonce = requestNonce

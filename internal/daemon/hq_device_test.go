@@ -62,6 +62,13 @@ func fixtureDeviceJWS(t *testing.T, key *ecdsa.PrivateKey, headerFields, claims 
 	return input + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
 
+type observedDeviceWrite struct {
+	net.Conn
+	started chan struct{}
+}
+
+func (c *observedDeviceWrite) Write(p []byte) (int, error) { close(c.started); return c.Conn.Write(p) }
+
 func TestHQDeviceSignedChannel(t *testing.T) {
 	testPlanRole(t, "331")
 	root := t.TempDir()
@@ -219,6 +226,17 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 	open, server := net.Pipe()
 	defer open.Close()
 	go handleConn(server, &g, priv, func(net.Conn) (int, error) { return 331, nil }, h)
+	// This response was committed to a still-blocked socket write while
+	// authorized. Revocation publishes immediately, then waits for that write.
+	delivery, out := net.Pipe()
+	defer delivery.Close()
+	started := make(chan struct{})
+	deliveryReq := fresh("identity")
+	go handleConn(&observedDeviceWrite{out, started}, &g, priv, func(net.Conn) (int, error) { return 331, nil }, h)
+	if _, err := delivery.Write(append(signed(t, caller, deliveryReq), '\n')); err != nil {
+		t.Fatal(err)
+	}
+	<-started
 	entered, finish := make(chan struct{}), make(chan struct{})
 	inFlight := make(chan Response, 1)
 	go func() {
@@ -252,6 +270,15 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 	if (<-inFlight).OK {
 		t.Fatal("released result after revocation")
 	}
+	select {
+	case <-revoked:
+		t.Fatal("administrator revoke completed with an authorized write still in progress")
+	default:
+	}
+	var committed Response
+	if json.NewDecoder(delivery).Decode(&committed) != nil || !VerifyResponse(machine, committed) || !committed.OK {
+		t.Fatal("invalid pre-cutoff response")
+	}
 	if r := <-revoked; r.Diagnostic != nil {
 		t.Fatal(r.Diagnostic.Message)
 	}
@@ -276,7 +303,7 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 	if r := run(deps, cli.Context{}, []string{"revoke-hq"}); r.Diagnostic != nil {
 		t.Fatal("repeat revocation failed", r.Diagnostic)
 	}
-	if exchange(fresh("identity"), caller, 331).OK || calls != 5 {
+	if exchange(fresh("identity"), caller, 331).OK || calls != 6 {
 		t.Fatalf("unexpected custody calls %d", calls)
 	}
 }

@@ -178,6 +178,33 @@ func devicePairAllows(p Pairing, peerUID int, pub ed25519.PublicKey) bool {
 		p.allows(pub) && !p.isTerminal(pub)
 }
 
+// A successful response can wait for the peer's receive buffer. Hold the
+// pairing lock across the actual bounded write so a completed local revoke
+// cannot be followed by delivery of an earlier authorized provider response.
+func lockDeviceDelivery(dir string, req Request, body []byte) (func() error, error) {
+	unlock, err := lockDevicePairing(dir)
+	if err != nil {
+		return nil, errHQDevice
+	}
+	p, err := currentDevicePairing(dir)
+	pub, decodeErr := base64.StdEncoding.Strict().DecodeString(req.PublicKey)
+	var result struct {
+		Epoch string `json:"hq_epoch"`
+	}
+	if err != nil || decodeErr != nil || !devicePairAllows(p, req.peerUID, pub) || json.Unmarshal(body, &result) != nil || result.Epoch != deviceEpoch(p) {
+		_ = unlock()
+		return nil, errHQDevice
+	}
+	return unlock, nil
+}
+
+func deviceEpoch(p Pairing) string {
+	if p.HQEpoch == "" {
+		return "legacy"
+	}
+	return p.HQEpoch
+}
+
 type deviceProvider func(context.Context, string, deviceDelegation) ([]byte, error)
 
 func requestHQDevice(ctx context.Context, root string, machine ed25519.PrivateKey, req Request, now func() time.Time, provider deviceProvider) Response {
@@ -200,10 +227,7 @@ func requestHQDevice(ctx context.Context, root string, machine ed25519.PrivateKe
 		base64.StdEncoding.EncodeToString(pub) != req.PublicKey || len(machine) != ed25519.PrivateKeySize {
 		return deviceUnavailable()
 	}
-	epoch := p.HQEpoch
-	if epoch == "" {
-		epoch = "legacy"
-	}
+	epoch := deviceEpoch(p)
 	if req.Option != "identity" && req.HQEpoch != epoch {
 		return deviceUnavailable()
 	}

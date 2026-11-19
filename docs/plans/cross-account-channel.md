@@ -236,6 +236,67 @@ the identity service and relays get no execution channel
 The thin client is a debug tool, off unless the prefix owner turns on debug
 mode.
 
+### Administrative device custody on the paired channel
+
+Protected pairing defaults to the dedicated HQ account. An administrator can
+select an eligible ordinary local non-administrator account with `--user NAME`
+on both halves of pairing. Its owner challenge uses `machine-pair-ordinary`
+and includes the verified numeric `hq_uid` between the HQ key and the nonce
+in the signed transcript. The owner reviews that UID. Members plan lookup and
+dedicated service recovery still resolve the dedicated service account.
+
+After pairing, the administrator explicitly runs the bundled
+`agent-bot-keyd hq-device-init` in their own macOS login. This authorizes
+creation of the native device identity for the current Machine, role key,
+UID, owner pin and enrollment epoch. An existing incompatible binding requires
+a separate transition. Status or a request from HQ cannot provision or rotate
+a key. The release ships the helper beside Machine at mode 0700. Machine
+requires its Developer ID signature and release identifier before delegation.
+
+An authenticated `hq-device` request selects one of these operations. Each
+one binds the original request nonce and the kernel-authenticated HQ UID.
+Responses use the normal pinned Machine signature. The admin's keyd verifies
+the second Machine-signed delegation before operating on its matching key.
+
+| Option | Signed state | Purpose |
+| --- | --- | --- |
+| `identity` | `identity` | Read public P-256 identity, RFC 7638 thumbprint, custody generation, hardware storage and current pairing epoch. A verified enrollment also includes the device ID and signed receipt digest/JTI. |
+| `enrollment-proof` | `proved` | Return a fresh ES256 enrollment proof restricted to the released device-authorization audience. |
+| `bind-enrollment` | `bound` | Validate the identity service's signed approved poll receipt against the admin's pending proof and device thumbprint. |
+| `access-assertion` | `asserted` | Use the recorded device ID and a new admin-owned ephemeral key for the fixed OAuth token audience. |
+| `bind-access` | `access-bound` | Validate the server-signed token result for that assertion and return the administrative session thumbprint and deadline. |
+
+The signed channel transcript appends the lines `hq_epoch`, then its value,
+after the normal ten fields for every operation except `identity`. A fresh
+owner proof establishes the epoch. Continuously paired older enrollments use
+`legacy`. Both bind operations additionally append alternating field names
+and values in this exact order: `receipt_body`, `receipt_jti`, `receipt_kid`,
+`receipt_signature`. The body is unpadded base64url of the exact signed HTTP
+200 bytes, limited to 8192 decoded bytes. The receipt signature is unpadded
+base64url Ed25519. Enrollment JTI is `enroll-v1:` plus the lowercase SHA-256
+hex digest of the original compact proof. Token JTI matches the issued access
+assertion. The private keyd message uses the domain
+`agent-bot-machine/keyd-hq-device/v1`, Machine key, HQ key (both padded
+standard base64), decimal peer UID, original nonce, Unix seconds, option,
+three empty historical field slots, then labelled epoch and receipt lines
+as applicable. Both request transcripts use LF with no trailing newline.
+
+An administrator runs `managed-machine daemon revoke-hq` to disable the
+role immediately. The deny marker becomes visible before waiting for
+in-flight work. Machine rechecks the pair at dispatch, after keyd returns
+and before delivering its response. A completed local revoke retires pending
+pairing and service-recovery challenges and waits for preauthorized socket
+writes to finish. Earlier responses already received or buffered, previously
+recorded human approvals, and completed remote effects have their own
+lifecycle. Restoring or re-enrolling revoked custody requires a separate
+explicitly authorized transition. There is no automatic re-pair.
+
+This implementation has a native provider on macOS. Other platforms refuse
+protected device requests until independently authorized hardware custody and
+local peer verification are available. Issuing arbitrary DPoP proofs or SDK
+approval decisions requires additional operation-specific authority. No
+generic signing or credential fallback is provided.
+
 ### First HQ provisioning on macOS
 
 Before the dedicated `_agent-bot-hq` role exists, the Homebrew prefix

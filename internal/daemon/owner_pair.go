@@ -198,7 +198,7 @@ func ownerPair(root string, caller Caller, state *ownerPairState, options ownerP
 		userName = "_agent-bot-hq"
 	}
 	account, err := lookupUser(userName)
-	if err != nil || account.Username != userName {
+	if err != nil || account == nil || account.Username != userName {
 		return ownerPairRefused("cannot resolve the selected local HQ account")
 	}
 	uid, err := strconv.Atoi(account.Uid)

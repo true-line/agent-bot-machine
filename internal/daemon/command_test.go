@@ -86,6 +86,7 @@ func TestDaemonRefusesAgent(t *testing.T) {
 }
 
 func TestInstallWaitHealthyIsRunning(t *testing.T) {
+	t.Setenv(channelEnv, filepath.Join(t.TempDir(), "channel"))
 	root := t.TempDir()
 	deps := owner(root)
 	deps.Activate = func(string) error { return nil }
@@ -101,6 +102,7 @@ func TestInstallWaitHealthyIsRunning(t *testing.T) {
 }
 
 func TestInstallActivates(t *testing.T) {
+	t.Setenv(channelEnv, filepath.Join(t.TempDir(), "channel"))
 	root := t.TempDir()
 	deps := owner(root)
 	var got string
@@ -261,6 +263,7 @@ func TestFailedActivationLeavesNoUnitBehind(t *testing.T) {
 }
 
 func TestFailedActivationRestoresThePreviousUnit(t *testing.T) {
+	t.Setenv(channelEnv, filepath.Join(t.TempDir(), "channel"))
 	root := t.TempDir()
 	deps := owner(root)
 	deps.GOOS = "linux"
@@ -300,6 +303,7 @@ func TestFailedActivationRestoresThePreviousUnit(t *testing.T) {
 }
 
 func TestServiceFailureIsNotACallerRefusal(t *testing.T) {
+	t.Setenv(channelEnv, filepath.Join(t.TempDir(), "channel"))
 	root := t.TempDir()
 	deps := owner(root)
 	deps.Deactivate = func(string) error { return errors.New("launchctl: input/output error") }
@@ -319,6 +323,7 @@ func TestServiceFailureIsNotACallerRefusal(t *testing.T) {
 }
 
 func TestFailedReloadAfterRestoreIsReported(t *testing.T) {
+	t.Setenv(channelEnv, filepath.Join(t.TempDir(), "channel"))
 	root := t.TempDir()
 	deps := owner(root)
 	deps.GOOS = "linux"
