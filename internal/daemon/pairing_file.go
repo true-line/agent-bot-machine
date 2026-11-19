@@ -68,6 +68,9 @@ func ensureStateDirAndPeers(dir string) (string, error) {
 // makes the terminal key live. It refuses legacy peer.* files beside peers/
 // and unknown files in peers/.
 func PairTerminal(root string) (string, error) {
+	if err := checkChannelIdentity(root); err != nil {
+		return "", err
+	}
 	dir := stateDir(root)
 	if err := purgeLegacySharedState(dir, defaultLegacySharedDir(root), defaultKeyStore(filepath.Join(dir, "daemon.key"))); err != nil {
 		return "", err

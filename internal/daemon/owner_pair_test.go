@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/diag"
 )
 
 func signedOwnerReply(t *testing.T, key *ecdsa.PrivateKey, challenge ownerPairChallenge) (string, string) {
@@ -123,7 +124,20 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	requireErr(command("--pin-owner", otherPin))
 	requireErr(command(enroll...))
 	requireErr(command(append(enroll, "--owner-challenge", "--user", "user")...))
+	// A pre-enrollment first-install challenge cannot survive pairing.
+	st, err := readOwnerPairState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.FirstHQ = &firstHQChallenge{firstHQAction, hex.EncodeToString(machine), approvePlanID, approveDigest, strings.Repeat("c", 64), time.Now().Unix() + ownerChallengeTTL}
+	if err := st.save(dir); err != nil {
+		t.Fatal(err)
+	}
 	_, superseded := signedOwnerReply(t, key, challenge())
+	st, err = readOwnerPairState(dir)
+	if err != nil || st.FirstHQ != nil || st.Recovery != nil {
+		t.Fatal("pairing retained the old first-install challenge", err)
+	}
 	c := challenge()
 	_, valid := signedOwnerReply(t, key, c)
 	requireErr(submit(superseded))
@@ -178,6 +192,20 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	if !channel(330, "status") || !channel(330, "receipts") || channel(331, "status") || channel(330, "apply") || channel(330, "update") || channel(330, "bootstrap") {
 		t.Fatal("wrong peer, debug or privilege boundary")
 	}
+	// A paired HQ signing a well-formed members approval still needs a
+	// separate action-specific owner proof. This includes recovery plans.
+	membersReq := Request{Verb: approveMembersVerb, PlanID: "plan-20261119T040000Z-abcd",
+		PlanDigest: strings.Repeat("a", 64), Timestamp: time.Now().Unix(), Nonce: "fresh-members"}
+	if err := Sign(private, &membersReq); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(membersReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, code, _ := (&Gate{Dir: dir}).verify(330, raw); code != diag.DaemonPeerRefused {
+		t.Fatalf("paired HQ members approval: %s", code)
+	}
 	// Older binaries might leave a staged key or UID. Neither supersedes
 	// the atomic owner-approved tuple.
 	alt, _, err := ed25519.GenerateKey(rand.Reader)
@@ -194,10 +222,22 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	if err != nil || !reload.AgentDaemon.Equal(public) || reload.AgentDaemonUID != 330 {
 		t.Fatalf("legacy replacement accepted %+v %v", reload, err)
 	}
+	// A new enrollment epoch similarly supersedes a post-pair recovery.
+	st, err = readOwnerPairState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Recovery = &recoveryChallenge{recoveryVerb, st.Machine, st.HQ, st.Owner, approvePlanID, approveDigest, strings.Repeat("d", 64), time.Now().Unix() + ownerChallengeTTL, st.UID}
+	if err := st.save(dir); err != nil {
+		t.Fatal(err)
+	}
 	c = challenge()
 	expired, err := readOwnerPairState(dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if expired.FirstHQ != nil || expired.Recovery != nil {
+		t.Fatal("new enrollment retained a previous challenge")
 	}
 	expired.Pending.Expires = time.Now().Unix() - 1
 	if err := expired.save(dir); err != nil {
@@ -260,7 +300,7 @@ func TestOwnerPairInteroperability(t *testing.T) {
 	if hex.EncodeToString(sum[:]) != "3e6f1280c032cf910328fc8d054585f605479825312b33862260ed74ab3d6169" {
 		t.Fatal("canonical proof bytes changed")
 	}
-	if err := verifyOwnerPairProof(public, `{"public_key":"`+public+`","signature":"`+signature+`"}`, &c); err != nil {
+	if err := verifyOwnerProof(public, `{"public_key":"`+public+`","signature":"`+signature+`"}`, c.message()); err != nil {
 		t.Fatal(err)
 	}
 }

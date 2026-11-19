@@ -66,7 +66,12 @@ Secure Enclave key. Machine verifies its proof in the Homebrew prefix owner's
 admin account. The Machine daemon continues to use its dedicated keychain for
 its own Ed25519 identity. [D4 and the cross-account channel](cross-account-channel.md#s5--agent-bot-is-the-control-plane-other-repos-p7p8)
 
-For a fresh enrollment obtain the owner's P-256 public key directly from the
+On a fresh Mac, the prefix administrator first runs `managed-machine members
+plan`. When its `hq-account` step calls for creating `_agent-bot-hq`, complete
+the [first-HQ plan transfer](cross-account-channel.md#first-hq-provisioning-on-macos)
+and human apply before requesting an enrollment challenge.
+
+For enrollment obtain the owner's P-256 public key directly from the
 independently verified, provisioned owner client. The prefix owner runs
 `managed-machine daemon pair --pin-owner BASE64`. Obtain HQ's Ed25519 public
 key and SHA-256 fingerprint from the provisioned HQ service. In the prefix

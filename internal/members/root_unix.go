@@ -337,6 +337,9 @@ func hqProgramOutput(program string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, program, args...)
+	// The service and approved owner can have different access to the
+	// invoking terminal's directory. All service probe paths are absolute.
+	cmd.Dir = "/"
 	cmd.Env = rootEnv
 	out, err := cmd.Output()
 	if err != nil {

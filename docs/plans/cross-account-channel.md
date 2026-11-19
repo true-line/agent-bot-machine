@@ -143,6 +143,13 @@ Catalog remains agent-daemon-only.
 
 ### Darwin key store
 
+Startup checks the shared `daemon.pub` against the prefix owner's private
+daemon key before activating services or replacing the socket. If the pin
+survives and custody is missing or mismatched, restore the matching private
+state from a trusted backup. Copying the public pin into a new private
+directory cannot restore signing. The existing migration for leaked legacy
+private state still retires its exposed identity.
+
 See [macos-signing.md](macos-signing.md). Constraints from #446 stay: no
 `.app` bundle, no Secure Enclave, no `keychain-access-groups`. The login
 keychain is not used. Empty-password `SecKeychainCreate` must pass a
@@ -228,6 +235,87 @@ the identity service and relays get no execution channel
 ([R2](https://github.com/true-line/agent-bot-platform/blob/main/docs/02-requirements/product-requirements.md#r2-control-stays-local)).
 The thin client is a debug tool, off unless the prefix owner turns on debug
 mode.
+
+### First HQ provisioning on macOS
+
+Before the dedicated `_agent-bot-hq` role exists, the Homebrew prefix
+administrator runs `managed-machine members plan` in their own login. The
+plan can include the existing `--hq-service` option for a verified HQ release.
+The default service plan binds the control endpoint to the planning account.
+The administrator obtains the owner's P-256 public key independently and pins
+it with `managed-machine daemon pair --pin-owner BASE64`.
+
+The administrator exports the saved plan and a two-minute challenge using the
+default JSON Lines output. Each export replaces the previous first-HQ
+challenge. Transfer the resulting file to the signed-in owner's approval app.
+The owner checks the Machine key, plan identity, digest, and complete account
+and service changes before approving. Transfer the returned JSON proof to the
+administrator. Treat the live proof as an approval until it expires.
+
+```sh
+managed-machine daemon first-hq export "$plan_id" > first-hq.json
+managed-machine daemon first-hq approve "$plan_id" --proof-file owner-proof.json
+sudo managed-machine members apply "$plan_id"
+```
+
+The administrator can withdraw an outstanding request with
+`managed-machine daemon first-hq cancel "$plan_id"`. Canceling in the owner
+app produces no proof. Import consumes the pending challenge and writes the
+existing ten-minute members approval. The final sudo command rechecks the
+current host against the approved digest and claims the ordinary one-use
+receipt. Once the role exists, continue with protected HQ pairing as described
+in [macOS signing](macos-signing.md#owner-approval-for-a-new-hq-pairing).
+
+If the service step fails after account creation, apply preserves the HQ role
+and attempts to finalize the root-owned receipt at
+`/var/db/managed-machine/members/receipts/<plan-id>.json` with result
+`failed` and `failed_at` naming the service. A receipt still marked
+`started` also consumes the approval. Rollback unloads a service started
+by this apply and removes a newly installed plist if it still matches.
+After a new bootstrap, Machine allows up to three seconds for launchd to
+publish the public socket. The owner client then checks its metadata and
+performs the authenticated status query. On the physical pilot, launchd
+published a root-owned socket whose inherited descriptor retained a different
+kernel name. HQ must verify that the published endpoint reaches that
+listener. The signed Machine status command exercises the separate role-to-
+Machine channel. See [HQ listener verification](https://github.com/true-line/agent-bot-hq/issues/176).
+
+Run `managed-machine members plan --hq-service "$record"` in the prefix
+administrator's account to inspect the remaining service step and its new
+digest. This readback saves a new plan.
+
+First-HQ transfer requires an absent role. With the role already present,
+installing the remaining service requires a new owner approval for the
+remaining plan. Enrolled HQ can currently sign status and receipts on a
+protected macOS channel. The channel refuses a members approval request
+until it can validate an action-specific owner proof. Retain the role,
+failed receipt and saved plans for the supported recovery flow once
+available.
+
+The export is one UTF-8 JSON object. Its fields are `action`
+(`first-hq-provision`), `machine_key`, `plan_id`, `plan_digest`, `nonce`,
+`expires_at` (integer Unix seconds), and `plan_canonical`. The canonical plan
+is the exact UTF-8 serialization from `members.Plan.Canonical()`, including its
+final LF. Its SHA-256 must equal `plan_digest`. The Machine public key,
+SHA-256 and 32-byte random nonce are lowercase hex. The app signs the following
+UTF-8 lines, each terminated by LF, with P-256 ECDSA and SHA-256.
+
+```text
+agent-bot-machine-owner/v1
+first-hq-provision
+<machine_key>
+<plan_id>
+<plan_digest>
+<nonce>
+<expires_at in decimal>
+```
+
+The returned object carries `public_key` (base64 of the X9.63 uncompressed
+P-256 point) and `signature` (base64 of the DER ECDSA signature). Machine checks
+the signature against its independently pinned key and revalidates the saved
+plan, host role and Machine identity before recording consent. This transfer
+requires only local administrator commands and the owner app. The signed HQ
+socket continues to enforce its existing verb restrictions.
 
 ### S6 — HQ account (this repo, D6)
 
@@ -315,3 +403,49 @@ peer is not a numeric UID, so the key is never bound there.
 6. After S1 merges, open S2 from this file. Do not reopen the login
    keychain design. #442 Linux/Windows `daemon.key` and the parent-dir
    owner check stay on #442.
+
+### Temporary daemon switch on an already-paired Mac
+
+Use a human Terminal in the Homebrew prefix administrator's registered home.
+Keep the installed binary, its service files and the paired HQ client pin in
+place. Use a distinct, trusted candidate path that the administrator controls.
+The candidate must be able to read the existing self-only dedicated Keychain
+item. An ad-hoc build or a new binary with superficially similar signing
+metadata may be denied. The candidate itself performs the custody check.
+
+1. While the released Machine is still serving, run the candidate's absolute
+   path with `daemon verify-identity`. Compare the reported public SHA-256
+   fingerprint to HQ's independently retained Machine fingerprint. This checks
+   the actual candidate against the existing Keychain, private public key,
+   published channel pin and protected enrollment. A refusal leaves the release
+   running. Preserve the existing Keychain item and its ACL.
+2. Stop the released supervisor before running the candidate. The installed
+   release's `daemon stop` unloads both per-user agents, Machine and keyd. To
+   keep keyd available, use the administrator's launchd domain that currently
+   has `dev.qwts.agent-machine` (verify with `launchctl print`), then run
+   `launchctl bootout "$domain/dev.qwts.agent-machine"` for that job only.
+   The original `~/Library/LaunchAgents/dev.qwts.agent-machine.plist` remains
+   on disk. In the same administrator account run the candidate's absolute
+   path with `daemon run --require-identity FINGERPRINT` in the foreground.
+   This form requires the same enrolled key at startup and refuses a running
+   listener. Use the existing home and canonical prefix channel.
+3. Verify a fresh signed status with the paired HQ client. Complete or cancel
+   any outstanding recovery challenge before reverting to a release that does
+   not serve that operation. The approved service repair still requires the
+   prefix administrator's separate human `sudo "$candidate" members apply PLAN_ID`,
+   with `candidate` set to the trusted readiness-capable executable's absolute path.
+4. Stop the candidate in its terminal. If only Machine was unloaded, restore
+   its exact released plist with `launchctl bootstrap "$domain"
+   "$HOME/Library/LaunchAgents/dev.qwts.agent-machine.plist"`, then
+   `launchctl kickstart "$domain/dev.qwts.agent-machine"`. If both agents
+   were stopped using the released CLI, use the original released binary's
+   absolute path with `daemon start` to reactivate them. Verify another
+   signed status against HQ's original Machine pin.
+
+The daemon runs as the prefix owner without sudo. Only the separate members
+apply step runs as root. A switch never requires replacing the signed
+Homebrew executable, repinning the Machine, exporting the signing key, or
+changing the keychain ACL. The verify command reports only a public
+fingerprint. For an existing protected pairing the candidate refuses missing
+or conflicting pins, failed custody, or legacy rotation evidence before
+publishing a key or binding the channel.
