@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -51,15 +52,41 @@ func writeChannelPub(dir string, priv ed25519.PrivateKey) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	path := filepath.Join(dir, "daemon.pub")
-	_ = os.Remove(path)
-	if err := os.WriteFile(path, pub, 0o644); err != nil {
+	// Publish only complete key bytes, without replacing a pin another
+	// startup may have published between the continuity check and this write.
+	f, err := os.CreateTemp(dir, ".daemon-pub-")
+	if err != nil {
 		return err
 	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(pub); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := stripDarwinACL(f.Name()); err != nil {
+		return err
+	}
+	if err := os.Chmod(f.Name(), 0o644); err != nil {
+		return err
+	}
+	if err := os.Link(f.Name(), filepath.Join(dir, "daemon.pub")); !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	existing, err := readPublishedKey(dir)
+	if err != nil {
+		return err
+	}
+	if !pub.Equal(existing) {
+		return errChannelIdentity
+	}
+	path := filepath.Join(dir, "daemon.pub")
 	if err := stripDarwinACL(path); err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o644)
+	return os.Chmod(path, 0644)
 }
 
 func defaultLegacySharedDir(root string) string {
@@ -160,6 +187,9 @@ func runProvider(root string, item Item) (provider.Provider, error) {
 // key and leaves the other client live. A confirmed replacement is accepted
 // on the next request. Receipts name this process's account.
 func Run(ctx context.Context, root string) error {
+	if err := checkChannelIdentity(root); err != nil {
+		return err
+	}
 	dir := stateDir(root)
 	if err := purgeLegacySharedState(dir, defaultLegacySharedDir(root), defaultKeyStore(filepath.Join(dir, "daemon.key"))); err != nil {
 		return err
@@ -167,19 +197,14 @@ func Run(ctx context.Context, root string) error {
 	if _, err := ensureStateDirAndPeers(dir); err != nil {
 		return err
 	}
-	priv, err := loadOrCreateKey(filepath.Join(dir, "daemon.key"))
+	keyPath := filepath.Join(dir, "daemon.key")
+	priv, err := establishChannelKey(keyPath, defaultKeyStore(keyPath), ChannelDir(), true)
 	if err != nil {
 		return err
 	}
 	ln, err := listenForRun(dir)
 	if err != nil {
 		return err
-	}
-	if ch := ChannelDir(); ch != "" && runtime.GOOS != "windows" {
-		if err := writeChannelPub(ch, priv); err != nil {
-			ln.Close()
-			return err
-		}
 	}
 	pairing, err := loadPairing(dir)
 	if err != nil {

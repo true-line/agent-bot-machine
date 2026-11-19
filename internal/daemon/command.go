@@ -313,6 +313,9 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 }
 
 func ensureService(deps Deps, ctx cli.Context, goos, root, userName string, install, debug bool) cli.Result {
+	if err := checkChannelIdentity(root); err != nil {
+		return serviceFailed(err)
+	}
 	exec, err := deps.executable(ctx)
 	if err != nil {
 		return serviceFailed(err)

@@ -505,6 +505,14 @@ func (s darwinKeychainStore) openDedicatedKeychain(create bool) (uintptr, uintpt
 		_ = stripDarwinACL(dir)
 		_ = os.Chmod(dir, 0o700)
 	}
+	_, statErr := os.Lstat(s.keychainPath)
+	absent := errors.Is(statErr, os.ErrNotExist)
+	if absent && !create {
+		return 0, 0, nil
+	}
+	if statErr != nil && !absent {
+		return 0, 0, statErr
+	}
 	prevDefault := copyDefaultKeychain()
 	defer restoreDefaultKeychain(prevDefault)
 	cpath := append([]byte(s.keychainPath), 0)
@@ -512,10 +520,7 @@ func (s darwinKeychainStore) openDedicatedKeychain(create bool) (uintptr, uintpt
 	empty := [1]byte{0}
 	ep := unsafe.Pointer(&empty[0])
 	var kc uintptr
-	if _, err := os.Lstat(s.keychainPath); errors.Is(err, os.ErrNotExist) {
-		if !create {
-			return 0, 0, nil
-		}
+	if absent {
 		r1, _, _ := syscall_syscall6(kc_SecKeychainCreate_trampoline_addr, uintptr(p), 0, uintptr(ep), 0, 0, uintptr(unsafe.Pointer(&kc)))
 		runtime.KeepAlive(cpath)
 		runtime.KeepAlive(empty)
@@ -524,8 +529,6 @@ func (s darwinKeychainStore) openDedicatedKeychain(create bool) (uintptr, uintpt
 		}
 		_ = stripDarwinACL(s.keychainPath)
 		_ = os.Chmod(s.keychainPath, 0o600)
-	} else if err != nil {
-		return 0, 0, err
 	} else {
 		r1, _, _ := syscall_syscall(kc_SecKeychainOpen_trampoline_addr, uintptr(p), uintptr(unsafe.Pointer(&kc)), 0)
 		runtime.KeepAlive(cpath)
@@ -599,7 +602,7 @@ func (s darwinKeychainStore) copyItemRef() (uintptr, int32, error) {
 // this binary before reading its secret bytes. Only a missing keychain file
 // or errSecItemNotFound (-25300) is treated as absent; every other OSStatus
 // (locked keychain or an untrusted ACL) fails closed with an error.
-func (s darwinKeychainStore) Load() ([]byte, bool, error) {
+func (s darwinKeychainStore) Load(repair bool) ([]byte, bool, error) {
 	itemRef, status, err := s.copyItemRef()
 	if err != nil {
 		return nil, false, err
@@ -616,7 +619,7 @@ func (s darwinKeychainStore) Load() ([]byte, bool, error) {
 		raw, err := readKeychainItemBytes(itemRef)
 		cfRelease(itemRef)
 		if err != nil {
-			if errors.Is(aclErr, errStaleBinaryACL) {
+			if repair && errors.Is(aclErr, errStaleBinaryACL) {
 				if derr := s.Delete(); derr != nil {
 					return nil, false, fmt.Errorf("stale binary ACL and rotate failed: %v (read: %v)", derr, err)
 				}
@@ -628,7 +631,7 @@ func (s darwinKeychainStore) Load() ([]byte, bool, error) {
 			zeroBytes(raw)
 			return nil, false, fmt.Errorf("keychain item has invalid length %d", len(raw))
 		}
-		if errors.Is(aclErr, errStaleBinaryACL) {
+		if repair && errors.Is(aclErr, errStaleBinaryACL) {
 			if err := s.Save(raw); err != nil {
 				zeroBytes(raw)
 				return nil, false, err

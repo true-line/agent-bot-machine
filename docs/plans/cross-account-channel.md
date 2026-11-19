@@ -143,6 +143,13 @@ Catalog remains agent-daemon-only.
 
 ### Darwin key store
 
+Startup checks the shared `daemon.pub` against the prefix owner's private
+daemon key before activating services or replacing the socket. If the pin
+survives and custody is missing or mismatched, restore the matching private
+state from a trusted backup. Copying the public pin into a new private
+directory cannot restore signing. The existing migration for leaked legacy
+private state still retires its exposed identity.
+
 See [macos-signing.md](macos-signing.md). Constraints from #446 stay: no
 `.app` bundle, no Secure Enclave, no `keychain-access-groups`. The login
 keychain is not used. Empty-password `SecKeychainCreate` must pass a
