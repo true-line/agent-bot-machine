@@ -48,7 +48,11 @@ fn pair() -> Pair {
         hq_epoch: "legacy".into(),
     }
 }
-fn request(p: &Pair, op: &str, nonce: &str, now: u64) -> Request {
+fn request(p: &Pair, op: &str, now: u64) -> Request {
+    request_with_nonce(p, op, &nonce().unwrap(), now)
+}
+
+fn request_with_nonce(p: &Pair, op: &str, nonce: &str, now: u64) -> Request {
     let msg = [
         "agent-bot-machine/keyd-hq-device/v1",
         &p.machine_pub,
@@ -70,37 +74,24 @@ fn request(p: &Pair, op: &str, nonce: &str, now: u64) -> Request {
 #[test]
 fn public_identity_and_enrollment_are_typed_and_offline() {
     let (items, native, p) = (Memory::default(), Fake::default(), pair());
-    assert!(run(
-        &items,
-        &native,
-        &p,
-        request(&p, "identity", "nonce-id1", 100),
-        100
-    )
-    .is_err());
+    assert!(run(&items, &native, &p, request(&p, "identity", 100), 100).is_err());
     assert_eq!(native.created.get(), 0);
     initialize(&items, &native, p.clone()).unwrap();
     assert!(initialize(&items, &native, p.clone()).is_err());
     assert_eq!(native.created.get(), 1);
     let before_identity = items.read(SERVICE, ITEM).unwrap();
-    let id = run(
-        &items,
-        &native,
-        &p,
-        request(&p, "identity", "nonce-id1", 100),
-        100,
-    )
-    .unwrap();
+    let id = run(&items, &native, &p, request(&p, "identity", 100), 100).unwrap();
     assert_eq!(items.read(SERVICE, ITEM).unwrap(), before_identity);
     assert_eq!(id["key_storage"], "hardware");
     assert_eq!(id["generation"], 1);
     assert_eq!(id.as_object().unwrap().len(), 4);
     assert!(native.signed.borrow().is_empty());
+    let proof_nonce = nonce().unwrap();
     let proof = run(
         &items,
         &native,
         &p,
-        request(&p, "enrollment-proof", "nonce-pf1", 100),
+        request_with_nonce(&p, "enrollment-proof", &proof_nonce, 100),
         100,
     )
     .unwrap();
@@ -132,7 +123,7 @@ fn public_identity_and_enrollment_are_typed_and_offline() {
         &items,
         &native,
         &p,
-        request(&p, "enrollment-proof", "nonce-pf1", 100),
+        request_with_nonce(&p, "enrollment-proof", &proof_nonce, 100),
         100
     )
     .is_err());
@@ -143,19 +134,12 @@ fn binding_freshness_and_unavailable_purposes_fail_closed() {
     let (items, native, p) = (Memory::default(), Fake::default(), pair());
     initialize(&items, &native, p.clone()).unwrap();
     for op in ["access-assertion", "sign", "rekey", "approval", "dpop"] {
-        assert!(run(&items, &native, &p, request(&p, op, "nonce-123", 100), 100).is_err());
+        assert!(run(&items, &native, &p, request(&p, op, 100), 100).is_err());
     }
     for ts in [69, 131] {
-        assert!(run(
-            &items,
-            &native,
-            &p,
-            request(&p, "identity", "nonce-123", ts),
-            100
-        )
-        .is_err());
+        assert!(run(&items, &native, &p, request(&p, "identity", ts), 100).is_err());
     }
-    let mut req = request(&p, "identity", "nonce-123", 100);
+    let mut req = request(&p, "identity", 100);
     req.option = "enrollment-proof".into();
     assert!(run(&items, &native, &p, req, 100).is_err());
     for i in 0..4 {
@@ -166,14 +150,7 @@ fn binding_freshness_and_unavailable_purposes_fail_closed() {
             2 => other.machine_pub = STANDARD.encode([5; 32]),
             _ => other.owner.push('x'),
         }
-        assert!(run(
-            &items,
-            &native,
-            &other,
-            request(&p, "identity", "nonce-123", 100),
-            100
-        )
-        .is_err());
+        assert!(run(&items, &native, &other, request(&p, "identity", 100), 100).is_err());
     }
     let bad = json!({"machine_pub":p.machine_pub,"hq_pub":p.hq_pub,"hq_uid":123,"timestamp":100,"req_nonce":"abcdefgh","option":"identity","signature":"x","aud":"https://test.invalid"});
     assert!(serde_json::from_value::<Request>(bad).is_err());
@@ -183,16 +160,8 @@ fn binding_freshness_and_unavailable_purposes_fail_closed() {
 fn manifest(key: &SigningKey) -> String {
     json!({"server":ORIGIN,"keys":[{"kid":"test-key","x":URL.encode(key.verifying_key().as_bytes()),"status":"active","notBefore":"2026-01-01T00:00:00Z","notAfter":"2027-01-01T00:00:00Z"}]}).to_string()
 }
-fn receipt(
-    p: &Pair,
-    op: &str,
-    now: u64,
-    nonce: &str,
-    origin: &SigningKey,
-    raw: &[u8],
-    jti: &str,
-) -> Request {
-    let mut req = request(p, op, nonce, now);
+fn receipt(p: &Pair, op: &str, now: u64, origin: &SigningKey, raw: &[u8], jti: &str) -> Request {
+    let mut req = request(p, op, now);
     let b64 = URL.encode(raw);
     let sig = URL.encode(
         origin
@@ -204,7 +173,7 @@ fn receipt(
         &p.machine_pub,
         &p.hq_pub,
         &p.hq_uid.to_string(),
-        nonce,
+        &req.req_nonce,
         &now.to_string(),
         op,
         "",
@@ -244,7 +213,7 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
         &items,
         &native,
         &p,
-        request(&p, "enrollment-proof", "enroll-000", now),
+        request(&p, "enrollment-proof", now),
         now,
     )
     .unwrap();
@@ -255,67 +224,39 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
     let raw=json!({"token_type":"N_A","device_id":"device-synthetic","jkt":enroll["thumbprint"],"harnesses":[],"read_only":true}).to_string();
     // Owner approval can outlive the Machine transport's short request window.
     let poll = now + 590;
-    let bind = |nonce: &str, body: &str, jti: &str, authority: &SigningKey, pins: &str| {
+    let bind = |body: &str, jti: &str, authority: &SigningKey, pins: &str| {
         execute(
             &items,
             &native,
             &p,
-            receipt(
-                &p,
-                "bind-enrollment",
-                poll,
-                nonce,
-                authority,
-                body.as_bytes(),
-                jti,
-            ),
+            receipt(&p, "bind-enrollment", poll, authority, body.as_bytes(), jti),
             poll,
             pins,
         )
     };
+    assert!(bind(&raw, &jti, &SigningKey::from_bytes(&[8; 32]), &pins).is_err());
+    assert!(bind(&raw, "enroll-v1:other", &issuer, &pins).is_err());
     assert!(bind(
-        "bind-bad1",
-        &raw,
-        &jti,
-        &SigningKey::from_bytes(&[8; 32]),
-        &pins
-    )
-    .is_err());
-    assert!(bind("bind-bad2", &raw, "enroll-v1:other", &issuer, &pins).is_err());
-    assert!(bind(
-        "bind-bad3",
         &raw.replace(enroll["thumbprint"].as_str().unwrap(), "wrong"),
         &jti,
         &issuer,
         &pins
     )
     .is_err());
+    assert!(bind(&raw, &jti, &issuer, &pins.replace("active", "retired")).is_err());
     assert!(bind(
-        "bind-bad4",
-        &raw,
-        &jti,
-        &issuer,
-        &pins.replace("active", "retired")
-    )
-    .is_err());
-    assert!(bind(
-        "bind-bad5",
         &raw,
         &jti,
         &issuer,
         &pins.replace("2027-01-01", "2026-01-02")
     )
     .is_err());
-    let bound = bind("bind-good", &raw, &jti, &issuer, &pins).unwrap();
+    let bound = bind(&raw, &jti, &issuer, &pins).unwrap();
     assert_eq!(bound["receipt_sha256"], digest(raw.as_bytes()));
     assert_eq!(bound["receipt_jti"], jti);
     assert_eq!(bound["device_id"], "device-synthetic");
-    assert_eq!(
-        bind("bind-dup1", &raw, &jti, &issuer, &pins).unwrap(),
-        bound
-    );
+    assert_eq!(bind(&raw, &jti, &issuer, &pins).unwrap(), bound);
     assert!(bind(
-        "bind-swap",
         &raw.replace("device-synthetic", "another"),
         &jti,
         &issuer,
@@ -323,21 +264,14 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
     )
     .is_err());
     assert_eq!(
-        run(
-            &items,
-            &native,
-            &p,
-            request(&p, "identity", "identity2", poll),
-            poll
-        )
-        .unwrap(),
+        run(&items, &native, &p, request(&p, "identity", poll), poll).unwrap(),
         bound
     );
     let access = run(
         &items,
         &native,
         &p,
-        request(&p, "access-assertion", "access-11", poll),
+        request(&p, "access-assertion", poll),
         poll,
     )
     .unwrap();
@@ -356,45 +290,37 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
     assert!(access.get("privateKey").is_none());
     let token_body=json!({"token_type":"DPoP","device_id":"device-synthetic","access_token":"synthetic-short-lived-token","expires_in":900}).to_string();
     let token_jti = claims["jti"].as_str().unwrap();
-    let access_bind = |n: &str, body: &str, at: u64, key: &SigningKey| {
+    let access_bind = |body: &str, at: u64, key: &SigningKey| {
         execute(
             &items,
             &native,
             &p,
-            receipt(&p, "bind-access", at, n, key, body.as_bytes(), token_jti),
+            receipt(&p, "bind-access", at, key, body.as_bytes(), token_jti),
             at,
             &pins,
         )
     };
     assert!(access_bind(
-        "token-err",
         &token_body.replace("device-synthetic", "other"),
         poll + 1,
         &issuer
     )
     .is_err());
-    assert!(access_bind(
-        "token-bad",
-        &token_body,
-        poll + 1,
-        &SigningKey::from_bytes(&[8; 32])
-    )
-    .is_err());
-    let session = access_bind("token-yes", &token_body, poll + 1, &issuer).unwrap();
+    assert!(access_bind(&token_body, poll + 1, &SigningKey::from_bytes(&[8; 32])).is_err());
+    let session = access_bind(&token_body, poll + 1, &issuer).unwrap();
     assert_eq!(session["expires_at"], poll + 900);
     assert_eq!(session.as_object().unwrap().len(), 2);
     assert_eq!(
-        access_bind("token-dup", &token_body, poll + 2, &issuer).unwrap(),
+        access_bind(&token_body, poll + 2, &issuer).unwrap(),
         session
     );
     assert!(access_bind(
-        "token-alt",
         &token_body.replace("short-lived", "changed"),
         poll + 3,
         &issuer
     )
     .is_err());
-    assert!(access_bind("token-exp", &token_body, poll + 901, &issuer).is_err());
+    assert!(access_bind(&token_body, poll + 901, &issuer).is_err());
     let saved = items.read(SERVICE, ITEM).unwrap().unwrap();
     assert!(!String::from_utf8(saved)
         .unwrap()
@@ -405,7 +331,7 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
         &items,
         &native,
         &replaced,
-        request(&replaced, "identity", "new-epoch", poll),
+        request(&replaced, "identity", poll),
         poll
     )
     .is_err());
@@ -420,20 +346,13 @@ fn revoke_during_native_work_withholds_result_and_pending_proof() {
         &items,
         &provider,
         &p,
-        request(&p, "enrollment-proof", "cutoff-000", 100),
+        request(&p, "enrollment-proof", 100),
         100
     )
     .is_err());
     let record: Record =
         serde_json::from_slice(&items.read(SERVICE, ITEM).unwrap().unwrap()).unwrap();
     assert!(record.pending.is_empty());
-    assert!(run(
-        &items,
-        &provider,
-        &p,
-        request(&p, "identity", "cutoff-001", 101),
-        101
-    )
-    .is_err());
+    assert!(run(&items, &provider, &p, request(&p, "identity", 101), 101).is_err());
     assert_eq!(provider.signed.borrow().len(), 1);
 }
