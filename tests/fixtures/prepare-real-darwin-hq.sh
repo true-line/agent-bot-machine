@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Prepare public, pinned test inputs as an ordinary user. This script neither
+# installs the service nor touches an existing checkout or account.
+set -euo pipefail
+[[ $# == 1 && -d "$1" ]] || { echo 'expected a disposable output directory' >&2; exit 2; }
+fixture="$(cd "$1" && pwd -P)"
+hq_sha=d52f01f517773565b673ec9735f670922e58dc91
+hq_tar_sha=43e99d8d83d2c8623f0b4eb2adbb9bdce1e833e16256b135549de0670e270e14
+node_dist=node-v24.19.0-darwin-arm64
+node_tar_sha=8294b7aa9b03997481c06babf1e8b270c859358f27da57a11509afe537ac381d
+node_sha=27db838bb204ef7c21df2931f5656e4c8fb32e6e947f363a402b49714d32b5b1
+cd "$fixture"
+mkdir bin
+curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+    "https://nodejs.org/dist/v24.19.0/$node_dist.tar.gz" -o node.tar.gz
+printf '%s  node.tar.gz\n' "$node_tar_sha" | shasum -a 256 --check
+tar -xzOf node.tar.gz "$node_dist/bin/node" > bin/node
+printf '%s  bin/node\n' "$node_sha" | shasum -a 256 --check
+chmod 0755 bin/node
+export PATH="$fixture/bin:$PATH"
+[[ "$(node --version)" == v24.19.0 && "$(node -p 'process.arch')" == arm64 ]]
+
+# Both HQ and its own pinned soul-contracts dependency are public.
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
+git -c init.defaultBranch=main init -q source
+git -C source -c credential.helper= fetch -q --depth=1 --no-tags https://github.com/true-line/agent-bot-hq.git "$hq_sha"
+git -C source checkout -q --detach FETCH_HEAD
+[[ "$(git -C source rev-parse HEAD)" == "$hq_sha" ]]
+(cd source && bash scripts/ci-build-darwin-artifact.sh "$hq_sha" "$fixture/approved.tar")
+printf '%s  approved.tar\n' "$hq_tar_sha" | shasum -a 256 --check
+printf '%s  node\n%s  approved.tar\n' "$node_sha" "$hq_tar_sha" > installed.sha256
