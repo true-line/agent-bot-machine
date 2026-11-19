@@ -36,6 +36,39 @@ hq_machine() {
 }
 machine_key="$(jq -er '.machine_key' "$signer/challenge.json")"
 machine_pin="$(printf '%s' "$machine_key" | xxd -r -p | shasum -a 256 | awk '{print $1}')"
+channel="$(brew --prefix)/var/agent-machine/daemon.sock"
+machine_pid=
+machine_socket_id=
+stop_fixture_machine() {
+    [[ -n "$machine_pid" ]] || return 0
+    kill "$machine_pid" 2>/dev/null || true
+    wait "$machine_pid" 2>/dev/null || true
+    machine_pid=
+    if [[ -n "$machine_socket_id" && ! -L "$channel" && -S "$channel" && "$(stat -f '%d:%i' "$channel")" == "$machine_socket_id" ]]; then
+        rm "$channel"
+    fi
+    machine_socket_id=
+}
+trap stop_fixture_machine EXIT
+start_fixture_machine() {
+    [[ ! -e "$channel" && ! -L "$channel" ]] || fail 'Machine channel already exists'
+    "$MM" daemon run "$@" > "$signer/machine.log" 2>&1 &
+    machine_pid=$!
+    for ((i=0; i<100; i++)); do
+        kill -0 "$machine_pid" || fail 'foreground Machine exited before opening the channel'
+        [[ ! -S "$channel" ]] || break
+        sleep 0.1
+    done
+    [[ ! -L "$channel" && -S "$channel" ]] || fail 'Machine channel did not open'
+    machine_socket_id="$(stat -f '%d:%i' "$channel")"
+}
+
+# Terminal pairing established private custody. The first ordinary service
+# startup publishes its public key before the role is enrolled.
+start_fixture_machine
+published="${channel%/*}/daemon.pub"
+[[ ! -L "$published" && -f "$published" && "$(stat -f '%z' "$published")" == 32 ]] || fail 'Machine did not publish its public key'
+[[ "$(od -An -tx1 -v "$published" | tr -d '[:space:]')" == "$machine_key" ]] || fail 'published key differs from first-HQ approval'
 hq_identity="$(hq_machine identity)"
 hq_key="$(jq -er '.public_key' <<<"$hq_identity")"
 hq_pin="$(jq -er '.fingerprint' <<<"$hq_identity")"
@@ -46,32 +79,14 @@ jq -j '["agent-bot-machine-owner/v1",.action,.machine_key,.hq_key,.nonce,(.expir
     "$signer/pair.json" > "$signer/pair.transcript"
 "$MM" "${enroll[@]}" --owner-proof "$(fixture_owner_proof "$signer/pair.transcript")" |
     jq -e --argjson uid "$(id -u "$role")" '.state=="paired" and .uid==$uid' >/dev/null
+stop_fixture_machine
 "$MM" daemon verify-identity | jq -e --arg pin "$machine_pin" '.state=="verified" and .fingerprint==$pin' >/dev/null
 
-channel="$(brew --prefix)/var/agent-machine/daemon.sock"
-[[ ! -e "$channel" && ! -L "$channel" ]] || fail 'Machine channel already exists'
-"$MM" daemon run --require-identity "$machine_pin" > "$signer/machine.log" 2>&1 &
-machine_pid=$!
-machine_socket_id=
-stop_fixture_machine() {
-    kill "$machine_pid" 2>/dev/null || true
-    wait "$machine_pid" 2>/dev/null || true
-    if [[ -n "$machine_socket_id" && ! -L "$channel" && -S "$channel" && "$(stat -f '%d:%i' "$channel")" == "$machine_socket_id" ]]; then
-        rm "$channel"
-    fi
-}
-trap stop_fixture_machine EXIT
-for ((i=0; i<100; i++)); do
-    [[ ! -S "$channel" ]] || break
-    kill -0 "$machine_pid" || fail 'foreground Machine exited before opening the channel'
-    sleep 0.1
-done
-[[ ! -L "$channel" && -S "$channel" ]] || fail 'Machine channel did not open'
-machine_socket_id="$(stat -f '%d:%i' "$channel")"
 paired_status() {
     hq_machine status --socket "$channel" "$@" | jq -e --arg fp "$machine_pin" \
         '.client=="agent-daemon" and .channel=="signed" and .state=="reported" and .daemon_fingerprint==$fp' >/dev/null
 }
+start_fixture_machine --require-identity "$machine_pin"
 paired_status --daemon-key "$machine_key"
 
 # Remove only the service installed earlier. Keep its role, state and pairs.
