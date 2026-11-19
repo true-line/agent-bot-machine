@@ -11,8 +11,18 @@ team=Z5DM34QS5U
 identity="$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" |
     awk -v t="($team)" '/"Developer ID Application: / && index($0, t) { print $2; exit }')"
 [[ "$identity" =~ ^[0-9A-F]{40}$ ]] || { echo "Missing release Developer ID identity for $team" >&2; exit 1; }
+# security identifies codesign signers by its native identity selector. Read
+# the SHA-256 value for that exact certificate in the same release keychain.
+leaf_sha256="$(security find-certificate -a -Z "$SIGN_KEYCHAIN" |
+    awk -v signer="$identity" '
+        /^SHA-256 hash: / { digest = $3; next }
+        /^SHA-1 hash: / && $3 == signer { count++; selected = digest }
+        { digest = "" }
+        END { if (count == 1) print selected }
+    ')"
+[[ "$leaf_sha256" =~ ^[0-9A-F]{64}$ ]] || { echo "Cannot resolve the selected signing certificate in the release keychain" >&2; exit 1; }
 python3 packaging/darwin/owner-profile.py "$work/profile.plist" \
-    owner-source/owner-presence-macos/OwnerPresence.entitlements "$identity" "$work/identity.der" >"$work/entitlements.plist"
+    owner-source/owner-presence-macos/OwnerPresence.entitlements "$leaf_sha256" "$work/identity.der" >"$work/entitlements.plist"
 install -m 0644 "$work/owner.provisionprofile" "$app/Contents/embedded.provisionprofile"
 [[ "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" == "$bundle" ]]
 [[ "$(lipo -archs "$app/Contents/MacOS/agent-bot-owner-presence")" == arm64 ]]

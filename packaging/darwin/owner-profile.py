@@ -22,7 +22,7 @@ def array_of(value, item_type):
     return isinstance(value, list) and all(isinstance(item, item_type) for item in value)
 
 
-def resolve(profile, template, fingerprint):
+def resolve(profile, template, certificate_sha256):
     require(isinstance(profile, dict), "profile")
     prefixes = profile.get("ApplicationIdentifierPrefix")
     require(
@@ -40,9 +40,8 @@ def resolve(profile, template, fingerprint):
     require(isinstance(expiry, datetime.datetime) and expiry.tzinfo is None and expiry > now, "ExpirationDate")
     certificates = profile.get("DeveloperCertificates")
     require(array_of(certificates, bytes), "DeveloperCertificates")
-    # codesign selects by SHA-1 fingerprint. Its full leaf DER is compared
-    # again after signing, so the certificate name and list order are irrelevant.
-    matches = {der for der in certificates if der and hashlib.sha1(der).hexdigest().upper() == fingerprint}
+    # Compare the full DER again after signing and before submitting to Apple.
+    matches = {der for der in certificates if der and hashlib.sha256(der).hexdigest().upper() == certificate_sha256}
     require(len(matches) == 1, "DeveloperCertificates")
 
     rights = profile.get("Entitlements")
@@ -81,7 +80,7 @@ def load_plist(path, label):
 
 if __name__ == "__main__":
     if len(sys.argv) != 5:
-        sys.exit("usage: owner-profile.py PROFILE TEMPLATE SIGNING_FINGERPRINT LEAF_DER_OUTPUT")
+        sys.exit("usage: owner-profile.py PROFILE TEMPLATE CERTIFICATE_SHA256 LEAF_DER_OUTPUT")
     try:
         profile = load_plist(sys.argv[1], "profile")
         template = load_plist(sys.argv[2], "Identity entitlements template")

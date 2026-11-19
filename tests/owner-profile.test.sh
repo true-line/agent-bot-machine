@@ -35,7 +35,7 @@ profile = {
     "DeveloperCertificates": [b"test certificate"], "Entitlements": rights,
 }
 cert = b"test certificate"
-fingerprint = hashlib.sha1(cert).hexdigest().upper()
+fingerprint = hashlib.sha256(cert).hexdigest().upper()
 for groups in ([group], [prefix + ".*"]):
     profile["Entitlements"]["keychain-access-groups"] = groups
     entitlements, leaf = resolve(profile, template, fingerprint)
@@ -73,7 +73,7 @@ for field in profile:
     missing = dict(profile)
     del missing[field]
     refuse(missing, field)
-refuse(profile, "DeveloperCertificates", identity=hashlib.sha1(marker.encode()).hexdigest().upper())
+refuse(profile, "DeveloperCertificates", identity=hashlib.sha256(marker.encode()).hexdigest().upper())
 refuse(profile, "Identity entitlements template", requested=dict(template, **{marker: marker}))
 
 # Run the production signer up to the first packaging step. The replacement
@@ -93,17 +93,32 @@ with tempfile.TemporaryDirectory() as directory:
         (tools / name).symlink_to(shutil.which(name))
     security = tools / "security"
     security.write_text("""#!/bin/sh
-[ "$*" = 'find-identity -v -p codesigning fixture' ] || exit 72
-printf '  1) %s "Developer ID Application: Fixture (Z5DM34QS5U)"\\n' "$FIXTURE_FINGERPRINT"
+case "$*" in
+    "find-identity -v -p codesigning fixture")
+        printf '  1) %s "Developer ID Application: Fixture (Z5DM34QS5U)"\\n' "$FIXTURE_SIGNER"
+        ;;
+    "find-certificate -a -Z fixture")
+        printf '%s\\n' "$FIXTURE_CERTIFICATES"
+        ;;
+    *) exit 72 ;;
+esac
 """)
     security.chmod(0o755)
     install = tools / "install"
     install.write_text("#!/bin/sh\nexit 73\n")
     install.chmod(0o755)
-    env = dict(PATH=str(tools), RUNNER_TEMP=str(root), SIGN_KEYCHAIN="fixture", NOTARY_KEY_PATH="fixture",
-               NOTARY_KEY_ID="fixture", NOTARY_ISSUER_ID="fixture", FIXTURE_FINGERPRINT=fingerprint)
+    signer_selector = "A" * 40
+    other_selector = "B" * 40
+    other_digest = hashlib.sha256(marker.encode()).hexdigest().upper()
+    def record(selector, digest):
+        return f'SHA-256 hash: {digest}\nSHA-1 hash: {selector}\nkeychain: "fixture"'
 
-    def preflight(profile_bytes, label=None):
+    inventory = record(other_selector, other_digest) + "\n" + record(signer_selector, fingerprint)
+    env = dict(PATH=str(tools), RUNNER_TEMP=str(root), SIGN_KEYCHAIN="fixture", NOTARY_KEY_PATH="fixture",
+               NOTARY_KEY_ID="fixture", NOTARY_ISSUER_ID="fixture", FIXTURE_SIGNER=signer_selector,
+               FIXTURE_CERTIFICATES=inventory)
+
+    def preflight(profile_bytes, label=None, inventory_error=False):
         (work / "profile.plist").write_bytes(profile_bytes)
         leaf = work / "identity.der"
         if leaf.exists():
@@ -111,7 +126,10 @@ printf '  1) %s "Developer ID Application: Fixture (Z5DM34QS5U)"\\n' "$FIXTURE_F
         proc = subprocess.run(["/bin/bash", repo / "scripts/sign-owner-app", "0.12.4"],
                               cwd=root, env=env, capture_output=True, check=False)
         assert proc.stdout == b""
-        if label is None:
+        if inventory_error:
+            assert proc.returncode == 1 and not leaf.exists()
+            assert proc.stderr == b"Cannot resolve the selected signing certificate in the release keychain\n"
+        elif label is None:
             assert proc.returncode == 73 and proc.stderr == b""
             assert leaf.read_bytes() == cert
             assert plistlib.loads((work / "entitlements.plist").read_bytes()) == entitlements
@@ -122,6 +140,11 @@ printf '  1) %s "Developer ID Application: Fixture (Z5DM34QS5U)"\\n' "$FIXTURE_F
 
     preflight(plistlib.dumps(dict(profile, DeveloperCertificates=[marker.encode(), cert])))
     preflight(plistlib.dumps(dict(profile, DeveloperCertificates=[marker.encode()])), "DeveloperCertificates")
+    for bad_inventory in (record(other_selector, other_digest),
+                          inventory + "\n" + record(signer_selector, other_digest)):
+        env["FIXTURE_CERTIFICATES"] = bad_inventory
+        preflight(plistlib.dumps(profile), inventory_error=True)
+    env["FIXTURE_CERTIFICATES"] = inventory
     malformed = f"<plist><integer>{marker}</integer></plist>".encode()
     preflight(malformed, "profile")
     template_path.write_bytes(malformed)

@@ -204,8 +204,9 @@ contains the base64 of the embeddable Developer ID distribution profile for
 `ai.true-line.agent-bot-owner-presence`. Only a distribution profile suitable
 for embedding in the delivered app belongs here. The signer checks the
 team, expiry, application identifier and authorized Keychain group. It selects
-the profile certificate by the signing identity's fingerprint and compares its
-full DER to the signed app's leaf certificate. A rejected profile reports the
+the profile certificate by the SHA-256 digest that the release keychain reports
+for the selected signing identity, then compares its full DER to the signed
+app's leaf certificate. A rejected profile reports the
 first failed field by name. The signer grants only the app's exact group. The profile for the retired
 `AgentBotMachine.app` has a different application identifier.
 
