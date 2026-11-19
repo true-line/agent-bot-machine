@@ -11,10 +11,8 @@ team=Z5DM34QS5U
 identity="$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" |
     awk -v t="($team)" '/"Developer ID Application: / && index($0, t) { print $2; exit }')"
 [[ "$identity" =~ ^[0-9A-F]{40}$ ]] || { echo "Missing release Developer ID identity for $team" >&2; exit 1; }
-security find-certificate -p -c 'Developer ID Application:' "$SIGN_KEYCHAIN" |
-    openssl x509 -outform DER -out "$work/identity.der"
 python3 packaging/darwin/owner-profile.py "$work/profile.plist" \
-    owner-source/owner-presence-macos/OwnerPresence.entitlements "$work/identity.der" >"$work/entitlements.plist"
+    owner-source/owner-presence-macos/OwnerPresence.entitlements "$identity" "$work/identity.der" >"$work/entitlements.plist"
 install -m 0644 "$work/owner.provisionprofile" "$app/Contents/embedded.provisionprofile"
 [[ "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" == "$bundle" ]]
 [[ "$(lipo -archs "$app/Contents/MacOS/agent-bot-owner-presence")" == arm64 ]]
