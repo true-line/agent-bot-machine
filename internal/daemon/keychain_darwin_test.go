@@ -83,8 +83,8 @@ func TestDarwinKeychainNeverImportsExec(t *testing.T) {
 				importsExec = true
 			}
 		}
-		if importsExec && name != "keys.go" && name != "activate.go" {
-			t.Fatalf("%s imports os/exec; only keys.go (runKeyHelperCmd) and activate.go (launchctl/systemctl) may import os/exec in internal/daemon", name)
+		if importsExec && name != "keys.go" && name != "activate.go" && name != "hq_device_keyd_darwin.go" && name != "ordinary_hq.go" {
+			t.Fatalf("%s imports os/exec; unexpected process boundary in internal/daemon", name)
 		}
 
 		// Ban raw process-spawning primitives across all non-test files in internal/daemon.
@@ -129,6 +129,14 @@ func TestDarwinKeychainNeverImportsExec(t *testing.T) {
 		case "keys.go":
 			if len(execCalls) != 1 || execCalls[0] != "runKeyHelperCmd:Command" {
 				t.Fatalf("keys.go exec.* calls = %v, want [runKeyHelperCmd:Command]", execCalls)
+			}
+		case "hq_device_keyd_darwin.go":
+			if strings.Join(execCalls, ",") != "verifyDeviceCode:CommandContext,runDeviceKeyd:CommandContext" {
+				t.Fatalf("unexpected device custody subprocess: %v", execCalls)
+			}
+		case "ordinary_hq.go":
+			if strings.Join(execCalls, ",") != "eligibleOrdinaryHQ:CommandContext" {
+				t.Fatalf("unexpected account lookup subprocess: %v", execCalls)
 			}
 		case "activate.go":
 			for _, c := range execCalls {
