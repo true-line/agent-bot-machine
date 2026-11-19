@@ -102,6 +102,73 @@ The names `root` and `admin` are reserved even if a lookup finds no account.
 `apply` takes a plan ID and nothing else, like the daemon's `apply`
 (ADR-0012). There is no flag that skips the approval.
 
+### Paired HQ service recovery on macOS
+
+When the dedicated HQ account already exists and its service is down, the
+prefix administrator saves a fresh HQ service plan in the default members
+store. The enrolled HQ CLI fetches the plan over the signed Machine channel.
+The operator carries its one-operation signed challenge to the daily owner's
+local Approvals interface, and returns the public proof to the same HQ CLI.
+The [paired workflow](https://github.com/true-line/agent-bot-machine/issues/539)
+keeps the existing enrollment and owner pin. A failed earlier root apply has
+already claimed its own plan ID.
+
+The channel verb is `hq-service-recovery`. All requests carry the exact
+`plan_id` and `plan_digest`. Its signed `option` selects an operation.
+
+| Option | Additional request fields | Signed success state and body |
+| --- | --- | --- |
+| `challenge` | None | `challenged` with the exact fields below |
+| `approve` | `challenge_nonce`, `owner_signature` | `approved` with the existing members approval record |
+| `cancel` | `challenge_nonce` | `cancelled` with `plan_id` and `plan_digest` |
+
+The usual HQ Ed25519 request signature includes the existing
+`plan_digest` suffix. Following it, append the LF-separated field name and
+value for `challenge_nonce` when present, then `owner_signature` when
+present. The transport signature has no trailing LF. The Machine reply
+uses the existing signed response frame and binds the transport request nonce.
+
+The challenge body contains exactly `action`, `machine_key`, `hq_key`,
+`owner_key`, `plan_id`, `plan_digest`, `nonce`, `expires_at` and
+`plan_canonical`. Preserve the original signed response bytes for handoff.
+The receiver verifies the Machine key against its independently trusted
+SHA-256 fingerprint and recomputes the plan digest over the canonical UTF-8
+string, including its final LF. The owner's signer verifies that its hardware
+key equals the pinned `owner_key` and shows the exact service and owner before
+requesting presence.
+
+The owner's ECDSA P-256/SHA-256 signature covers the following UTF-8 lines,
+including the final LF. Machine and HQ keys and the 32-byte challenge nonce
+are lowercase hex. The owner key is canonical standard base64 of the
+uncompressed 65-byte public point. Expiry is decimal Unix time, at most
+120 seconds from issuance. The returned signature is standard base64 of
+the ASN.1 DER signature.
+
+```text
+agent-bot-machine-owner/v1
+hq-service-recovery
+<MACHINE_KEY>
+<HQ_KEY>
+<OWNER_KEY>
+<PLAN_ID>
+<PLAN_DIGEST>
+<CHALLENGE_NONCE>
+<EXPIRES_AT>
+```
+
+Machine checks the current protected peer and kernel UID, current Machine and
+owner keys, and a locally rebuilt exact plan at issue and before approval.
+The sole allowed steps are the unchanged dedicated HQ account and its
+verified LaunchDaemon create/write. The member list must be empty. The
+retained archive, Node executable, extracted files, owner and service
+definition must match. An active HQ process or conflicting job is refused.
+Issuing a challenge replaces the old one. Cancellation matches the challenge
+nonce and cannot revoke its replacement. A successful proof is consumed in
+durable state before recording the usual ten-minute approval. Only the
+existing human-run `sudo managed-machine members apply PLAN_ID` acts on the
+host and verifies the running service. The protected route leaves generic
+member approvals, first installation, and enrollment on their existing terms.
+
 ### How root is obtained
 
 The owner runs `sudo managed-machine members apply <plan-id>` in their own
@@ -311,6 +378,12 @@ asserts the same owners, groups and modes), a deliberately broken rule
 made to generate one), and `approve-members` itself (Go tests in
 `internal/daemon`; the script writes the approval file in the same form).
 
+On split accounts Machine serves saved IDs and canonical plan bytes to the
+enrolled HQ service account through the signed [`members-plans` read
+operation](machine-daemon.md#closed-verb-set). Fetching a plan leaves its
+approval and apply state untouched. The protected approval step for an
+already paired HQ is tracked in [Machine #539](https://github.com/true-line/agent-bot-machine/issues/539).
+
 **Local owner approval is built.** agent-bot-identity's
 [proposal route](https://github.com/true-line/agent-bot-identity/blob/774e177a0c79ef4ab404de4df3cfb35949e4db6a/agent-web.mjs)
 reads the saved plan, verifies its canonical digest, and presents its steps
@@ -418,13 +491,32 @@ dependencies. Node must use Apple system libraries. Owner-writable Homebrew
 runtimes are unsuitable. No build tools or downloads run during installation.
 
 Machine creates the system LaunchDaemon `ai.true-line.agent-bot-hq` for
-`_agent-bot-hq`. Its root-owned listener is
-`/private/var/agent-bot-hq-control.sock`. Kernel peer credentials and the
-approved owner's UID authorize each request. Machine checks the release's
-`darwin-owner-control/v1` capability as the HQ account and verifies the running
-endpoint via status as the approved owner. A second approved apply verifies the
-same loaded job. A differing job or release needs a separate cutover.
-First-install failure rolls back the new registration; role-account state stays
+`_agent-bot-hq`. The verified Darwin archive selects the owner-control
+endpoint. Existing unmarked archives use `darwin-owner-control/v1` and
+`/private/var/agent-bot-hq-control.sock`. An archive advertising
+`owner_control_capability: darwin-owner-control/v2` in
+`governance/interim-release.json` uses
+`/Library/Application Support/ai.true-line.agent-bot-hq/owner-control.sock`.
+The v2 service step shows whether Machine will create or verify the
+`root:wheel` mode `0755` directory. Machine verifies the root-owned ancestors and refuses ACL entries that grant access
+or an installed plist that differs from the approved job. It preserves a pre-existing
+directory on failure and can remove its newly created directory only when
+the job is confirmed absent and the same directory is empty.
+
+Kernel peer credentials and the approved owner's UID authorize each request.
+Machine checks the matching versioned capability as the dedicated HQ account
+and queries the running endpoint as the approved owner. Both layouts use a
+root-owned socket at mode `0666`. The existing signed plan and pairing
+continue to refer to their original subject. Changing an installed service's
+layout or release requires an explicit cutover. A second approved apply
+verifies the same loaded job. The experimental v2 layout requires installation
+evidence on a Mac with fully enabled SIP. In the macOS 27 HQ installation
+workflow, the manually selected `require_sip` input enforces this condition.
+For a newly started job that advertises `darwin-hq-launch-exits/v2`, exit
+88 reports a native socket check-in return of 159. Machine includes the
+sandbox classification when this Mac's launchctl confirms it.
+
+First-install failure rolls back the new registration. Role-account state stays
 in its private home. This service operation does not qualify the protected
 profile. The [HQ service issue](https://github.com/true-line/agent-bot-hq/issues/88)
 tracks the scope and remaining acceptance evidence.

@@ -1,0 +1,100 @@
+name: macOS 27 HQ installation
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/darwin-hq-install.yml'
+      - 'cmd/managed-machine/**'
+      - 'internal/daemon/**'
+      - 'internal/members/**'
+      - 'tests/members-apply-macos.test.sh'
+      - 'tests/fixtures/*darwin-hq*'
+      - 'tests/fixtures/hq-launchd-install.sh'
+      - 'tests/fixtures/hq-launchd-runtime.c'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/darwin-hq-install.yml'
+      - 'cmd/managed-machine/**'
+      - 'internal/daemon/**'
+      - 'internal/members/**'
+      - 'tests/members-apply-macos.test.sh'
+      - 'tests/fixtures/*darwin-hq*'
+      - 'tests/fixtures/hq-launchd-install.sh'
+      - 'tests/fixtures/hq-launchd-runtime.c'
+  workflow_dispatch:
+    inputs:
+      require_sip:
+        description: Require fully enabled SIP and exercise the v2 production endpoint
+        type: boolean
+        default: true
+      device_release_version:
+        description: Optional signed Machine release version for native dedicated HQ device custody qualification
+        type: string
+      device_archive_sha256:
+        description: Reviewed SHA-256 of the matching signed Darwin arm64 archive
+        type: string
+permissions:
+  contents: read
+jobs:
+  install:
+    name: Machine installs the pinned HQ release on macOS 27
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Fetch the reviewed signed Machine release for optional hardware qualification
+        if: inputs.device_release_version != '' || inputs.device_archive_sha256 != ''
+        shell: bash
+        env:
+          MM_DEVICE_VERSION: ${{ inputs.device_release_version }}
+          MM_DEVICE_SHA: ${{ inputs.device_archive_sha256 }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$MM_DEVICE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$MM_DEVICE_SHA" =~ ^[0-9a-f]{64}$ ]]
+          archive="managed-machine_${MM_DEVICE_VERSION}_darwin_arm64.tar.gz"
+          gh release download "v$MM_DEVICE_VERSION" --repo "$GITHUB_REPOSITORY" --pattern "$archive" --dir "$RUNNER_TEMP"
+          [[ "$(shasum -a 256 "$RUNNER_TEMP/$archive" | awk '{print $1}')" == "$MM_DEVICE_SHA" ]]
+          echo "MM_HQ_DEVICE_ARCHIVE=$RUNNER_TEMP/$archive" >> "$GITHUB_ENV"
+          echo "MM_HQ_DEVICE_SHA256=$MM_DEVICE_SHA" >> "$GITHUB_ENV"
+      - name: Install the real HQ archive with a signed first-HQ approval
+        shell: bash
+        env:
+          MM_HQ_REQUIRE_SIP: ${{ inputs.require_sip || 'false' }}
+          MM_MEMBERS_REAL_ACCOUNTS: '1'
+          MM_MEMBERS_RUNNER: ${{ runner.environment }}
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          CGO_ENABLED: '0'
+          GOTOOLCHAIN: local
+        run: |
+          command -v gtar >/dev/null || brew install gnu-tar
+          if [[ -n "${MM_HQ_DEVICE_ARCHIVE:-}" ]]; then
+            MM_KEYD_CUSTODY_TEST=1 bash tests/fixtures/with-keyd-test-keychain.sh bash tests/members-apply-macos.test.sh --real-hq
+          else
+            bash tests/members-apply-macos.test.sh --real-hq
+          fi
+  rollback-macos-15:
+    name: HQ socket rollback on macOS 15
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check socket preservation when guarded removal is unavailable
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          sw_vers
+          [[ "$(sw_vers -productVersion)" == 15.* ]]
+          go test -v -count=1 -race ./internal/members -run '^TestRollbackOfObservedLaunchSocket$'
