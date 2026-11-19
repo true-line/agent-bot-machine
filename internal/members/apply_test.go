@@ -248,6 +248,30 @@ func wantRefused(t *testing.T, w *world, res cli.Result, id string) {
 	}
 }
 
+func TestMissingApprovalGuidanceByPlatform(t *testing.T) {
+	w := newWorld(bare())
+	w.planned(t, applyID)
+	darwinPlan := filepath.Join("/home/owner", "Library", "Application Support", "managed-machine", "members", "plans", applyID+".json")
+	w.h.files[darwinPlan] = w.h.files[planFile(applyID)]
+
+	for _, tc := range []struct {
+		target target.Target
+		want   string
+		absent string
+	}{
+		{target.DarwinARM64, "paired HQ CLI's hq-service-recovery", "local web UI first"},
+		{target.LinuxAMD64, "local web UI's Approvals tab", "hq-service-recovery"},
+	} {
+		t.Run(string(tc.target), func(t *testing.T) {
+			res := Command(w.deps).Run(on(tc.target), []string{"apply", applyID})
+			wantRefused(t, w, res, diag.MembersNotApproved)
+			if message := res.Diagnostic.Message; !strings.Contains(message, tc.want) || strings.Contains(message, tc.absent) {
+				t.Fatalf("unexpected approval guidance: %s", message)
+			}
+		})
+	}
+}
+
 func TestApplyRunsAnApprovedPlanOnce(t *testing.T) {
 	w := newWorld(bare())
 	p := w.planned(t, applyID)
