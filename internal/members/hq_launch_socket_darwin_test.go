@@ -1,12 +1,15 @@
 package members
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -140,5 +143,236 @@ func TestRollbackOfObservedLaunchSocket(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestInterruptedUpgradeBootoutPreservesSocketProvenance(t *testing.T) {
+	for _, scenario := range []string{"captured", "replaced", "no capture", "already removed", "journal unavailable",
+		"stays absent", "original reappears", "replacement after absence"} {
+		t.Run(scenario, func(t *testing.T) {
+			dir, err := os.MkdirTemp("/private/tmp", "mm-stop.")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(dir) })
+			parent, err := os.Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer parent.Close()
+			path := filepath.Join(dir, "owner.sock")
+			bind := func() func() {
+				t.Helper()
+				fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				closeSocket := func() {
+					if fd >= 0 {
+						unix.Close(fd)
+						fd = -1
+					}
+				}
+				t.Cleanup(closeSocket)
+				if err = unix.Bind(fd, &unix.SockaddrUnix{Name: path}); err != nil {
+					t.Fatal(err)
+				}
+				if err = os.Chmod(path, 0666); err != nil {
+					t.Fatal(err)
+				}
+				return closeSocket
+			}
+			uid := uint32(os.Geteuid())
+			var published os.FileInfo
+			var releaseSocket func()
+			if scenario != "no capture" {
+				releaseSocket = bind()
+				published, err = waitForLaunchSocket(path, uid, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			missingAtStop := scenario == "stays absent" || scenario == "original reappears" || scenario == "replacement after absence"
+			if missingAtStop {
+				if err := os.Rename(path, path+".old"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			process := exec.Command("/usr/bin/true")
+			if err := process.Run(); err != nil {
+				t.Fatal(err)
+			}
+			pid := strconv.Itoa(process.ProcessState.Pid())
+			evidence, err := observedStopEvidence(parent, filepath.Base(path), published, pid, uid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := filepath.Join(dir, "journal")
+			if scenario == "journal unavailable" {
+				record = filepath.Join(dir, "absent", "journal")
+			}
+			j := upgradeJournal{Phase: "starting-next"}
+			interrupted := errors.New("interrupted immediately after bootout")
+			err = j.recordBootout(record, "stopping-next", evidence, func() error {
+				if scenario == "journal unavailable" {
+					t.Fatal("bootout preceded durable evidence")
+				}
+				var before upgradeJournal
+				b, e := os.ReadFile(record)
+				if e != nil || json.Unmarshal(b, &before) != nil || before.Phase != "stopping-next" ||
+					before.Stopping == nil || *before.Stopping != *evidence || before.Stopping.Parent.Inode == 0 || before.Stopping.PID != pid {
+					t.Fatal("job, directory and leaf observation were not journaled first")
+				}
+				if (before.Stopping.Socket.Inode == 0) != (missingAtStop || scenario == "no capture") {
+					t.Fatal("wrong recorded leaf state")
+				}
+				return interrupted
+			})
+			if scenario == "journal unavailable" {
+				if err == nil || errors.Is(err, interrupted) {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, interrupted) {
+				t.Fatal(err)
+			}
+			switch scenario {
+			case "replaced":
+				if err := os.Rename(path, path+".old"); err != nil {
+					t.Fatal(err)
+				}
+				bind()
+			case "no capture", "replacement after absence":
+				bind()
+			case "original reappears":
+				if err := os.Rename(path+".old", path); err != nil {
+					t.Fatal(err)
+				}
+			case "already removed":
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Re-open the durable journal as a new apply would. Only the captured
+			// endpoint gets as far as the separate kernel-guarded removal boundary.
+			b, err := os.ReadFile(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var restored upgradeJournal
+			if err = json.Unmarshal(b, &restored); err != nil {
+				t.Fatal(err)
+			}
+			unowned := scenario == "replaced" || scenario == "no capture" || scenario == "original reappears" || scenario == "replacement after absence"
+			if unowned {
+				replacement, e := waitForLaunchSocket(path, uid, 0)
+				if e != nil {
+					t.Fatal(e)
+				}
+				changed, e := observedStopEvidence(parent, filepath.Base(path), replacement, pid, uid)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if e = restored.recordBootout(record, "stopping-next", changed, func() error {
+					t.Fatal("second stop adopted a new endpoint")
+					return nil
+				}); e == nil {
+					t.Fatal("replaced recorded evidence")
+				}
+			}
+			if scenario == "stays absent" {
+				changedPID := *evidence
+				changedPID.PID = "1"
+				if e := restored.recordBootout(record, "stopping-next", &changedPID, func() error {
+					t.Fatal("changed process accepted with absent leaf")
+					return nil
+				}); e == nil {
+					t.Fatal("absent leaf lost its job identity")
+				}
+			}
+			called := false
+			err = clearRecordedEndpoint(path, restored.Stopping, func(d *os.File, f os.FileInfo, p string) error {
+				called = true
+				if published == nil || !os.SameFile(published, f) || d.Name() != dir || p != pid {
+					t.Fatal("unverified removal")
+				}
+				kernel, err := unix.Sysctl("kern.osrelease")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !supportsGuardedUpgrade(kernel) {
+					// Older Darwin retains the recorded node for operator recovery.
+					if err = unlinkStoppedSocket(d, filepath.Base(path), f, uid, p); !errors.Is(err, unix.EINVAL) {
+						t.Fatal(err)
+					}
+					return nil
+				}
+				busy := false
+				err = retryBusyHQEndpoint(func() error {
+					e := unlinkStoppedSocket(d, filepath.Base(path), f, uid, p)
+					if errors.Is(e, unix.EBUSY) {
+						busy = true
+						releaseSocket()
+					}
+					return e
+				})
+				if !busy {
+					t.Fatal("kernel did not protect open socket")
+				}
+				if _, e := os.Lstat(path); !errors.Is(e, os.ErrNotExist) {
+					t.Fatal("original endpoint not removed after release")
+				}
+				return err
+			})
+			if (err != nil) != unowned || called != (scenario == "captured") {
+				t.Fatalf("called=%v, error=%v", called, err)
+			}
+			if unowned {
+				if _, err := os.Lstat(path); err != nil {
+					t.Fatal("unowned entry was removed")
+				}
+			}
+			if unowned && scenario != "original reappears" {
+				if _, err := observedStopEvidence(parent, filepath.Base(path), published, pid, uid); err == nil {
+					t.Fatal("accepted changed endpoint before bootout")
+				}
+			}
+		})
+	}
+}
+
+// Pre-existing journals have no stopping record until a stop was captured.
+func TestUpgradeJournalWithoutStopEvidence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "owner.sock")
+	remove := func(*os.File, os.FileInfo, string) error { t.Fatal("unexpected removal"); return nil }
+	if err := clearRecordedEndpoint(path, nil, remove); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("preserve"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearRecordedEndpoint(path, nil, remove); err == nil {
+		t.Fatal("unrecorded leaf accepted")
+	}
+}
+
+func TestUpgradeRetriesOnlyBusyEndpoint(t *testing.T) {
+	other := errors.New("changed inode or pairing")
+	tries := 0
+	err := retryBusyHQEndpoint(func() error {
+		tries++
+		if tries == 1 {
+			return unix.EBUSY
+		}
+		return other
+	})
+	if !errors.Is(err, other) || tries != 2 {
+		t.Fatalf("tries=%d, err=%v", tries, err)
+	}
+	start := time.Now()
+	err = retryBusyHQEndpoint(func() error { return unix.EBUSY })
+	if !errors.Is(err, unix.EBUSY) || time.Since(start) > 3*time.Second {
+		t.Fatal("busy endpoint did not terminate", err)
 	}
 }

@@ -103,76 +103,160 @@ func writeUpgradeFile(path string, data []byte, mode os.FileMode, exclusive bool
 	}
 	return syncUpgradeDir(parent)
 }
-func (j *upgradeJournal) write(exclusive bool) error {
+func (j *upgradeJournal) write(path string, exclusive bool) error {
 	b, e := json.Marshal(j)
 	if e != nil {
 		return e
 	}
-	return writeUpgradeFile(filepath.Join(receiptsDir(), upgradeJournalName), append(b, '\n'), 0600, exclusive)
+	return writeUpgradeFile(path, append(b, '\n'), 0600, exclusive)
 }
 func (j *upgradeJournal) phase(phase string) error {
 	j.Phase = phase
 	j.Stopping = nil
-	return j.write(false)
+	return j.write(filepath.Join(receiptsDir(), upgradeJournalName), false)
 }
 
 func (j *upgradeJournal) stop(r launchRecord, phase string) error {
-	if err := j.pair(j.Approval, nil); err != nil {
-		return err
-	}
-	active, pid, err := loadedLaunchDaemon(r.Service, j.Owner)
-	n, parse := strconv.Atoi(pid)
-	if err != nil || !active || parse != nil || n <= 0 {
-		return errors.New("cannot identify the running HQ job to stop")
-	}
-	if err = verifyReviewedPlist(launchPlist, r.Plist); err != nil {
-		return err
-	}
 	parent, err := os.OpenFile(launchRuntimeDir, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return err
 	}
 	defer parent.Close()
-	dir, err := parent.Stat()
-	if err != nil {
-		return err
-	}
 	sock, err := waitForLaunchSocket(launchRuntimeSocket, 0, 0)
 	if err != nil {
 		return err
 	}
-	j.Phase = phase
-	j.Stopping = &stoppingHQ{upgradeNode(dir), upgradeNode(sock), pid}
-	if err = j.write(false); err != nil {
-		return err
-	}
-	if err = runProgram(launchctl, "bootout", "system/"+launchLabel); err != nil {
-		return err
-	}
-	active, _, err = loadedLaunchDaemon(r.Service, j.Owner)
-	if err != nil || active {
-		return errors.New("cannot confirm reviewed HQ job stopped")
-	}
-	return removeStoppedLaunchSocket(launchRuntimeSocket, parent, sock, pid)
+	return j.stopObserved(r, phase, parent, sock)
 }
+
+// The caller stopping a failed activation supplies the original directory
+// descriptor and socket observed after bootstrap, before the owner status check.
+func (j *upgradeJournal) stopObserved(r launchRecord, phase string, parent *os.File, sock os.FileInfo) error {
+	err := j.pair(j.Approval, func() error {
+		if parent == nil || parent.Name() != launchRuntimeDir {
+			return errors.New("missing approved HQ socket directory")
+		}
+		directory, err := planLaunchDirectory(OSHost{}, checkDarwinACLs)
+		if err != nil || !upgradeDirectory(directory, false) {
+			return errors.New("protected HQ runtime directory changed before stop")
+		}
+		if err := verifyReviewedPlist(launchPlist, r.Plist); err != nil {
+			return err
+		}
+		active, pid, err := loadedLaunchDaemon(r.Service, j.Owner)
+		if err != nil || !active {
+			return errors.New("cannot identify the approved HQ job to stop")
+		}
+		n, err := strconv.Atoi(pid)
+		if err != nil || n <= 0 {
+			return errors.New("cannot identify the running HQ process to stop")
+		}
+		if err := verifyHQProcessUID(pid); err != nil {
+			return err
+		}
+		evidence, err := observedStopEvidence(parent, filepath.Base(launchRuntimeSocket), sock, pid, 0)
+		if err != nil {
+			return err
+		}
+		return j.recordBootout(filepath.Join(receiptsDir(), upgradeJournalName), phase, evidence, func() error {
+			return runProgram(launchctl, "bootout", "system/"+launchLabel)
+		})
+	})
+	if err != nil {
+		return err
+	}
+	return j.clearStoppedEndpoint()
+}
+
+func (j *upgradeJournal) recordBootout(path, phase string, evidence *stoppingHQ, bootout func() error) error {
+	// A crash can also precede bootout. A repeated stop must identify the
+	// same job and endpoint as the first attempt, even when no leaf existed.
+	if evidence == nil || (j.Phase == phase && (j.Stopping == nil || *j.Stopping != *evidence)) {
+		return errors.New("preserving changed HQ endpoint or process at recorded stop")
+	}
+	j.Phase, j.Stopping = phase, evidence
+	if err := j.write(path, false); err != nil {
+		return err
+	}
+	return bootout()
+}
+
+// During rollback the last service process may still be closing a descriptor.
+// EBUSY alone permits a short retry. Every attempt repeats the pairing, job,
+// parent, socket identity and listener checks before the guarded unlink.
 func (j *upgradeJournal) clearStoppedEndpoint() error {
-	info, err := os.Lstat(launchRuntimeSocket)
+	return retryBusyHQEndpoint(func() error {
+		return j.pair(j.Approval, func() error {
+			active, _, err := loadedLaunchDaemon(j.Upgrade.Next.Service, j.Owner)
+			if err != nil || active {
+				return errors.New("cannot confirm reviewed HQ job stopped")
+			}
+			return clearRecordedEndpoint(launchRuntimeSocket, j.Stopping, func(parent *os.File, sock os.FileInfo, pid string) error {
+				return removeStoppedLaunchSocket(launchRuntimeSocket, parent, sock, pid)
+			})
+		})
+	})
+}
+
+func retryBusyHQEndpoint(remove func() error) error {
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for {
+		err := remove()
+		if !errors.Is(err, syscall.EBUSY) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func observedStopEvidence(parent *os.File, name string, sock os.FileInfo, pid string, uid uint32) (*stoppingHQ, error) {
+	dir, err := parent.Stat()
+	if err != nil {
+		return nil, err
+	}
+	currentDir, err := os.Lstat(parent.Name())
+	if err != nil || !dir.IsDir() || upgradeNode(currentDir) != upgradeNode(dir) {
+		return nil, errors.New("protected HQ runtime directory changed before stop")
+	}
+	path := filepath.Join(parent.Name(), name)
+	current, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		// Record the actual job and parent but no authority to unlink a leaf,
+		// including a previously published inode that later reappears.
+		return &stoppingHQ{Parent: upgradeNode(dir), PID: pid}, nil
 	}
-	if err != nil || j.Stopping == nil || upgradeNode(info) != j.Stopping.Socket {
-		return errors.New("preserving endpoint without exact recorded stop provenance")
+	if err != nil || sock == nil || current.Mode() != os.ModeSocket|0666 || current.Sys().(*syscall.Stat_t).Uid != uid ||
+		current.Sys().(*syscall.Stat_t).Nlink != 1 || upgradeNode(current).Inode == 0 || upgradeNode(current) != upgradeNode(sock) {
+		return nil, errors.New("preserving changed or unobserved HQ endpoint before stop")
 	}
-	parent, err := os.OpenFile(launchRuntimeDir, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	return &stoppingHQ{upgradeNode(dir), upgradeNode(sock), pid}, nil
+}
+func clearRecordedEndpoint(path string, stop *stoppingHQ, remove func(*os.File, os.FileInfo, string) error) error {
+	unverified := errors.New("preserving endpoint without exact recorded stop provenance")
+	if stop == nil {
+		// Journals written before any stop have no endpoint ownership evidence.
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return unverified
+	}
+	parent, err := os.OpenFile(filepath.Dir(path), os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return err
 	}
 	defer parent.Close()
 	dir, err := parent.Stat()
-	if err != nil || upgradeNode(dir) != j.Stopping.Parent {
+	if err != nil || upgradeNode(dir) != stop.Parent {
 		return errors.New("protected HQ runtime directory changed after stop")
 	}
-	return removeStoppedLaunchSocket(launchRuntimeSocket, parent, info, j.Stopping.PID)
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || stop.Socket.Inode == 0 || upgradeNode(info) != stop.Socket {
+		return unverified
+	}
+	return remove(parent, info, stop.PID)
 }
 func (j *upgradeJournal) verify(r launchRecord) error {
 	if err := j.pair(j.Approval, nil); err != nil {
@@ -465,5 +549,11 @@ func (j *upgradeJournal) start(r launchRecord) error {
 	if e := j.pair(j.Approval, nil); e != nil {
 		return e
 	}
-	return startReviewedRecord(r, j.Owner)
+	return startReviewedRecord(r, j.Owner, func(parent *os.File, published os.FileInfo) error {
+		phase := "stopping-previous"
+		if r.Plist == j.Upgrade.Next.Plist {
+			phase = "stopping-next"
+		}
+		return j.stopObserved(r, phase, parent, published)
+	})
 }

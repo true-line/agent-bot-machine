@@ -212,7 +212,7 @@ func upgradeUnderLock(step Step, approval Approval, pair upgradePairGuard) (err 
 		return e
 	}
 	j := upgradeJournal{OriginalPlist: upgradeNode(oldInfo), PreparedPlist: upgradeNode(newInfo), pair: pair, Approval: approval, Owner: step.Owner, Upgrade: rec, Stage: staged, Signer: priorSigner, Phase: "prepared"}
-	if e = j.write(true); e != nil {
+	if e = j.write(journal, true); e != nil {
 		if _, x := os.Lstat(journal); !errors.Is(x, os.ErrNotExist) {
 			journalOwned = true
 		}
@@ -221,13 +221,13 @@ func upgradeUnderLock(step Step, approval Approval, pair upgradePairGuard) (err 
 	journalOwned = true
 	return performUpgrade(&j, rec)
 }
-func startReviewedRecord(r launchRecord, owner string) error {
+func startReviewedRecord(r launchRecord, owner string, stopStarted func(*os.File, os.FileInfo) error) error {
 	r.RuntimeDir = &launchDirectory{launchRuntimeDir, ActionNone, "root", "wheel", "0755"}
 	raw, e := json.Marshal(r)
 	if e != nil {
 		return e
 	}
-	return activateReviewedLaunch(Step{Kind: KindService, Target: launchLabel, Action: ActionWrite, Owner: owner, Content: string(raw)})
+	return activateReviewedLaunch(Step{Kind: KindService, Target: launchLabel, Action: ActionWrite, Owner: owner, Content: string(raw)}, stopStarted)
 }
 func validateUpgradeRoleCapability(r launchRecord) error {
 	b, err := hqProgramOutput("/usr/bin/sudo", "-n", "-H", "-u", DarwinHQAccount, "--", r.Service.Node, filepath.Join(r.Service.ReleaseDir, "hq/main.mjs"), "check-owner-control")

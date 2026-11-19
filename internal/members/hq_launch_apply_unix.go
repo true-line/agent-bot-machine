@@ -108,11 +108,11 @@ func activateLaunchDaemon(step Step) error {
 		if _, err := os.Lstat(filepath.Join(receiptsDir(), upgradeJournalName)); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("an interrupted HQ release transition needs reconciliation")
 		}
-		return activateReviewedLaunch(step)
+		return activateReviewedLaunch(step, nil)
 	})
 }
 
-func activateReviewedLaunch(step Step) (err error) {
+func activateReviewedLaunch(step Step, stopStarted func(*os.File, os.FileInfo) error) (err error) {
 	if step.Target != launchLabel {
 		return errors.New("expected Darwin LaunchDaemon step")
 	}
@@ -215,6 +215,12 @@ func activateReviewedLaunch(step Step) (err error) {
 	started := false
 	defer func() {
 		if err == nil {
+			return
+		}
+		if started && stopStarted != nil {
+			// An upgrade must durably identify its newly published endpoint before
+			// bootout so a later apply can finish the same guarded cleanup.
+			err = errors.Join(err, stopStarted(socketParent, published))
 			return
 		}
 		if started {
