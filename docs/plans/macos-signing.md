@@ -4,8 +4,8 @@ overview: >-
   Ship the darwin core as a Developer ID signed and notarized managed-machine
   CLI binary, with no .app bundle, no keychain-access-groups entitlement, and
   no Secure Enclave wrap; store the daemon key in a dedicated file keychain
-  (`daemon.keychain-db`) with a self-only ACL. A reviewed Machine version request on main starts signing before the Homebrew
-  digest is available. The signed draft supplies the digest for the release PR.
+  (`daemon.keychain-db`) with a self-only ACL. Merging a reviewed version PR starts signing. The release publishes the signed
+  Homebrew digest with the five platform archives.
 related_prs: [440, 441, 451]
 related_issues: [442, 446]
 ---
@@ -102,8 +102,7 @@ confirmation dialog and read the item if the logged-in user approves the
 prompt. Owner direction (#446) accepts this trade-off in order to ship a
 plain CLI binary with no `.app` bundle.
 
-Signing runs during the release PR so the formula still pins the darwin archive
-before the tag exists, and the pin names the signed archive.
+Signing runs on the version PR merge commit. The Homebrew pin comes from the verified signed Darwin archive.
 
 ## Target
 
@@ -113,21 +112,13 @@ before the tag exists, and the pin names the signed archive.
 notarization. The five signing secrets (`MACOS_DEVID_P12`,
 `MACOS_DEVID_P12_PASSWORD`, `NOTARY_KEY_P8`, `NOTARY_KEY_ID`,
 `NOTARY_ISSUER_ID`) live only in the GitHub environment `release`, which
-admits the `main` branch. Manual signing also requires the separate
-`release-manual` deployment approval.
+requires the owner's approval and admits the `main` branch and `v*` tags.
 
 **Archive.** `mm-release build` writes the darwin archive as `LICENSE` (`0644`)
 and `managed-machine` (`0755`), identical in layout to the Linux and Windows
 archives.
 
-**Signing.** Submit the next Machine version (for example `0.11.7`) in
-`.github/machine-release-version` through a reviewed PR. Merging it to
-`main` starts Sign at that merge commit. The read-only first job validates
-the version. The existing `release` environment controls access to the signing
-identity. The reviewed request signs both the CLI and the pinned owner app.
-Manual dispatch remains available for recovery of either artifact.
-After the signed draft exists, the release PR pins its verified digest in the
-Homebrew formula. Changes to VERSION and the formula do not request signing again.
+**Signing.** Merge the bot’s reviewed version PR to start Sign on protected main. The request job checks the merged PR and its approval. The main-only `release` environment supplies the signing identity. A manual dispatch remains available for recovery and the separate owner app.
 
 The macOS signing job builds the
 deterministic dist, imports the Developer ID identity into a temporary keychain
@@ -154,12 +145,12 @@ the file, and it must name the Team ID), with no extra files. With
 
 ### Release automation
 
-A reviewed change to `.github/machine-release-version` starts Sign on main. Release preparation verifies the signed draft against the signing commit, including the owner-only custody helper, and opens the release PR. After merge and successful CI, the version-cut workflow checks the source, signed archive and formula pin before tagging the exact release commit. The tag triggers final verification and publication.
+Changes merged to `main` open or refresh a version PR. Merging the reviewed version PR starts the five-target Machine build and macOS signing. After CI and signing pass on that merge commit, automation tags it and publishes the verified archives. The published release includes the Homebrew formula with the signed macOS checksum. A separate formula-only PR updates the tap.
 
 The release workflows use three GitHub environments.
 
-- `release` holds the Apple signing and notarization credentials. Restrict deployments to the branch `main`. Normal signing of both artifacts uses the reviewed Machine version change as authorization.
-- `release-manual` requires the designated owner reviewer for manual recovery of either artifact. Restrict it to the branch `main`. This environment needs no secrets.
+- `release` holds the Apple signing and notarization credentials. Restrict deployments to the branch `main`. Normal Machine releases use the reviewed version change as authorization.
+- `release-manual` requires the designated owner reviewer for manual signing, including owner-presence builds and recovery. Restrict it to the branch `main`. This environment needs no secrets.
 - `version-cut` restricts release PR and tag automation to the branch `main`. The automation uses the repository installation of the release App and the `CHORES_DUMB_CLIENT_ID` and `CHORES_DUMB_PRIVATE_KEY` credentials. It creates signed release commits and pushes the tag with an installation token so the tag triggers the Release workflow.
 
 During migration, configure the manual gate and verify its required reviewer before removing the separate reviewer from `release`. The signing workflow must already be deployed on `main` before that change.
@@ -178,7 +169,7 @@ During migration, configure the manual gate and verify its required reviewer bef
   passes.
 - `TestSignWorkflowContract` pins the release-request path and manual dispatch on `main`, the
   `release` environment, `contents: write` on the job alone, only the five
-  CLI signing secrets plus the profile on owner-app jobs through `env`, and no password-bearing `security` flags or
+  CLI signing secrets plus the profile on owner-app dispatches through `env`, and no password-bearing `security` flags or
   `-A` on the command line.
 - `tests/release.test.sh` and `tests/formula-core.test.sh` run `prepare` and
   `tag` against `tests/fixtures/fake-gh`: a failed signing run aborts prepare
@@ -195,17 +186,16 @@ During migration, configure the manual gate and verify its required reviewer bef
 
 ## Replay
 
-1. Merge a reviewed change to the Machine version request. Check the Sign run for that commit.
-2. Compare the release PR’s Darwin archive digest with the signed draft and merge the PR after its checks pass.
-3. Confirm that the Release run on the annotated tag publishes the platform reports and promotes the draft.
+1. Merge a change to main and inspect the generated version PR.
+2. Merge the reviewed version PR. Confirm Sign and both CI workflows ran on its merge SHA.
+3. Confirm the tag points to that SHA and the public release has the five archives, checksums, five platform reports and the verified Homebrew formula.
 
 ### Signing the owner approval app (HQ #56)
 
-Merging a reviewed Machine version request to protected `main` signs the
-owner approval app and the Machine CLI at the same version and commit. The
-owner-app job builds the pinned Identity source on Apple Silicon using the
-release environment, Developer ID identity and notarization service. For manual
-recovery **Sign** accepts `owner-presence` and defaults to `machine`.
+Machine's main-only **Sign** dispatch accepts `owner-presence` as an optional
+artifact. It builds the pinned Identity source on Apple Silicon, using the same
+reviewed release environment, Developer ID identity and notarization service
+as the CLI. The default dispatch still builds the five Machine archives.
 The app is the signed-in owner's approval client. The custody helper continues
 to run under the prefix owner's account.
 
@@ -218,10 +208,6 @@ group. It signs with only the app's exact group. The profile for the retired
 `AgentBotMachine.app` has a different application identifier.
 
 After notarization, Machine staples the ticket, archives the app and checks
-the extracted copy with codesign, stapler and Gatekeeper. The owner-app job stages
-a separate `owner-presence-vX.Y.Z` draft containing the ZIP and its SHA-256 checksum. On the Machine tag, the
-publication workflow requires that draft to target the exact Machine signing
-commit. It verifies the checksum, arm64 architecture, app version, Developer
-ID signature and team, stapled ticket and Gatekeeper assessment. The public
-Machine release includes the same ZIP and checksum.
+the extracted copy with codesign, stapler and Gatekeeper. The dispatch creates
+a separate `owner-presence-vX.Y.Z` draft containing the zip and its SHA-256.
 Physical owner presence and the subsequent signed HQ response are pilot checks.
