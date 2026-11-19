@@ -65,7 +65,10 @@ func TestWaitForLaunchSocket(t *testing.T) {
 	path := filepath.Join(dir, "control")
 	uid := uint32(os.Geteuid())
 	done := make(chan error, 1)
-	go func() { done <- waitForLaunchSocket(path, uid, time.Second) }()
+	go func() {
+		_, err := waitForLaunchSocket(path, uid, time.Second)
+		done <- err
+	}()
 	time.Sleep(80 * time.Millisecond)
 	select {
 	case err := <-done:
@@ -87,11 +90,11 @@ func TestWaitForLaunchSocket(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if err := waitForLaunchSocket(path, uid, 0); err != nil {
+	if _, err := waitForLaunchSocket(path, uid, 0); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	if err := waitForLaunchSocket(filepath.Join(dir, "missing"), uid, 75*time.Millisecond); err == nil || !strings.Contains(err.Error(), "before the deadline") {
+	if _, err := waitForLaunchSocket(filepath.Join(dir, "missing"), uid, 75*time.Millisecond); err == nil || !strings.Contains(err.Error(), "before the deadline") {
 		t.Fatalf("missing socket: %v", err)
 	}
 	if got := withLaunchState(errors.New("socket absent"), []byte("\tstate = waiting\n\truns = 0\n\tlast exit code = (never exited)\n\tprivate = HIDDEN"), false); got.Error() != "socket absent (launchd state waiting, launchd runs 0, launchd has never exited)" {
@@ -110,7 +113,7 @@ func TestWaitForLaunchSocket(t *testing.T) {
 	}
 	for _, candidate := range []string{file, link, filepath.Join(file, "inaccessible")} {
 		start = time.Now()
-		if err := waitForLaunchSocket(candidate, uid, time.Second); err == nil || strings.Contains(err.Error(), "before the deadline") {
+		if _, err := waitForLaunchSocket(candidate, uid, time.Second); err == nil || strings.Contains(err.Error(), "before the deadline") {
 			t.Fatalf("unexpected result for invalid endpoint: %v", err)
 		}
 		if time.Since(start) >= time.Second {
@@ -139,7 +142,7 @@ func TestWaitForLaunchSocketRefusesForeignOrPrivateNode(t *testing.T) {
 		if err := os.Chmod(path, tc.mode); err != nil {
 			t.Fatal(err)
 		}
-		if err := waitForLaunchSocket(path, tc.wantUID, time.Second); err == nil || !strings.Contains(err.Error(), "unexpected type, owner or mode") {
+		if _, err := waitForLaunchSocket(path, tc.wantUID, time.Second); err == nil || !strings.Contains(err.Error(), "unexpected type, owner or mode") {
 			t.Fatalf("accepted wrong socket metadata: %v", err)
 		}
 	}

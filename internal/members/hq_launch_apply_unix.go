@@ -113,7 +113,14 @@ func activateLaunchDaemon(step Step) (err error) {
 	if err != nil {
 		return err
 	}
+	var socketParent *os.File
+	var published os.FileInfo
 	if !loaded {
+		socketParent, err = os.OpenFile(filepath.Dir(launchSocket), os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return err
+		}
+		defer socketParent.Close()
 		if _, err := os.Lstat(launchSocket); err == nil || !errors.Is(err, os.ErrNotExist) {
 			return refuse(RefusedPath, "owner control socket path already occupied or inaccessible")
 		}
@@ -173,9 +180,22 @@ func activateLaunchDaemon(step Step) (err error) {
 			return
 		}
 		if started {
+			ours, pid, inspectErr := loadedLaunchDaemon(rec.Service, step.Owner)
+			if inspectErr != nil || !ours {
+				err = errors.Join(err, errors.New("cannot verify the approved job before rollback"), inspectErr)
+				return
+			}
 			if stopErr := runProgram(launchctl, "bootout", "system/"+launchLabel); stopErr != nil {
 				err = errors.Join(err, stopErr)
 				return
+			}
+			loaded, _, inspectErr := loadedLaunchDaemon(rec.Service, step.Owner)
+			if inspectErr != nil || loaded {
+				err = errors.Join(err, errors.New("cannot confirm the HQ job was unloaded"), inspectErr)
+				return
+			}
+			if published != nil {
+				err = errors.Join(err, removeStoppedLaunchSocket(socketParent, published, pid))
 			}
 		}
 		if created {
@@ -189,7 +209,8 @@ func activateLaunchDaemon(step Step) (err error) {
 			return err
 		}
 		started = true
-		if err := waitForLaunchSocket(launchSocket, 0, 3*time.Second); err != nil {
+		published, err = waitForLaunchSocket(launchSocket, 0, 3*time.Second)
+		if err != nil {
 			return inspectFailedLaunch(err, rec.Service, step.Owner, cap, started)
 		}
 	}
@@ -221,7 +242,7 @@ func activateLaunchDaemon(step Step) (err error) {
 
 // Bootstrap can return before launchd publishes its public socket. Once a
 // node exists, the owner client verifies its metadata and authenticates it.
-func waitForLaunchSocket(path string, expectedUID uint32, limit time.Duration) error {
+func waitForLaunchSocket(path string, expectedUID uint32, limit time.Duration) (os.FileInfo, error) {
 	deadline := time.Now().Add(limit)
 	for {
 		info, err := os.Lstat(path)
@@ -229,15 +250,15 @@ func waitForLaunchSocket(path string, expectedUID uint32, limit time.Duration) e
 		case err == nil:
 			stat, ok := info.Sys().(*syscall.Stat_t)
 			if !ok || info.Mode() != os.ModeSocket|0666 || stat.Uid != expectedUID {
-				return errors.New("owner-control socket has unexpected type, owner or mode")
+				return nil, errors.New("owner-control socket has unexpected type, owner or mode")
 			}
-			return nil
+			return info, nil
 		case !errors.Is(err, syscall.ENOENT):
-			return errors.New("cannot inspect the launchd owner-control endpoint")
+			return nil, errors.New("cannot inspect the launchd owner-control endpoint")
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return errors.New("launchd did not publish the owner-control socket before the deadline")
+			return nil, errors.New("launchd did not publish the owner-control socket before the deadline")
 		}
 		time.Sleep(min(25*time.Millisecond, remaining))
 	}

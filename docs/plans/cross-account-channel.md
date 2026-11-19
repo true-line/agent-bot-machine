@@ -272,6 +272,10 @@ and attempts to finalize the root-owned receipt at
 `failed` and `failed_at` naming the service. A receipt still marked
 `started` also consumes the approval. Rollback unloads a service started
 by this apply and removes a newly installed plist if it still matches.
+If launchd leaves its socket behind after confirmed bootout, Machine can
+remove the same inactive socket it observed during that startup. A changed
+or busy endpoint is preserved. macOS 15 rejects the guarded unlink operation.
+Machine reports that limitation and leaves the socket in place.
 After a new bootstrap, Machine allows up to three seconds for launchd to
 publish the public socket. The owner client then checks its metadata and
 performs the authenticated status query. On the physical pilot, launchd
