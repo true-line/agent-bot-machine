@@ -104,8 +104,35 @@ check_private_predecessor_receipt() {
     paired_status
     ok 'ordinary upgrade review accepted a private receipt; root refused its absence before changing the job'
 }
-upgrade_case() {
+# Keep private status documents, owner proofs and raw command lines off CI logs.
+# Only emit fixed product classifications from the first diagnostic.
+report_upgrade_failure() {
+    jq -Rsr '
+      ([split("\n")[] | fromjson? | objects | select(.diagnostic and (.message|type=="string"))] | first) as $d
+      | if $d == null then "Machine did not emit a recognized diagnostic record" else
+        ($d.diagnostic | if IN("MM_MEMBERS_APPLY_FAILED","MM_MEMBERS_NOT_APPROVED","MM_MEMBERS_PLAN_FAILED") then . else "other" end) as $id
+        | ["cannot verify prior HQ apply receipt", "cannot check the host", "cannot write the receipt",
+           "approved dedicated HQ pairing changed", "approved HQ pairing is unavailable",
+           "upgrade requires its exact in-progress root receipt", "reviewed HQ plist or its prepared replacement changed",
+           "dedicated HQ did not confirm its previously paired Machine", "HQ did not confirm the expected owner endpoint and available signer",
+           "preserving endpoint while its HQ process may still exist", "preserving busy HQ endpoint",
+           "preserved HQ transition evidence after stop", "preserved HQ transition evidence after attempted swap",
+           "launchd did not publish the owner-control socket before the deadline",
+           "query launched HQ as approved owner: sudo exit status 42", "cannot confirm the HQ job was unloaded",
+           "preserving an unrecognized HQ job during upgrade rollback", "preserving endpoint without exact recorded stop provenance",
+           "HQ did not confirm its original Machine hardware signer",
+           "previous HQ release, Machine pairing and original hardware signer verified after rollback",
+           "permission denied", "operation not permitted", "resource temporarily unavailable", "invalid argument"] as $known
+        | $d.message | split("\n") | .[:2] | map(. as $line | [$known[] | select(. as $key | $line | contains($key))]
+          | if length==0 then "unclassified" else join(", ") end)
+        | "Machine diagnostic " + $id + ": " + join(" / ")
+        end' "$1" >&2
+}
+upgrade_case() (
     local baseline prior_sha prior_inode active before bad_tree bad_archive bad_sum
+    local phase="read predecessor service"
+    set -E
+    trap 'printf "FAIL: hosted service upgrade phase [%s], fixture line %d, exit %d\n" "$phase" "$LINENO" "$?" >&2' ERR
     prior_inode="$(stat -f '%d:%i' "$plist")"
     prior_sha="$(shasum -a 256 "$plist" | awk '{print $1}')"
     before="$(job_pid)"
@@ -120,41 +147,63 @@ upgrade_case() {
         ok 'service-only upgrade refused the existing software signer before stopping the system job'
         return
     fi
+    phase="check private predecessor receipt"
     check_private_predecessor_receipt
+    phase="verify predecessor hardware signer and running release"
     baseline="$(cd / && "$stage/node" "$stage/hq/hq/main.mjs" status --owner-control --json | jq -er '.hq.signer|select(.available and .backend=="machine" and .key_storage=="hardware")|.thumbprint')"
     require_release "$stage/hq" "$baseline"
-    # Only the explicitly marked negative candidate is synthetic: the public
-    # CLI, helper and actual launchd job run normally. The owner status client
-    # returns 42 so the product must rollback after launching that candidate.
+    ok 'predecessor status confirmed the original paired hardware signer'
+    phase="prepare fault candidate"
+    # Exercise the real release and authenticated socket. Fail the negative
+    # candidate only after its owner status request actually succeeded.
     bad_tree="$WORK/upgrade-fault"
     mkdir "$bad_tree"
     tar -xpf "$upgrade_public/approved.tar" -C "$bad_tree"
-    "$stage/node" --input-type=module - "$bad_tree/hq/hq/main.mjs" <<'JS'
+    "$stage/node" --input-type=module - "$bad_tree/hq/hq/interim-core.mjs" <<'JS'
 import { readFileSync, writeFileSync } from 'node:fs';
 const p=process.argv[2], code=readFileSync(p,'utf8');
-const at=code.startsWith('#!') ? code.indexOf('\n')+1 : 0;
-writeFileSync(p, code.slice(0,at)+"if (process.argv[2] === 'status' && process.argv.includes('--owner-control')) process.exit(42);\n"+code.slice(at));
+const marker = "    if (args.json || args.cmd === 'souls') console.log(JSON.stringify(res.result, null, 2));";
+if (code.split(marker).length !== 2) throw Error('pinned HQ status success branch changed');
+writeFileSync(p, code.replace(marker, `    if (args.cmd === 'status' && args.ownerControl && args.json) {
+      process.exitCode = 42;
+      return;
+    }
+${marker}`));
 JS
     bad_archive="$WORK/upgrade-fault.tar"
     (cd "$bad_tree" && gtar --format=ustar -cf "$bad_archive" hq)
     bad_sum="$(shasum -a 256 "$bad_archive" | awk '{print $1}')"
     install_upgrade_tree "$bad_archive" "$stage/upgrade-fault" "$WORK/upgrade-fault.json" "$bad_sum"
+    phase="plan and approve fault candidate"
     approve_upgrade "$repair_id" "$repair_digest" "$WORK/upgrade-fault.json"
+    ok 'fault candidate received its signed owner approval'
+    phase="apply fault candidate and check rollback"
     if (cd "$signer" && sudo "$MM" members apply "$upgrade_id") > "$signer/failed-upgrade.log" 2>&1; then
         fail 'failed status candidate unexpectedly passed'
     fi
-    grep -Fq 'sudo exit status 42' "$signer/failed-upgrade.log"
-    grep -Fq 'previous HQ release, Machine pairing and original hardware signer verified after rollback' "$signer/failed-upgrade.log"
+    if ! grep -Fq MM_MEMBERS_APPLY_FAILED "$signer/failed-upgrade.log" ||
+       ! grep -Fq 'query launched HQ as approved owner: sudo exit status 42' "$signer/failed-upgrade.log"; then
+        report_upgrade_failure "$signer/failed-upgrade.log"
+        fail 'approved upgrade failed before the injected owner status result'
+    fi
+    if ! grep -Fq 'previous HQ release, Machine pairing and original hardware signer verified after rollback' "$signer/failed-upgrade.log"; then
+        report_upgrade_failure "$signer/failed-upgrade.log"
+        fail 'Machine reached the injected owner status failure but did not confirm rollback'
+    fi
+    phase="verify failed receipt and original release"
     sudo jq -e --arg id "$upgrade_id" --arg digest "$upgrade_digest" '.result=="failed" and .plan_id==$id and .plan_digest==$digest' "$RECEIPTS/$upgrade_id.json" >/dev/null
     [[ "$(stat -f '%d:%i' "$plist")" == "$prior_inode" && "$(shasum -a 256 "$plist" | awk '{print $1}')" == "$prior_sha" ]]
     require_release "$stage/hq" "$baseline"
+    ok 'fault candidate rolled back to the original plist and signer'
+    phase="approve and apply public candidate"
     approve_upgrade "$repair_id" "$repair_digest" "$WORK/upgrade-public.json"
     (cd "$signer" && sudo "$MM" members apply "$upgrade_id")
     sudo jq -e --arg id "$upgrade_id" --arg digest "$upgrade_digest" '.result=="applied" and .plan_id==$id and .plan_digest==$digest' "$RECEIPTS/$upgrade_id.json" >/dev/null
     require_release "$next_dir/hq" "$baseline"
+    phase="repeat completed upgrade"
     active="$(job_pid)"
     (cd "$signer" && sudo "$MM" members apply "$upgrade_id") | jq -e '.applied==true' >/dev/null
     [[ "$(job_pid)" == "$active" ]]
     ok 'real system service rollback restored its plist and hardware signer; public candidate upgraded once and preserved its paired role'
-}
+)
 upgrade_case
