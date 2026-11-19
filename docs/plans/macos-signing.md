@@ -126,13 +126,15 @@ via `security -i` on stdin (so neither the keychain password nor the `.p12`
 password appears in `argv`, and `-T /usr/bin/codesign` restricts key use to
 `codesign`), prepends that keychain to the user keychain search list (restoring
 the original search list in `if: always()`), and runs `scripts/sign-darwin`:
-sign `managed-machine` with the hardened runtime and a secure timestamp, check
-authority, Team ID, identifier and runtime flag, notarize with `notarytool`
-(removing the temporary `.p8` file immediately afterward), require Gatekeeper's
-`Notarized Developer ID` assessment
-(`spctl -a -t open --context context:primary-signature -vv`), repack with
-`mm-release repack`, and check with `mm-release verify-signed`. The signed dist
-is uploaded to the draft release `vX.Y.Z`. It is the only workflow that may
+sign both `managed-machine` and `agent-bot-keyd` with the hardened runtime and
+a secure timestamp, verify their signatures and runtime flags, and submit them
+together with `notarytool`. After an accepted submission, remove the temporary
+`.p8` and verify each standalone executable with `codesign --check-notarization`
+and an explicit requirement for notarization, the Developer ID Application
+chain, the release team and the executable's identifier. A failed check for
+either binary stops repacking after bounded retries. Repack with
+`mm-release repack` and verify with `mm-release verify-signed -require-keyd`.
+The signed dist is uploaded to the draft release `vX.Y.Z`. It is the only workflow that may
 read secrets.
 
 **Verification.** `mm-release verify-signed -unsigned D -signed S -team T`
@@ -140,7 +142,9 @@ needs no macOS: the four other archives are byte-identical; in the darwin
 archive `LICENSE` is byte-identical and `managed-machine` matches the
 deterministic build outside the code signature (only the `LC_CODE_SIGNATURE`
 datasize and `__LINKEDIT` vmsize/filesize may differ, the signature must end
-the file, and it must name the Team ID), with no extra files. With
+the file, and it must name the Team ID). The release also requires
+`agent-bot-keyd` with the same Team ID and mode `0700`. Additional files
+are rejected. With
 `-require-pin` the formula must pin the signed darwin digest.
 
 ### Release automation

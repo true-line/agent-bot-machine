@@ -46,13 +46,16 @@ codesign --force --timestamp --options runtime --keychain "$SIGN_KEYCHAIN" \
 codesign --force --timestamp --options runtime --keychain "$SIGN_KEYCHAIN" \
     -s "$identity" -i "ai.true-line.agent-bot-keyd" "$tree/agent-bot-keyd"
 
-codesign --verify --strict --verbose=2 "$tree/managed-machine"
-codesign --verify --strict --verbose=2 "$tree/agent-bot-keyd"
-details="$(codesign -dv --verbose=2 "$tree/managed-machine" 2>&1)"
-grep -Fq "Authority=Developer ID Application: " <<<"$details"
-grep -Fqx "TeamIdentifier=$team" <<<"$details"
-grep -Fqx "Identifier=$signing_id" <<<"$details"
-grep -Fq "flags=0x10000(runtime)" <<<"$details"
+for name in managed-machine agent-bot-keyd; do
+    expected_id="$signing_id"
+    [[ "$name" != agent-bot-keyd ]] || expected_id=ai.true-line.agent-bot-keyd
+    codesign --verify --strict "$tree/$name"
+    details="$(codesign -dv --verbose=2 "$tree/$name" 2>&1)"
+    grep -Fq "Authority=Developer ID Application: " <<<"$details"
+    grep -Fqx "TeamIdentifier=$team" <<<"$details"
+    grep -Fqx "Identifier=$expected_id" <<<"$details"
+    grep -Fq "flags=0x10000(runtime)" <<<"$details"
+done
 
 mkdir -p "$work/payload"
 cp "$tree/managed-machine" "$tree/agent-bot-keyd" "$work/payload/"
@@ -69,16 +72,8 @@ if [[ "$status" != "Accepted" ]]; then
 fi
 rm -f "$NOTARY_KEY_PATH"
 
-assessment=""
-for attempt in 1 2 3 4 5; do
-    assessment="$(spctl -a -t open --context context:primary-signature -vv "$tree/managed-machine" 2>&1 || true)"
-    if grep -Fq "source=Notarized Developer ID" <<<"$assessment" && grep -Fq "($team)" <<<"$assessment"; then
-        break
-    fi
-    [[ "$attempt" == 5 ]] && { echo "Error: Gatekeeper notarization check failed: $assessment" >&2; exit 1; }
-    sleep 15
-done
+bash "$root/scripts/verify-darwin-clis" "$tree" "$team"
 
 rm -rf "$signed"
 (cd "$root" && go run ./cmd/mm-release repack -dist "$unsigned" -tree "$tree" -out "$signed")
-(cd "$root" && go run ./cmd/mm-release verify-signed -unsigned "$unsigned" -signed "$signed" -team "$team")
+(cd "$root" && go run ./cmd/mm-release verify-signed -unsigned "$unsigned" -signed "$signed" -team "$team" -require-keyd)
