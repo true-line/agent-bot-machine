@@ -19,6 +19,11 @@ import (
 
 const launchctl = "/bin/launchctl"
 
+type launchRoleCapability struct {
+	Capability        string
+	LaunchDiagnostics any `json:"launch_diagnostics"`
+}
+
 func preflightLaunchDaemon() error {
 	for _, program := range []string{launchctl, "/usr/bin/ruby", "/usr/bin/sudo", "/usr/bin/plutil"} {
 		if err := requireProgram(program); err != nil {
@@ -44,9 +49,16 @@ func loadedLaunchDaemon(s HQService, owner string) (bool, string, error) {
 		}
 		return false, "", err
 	}
-	// The file on disk can have been replaced since launchd loaded it.
-	// Check the active job's source and complete argv, independently of
-	// whether the job currently has a process.
+	pid, approved := approvedLaunchPID(out, s, owner)
+	if !approved {
+		return false, "", refuse(RefusedPath, "loaded LaunchDaemon differs from the approved job")
+	}
+	return true, pid, nil
+}
+
+// The installed plist may have changed since launchd loaded it. Match the
+// source, program and complete argument list from this snapshot of the job.
+func approvedLaunchPID(out []byte, s HQService, owner string) (string, bool) {
 	var args []string
 	var source, program, pid string
 	inArguments := false
@@ -73,10 +85,7 @@ func loadedLaunchDaemon(s HQService, owner string) (bool, string, error) {
 	}
 	want := []string{"/usr/bin/ruby", "--disable-gems", filepath.Join(s.ReleaseDir, "helpers/darwin-owner.rb"),
 		"launch", s.Node, filepath.Join(s.ReleaseDir, "hq/main.mjs"), "run", "--home", launchState, "--owner-account", owner}
-	if source != launchPlist || program != want[0] || !slices.Equal(args, want) {
-		return false, "", refuse(RefusedPath, "loaded LaunchDaemon differs from the approved job")
-	}
-	return true, pid, nil
+	return pid, source == launchPlist && program == want[0] && slices.Equal(args, want)
 }
 
 func activateLaunchDaemon(step Step) (err error) {
@@ -111,7 +120,7 @@ func activateLaunchDaemon(step Step) (err error) {
 	}
 	main := filepath.Join(rec.Service.ReleaseDir, "hq/main.mjs")
 	capability, err := hqProgramOutput("/usr/bin/sudo", "-n", "-H", "-u", DarwinHQAccount, "--", rec.Service.Node, main, "check-owner-control")
-	var cap struct{ Capability string }
+	var cap launchRoleCapability
 	if err != nil || json.Unmarshal(capability, &cap) != nil || cap.Capability != "darwin-owner-control/v1" {
 		return errors.New("the approved release did not confirm darwin-owner-control/v1 as the HQ account")
 	}
@@ -181,12 +190,12 @@ func activateLaunchDaemon(step Step) (err error) {
 		}
 		started = true
 		if err := waitForLaunchSocket(launchSocket, 0, 3*time.Second); err != nil {
-			return inspectFailedLaunch(err)
+			return inspectFailedLaunch(err, rec.Service, step.Owner, cap, started)
 		}
 	}
 	out, err := hqProgramOutput("/usr/bin/sudo", "-n", "-H", "-u", step.Owner, "--", rec.Service.Node, main, "status", "--owner-control", "--json")
 	if err != nil {
-		return inspectFailedLaunch(ownerStatusFailure(err))
+		return inspectFailedLaunch(ownerStatusFailure(err), rec.Service, step.Owner, cap, started)
 	}
 	if !confirmsServiceOwner(out, step.Owner, u.Uid, DarwinHQAccount, launchSocket, "getpeereid") {
 		return errors.New("running HQ did not confirm the approved macOS owner-control endpoint")
@@ -251,13 +260,39 @@ func ownerStatusFailure(err error) error {
 
 // Only sanitized errors enter this function. Capture launchd's state before
 // deferred rollback unloads the job, including when no public socket appeared.
-func inspectFailedLaunch(stage error) error {
-	job, _ := hqProgramOutput(launchctl, "print", "system/"+launchLabel)
-	return withLaunchState(stage, job)
+func inspectFailedLaunch(stage error, service HQService, owner string, cap launchRoleCapability, started bool) error {
+	job, err := hqProgramOutput(launchctl, "print", "system/"+launchLabel)
+	if err != nil {
+		return stage
+	}
+	return withLaunchState(stage, job, cap.explainsLastExit(job, service, owner, started))
 }
 
-func withLaunchState(stage error, job []byte) error {
-	var state, runs, lastExit string
+// A pre-existing job can have exit history from an older version at the same
+// path. Attribute an exit only to a newly bootstrapped, verified job.
+func (cap launchRoleCapability) explainsLastExit(job []byte, service HQService, owner string, started bool) bool {
+	if !started || cap.Capability != "darwin-owner-control/v1" || cap.LaunchDiagnostics != "darwin-hq-launch-exits/v1" ||
+		!strings.HasPrefix(string(job), "system/"+launchLabel+" = {\n") {
+		return false
+	}
+	pid, approved := approvedLaunchPID(job, service, owner)
+	return approved && (pid == "" || pid == "0")
+}
+
+var hqLaunchExitReasons = map[int]string{
+	80: "native launcher rejected the role or arguments",
+	81: "native launchd socket check-in failed",
+	82: "launchd returned an unexpected descriptor count",
+	83: "native launcher could not validate the inherited Unix stream descriptor",
+	84: "native launcher could not verify the protected public socket metadata",
+	85: "native launcher could not verify the launchd-bound address",
+	86: "native launcher could not execute the approved Node runtime",
+	87: "Node owner-control activation failed after exec",
+}
+
+func withLaunchState(stage error, job []byte, explainLastExit bool) error {
+	var state, runs, lastExit, reason string
+	var runCount uint64
 	for _, line := range strings.Split(string(job), "\n") {
 		key, val, ok := strings.Cut(line, " = ")
 		if !ok {
@@ -267,30 +302,36 @@ func withLaunchState(stage error, job []byte) error {
 		case "\tstate":
 			switch val {
 			case "running", "not running", "waiting", "spawn scheduled", "spawn pending", "exited", "stopped":
-				state = "launchd state " + val
+				state = val
 			}
 		case "\truns":
 			if n, parseErr := strconv.ParseUint(val, 10, 32); parseErr == nil {
+				runCount = n
 				runs = fmt.Sprintf("launchd runs %d", n)
 			}
 		case "\tlast exit code":
 			if val == "(never exited)" {
 				lastExit = "launchd has never exited"
+				reason = ""
 			}
 			if n, parseErr := strconv.Atoi(val); parseErr == nil && n >= 0 && n <= 255 {
 				lastExit = fmt.Sprintf("launchd last exit code %d", n)
+				reason = hqLaunchExitReasons[n]
 			}
 		}
 	}
 	var details []string
 	if state != "" {
-		details = append(details, state)
+		details = append(details, "launchd state "+state)
 	}
 	if runs != "" {
 		details = append(details, runs)
 	}
 	if lastExit != "" {
 		details = append(details, lastExit)
+		if explainLastExit && runCount > 0 && state != "" && state != "running" && reason != "" {
+			details = append(details, reason)
+		}
 	}
 	if len(details) == 0 {
 		return stage
