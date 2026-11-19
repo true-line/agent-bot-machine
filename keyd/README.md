@@ -88,6 +88,41 @@ refuses them rather than adopt them:
 
 These records are login Keychain generic passwords under service `agent-bot.keyd`.
 
+## Managed-device custody on macOS
+
+The administrator who owns Homebrew runs `agent-bot-keyd hq-device-init`
+once after owner-approved Machine/HQ pairing. This creates a Secure Enclave
+P-256 device key and stores its device-bound reference in an item accessible
+to the signed keyd. Initialization refuses an existing item. A missing
+enclave, locked or untrusted Keychain, missing pairing or revoked HQ makes
+device operations unavailable. This command needs the administrator's
+Keychain available without a prompt.
+
+Machine invokes `agent-bot-keyd hq-device` with a signed request on stdin.
+The helper reads the current pairing from the administrator's account and
+checks the Machine key, HQ key, peer UID, owner pin and pairing epoch. It
+checks the revoke marker around signing, before committing updated custody
+state and before returning. Restart retains the same public key, pending
+enrollment and binding. Revocation prevents another request from using the
+old pairing. A proof already delivered has its own validity window.
+
+The helper supplies the public identity and an enrollment proof for the
+configured service. It binds the returned device ID only after verifying
+the service's signed enrollment receipt and matching the outstanding proof
+and device key. It can then issue a short-lived access assertion bound to
+a fresh, admin-held DPoP key. For a signed token response it retains only
+the token hash and its expiry alongside the device-bound reference. Every
+operation runs locally. HQ handles the HTTPS exchange.
+
+The release embeds the public issuer manifest in
+[`trusted/server-keys.json`](trusted/server-keys.json). It comes from
+[HQ's reviewed pin](https://github.com/true-line/agent-bot-hq/blob/1d0a34b5c6c0f37e2a7d15655bd88e43dd6b6ed6/governance/server-keys.json).
+Review rotations against the owning release and update keyd before expiry.
+The helper refuses unknown, retired or out-of-window keys. Linux and
+Windows device operations remain unavailable until their administrative
+providers can enforce the same requirements. A cooperative profile
+requires the same custody boundary.
+
 ## Sockets
 
 Both sockets live in `<state>/keyd/` (0700). `<state>` is agent-bot's state
