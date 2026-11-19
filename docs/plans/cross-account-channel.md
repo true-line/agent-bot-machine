@@ -286,11 +286,11 @@ digest. This readback saves a new plan.
 
 First-HQ transfer requires an absent role. With the role already present,
 installing the remaining service requires a new owner approval for the
-remaining plan. Enrolled HQ can currently sign status and receipts on a
-protected macOS channel. The channel refuses a members approval request
-until it can validate an action-specific owner proof. Retain the role,
-failed receipt and saved plans for the supported recovery flow once
-available.
+remaining plan. Use the enrolled HQ CLI to export a signed service-recovery
+challenge for that plan. The daily owner reviews it and returns a proof to
+the same paired HQ CLI. This approval covers only the eligible service
+repair. Retain the existing role, enrollment and failed receipt. Follow the
+[paired HQ service recovery procedure](member-accounts.md#paired-hq-service-recovery-on-macos).
 
 The export is one UTF-8 JSON object. Its fields are `action`
 (`first-hq-provision`), `machine_key`, `plan_id`, `plan_digest`, `nonce`,
