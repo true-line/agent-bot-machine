@@ -22,6 +22,11 @@ on:
       - 'tests/fixtures/hq-launchd-install.sh'
       - 'tests/fixtures/hq-launchd-runtime.c'
   workflow_dispatch:
+    inputs:
+      require_sip:
+        description: Require fully enabled SIP and exercise the v2 production endpoint
+        type: boolean
+        default: true
 permissions:
   contents: read
 jobs:
@@ -40,6 +45,7 @@ jobs:
       - name: Install the real HQ archive with a signed first-HQ approval
         shell: bash
         env:
+          MM_HQ_REQUIRE_SIP: ${{ inputs.require_sip || 'false' }}
           MM_MEMBERS_REAL_ACCOUNTS: '1'
           MM_MEMBERS_RUNNER: ${{ runner.environment }}
           HOMEBREW_NO_AUTO_UPDATE: '1'

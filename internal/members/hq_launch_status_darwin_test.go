@@ -33,7 +33,7 @@ func TestOwnerStatusFailureOnlyEmitsPublicClassifications(t *testing.T) {
 	} {
 		// Use a real exit status so the original child failure is preserved.
 		_, err := exec.Command("/bin/sh", "-c", `printf '%s' "$1" >&2; exit 1`, "test", tc.stderr).Output()
-		got := withLaunchState(ownerStatusFailure(err), job, false)
+		got := withLaunchState(ownerStatusFailure(err), job, "")
 		if tc.want == "" && ownerStatusStderr([]byte(tc.stderr)) != "" {
 			t.Fatalf("misclassified unrelated stderr: %q", tc.stderr)
 		}
@@ -97,7 +97,7 @@ func TestWaitForLaunchSocket(t *testing.T) {
 	if _, err := waitForLaunchSocket(filepath.Join(dir, "missing"), uid, 75*time.Millisecond); err == nil || !strings.Contains(err.Error(), "before the deadline") {
 		t.Fatalf("missing socket: %v", err)
 	}
-	if got := withLaunchState(errors.New("socket absent"), []byte("\tstate = waiting\n\truns = 0\n\tlast exit code = (never exited)\n\tprivate = HIDDEN"), false); got.Error() != "socket absent (launchd state waiting, launchd runs 0, launchd has never exited)" {
+	if got := withLaunchState(errors.New("socket absent"), []byte("\tstate = waiting\n\truns = 0\n\tlast exit code = (never exited)\n\tprivate = HIDDEN"), ""); got.Error() != "socket absent (launchd state waiting, launchd runs 0, launchd has never exited)" {
 		t.Fatalf("readiness failure should report only bounded launchd state: %v", got)
 	}
 	if elapsed := time.Since(start); elapsed < 75*time.Millisecond || elapsed > time.Second {
@@ -168,7 +168,7 @@ func TestLaunchExitDiagnosticsRequireReleaseAndApprovedJob(t *testing.T) {
 			t.Fatal(err)
 		}
 		raw := []byte(job)
-		return withLaunchState(errors.New("status failed"), raw, cap.explainsLastExit(raw, service, owner, started)).Error()
+		return withLaunchState(errors.New("status failed"), raw, cap.exitDiagnostics(raw, service, owner, started)).Error()
 	}
 	for i, label := range []string{
 		"native launcher rejected the role or arguments", "native launchd socket check-in failed",
@@ -184,12 +184,29 @@ func TestLaunchExitDiagnosticsRequireReleaseAndApprovedJob(t *testing.T) {
 		}
 	}
 	job := head + "\tlast exit code = 84\n}"
+	v2 := strings.NewReplacer(base, launchControlV2, launchExitsV1, launchExitsV2).Replace(advertised)
+	native159 := strings.Replace(job, "code = 84", "code = 88", 1)
+	if d := report(t, v2, native159, true); !strings.Contains(d, "native launchd socket check-in returned 159") {
+		t.Fatal(d)
+	}
+	for _, transport := range []string{launchControlV1, launchControlV2} {
+		for _, diagnostics := range []string{launchExitsV1, launchExitsV2} {
+			advertisement := strings.NewReplacer(base, transport, launchExitsV1, diagnostics).Replace(advertised)
+			if d := report(t, advertisement, job, true); !strings.Contains(d, hqLaunchExitReasons[84]) {
+				t.Errorf("%s %s lost known exit 84: %s", transport, diagnostics, d)
+			}
+			d := report(t, advertisement, native159, true)
+			if strings.Contains(d, "native launchd socket check-in returned 159") != (diagnostics == launchExitsV2) {
+				t.Errorf("%s %s wrongly classified exit 88: %s", transport, diagnostics, d)
+			}
+		}
+	}
 	for _, tc := range []struct {
 		name, capability, job string
 		started               bool
 	}{
 		{"old release", `{"capability":"` + base + `"}`, job, true},
-		{"future contract", strings.Replace(advertised, "exits/v1", "exits/v2", 1), job, true},
+		{"future contract", strings.Replace(advertised, "exits/v1", "exits/v3", 1), job, true},
 		{"future field type", `{"capability":"` + base + `","launch_diagnostics":{}}`, job, true},
 		{"unknown capability", strings.Replace(advertised, base, "unknown/v1", 1), job, true},
 		{"previously loaded job", advertised, job, false},
@@ -205,7 +222,7 @@ func TestLaunchExitDiagnosticsRequireReleaseAndApprovedJob(t *testing.T) {
 		{"generic error", advertised, strings.Replace(job, "code = 84", "code = 1", 1), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			want := withLaunchState(errors.New("status failed"), []byte(tc.job), false).Error()
+			want := withLaunchState(errors.New("status failed"), []byte(tc.job), "").Error()
 			if got := report(t, tc.capability, tc.job, tc.started); got != want || !strings.Contains(got, "launchd last exit code") {
 				t.Errorf("expected numeric launchctl evidence only: %q", got)
 			}

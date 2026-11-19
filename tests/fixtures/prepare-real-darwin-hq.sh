@@ -4,8 +4,8 @@
 set -euo pipefail
 [[ $# == 1 && -d "$1" ]] || { echo 'expected a disposable output directory' >&2; exit 2; }
 fixture="$(cd "$1" && pwd -P)"
-hq_sha=f554e1e18e2519a3a08f062e1988906f56fe75be
-hq_tar_sha=81b864d682b977453998b1cfae1d5a2a19d0b9c275eb0f6dd7d0184097692553
+hq_sha=d52f01f517773565b673ec9735f670922e58dc91
+hq_tar_sha=43e99d8d83d2c8623f0b4eb2adbb9bdce1e833e16256b135549de0670e270e14
 node_dist=node-v24.19.0-darwin-arm64
 node_tar_sha=8294b7aa9b03997481c06babf1e8b270c859358f27da57a11509afe537ac381d
 node_sha=27db838bb204ef7c21df2931f5656e4c8fb32e6e947f363a402b49714d32b5b1

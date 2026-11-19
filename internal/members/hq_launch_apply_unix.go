@@ -96,7 +96,8 @@ func activateLaunchDaemon(step Step) (err error) {
 	if err = json.Unmarshal([]byte(step.Content), &rec); err != nil {
 		return err
 	}
-	if err = verifyDarwinRelease(rec.Service, OSHost{}); err != nil {
+	expected, err := verifyDarwinRelease(rec.Service, OSHost{})
+	if err != nil {
 		return err
 	}
 	if err = preflightLaunchDaemon(); err != nil {
@@ -109,31 +110,54 @@ func activateLaunchDaemon(step Step) (err error) {
 	if u.Uid != strconv.Itoa(rec.OwnerUID) {
 		return errors.New("approved owner's UID changed")
 	}
+	// Different approved plans can race for the same service. Hold this
+	// receipt-directory lock through bootstrap, verification and rollback.
+	lock, err := os.OpenFile(filepath.Join(receiptsDir(), ".hq-launchd.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
 	loaded, _, err := loadedLaunchDaemon(rec.Service, step.Owner)
 	if err != nil {
 		return err
 	}
-	var socketParent *os.File
-	var published os.FileInfo
-	if !loaded {
-		socketParent, err = os.OpenFile(filepath.Dir(launchSocket), os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-		if err != nil {
-			return err
-		}
-		defer socketParent.Close()
-		if _, err := os.Lstat(launchSocket); err == nil || !errors.Is(err, os.ErrNotExist) {
-			return refuse(RefusedPath, "owner control socket path already occupied or inaccessible")
-		}
-	}
 	main := filepath.Join(rec.Service.ReleaseDir, "hq/main.mjs")
 	capability, err := hqProgramOutput("/usr/bin/sudo", "-n", "-H", "-u", DarwinHQAccount, "--", rec.Service.Node, main, "check-owner-control")
 	var cap launchRoleCapability
-	if err != nil || json.Unmarshal(capability, &cap) != nil || cap.Capability != "darwin-owner-control/v1" {
-		return errors.New("the approved release did not confirm darwin-owner-control/v1 as the HQ account")
+	if err != nil || json.Unmarshal(capability, &cap) != nil || cap.Capability != expected {
+		return fmt.Errorf("the approved release did not confirm %s as the HQ account", expected)
 	}
 	created := step.Action == ActionCreate
 	if created && loaded {
 		return errors.New("refusing existing loaded job during first install")
+	}
+	dir, dirErr := prepareLaunchDirectory(rec.RuntimeDir, expected, created)
+	if dir != nil {
+		defer func() {
+			defer dir.Close()
+			if err != nil {
+				err = errors.Join(err, rollbackLaunchDirectory(dir, rec.Service, step.Owner))
+			}
+		}()
+	}
+	if dirErr != nil {
+		return dirErr
+	}
+	socket := socketForCapability(expected)
+	var socketParent *os.File
+	var published os.FileInfo
+	if !loaded {
+		socketParent, err = os.OpenFile(filepath.Dir(socket), os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return err
+		}
+		defer socketParent.Close()
+		if _, err := os.Lstat(socket); err == nil || !errors.Is(err, os.ErrNotExist) {
+			return refuse(RefusedPath, "owner control socket path already occupied or inaccessible")
+		}
 	}
 	if created {
 		// O_EXCL prevents overwriting a job installed concurrently. The
@@ -195,7 +219,7 @@ func activateLaunchDaemon(step Step) (err error) {
 				return
 			}
 			if published != nil {
-				err = errors.Join(err, removeStoppedLaunchSocket(socketParent, published, pid))
+				err = errors.Join(err, removeStoppedLaunchSocket(socket, socketParent, published, pid))
 			}
 		}
 		if created {
@@ -209,7 +233,7 @@ func activateLaunchDaemon(step Step) (err error) {
 			return err
 		}
 		started = true
-		published, err = waitForLaunchSocket(launchSocket, 0, 3*time.Second)
+		published, err = waitForLaunchSocket(socket, 0, 3*time.Second)
 		if err != nil {
 			return inspectFailedLaunch(err, rec.Service, step.Owner, cap, started)
 		}
@@ -218,7 +242,7 @@ func activateLaunchDaemon(step Step) (err error) {
 	if err != nil {
 		return inspectFailedLaunch(ownerStatusFailure(err), rec.Service, step.Owner, cap, started)
 	}
-	if !confirmsServiceOwner(out, step.Owner, u.Uid, DarwinHQAccount, launchSocket, "getpeereid") {
+	if !confirmsServiceOwner(out, step.Owner, u.Uid, DarwinHQAccount, socket, "getpeereid") {
 		return errors.New("running HQ did not confirm the approved macOS owner-control endpoint")
 	}
 	loaded, pid, err := loadedLaunchDaemon(rec.Service, step.Owner)
@@ -286,19 +310,27 @@ func inspectFailedLaunch(stage error, service HQService, owner string, cap launc
 	if err != nil {
 		return stage
 	}
-	return withLaunchState(stage, job, cap.explainsLastExit(job, service, owner, started))
+	return withLaunchState(stage, job, cap.exitDiagnostics(job, service, owner, started))
 }
 
 // A pre-existing job can have exit history from an older version at the same
 // path. Attribute an exit only to a newly bootstrapped, verified job.
-func (cap launchRoleCapability) explainsLastExit(job []byte, service HQService, owner string, started bool) bool {
-	if !started || cap.Capability != "darwin-owner-control/v1" || cap.LaunchDiagnostics != "darwin-hq-launch-exits/v1" ||
+func (cap launchRoleCapability) exitDiagnostics(job []byte, service HQService, owner string, started bool) string {
+	diagnostics, ok := cap.LaunchDiagnostics.(string)
+	recognized := ok && (diagnostics == launchExitsV1 || diagnostics == launchExitsV2)
+	if !started || (cap.Capability != launchControlV1 && cap.Capability != launchControlV2) || !recognized ||
 		!strings.HasPrefix(string(job), "system/"+launchLabel+" = {\n") {
-		return false
+		return ""
 	}
 	pid, approved := approvedLaunchPID(job, service, owner)
-	return approved && (pid == "" || pid == "0")
+	if approved && (pid == "" || pid == "0") {
+		return diagnostics
+	}
+	return ""
 }
+
+const launchExitsV1 = "darwin-hq-launch-exits/v1"
+const launchExitsV2 = "darwin-hq-launch-exits/v2"
 
 var hqLaunchExitReasons = map[int]string{
 	80: "native launcher rejected the role or arguments",
@@ -311,7 +343,8 @@ var hqLaunchExitReasons = map[int]string{
 	87: "Node owner-control activation failed after exec",
 }
 
-func withLaunchState(stage error, job []byte, explainLastExit bool) error {
+func withLaunchState(stage error, job []byte, diagnostics string) error {
+	exitCode := -1
 	var state, runs, lastExit, reason string
 	var runCount uint64
 	for _, line := range strings.Split(string(job), "\n") {
@@ -333,10 +366,12 @@ func withLaunchState(stage error, job []byte, explainLastExit bool) error {
 		case "\tlast exit code":
 			if val == "(never exited)" {
 				lastExit = "launchd has never exited"
+				exitCode = -1
 				reason = ""
 			}
 			if n, parseErr := strconv.Atoi(val); parseErr == nil && n >= 0 && n <= 255 {
 				lastExit = fmt.Sprintf("launchd last exit code %d", n)
+				exitCode = n
 				reason = hqLaunchExitReasons[n]
 			}
 		}
@@ -350,8 +385,16 @@ func withLaunchState(stage error, job []byte, explainLastExit bool) error {
 	}
 	if lastExit != "" {
 		details = append(details, lastExit)
-		if explainLastExit && runCount > 0 && state != "" && state != "running" && reason != "" {
-			details = append(details, reason)
+		if diagnostics != "" && runCount > 0 && state != "" && state != "running" {
+			if diagnostics == launchExitsV2 && exitCode == 88 {
+				reason = "native launchd socket check-in returned 159"
+				if out, err := hqProgramOutput(launchctl, "error", "posix", "159"); err == nil && strings.TrimSpace(string(out)) == "159: Sandbox restriction" {
+					reason += ": Sandbox restriction"
+				}
+			}
+			if reason != "" {
+				details = append(details, reason)
+			}
 		}
 	}
 	if len(details) == 0 {
@@ -378,14 +421,23 @@ func ownerStatusStderr(raw []byte) string {
 		return "owner-control connection closed"
 	case s == "expected an owner control socket owned by uid 0 at mode 666":
 		return "owner-control socket has unexpected type, owner or mode"
-	case s == "owner control requires a root-managed directory at /private" || s == "owner control requires a root-managed directory at /private/var":
-		return "owner-control socket parent is not root-managed"
-	case s == "connect ENOENT "+launchSocket, s == "ENOENT: no such file or directory, lstat '"+launchSocket+"'":
-		return "owner-control socket missing"
-	case s == "connect ECONNREFUSED "+launchSocket:
-		return "owner-control connection refused"
-	case s == "connect EACCES "+launchSocket, s == "connect EPERM "+launchSocket, s == "EACCES: permission denied, lstat '"+launchSocket+"'", s == "EPERM: operation not permitted, lstat '"+launchSocket+"'":
-		return "owner-control socket access denied"
+	}
+	for _, socket := range []string{launchSocket, launchRuntimeSocket} {
+		for _, dir := range pathAncestry(filepath.Dir(socket)) {
+			if s == "owner control requires a root-managed directory at "+dir {
+				return "owner-control socket parent is not root-managed"
+			}
+		}
+		switch s {
+		case "connect ENOENT " + socket, "ENOENT: no such file or directory, lstat '" + socket + "'":
+			return "owner-control socket missing"
+		case "connect ECONNREFUSED " + socket:
+			return "owner-control connection refused"
+		case "connect EACCES " + socket, "connect EPERM " + socket, "EACCES: permission denied, lstat '" + socket + "'", "EPERM: operation not permitted, lstat '" + socket + "'":
+			return "owner-control socket access denied"
+		}
+	}
+	switch {
 	case strings.HasPrefix(s, "sudo: a password is required"):
 		return "sudo requires authentication"
 	}

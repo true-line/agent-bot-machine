@@ -15,8 +15,9 @@ checkout_review_source() {
 }
 checkout_review_source conformance soul-conformance e41baba741bab974fee19acb09b5edb446a3d1f0
 suite="$subjects/conformance/suites/paired-hq-recovery"
-identity_sha="$(jq -er '.identity | select(test("^[0-9a-f]{40}$"))' "$subjects/conformance/governance/paired-hq-recovery.json")"
-checkout_review_source identity agent-bot-identity "$identity_sha"
+# This pinned Identity version recognizes both legacy plans and the v2
+# root-owned runtime-directory effect in the Machine service plan.
+checkout_review_source identity agent-bot-identity 3d6bf1cd756bdadad1772fa74f7e48d1dd27bfa3
 presence="$subjects/identity/owner-presence-macos"
 xcrun --sdk macosx swiftc -swift-version 5 -parse-as-library \
     "$presence/PairingChallenge.swift" "$presence/FirstHQChallenge.swift" "$suite/owner.swift" -o "$signer/review-owner"
@@ -90,6 +91,7 @@ start_fixture_machine --require-identity "$machine_pin"
 paired_status --daemon-key "$machine_key"
 
 # Remove only the service installed earlier. Keep its role, state and pairs.
+if "$layout_v2"; then runtime_id="$(stat -f '%d:%i' "$runtime_dir")"; fi
 endpoint_id="$(stat -f '%d:%i' "$socket")"
 jq -j '.plan_canonical|fromjson|.steps[1].content|fromjson|.plist' "$signer/challenge.json" > "$signer/installed.plist"
 cmp -s "$signer/installed.plist" "$plist" || fail 'installed plist changed'
@@ -98,6 +100,10 @@ sudo rm "$plist"
 if [[ -e "$socket" || -L "$socket" ]]; then
     [[ ! -L "$socket" && -S "$socket" && "$(stat -f '%d:%i' "$socket")" == "$endpoint_id" ]] || fail 'owner endpoint changed'
     sudo rm "$socket"
+fi
+if "$layout_v2"; then
+    [[ ! -L "$runtime_dir" && "$(stat -f '%d:%i:%Su:%Sg:%Lp' "$runtime_dir")" == "$runtime_id:root:wheel:755" ]] || fail 'original runtime directory changed'
+    sudo rmdir "$runtime_dir"
 fi
 paired_status
 # Returns the exact saved plan ID and digest in repair_id and repair_digest.
@@ -161,6 +167,9 @@ for ((i=0; i<60; i++)); do
     sleep 0.05
 done
 [[ ! -e "$socket" && ! -L "$socket" ]] || fail 'rollback left the owner-control endpoint'
+if "$layout_v2"; then
+    [[ ! -e "$runtime_dir" && ! -L "$runtime_dir" ]] || fail 'rollback left its new HQ runtime directory'
+fi
 [[ "$(id -u "$role")" == "$role_uid" && "$(attr "$role" NFSHomeDirectory)" == "$role_home" &&
    "$(sudo stat -f '%d:%i:%u:%g:%Lp' "$role_home")" == "$home_id" ]] || fail 'rollback changed the HQ role or home'
 "$MM" daemon verify-identity | jq -e --arg pin "$machine_pin" '.state=="verified" and .fingerprint==$pin' >/dev/null

@@ -4,6 +4,8 @@ role=_agent-bot-hq
 label=ai.true-line.agent-bot-hq
 plist="/Library/LaunchDaemons/$label.plist"
 socket=/private/var/agent-bot-hq-control.sock
+runtime_dir="/Library/Application Support/$label"
+layout_v2=false
 ! exists "$role" && [[ ! -e "$plist" && ! -L "$plist" && ! -e "$socket" && ! -L "$socket" ]] || fail 'existing HQ installation'
 ! sudo launchctl print "system/$label" >/dev/null 2>&1 || fail 'existing HQ job'
 real_hq=false
@@ -17,6 +19,9 @@ signer="$WORK/first-hq-owner-signer"
 cleanup_launch() {
     sudo launchctl bootout "system/$label" >/dev/null 2>&1 || true
     sudo rm -f "$plist" "$socket"
+    if "$layout_v2" && [[ -d "$runtime_dir" && ! -L "$runtime_dir" ]]; then
+        sudo rmdir "$runtime_dir" || return 1
+    fi
     sudo rm -rf "$stage"
     rm -rf "$signer"
 }
@@ -28,7 +33,12 @@ prepare_native_hq_fixture() {
     mkdir -p "$fixture/hq"/{hq,helpers,governance}
     touch "$fixture/hq/hq/main.mjs"
     printf '%s\n' 'exec(*ARGV.drop(1))' > "$fixture/hq/helpers/darwin-owner.rb"
-    printf '%s\n' '{"target_platform":"darwin"}' > "$fixture/hq/governance/interim-release.json"
+    if "$layout_v2"; then
+        printf '%s\n' '{"target_platform":"darwin","owner_control_capability":"darwin-owner-control/v2"}' > "$fixture/hq/governance/interim-release.json"
+        set -- "$@" -DMM_FIXTURE_OWNER_V2
+    else
+        printf '%s\n' '{"target_platform":"darwin"}' > "$fixture/hq/governance/interim-release.json"
+    fi
     chmod -R u=rwX,go=rX "$fixture/hq"
     python3 - "$fixture" <<'PYTAR'
 import os, sys, tarfile
@@ -58,6 +68,17 @@ if "$real_hq"; then
     mkdir "$fixture"
     bash "$ROOT/tests/fixtures/prepare-real-darwin-hq.sh" "$fixture"
     install_hq_fixture "$fixture" "$fixture/bin/node" "$stage" "$record" "$fixture/installed.sha256"
+    case "$(jq -er '.owner_control_capability // "v1-unmarked"' "$stage/hq/governance/interim-release.json")" in
+        v1-unmarked) ;;
+        darwin-owner-control/v2)
+            [[ ! -e "$runtime_dir" && ! -L "$runtime_dir" ]] || fail 'preexisting HQ runtime directory'
+            socket="$runtime_dir/owner-control.sock"
+            layout_v2=true ;;
+        *) fail 'unknown pinned HQ transport layout' ;;
+    esac
+    if [[ "${MM_HQ_REQUIRE_SIP:-false}" == true ]]; then
+        "$layout_v2" || fail 'SIP qualification requires the pinned v2 HQ archive'
+    fi
 else
     prepare_native_hq_fixture "$fixture"
     install_hq_fixture "$fixture" "$fixture/runtime" "$stage" "$record"
@@ -88,6 +109,13 @@ first_hq_approve() {
     ' "$challenge" >/dev/null
     [[ "$(jq -j '.plan_canonical' "$challenge" | shasum -a 256 | awk '{print $1}')" == "$digest" ]] || fail 'canonical bytes differ from saved plan'
     jq -j '["agent-bot-machine-owner/v1", .action, .machine_key, .plan_id, .plan_digest, .nonce, (.expires_at | tostring), ""] | join("\n")' "$challenge" > "$message"
+    if "$layout_v2"; then
+        jq -e --arg dir "$runtime_dir" --arg socket "$socket" '
+            .plan_canonical|fromjson|.steps[1].content|fromjson|
+            .runtime_directory == {path:$dir,action:"create",owner:"root",group:"wheel",mode:"0755"} and
+            (.plist|contains("<string>"+$socket+"</string>"))
+        ' "$challenge" >/dev/null || fail 'first-HQ review omits the root-managed runtime namespace'
+    fi
     fixture_owner_proof "$message" > "$signer/proof.json"
     refused MM_MEMBERS_NOT_APPROVED sudo "$MM" members apply "$id"
     "$MM" daemon first-hq approve "$id" --proof-file "$signer/proof.json" | jq -e '.state == "approved"' >/dev/null
@@ -138,6 +166,15 @@ for count in 1 2; do
     jq -e '.hq.sockets.ownerControl.peer_check=="getpeereid"' <<<"$status" >/dev/null
     if "$real_hq"; then
         check_real_hq_status <<<"$status"
+        if "$layout_v2"; then
+            [[ ! -L "$runtime_dir" && "$(stat -f '%Su:%Sg:%Lp' "$runtime_dir")" == 'root:wheel:755' &&
+               -S "$socket" && ! -L "$socket" && "$(stat -f '%Su:%Lp' "$socket")" == 'root:666' ]] || fail 'incorrect v2 directory or socket'
+            if denied="$(cd / && sudo -n -H -u nobody -- "$stage/node" "$stage/hq/hq/main.mjs" status --owner-control --json 2>&1)"; then
+                fail 'another account received owner status'
+            fi
+            jq -e '.ok == false and (.transport_error == "connection closed" or .transport_error == "read ECONNRESET")' <<<"$denied" >/dev/null ||
+                fail 'separate account did not reach the peer-checked listener'
+        fi
     fi
     [[ "$(sudo stat -f '%Su %Sg %Lp' "$plist")" == 'root wheel 644' ]]
     [[ "$(sudo stat -f '%Su %Lp' /var/agent-bot-hq/.agent-bot-hq)" == "$role 700" ]]

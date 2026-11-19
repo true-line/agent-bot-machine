@@ -114,7 +114,7 @@ func TestRollbackOfObservedLaunchSocket(t *testing.T) {
 				t.Fatal(err)
 			}
 			originalEntry, _ := os.Lstat(path)
-			err = unlinkStoppedSocket(parent, observed, uid, pid)
+			err = unlinkStoppedSocket(parent, filepath.Base(path), observed, uid, pid)
 			after, statErr := os.Lstat(path)
 			if !hasGuardedUnlink && (scenario == "closed" || scenario == "bound socket") {
 				if !errors.Is(err, unix.EINVAL) || statErr != nil || !os.SameFile(originalEntry, after) {

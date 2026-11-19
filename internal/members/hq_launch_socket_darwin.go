@@ -15,17 +15,20 @@ import (
 
 // The open directory spans the initial absence check, bootstrap and bootout.
 // The only production leaf eligible for removal is the fixed owner endpoint.
-func removeStoppedLaunchSocket(parent *os.File, published os.FileInfo, pid string) error {
-	if err := trustedPath(OSHost{}, filepath.Dir(launchSocket), true); err != nil {
+func removeStoppedLaunchSocket(socket string, parent *os.File, published os.FileInfo, pid string) error {
+	if (socket != launchSocket && socket != launchRuntimeSocket) || parent.Name() != filepath.Dir(socket) {
+		return errors.New("refusing unapproved HQ endpoint")
+	}
+	if err := trustedPath(OSHost{}, parent.Name(), true); err != nil {
 		return err
 	}
-	if err := checkDarwinACLs([]string{"/", "/private", filepath.Dir(launchSocket)}); err != nil {
+	if err := checkDarwinACLs(pathAncestry(parent.Name())); err != nil {
 		return err
 	}
-	return unlinkStoppedSocket(parent, published, 0, pid)
+	return unlinkStoppedSocket(parent, filepath.Base(socket), published, 0, pid)
 }
 
-func unlinkStoppedSocket(parent *os.File, published os.FileInfo, uid uint32, pid string) error {
+func unlinkStoppedSocket(parent *os.File, name string, published os.FileInfo, uid uint32, pid string) error {
 	const changed = "preserving changed or unverified HQ owner-control endpoint"
 	currentParent, err := os.Lstat(parent.Name())
 	if err != nil {
@@ -43,7 +46,6 @@ func unlinkStoppedSocket(parent *os.File, published os.FileInfo, uid uint32, pid
 	if !ok || before.Ino == 0 || before.Nlink != 1 || before.Uid != uid || before.Mode != unix.S_IFSOCK|0666 {
 		return errors.New(changed)
 	}
-	name := filepath.Base(launchSocket)
 	fd := int(parent.Fd())
 	observe := func() error {
 		var now unix.Stat_t

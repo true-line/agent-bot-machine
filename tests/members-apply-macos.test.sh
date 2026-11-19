@@ -27,6 +27,12 @@ case "${1:-}" in
     "") ;;
     --real-hq)
         sw_vers
+        /bin/launchctl version
+        sip_status="$(LC_ALL=C /usr/bin/csrutil status)"
+        printf '%s\n' "$sip_status"
+        if [[ "${MM_HQ_REQUIRE_SIP:-false}" == true && "$sip_status" != 'System Integrity Protection status: enabled.' ]]; then
+            echo 'SIP qualification requires a fully enabled runner' >&2; exit 1
+        fi
         printf 'Architecture: %s\n' "$(uname -m)"
         [[ "$#" == 1 && "${RUNNER_ENVIRONMENT:-}" == github-hosted && "$(uname -m)" == arm64 && "$(sw_vers -productVersion)" == 27.* ]] || {
             echo 'real HQ install requires a disposable GitHub-hosted Apple Silicon macOS 27 runner' >&2; exit 1;

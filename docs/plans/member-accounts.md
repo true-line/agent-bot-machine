@@ -491,13 +491,32 @@ dependencies. Node must use Apple system libraries. Owner-writable Homebrew
 runtimes are unsuitable. No build tools or downloads run during installation.
 
 Machine creates the system LaunchDaemon `ai.true-line.agent-bot-hq` for
-`_agent-bot-hq`. Its root-owned listener is
-`/private/var/agent-bot-hq-control.sock`. Kernel peer credentials and the
-approved owner's UID authorize each request. Machine checks the release's
-`darwin-owner-control/v1` capability as the HQ account and verifies the running
-endpoint via status as the approved owner. A second approved apply verifies the
-same loaded job. A differing job or release needs a separate cutover.
-First-install failure rolls back the new registration; role-account state stays
+`_agent-bot-hq`. The verified Darwin archive selects the owner-control
+endpoint. Existing unmarked archives use `darwin-owner-control/v1` and
+`/private/var/agent-bot-hq-control.sock`. An archive advertising
+`owner_control_capability: darwin-owner-control/v2` in
+`governance/interim-release.json` uses
+`/Library/Application Support/ai.true-line.agent-bot-hq/owner-control.sock`.
+The v2 service step shows whether Machine will create or verify the
+`root:wheel` mode `0755` directory. Machine verifies the root-owned ancestors and refuses ACL entries that grant access
+or an installed plist that differs from the approved job. It preserves a pre-existing
+directory on failure and can remove its newly created directory only when
+the job is confirmed absent and the same directory is empty.
+
+Kernel peer credentials and the approved owner's UID authorize each request.
+Machine checks the matching versioned capability as the dedicated HQ account
+and queries the running endpoint as the approved owner. Both layouts use a
+root-owned socket at mode `0666`. The existing signed plan and pairing
+continue to refer to their original subject. Changing an installed service's
+layout or release requires an explicit cutover. A second approved apply
+verifies the same loaded job. The experimental v2 layout requires installation
+evidence on a Mac with fully enabled SIP. In the macOS 27 HQ installation
+workflow, the manually selected `require_sip` input enforces this condition.
+For a newly started job that advertises `darwin-hq-launch-exits/v2`, exit
+88 reports a native socket check-in return of 159. Machine includes the
+sandbox classification when this Mac's launchctl confirms it.
+
+First-install failure rolls back the new registration. Role-account state stays
 in its private home. This service operation does not qualify the protected
 profile. The [HQ service issue](https://github.com/true-line/agent-bot-hq/issues/88)
 tracks the scope and remaining acceptance evidence.

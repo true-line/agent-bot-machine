@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,12 @@ import (
 
 // Exercise the production archive and host rebuild without provisioning a role.
 func TestDarwinHQRecoveryBindsSoleServiceStep(t *testing.T) {
+	for _, version := range []string{launchControlV1, launchControlV2} {
+		t.Run(version, func(t *testing.T) { testDarwinHQRecoveryPlan(t, version) })
+	}
+}
+
+func testDarwinHQRecoveryPlan(t *testing.T, version string) {
 	base := t.TempDir()
 	h := emptyHost()
 	const admin = "operator"
@@ -31,10 +38,15 @@ func TestDarwinHQRecoveryBindsSoleServiceStep(t *testing.T) {
 			}
 		}
 	}
+	h.entries[filepath.Dir(launchRuntimeDir)] = Entry{Dir: true, Owner: "root", Group: "admin", Mode: 0755}
+	meta := `{"target_platform":"darwin"}`
+	if version == launchControlV2 {
+		meta = `{"target_platform":"darwin","owner_control_capability":"darwin-owner-control/v2"}`
+	}
 	var archive bytes.Buffer
 	tw := tar.NewWriter(&archive)
 	for _, entry := range []struct{ name, content string }{
-		{"hq/", ""}, {"hq/governance/", ""}, {"hq/governance/interim-release.json", `{"target_platform":"darwin"}`},
+		{"hq/", ""}, {"hq/governance/", ""}, {"hq/governance/interim-release.json", meta},
 		{"hq/helpers/", ""}, {"hq/helpers/darwin-owner.rb", "# fixture\n"},
 		{"hq/hq/", ""}, {"hq/hq/main.mjs", "// fixture\n"},
 	} {
@@ -84,6 +96,20 @@ func TestDarwinHQRecoveryBindsSoleServiceStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var rec launchRecord
+	if err := json.Unmarshal([]byte(p.Steps[1].Content), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.Plist, "<string>"+socketForCapability(version)+"</string>") {
+		t.Fatalf("wrong plist %s", rec.Plist)
+	}
+	if version == launchControlV1 {
+		if strings.Contains(p.Steps[1].Content, "runtime_directory") || p.Steps[1].Detail != "install the approved LaunchDaemon and verify status as its owner" {
+			t.Fatal("legacy canonical service record changed")
+		}
+	} else if rec.RuntimeDir == nil || rec.RuntimeDir.Action != ActionCreate || !strings.Contains(p.Steps[1].Detail, "create "+launchRuntimeDir+" as root:wheel 0755") {
+		t.Fatal("new directory effect missing from the canonical approval")
+	}
 	digest, err := p.Digest()
 	if err != nil {
 		t.Fatal(err)
@@ -114,6 +140,19 @@ func TestDarwinHQRecoveryBindsSoleServiceStep(t *testing.T) {
 			t.Fatal("accepted a changed or ineligible plan")
 		}
 	}
+	// A matching release under a different layout cannot reuse the paired
+	// approval or take over an on-disk job from another layout.
+	alternate := launchRuntimeSocket
+	if version == launchControlV2 {
+		alternate = launchSocket
+	}
+	h.entries[launchPlist] = Entry{Regular: true, Owner: "root", Group: "wheel", Mode: 0644}
+	h.files[launchPlist] = strings.Replace(rec.Plist, socketForCapability(version), alternate, 1)
+	if err := checkDarwinHQRecovery(saved, admin, uid, h, down); err == nil {
+		t.Fatal("accepted mismatched existing LaunchDaemon")
+	}
+	delete(h.entries, launchPlist)
+	delete(h.files, launchPlist)
 	if err := os.WriteFile(s.Node, []byte("changed"), 0755); err != nil {
 		t.Fatal(err)
 	}
