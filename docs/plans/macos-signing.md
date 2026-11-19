@@ -90,7 +90,9 @@ binds the accepted HQ key to the local `_agent-bot-hq` UID. An existing HQ
 enrollment needs a separate authorized transition. Replacing the owner key
 also requires a separate rotation procedure. On hosts with an owner pin, the bound HQ account
 can request signed `status`, `receipts` and the read-only `members-plans`
-operation. Widening actions still require their own action-specific owner
+operation. The narrowly scoped [paired HQ service recovery](member-accounts.md#paired-hq-service-recovery-on-macos)
+requires a fresh owner signature bound to the Machine, enrolled HQ, and
+verified service plan. Other widening actions still require their own owner
 presence checks. A signature verifies possession of the pinned key;
 provisioning and physical qualification establish its hardware provenance.
 

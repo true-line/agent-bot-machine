@@ -112,16 +112,27 @@ func readMembersPlans(home, option, id string) ([]byte, error) {
 		}
 		return json.Marshal(page)
 	}
+	raw, err := readSavedPlanFile(dir, id)
+	if err != nil {
+		return nil, err
+	}
+	return membersPlanBody(id, raw)
+}
+
+func readSavedPlanFile(dir *os.File, id string) ([]byte, error) {
+	if !plan.ValidID(id) {
+		return nil, errMembersPlans
+	}
 	f, err := openSavedPlan(dir, id+".json")
 	if err != nil {
-		return nil, errMembersPlans
+		return nil, err
 	}
 	defer f.Close()
 	raw, err := io.ReadAll(io.LimitReader(f, maxSavedPlanBytes+1))
 	if err != nil || len(raw) > maxSavedPlanBytes {
 		return nil, errMembersPlans
 	}
-	return membersPlanBody(id, raw)
+	return raw, nil
 }
 
 func openSavedPlan(dir *os.File, name string) (*os.File, error) {

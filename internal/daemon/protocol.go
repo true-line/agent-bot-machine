@@ -23,22 +23,25 @@ const timestampSkew = 5 * time.Minute
 // Request is one signed command. Fields the catalog did not declare are
 // rejected by DisallowUnknownFields before a signature is considered.
 type Request struct {
-	Verb       string           `json:"verb"`
-	Name       string           `json:"name,omitempty"`
-	Option     string           `json:"option,omitempty"`
-	Target     string           `json:"target,omitempty"`
-	PlanID     string           `json:"plan_id,omitempty"`
-	PlanDigest string           `json:"plan_digest,omitempty"`
-	Soul       string           `json:"soul,omitempty"`
-	Harness    string           `json:"harness,omitempty"`
-	SessionID  string           `json:"session_id,omitempty"`
-	CatalogKey *CatalogKey      `json:"catalog_key,omitempty"`
-	Floor      *CatalogFloor    `json:"floor,omitempty"`
-	Envelope   *CatalogEnvelope `json:"envelope,omitempty"`
-	Timestamp  int64            `json:"timestamp"`
-	Nonce      string           `json:"nonce"`
-	PublicKey  string           `json:"public_key"`
-	Signature  string           `json:"signature"`
+	Verb           string `json:"verb"`
+	Name           string `json:"name,omitempty"`
+	Option         string `json:"option,omitempty"`
+	Target         string `json:"target,omitempty"`
+	peerUID        int
+	ChallengeNonce string           `json:"challenge_nonce,omitempty"`
+	OwnerSignature string           `json:"owner_signature,omitempty"`
+	PlanID         string           `json:"plan_id,omitempty"`
+	PlanDigest     string           `json:"plan_digest,omitempty"`
+	Soul           string           `json:"soul,omitempty"`
+	Harness        string           `json:"harness,omitempty"`
+	SessionID      string           `json:"session_id,omitempty"`
+	CatalogKey     *CatalogKey      `json:"catalog_key,omitempty"`
+	Floor          *CatalogFloor    `json:"floor,omitempty"`
+	Envelope       *CatalogEnvelope `json:"envelope,omitempty"`
+	Timestamp      int64            `json:"timestamp"`
+	Nonce          string           `json:"nonce"`
+	PublicKey      string           `json:"public_key"`
+	Signature      string           `json:"signature"`
 }
 
 // Response is signed by the daemon. Signature is over the other fields.
@@ -156,7 +159,7 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	}
 	g.seen[req.Nonce] = struct{}{}
 	if !knownVerb(req.Verb) {
-		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, members-plans, approve-members, bootstrap"
+		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, members-plans, hq-service-recovery, approve-members, bootstrap"
 	}
 	if id, msg := catalogFields(req, raw); id != "" {
 		return req, id, msg
@@ -171,13 +174,16 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 		}
 		g.Pairing = pairing
 	}
-	if req.Verb == membersPlansVerb {
+	if req.Verb == recoveryVerb && (!g.Pairing.OwnerPresenceRequired || runtime.GOOS != "darwin") {
+		return req, diag.DaemonPeerRefused, "service recovery requires the protected macOS pairing"
+	}
+	if req.Verb == membersPlansVerb || req.Verb == recoveryVerb {
 		p := g.Pairing
 		if !p.AgentDaemonBound || p.AgentDaemonUID != peerUID || !p.AgentDaemon.Equal(ed25519.PublicKey(pub)) || !dedicatedMembersPlanPeer(peerUID) {
-			return req, diag.DaemonPeerRefused, "members-plans requires the enrolled HQ service account"
+			return req, diag.DaemonPeerRefused, "this command requires the enrolled HQ service account"
 		}
 	}
-	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" && req.Verb != membersPlansVerb {
+	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" && req.Verb != membersPlansVerb && req.Verb != recoveryVerb {
 		return req, diag.DaemonPeerRefused, "this command requires its own owner presence proof"
 	}
 	if req.Verb == "bootstrap" {
@@ -199,6 +205,7 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if g.Pairing.isTerminal(ed25519.PublicKey(pub)) && !terminalVerb(req.Verb) {
 		return req, diag.DaemonUnknownKey, "the terminal client key is only for update, status, and receipts"
 	}
+	req.peerUID = peerUID
 	return req, "", ""
 }
 
@@ -232,7 +239,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, approveMembersVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, approveMembersVerb, "bootstrap":
 		return true
 	default:
 		return false
@@ -284,6 +291,16 @@ const approveMembersVerb = "approve-members"
 // or null value, and refuses everything but plan_id and plan_digest on
 // approve-members. Both identifiers must have their fixed forms.
 func membersFields(req Request, raw []byte) (string, string) {
+	if req.Verb == recoveryVerb {
+		if !validRecoveryRequest(req, raw) {
+			return diag.DaemonUndeclared, "invalid hq-service-recovery request"
+		}
+		return "", ""
+	}
+	if req.ChallengeNonce != "" || req.OwnerSignature != "" || hasRawField(raw, "challenge_nonce", "owner_signature") {
+		return diag.DaemonUndeclared, "recovery proof fields are not declared on this verb"
+	}
+
 	if req.Verb == membersPlansVerb {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &fields); err != nil {
@@ -329,6 +346,12 @@ func canonical(r Request) []byte {
 	}
 	if r.PlanDigest != "" {
 		parts = append(parts, "plan_digest", r.PlanDigest)
+	}
+	if r.ChallengeNonce != "" {
+		parts = append(parts, "challenge_nonce", r.ChallengeNonce)
+	}
+	if r.OwnerSignature != "" {
+		parts = append(parts, "owner_signature", r.OwnerSignature)
 	}
 	return []byte(strings.Join(parts, "\n"))
 }

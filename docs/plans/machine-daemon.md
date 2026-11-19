@@ -174,6 +174,10 @@ flowchart LR
   refuse access. The directory scan limit is 8,192 entries. Fetch bounds the saved
   file at 256 KiB and the response at the existing 64 KiB frame limit.
   [Plan retrieval decision](https://github.com/true-line/agent-bot-platform/discussions/50)
+- `hq-service-recovery` is a macOS-only protected transition. Its exact
+  signed message and one-operation handoff are specified in
+  [paired HQ service recovery](member-accounts.md#paired-hq-service-recovery-on-macos).
+
 - `approve-members`: record the owner's approval of one member accounts
   plan ([member-accounts.md](member-accounts.md)). The request carries
   `plan_id` and `plan_digest` and nothing else, and both are in the signed

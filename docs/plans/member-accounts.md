@@ -102,6 +102,73 @@ The names `root` and `admin` are reserved even if a lookup finds no account.
 `apply` takes a plan ID and nothing else, like the daemon's `apply`
 (ADR-0012). There is no flag that skips the approval.
 
+### Paired HQ service recovery on macOS
+
+When the dedicated HQ account already exists and its service is down, the
+prefix administrator saves a fresh HQ service plan in the default members
+store. The enrolled HQ CLI fetches the plan over the signed Machine channel.
+The operator carries its one-operation signed challenge to the daily owner's
+local Approvals interface, and returns the public proof to the same HQ CLI.
+The [paired workflow](https://github.com/true-line/agent-bot-machine/issues/539)
+keeps the existing enrollment and owner pin. A failed earlier root apply has
+already claimed its own plan ID.
+
+The channel verb is `hq-service-recovery`. All requests carry the exact
+`plan_id` and `plan_digest`. Its signed `option` selects an operation.
+
+| Option | Additional request fields | Signed success state and body |
+| --- | --- | --- |
+| `challenge` | None | `challenged` with the exact fields below |
+| `approve` | `challenge_nonce`, `owner_signature` | `approved` with the existing members approval record |
+| `cancel` | `challenge_nonce` | `cancelled` with `plan_id` and `plan_digest` |
+
+The usual HQ Ed25519 request signature includes the existing
+`plan_digest` suffix. Following it, append the LF-separated field name and
+value for `challenge_nonce` when present, then `owner_signature` when
+present. The transport signature has no trailing LF. The Machine reply
+uses the existing signed response frame and binds the transport request nonce.
+
+The challenge body contains exactly `action`, `machine_key`, `hq_key`,
+`owner_key`, `plan_id`, `plan_digest`, `nonce`, `expires_at` and
+`plan_canonical`. Preserve the original signed response bytes for handoff.
+The receiver verifies the Machine key against its independently trusted
+SHA-256 fingerprint and recomputes the plan digest over the canonical UTF-8
+string, including its final LF. The owner's signer verifies that its hardware
+key equals the pinned `owner_key` and shows the exact service and owner before
+requesting presence.
+
+The owner's ECDSA P-256/SHA-256 signature covers the following UTF-8 lines,
+including the final LF. Machine and HQ keys and the 32-byte challenge nonce
+are lowercase hex. The owner key is canonical standard base64 of the
+uncompressed 65-byte public point. Expiry is decimal Unix time, at most
+120 seconds from issuance. The returned signature is standard base64 of
+the ASN.1 DER signature.
+
+```text
+agent-bot-machine-owner/v1
+hq-service-recovery
+<MACHINE_KEY>
+<HQ_KEY>
+<OWNER_KEY>
+<PLAN_ID>
+<PLAN_DIGEST>
+<CHALLENGE_NONCE>
+<EXPIRES_AT>
+```
+
+Machine checks the current protected peer and kernel UID, current Machine and
+owner keys, and a locally rebuilt exact plan at issue and before approval.
+The sole allowed steps are the unchanged dedicated HQ account and its
+verified LaunchDaemon create/write. The member list must be empty. The
+retained archive, Node executable, extracted files, owner and service
+definition must match. An active HQ process or conflicting job is refused.
+Issuing a challenge replaces the old one. Cancellation matches the challenge
+nonce and cannot revoke its replacement. A successful proof is consumed in
+durable state before recording the usual ten-minute approval. Only the
+existing human-run `sudo managed-machine members apply PLAN_ID` acts on the
+host and verifies the running service. The protected route leaves generic
+member approvals, first installation, and enrollment on their existing terms.
+
 ### How root is obtained
 
 The owner runs `sudo managed-machine members apply <plan-id>` in their own

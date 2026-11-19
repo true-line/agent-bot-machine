@@ -44,6 +44,7 @@ func (c ownerPairChallenge) message() []byte {
 }
 
 type ownerPairState struct {
+	Recovery   *recoveryChallenge  `json:"service_recovery,omitempty"`
 	Owner      string              `json:"owner"`
 	Machine    string              `json:"machine,omitempty"`
 	HQ         string              `json:"hq,omitempty"`
@@ -97,12 +98,15 @@ func readOwnerPairState(dir string) (*ownerPairState, error) {
 	if c := s.Pending; c != nil && (s.PendingUID <= 0 || c.Action != "machine-pair" || !exactKey(c.Machine) || !exactKey(c.HQ) || !exactKey(c.Nonce)) {
 		return nil, errors.New("invalid pending owner challenge")
 	}
+	if c := s.Recovery; c != nil && (!c.valid() || c.Machine != s.Machine || c.HQ != s.HQ || c.Owner != s.Owner || c.UID != s.UID) {
+		return nil, errors.New("invalid pending service recovery")
+	}
 	return &s, nil
 }
 
 // Owner pin, outstanding nonce and live key/UID change together. Readers see
-// the entire old record or its replacement. Only admin enrollment writers
-// hold the lock; the socket service never consumes the challenge.
+// the entire old record or its replacement. Admin enrollment and protected
+// service recovery share this lock, with separate challenge purposes.
 func (s *ownerPairState) save(dir string) error {
 	data, err := json.Marshal(s)
 	if err != nil {
@@ -210,6 +214,7 @@ func ownerPair(root string, caller Caller, state *ownerPairState, options ownerP
 			return serviceFailed(err)
 		}
 		c := &ownerPairChallenge{"machine-pair", machineHex, hqHex, hex.EncodeToString(nonce[:]), now + ownerChallengeTTL}
+		state.Recovery = nil
 		state.Pending, state.PendingUID = c, uid
 		if err = state.save(dir); err != nil {
 			return serviceFailed(err)
@@ -233,6 +238,7 @@ func ownerPair(root string, caller Caller, state *ownerPairState, options ownerP
 	if _, err = os.Lstat(filepath.Join(dir, "peers", "agent-daemon.revoked")); err == nil || !errors.Is(err, os.ErrNotExist) {
 		return ownerPairRefused("HQ enrollment is revoked or its revocation state cannot be read")
 	}
+	state.Recovery = nil
 	state.Machine, state.HQ, state.UID = machineHex, hqHex, uid
 	state.Pending, state.PendingUID = nil, 0
 	if err = state.save(dir); err != nil {
