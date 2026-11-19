@@ -6,9 +6,9 @@
 # macOS runner, and only when asked:
 #   MM_MEMBERS_REAL_ACCOUNTS=1 bash tests/members-apply-macos.test.sh
 #
-# The approval file is written here in the form agent-machine's
-# approve-members verb writes it. The verb itself is covered by the Go tests
-# in internal/daemon.
+# Generic account cases seed the existing approval record. The dedicated
+# first-HQ case at the end exports and imports a signed owner proof via the
+# production CLI, then applies its exact plan using sudo.
 set -euo pipefail
 
 if [ "${MM_MEMBERS_REAL_ACCOUNTS:-}" != "1" ]; then

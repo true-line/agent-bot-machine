@@ -55,7 +55,8 @@ private group and home and cannot log in. Add --hq-service to install the
 verified launchd service.
 
 apply needs root and an approval. The owner approves the plan's digest in
-the local web UI, then runs apply with sudo in their own terminal within
+the local web UI or, for first HQ on macOS, the owner approval app.
+The prefix administrator then runs apply with sudo in their own terminal within
 ten minutes. apply builds the plan again from the host and runs only when
 its digest is the approved one. It takes a plan id and nothing else; no
 option skips the approval. An agent account or session is refused.
@@ -276,6 +277,13 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		Set("hq_account_dedicated", plan.SharedHQAdvice() == "").
 		SetOptional("advice", plan.SharedHQAdvice())}
 	for _, s := range plan.Steps {
+		if platform == PlatformDarwin && s.Kind == KindHQAccount && s.Target == DarwinHQAccount && s.Action == ActionCreate {
+			advice := "The prefix administrator can send this saved plan to the owner approval app with managed-machine daemon first-hq export " + planID
+			if len(plan.Members) != 0 {
+				advice = "First provision the dedicated HQ role with a members plan without harness accounts, then plan the harness accounts separately."
+			}
+			records[0].Set("advice", advice)
+		}
 		records = append(records, output.New().
 			Set("kind", s.Kind).
 			Set("target", s.Target).

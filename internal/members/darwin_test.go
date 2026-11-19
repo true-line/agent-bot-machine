@@ -146,3 +146,37 @@ func TestDarwinPlanAndApplyCommands(t *testing.T) {
 		t.Fatal("a macOS plan was applied on Linux")
 	}
 }
+
+func TestDarwinPlanGuidesFirstHQExport(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		exists bool
+		want   string
+	}{
+		{"dedicated first HQ", []string{"plan"}, false, "daemon first-hq export "},
+		{"includes harness", []string{"plan", "--members", "_abm-one"}, false, "without harness accounts"},
+		{"dedicated role exists", []string{"plan"}, true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := emptyHost()
+			if tc.exists {
+				h.accounts[DarwinHQAccount] = Account{Name: DarwinHQAccount, UID: 320, GID: 320, Group: DarwinHQAccount, Home: HQHome(PlatformDarwin, DarwinHQAccount)}
+				h.entries[h.accounts[DarwinHQAccount].Home] = Entry{Dir: true, Owner: DarwinHQAccount, Mode: 0700}
+			}
+			d, _ := deps(t, h)
+			result := Command(d).Run(on(target.DarwinARM64), tc.args)
+			if result.Diagnostic != nil {
+				t.Fatal(result.Diagnostic.Message)
+			}
+			value, ok := result.Records[0].Get("advice")
+			if tc.want == "" {
+				if ok {
+					t.Fatalf("unexpected advice: %v", value)
+				}
+			} else if !ok || !strings.Contains(value.(string), tc.want) {
+				t.Fatalf("wrong first-HQ advice: %v", value)
+			}
+		})
+	}
+}
