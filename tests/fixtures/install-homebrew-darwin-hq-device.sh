@@ -12,24 +12,30 @@ tap_homebrew_device_release() (
     # formula with normal Homebrew permissions, leaving the parent umask intact.
     umask 022
     "$brew" tap "$tap" https://github.com/true-line/agent-bot-machine.git
+    if [[ -n "${MM_HQ_TAP_REVISION:-}" ]]; then
+        [[ "$MM_HQ_TAP_REVISION" =~ ^[0-9a-f]{40}$ && "${HOMEBREW_NO_AUTO_UPDATE:-}" == 1 ]] || exit 1
+        git -C "$tapdir" fetch --quiet --no-tags --depth=1 origin "$MM_HQ_TAP_REVISION"
+        git -C "$tapdir" checkout --quiet --detach "$MM_HQ_TAP_REVISION"
+        [[ "$(git -C "$tapdir" rev-parse HEAD)" == "$MM_HQ_TAP_REVISION" ]]
+    fi
 )
 
 install_homebrew_device_release() (
     set -euo pipefail
-    local brew="$1" version="$2" digest="$3" tap=true-line/agent-bot-machine recipe archive
+    local brew="$1" version="$2" digest="$3" tap=true-line/agent-bot-machine tapdir recipe
     [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$digest" =~ ^[0-9a-f]{64}$ ]] || exit 1
     umask 022
-    recipe="$("$brew" --repository "$tap")/Formula/managed-machine.rb"
-    archive="managed-machine_${version}_darwin_arm64.tar.gz"
-    if ! grep -Fxq "  version \"$version\"" "$recipe" ||
-       ! grep -Fxq "      tag:   \"v$version\"" "$recipe" ||
-       ! grep -Fxq "    url \"https://github.com/$tap/releases/download/v$version/$archive\"" "$recipe" ||
-       ! grep -Fxq "    sha256 \"$digest\"" "$recipe"; then
+    tapdir="$("$brew" --repository "$tap")"
+    recipe="$tapdir/Formula/managed-machine.rb"
+    if [[ "$(python3 "$(dirname "${BASH_SOURCE[0]}")/homebrew-device-pin.py" "$recipe")" != "$version $digest" ]]; then
         echo 'The public Homebrew formula does not pin the requested release and archive' >&2
         exit 1
     fi
     if "$brew" commands --quiet | grep -x trust >/dev/null; then "$brew" trust --tap "$tap"; fi
     "$brew" install --formula "$tap/managed-machine"
+    if [[ -n "${MM_HQ_TAP_REVISION:-}" ]]; then
+        [[ "$(git -C "$tapdir" rev-parse HEAD)" == "$MM_HQ_TAP_REVISION" ]] || exit 1
+    fi
 )
 
 verify_homebrew_device_binary() {
@@ -56,3 +62,18 @@ with tarfile.open(sys.argv[1],"r:gz") as archive:
             while chunk:=src.read(65536): dst.write(chunk)
 PY
 }
+
+fetch_public_device_archive() (
+    set -euo pipefail
+    local version="$1" work="$2" expected="$3" asset url digest
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$expected" =~ ^[0-9a-f]{64}$ ]] || exit 1
+    asset="managed-machine_${version}_darwin_arm64.tar.gz"
+    url="https://github.com/true-line/agent-bot-machine/releases/download/v$version"
+    local download=(curl -qfsSL --proto '=https' --proto-redir '=https' --retry 3)
+    "${download[@]}" "$url/SHA256SUMS" -o "$work/SHA256SUMS"
+    digest="$(awk -v asset="$asset" 'NF == 2 && $2 == asset {print $1}' "$work/SHA256SUMS")"
+    [[ "$digest" == "$expected" ]] || { echo 'Published checksum disagrees with the selected release' >&2; exit 1; }
+    "${download[@]}" "$url/$asset" -o "$work/$asset"
+    [[ "$(shasum -a 256 "$work/$asset" | awk '{print $1}')" == "$expected" ]] ||
+        { echo 'Downloaded archive differs from its published checksum' >&2; exit 1; }
+)

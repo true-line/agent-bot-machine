@@ -1,5 +1,5 @@
 #!/bin/bash
-# Qualify the public formula on a fresh PR runner without starting either service.
+# Qualify the public formula on a fresh hosted runner without starting either service.
 set -euo pipefail
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
    "$(uname -sm)" == 'Darwin arm64' && "$(id -u)" != 0 &&
@@ -11,15 +11,14 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 tap_homebrew_device_release "$brew" "$prefix"
 recipe="$("$brew" --repository true-line/agent-bot-machine)/Formula/managed-machine.rb"
-version="$(sed -nE 's/^  version "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' "$recipe")"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+pin="$(python3 "$(dirname "$0")/homebrew-device-pin.py" "$recipe")"
+if [[ -n "${MM_HQ_TAP_REVISION:-}" && "$pin" != "${MM_HQ_DEVICE_VERSION:-} ${MM_HQ_DEVICE_SHA256:-}" ]]; then
+    echo 'The event revision does not install the selected formula pin' >&2
+    exit 1
+fi
+read -r version digest <<< "$pin"
 asset="managed-machine_${version}_darwin_arm64.tar.gz"
-url="https://github.com/true-line/agent-bot-machine/releases/download/v$version"
-download=(curl -qfsSL --proto '=https' --proto-redir '=https' --retry 3)
-"${download[@]}" "$url/SHA256SUMS" -o "$work/SHA256SUMS"
-digest="$(awk -v asset="$asset" 'NF == 2 && $2 == asset {print $1}' "$work/SHA256SUMS")"
-[[ "$digest" =~ ^[0-9a-f]{64}$ ]]
-"${download[@]}" "$url/$asset" -o "$work/$asset"
+fetch_public_device_archive "$version" "$work" "$digest"
 unpack_signed_device_release "$work/$asset" "$digest" "$work/unpacked"
 install_homebrew_device_release "$brew" "$version" "$digest"
 verify_homebrew_device_install "$prefix" "$version" "$work/unpacked"

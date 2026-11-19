@@ -292,12 +292,18 @@ On pull requests, the macOS 15 runner installs the current public Homebrew
 formula and checks the linked Machine and keyd executables against the
 published release checksum, Developer ID requirements and installed modes.
 
-After the public Homebrew formula pins a compatible signed release, the
-`macOS 27 HQ installation` workflow can qualify that installation on a fresh
-runner. Supply `device_release_version`, the reviewed Darwin archive digest
-in `device_archive_sha256`, and `device_homebrew_install=true`. It compares
-both active keg executables to the signed archive before pairing a dedicated
-HQ role, verifying an enrollment proof, restarting Machine and revoking HQ.
+When the signed Darwin archive pin changes on protected `main`, CI installs
+the public tap at that push's exact Git commit. It verifies the release
+checksums and compares both active keg executables to the published archive.
+The historical v0.12.4 archive receives the package checks. For subsequent
+releases, the macOS 27 runner also pairs a dedicated HQ role, verifies an
+enrollment proof, restarts Machine and revokes HQ.
+
+The hosted run reports its actual SIP state. Physical Stage 2a qualification
+requires separate evidence. To run the installed-release check manually, use
+the `macOS 27 HQ installation` workflow with `device_release_version`, the
+reviewed `device_archive_sha256`, and `device_homebrew_install=true`.
+The `require_sip=true` dispatch additionally requires fully enabled SIP.
 
 An administrator runs `managed-machine daemon revoke-hq` to disable the
 role immediately. The deny marker becomes visible before waiting for

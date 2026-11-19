@@ -1,0 +1,44 @@
+name: Qualify the published Homebrew device release
+on:
+  push:
+    branches: [main]
+    paths: [Formula/managed-machine.rb]
+  pull_request:
+    paths:
+      - Formula/managed-machine.rb
+      - .github/workflows/homebrew-device-release.yml
+      - .github/workflows/darwin-hq-install.yml
+      - tests/fixtures/homebrew-device-pin.py
+      - tests/homebrew-device-pin.test.py
+permissions:
+  contents: read
+
+jobs:
+  pin:
+    runs-on: ubuntu-24.04
+    outputs:
+      mode: ${{ steps.pin.outputs.mode }}
+      version: ${{ steps.pin.outputs.version }}
+      digest: ${{ steps.pin.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Test release-pin selection
+        run: python3 tests/homebrew-device-pin.test.py
+      - name: Compare the protected-main push's formula pins
+        id: pin
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          PROTECTED: ${{ github.ref_protected }}
+        run: python3 tests/fixtures/homebrew-device-pin.py --event >> "$GITHUB_OUTPUT"
+  qualify:
+    needs: pin
+    if: github.event_name == 'push' && (needs.pin.outputs.mode == 'package' || needs.pin.outputs.mode == 'custody')
+    uses: ./.github/workflows/darwin-hq-install.yml
+    with:
+      formula_qualification: ${{ needs.pin.outputs.mode }}
+      device_release_version: ${{ needs.pin.outputs.version }}
+      device_archive_sha256: ${{ needs.pin.outputs.digest }}

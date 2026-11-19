@@ -21,6 +21,17 @@ on:
       - 'tests/fixtures/*darwin-hq*'
       - 'tests/fixtures/hq-launchd-install.sh'
       - 'tests/fixtures/hq-launchd-runtime.c'
+  workflow_call:
+    inputs:
+      formula_qualification:
+        type: string
+        required: true
+      device_release_version:
+        type: string
+        required: true
+      device_archive_sha256:
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       require_sip:
@@ -41,6 +52,7 @@ permissions:
   contents: read
 jobs:
   install:
+    if: inputs.formula_qualification != 'package'
     name: Machine installs the pinned HQ release on macOS 27
     runs-on: xcode-27
     timeout-minutes: 20
@@ -58,19 +70,19 @@ jobs:
         env:
           MM_DEVICE_VERSION: ${{ inputs.device_release_version }}
           MM_DEVICE_SHA: ${{ inputs.device_archive_sha256 }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           [[ "$MM_DEVICE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$MM_DEVICE_SHA" =~ ^[0-9a-f]{64}$ ]]
           archive="managed-machine_${MM_DEVICE_VERSION}_darwin_arm64.tar.gz"
-          gh release download "v$MM_DEVICE_VERSION" --repo "$GITHUB_REPOSITORY" --pattern "$archive" --dir "$RUNNER_TEMP"
-          [[ "$(shasum -a 256 "$RUNNER_TEMP/$archive" | awk '{print $1}')" == "$MM_DEVICE_SHA" ]]
+          source tests/fixtures/install-homebrew-darwin-hq-device.sh
+          fetch_public_device_archive "$MM_DEVICE_VERSION" "$RUNNER_TEMP" "$MM_DEVICE_SHA" >/dev/null
           echo "MM_HQ_DEVICE_VERSION=$MM_DEVICE_VERSION" >> "$GITHUB_ENV"
           echo "MM_HQ_DEVICE_ARCHIVE=$RUNNER_TEMP/$archive" >> "$GITHUB_ENV"
           echo "MM_HQ_DEVICE_SHA256=$MM_DEVICE_SHA" >> "$GITHUB_ENV"
       - name: Install the real HQ archive with a signed first-HQ approval
         shell: bash
         env:
-          MM_HQ_DEVICE_HOMEBREW: ${{ inputs.device_homebrew_install || 'false' }}
+          MM_HQ_DEVICE_HOMEBREW: ${{ inputs.device_homebrew_install || inputs.formula_qualification == 'custody' || 'false' }}
+          MM_HQ_TAP_REVISION: ${{ inputs.formula_qualification && github.sha || '' }}
           MM_HQ_REQUIRE_SIP: ${{ inputs.require_sip || 'false' }}
           MM_MEMBERS_REAL_ACCOUNTS: '1'
           MM_MEMBERS_RUNNER: ${{ runner.environment }}
@@ -85,6 +97,7 @@ jobs:
             bash tests/members-apply-macos.test.sh --real-hq
           fi
   rollback-macos-15:
+    if: inputs.formula_qualification != 'custody'
     name: HQ socket rollback on macOS 15
     runs-on: macos-15
     timeout-minutes: 15
@@ -105,8 +118,11 @@ jobs:
           [[ "$(sw_vers -productVersion)" == 15.* ]]
           go test -v -count=1 -race ./internal/members -run '^TestRollbackOfObservedLaunchSocket$'
       - name: Verify the current public Homebrew Machine and keyd
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || inputs.formula_qualification == 'package'
         env:
+          MM_HQ_TAP_REVISION: ${{ inputs.formula_qualification && github.sha || '' }}
           HOMEBREW_NO_AUTO_UPDATE: '1'
+          MM_HQ_DEVICE_VERSION: ${{ inputs.device_release_version }}
+          MM_HQ_DEVICE_SHA256: ${{ inputs.device_archive_sha256 }}
           HOMEBREW_NO_ANALYTICS: '1'
         run: bash tests/fixtures/public-homebrew-darwin-hq-device.sh
