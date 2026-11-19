@@ -62,8 +62,14 @@ openssl ecparam -name prime256v1 -genkey -noout -out "$signer/key.pem"
 pin="$(openssl ec -in "$signer/key.pem" -pubout -outform DER 2>/dev/null | tail -c 65 | openssl base64 -A)"
 "$MM" daemon pair >/dev/null
 "$MM" daemon pair --pin-owner "$pin" >/dev/null
+# Sign only the purpose-specific transcript constructed by a test case.
+fixture_owner_proof() {
+    local message="$1" sig
+    sig="$(openssl dgst -sha256 -sign "$signer/key.pem" "$message" | openssl base64 -A)"
+    jq -n --arg public_key "$pin" --arg signature "$sig" '{public_key:$public_key,signature:$signature}'
+}
 first_hq_approve() {
-    local id="$1" digest="$2" challenge="$signer/challenge.json" message="$signer/message" sig
+    local id="$1" digest="$2" challenge="$signer/challenge.json" message="$signer/message"
     "$MM" daemon first-hq export "$id" > "$challenge"
     jq -e --arg id "$id" --arg digest "$digest" '
         .action == "first-hq-provision" and .plan_id == $id and .plan_digest == $digest and
@@ -72,12 +78,17 @@ first_hq_approve() {
     ' "$challenge" >/dev/null
     [[ "$(jq -j '.plan_canonical' "$challenge" | shasum -a 256 | awk '{print $1}')" == "$digest" ]] || fail 'canonical bytes differ from saved plan'
     jq -j '["agent-bot-machine-owner/v1", .action, .machine_key, .plan_id, .plan_digest, .nonce, (.expires_at | tostring), ""] | join("\n")' "$challenge" > "$message"
-    sig="$(openssl dgst -sha256 -sign "$signer/key.pem" "$message" | openssl base64 -A)"
-    jq -n --arg public_key "$pin" --arg signature "$sig" '{public_key:$public_key,signature:$signature}' > "$signer/proof.json"
+    fixture_owner_proof "$message" > "$signer/proof.json"
     refused MM_MEMBERS_NOT_APPROVED sudo "$MM" members apply "$id"
     "$MM" daemon first-hq approve "$id" --proof-file "$signer/proof.json" | jq -e '.state == "approved"' >/dev/null
     refused MM_DAEMON_CALLER_REFUSED "$MM" daemon first-hq approve "$id" --proof-file "$signer/proof.json"
     ! exists "$role" || fail 'proof import created an account'
+}
+check_real_hq_status() {
+    jq -e --arg role "$role" --arg owner "$ME" --arg socket "$socket" --argjson uid "$(id -u)" '
+        .profile == "managed-cooperative" and .hq.account == $role and
+        (.hq.sockets.ownerControl | .peer_check == "getpeereid" and .account == $owner and .uid == $uid and .path == $socket)
+    ' >/dev/null || fail 'real HQ did not confirm cooperative status for the approved owner'
 }
 for count in 1 2; do
     out="$("$MM" members plan --hq-service "$record")"
@@ -116,10 +127,7 @@ for count in 1 2; do
     status="$(cd / && "$stage/node" "$stage/hq/hq/main.mjs" status --owner-control --json)"
     jq -e '.hq.sockets.ownerControl.peer_check=="getpeereid"' <<<"$status" >/dev/null
     if "$real_hq"; then
-        jq -e --arg role "$role" --arg owner "$ME" --arg socket "$socket" --argjson uid "$(id -u)" '
-            .profile == "managed-cooperative" and .hq.account == $role and
-            (.hq.sockets.ownerControl | .account == $owner and .uid == $uid and .path == $socket)
-        ' <<<"$status" >/dev/null || fail 'real HQ did not confirm cooperative status for the approved owner'
+        check_real_hq_status <<<"$status"
     fi
     [[ "$(sudo stat -f '%Su %Sg %Lp' "$plist")" == 'root wheel 644' ]]
     [[ "$(sudo stat -f '%Su %Lp' /var/agent-bot-hq/.agent-bot-hq)" == "$role 700" ]]
@@ -131,6 +139,8 @@ for count in 1 2; do
 done
 if "$real_hq"; then
     ok 'signed first-HQ install served cooperative status; the refused repeat apply preserved its PID'
+    # Run in a subshell to own the foreground Machine child independently of launchd cleanup.
+    (source "$ROOT/tests/fixtures/paired-darwin-hq-recovery.sh")
 else
     sudo sh -c 'printf x >> "$1"' sh "$stage/hq/hq/main.mjs"
     refused MM_MEMBERS_PATH_REFUSED "$MM" members plan --hq-service "$record"
