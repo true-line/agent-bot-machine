@@ -32,6 +32,7 @@ type ownerPairOptions struct {
 }
 
 type ownerPairChallenge struct {
+	UID     int    `json:"hq_uid,omitempty"`
 	Action  string `json:"action"`
 	Machine string `json:"machine_key"`
 	HQ      string `json:"hq_key"`
@@ -40,16 +41,23 @@ type ownerPairChallenge struct {
 }
 
 func (c ownerPairChallenge) message() []byte {
-	return []byte(strings.Join([]string{"agent-bot-machine-owner/v1", c.Action, c.Machine, c.HQ, c.Nonce, strconv.FormatInt(c.Expires, 10), ""}, "\n"))
+	parts := []string{"agent-bot-machine-owner/v1", c.Action, c.Machine, c.HQ}
+	if c.Action == "machine-pair-ordinary" {
+		parts = append(parts, strconv.Itoa(c.UID))
+	}
+	return []byte(strings.Join(append(parts, c.Nonce, strconv.FormatInt(c.Expires, 10), ""), "\n"))
 }
 
 type ownerPairState struct {
+	Recovery   *recoveryChallenge  `json:"service_recovery,omitempty"`
 	Owner      string              `json:"owner"`
 	Machine    string              `json:"machine,omitempty"`
 	HQ         string              `json:"hq,omitempty"`
+	HQEpoch    string              `json:"hq_epoch,omitempty"`
 	UID        int                 `json:"uid,omitempty"`
 	Pending    *ownerPairChallenge `json:"pending,omitempty"`
 	PendingUID int                 `json:"pending_uid,omitempty"`
+	FirstHQ    *firstHQChallenge   `json:"first_hq,omitempty"`
 }
 
 func ownerKey(s string) (*ecdsa.PublicKey, error) {
@@ -91,18 +99,24 @@ func readOwnerPairState(dir string) (*ownerPairState, error) {
 	if _, err := ownerKey(s.Owner); err != nil {
 		return nil, err
 	}
-	if (s.HQ == "" && (s.UID != 0 || s.Machine != "")) || (s.HQ != "" && (!exactKey(s.HQ) || !exactKey(s.Machine) || s.UID <= 0)) {
+	if (s.HQEpoch != "" && (!exactKey(s.HQEpoch) || s.HQ == "")) || (s.HQ == "" && (s.UID != 0 || s.Machine != "")) || (s.HQ != "" && (!exactKey(s.HQ) || !exactKey(s.Machine) || s.UID <= 0)) {
 		return nil, errors.New("invalid enrolled HQ identity")
 	}
-	if c := s.Pending; c != nil && (s.PendingUID <= 0 || c.Action != "machine-pair" || !exactKey(c.Machine) || !exactKey(c.HQ) || !exactKey(c.Nonce)) {
+	if c := s.Pending; c != nil && (s.PendingUID <= 0 || !(c.Action == "machine-pair" && c.UID == 0 || c.Action == "machine-pair-ordinary" && c.UID == s.PendingUID) || !exactKey(c.Machine) || !exactKey(c.HQ) || !exactKey(c.Nonce)) {
 		return nil, errors.New("invalid pending owner challenge")
+	}
+	if c := s.Recovery; c != nil && (!c.valid() || c.Machine != s.Machine || c.HQ != s.HQ || c.Owner != s.Owner || c.UID != s.UID) {
+		return nil, errors.New("invalid pending service recovery")
+	}
+	if s.FirstHQ != nil && !s.FirstHQ.valid() {
+		return nil, errors.New("invalid pending first-HQ challenge")
 	}
 	return &s, nil
 }
 
 // Owner pin, outstanding nonce and live key/UID change together. Readers see
-// the entire old record or its replacement. Only admin enrollment writers
-// hold the lock; the socket service never consumes the challenge.
+// the entire old record or its replacement. Admin enrollment and protected
+// service recovery share this lock, with separate challenge purposes.
 func (s *ownerPairState) save(dir string) error {
 	data, err := json.Marshal(s)
 	if err != nil {
@@ -180,24 +194,47 @@ func ownerPair(root string, caller Caller, state *ownerPairState, options ownerP
 	if !options.challenge && !options.proofSet {
 		return ownerPairRefused("HQ enrollment requires a fresh --owner-challenge and --owner-proof")
 	}
-	if userName != "" && userName != "_agent-bot-hq" {
-		return ownerPairRefused("owner-approved HQ pairing requires the dedicated _agent-bot-hq account")
+	if userName == "" {
+		userName = "_agent-bot-hq"
 	}
-	account, err := lookupUser("_agent-bot-hq")
-	if err != nil {
-		return ownerPairRefused("cannot resolve the dedicated _agent-bot-hq account")
+	account, err := lookupUser(userName)
+	if err != nil || account == nil || account.Username != userName {
+		return ownerPairRefused("cannot resolve the selected local HQ account")
 	}
 	uid, err := strconv.Atoi(account.Uid)
-	if err != nil || uid <= 0 || uid == caller.UID || account.Username != "_agent-bot-hq" {
-		return ownerPairRefused("invalid dedicated HQ account")
+	ordinary := userName != "_agent-bot-hq"
+	if err != nil || uid <= 0 || uid == caller.UID || ordinary && !ordinaryHQAccount(account) {
+		return ownerPairRefused("selected account is ineligible for HQ pairing")
 	}
 	hq, err := parseEnrollKey(enrollment, fingerprint)
 	if err != nil {
 		return ownerPairRefused(err.Error())
 	}
-	machine, err := loadPublic(filepath.Join(dir, "daemon.pub"))
+	// Startup publishes the channel pin under this same owner-pairing lock.
+	// Require it for both issuance and consumption before changing any state.
+	machine, err := readPublishedKey(dir)
+	if err != nil || machine == nil {
+		return ownerPairRefused("cannot read the prefix owner's Machine public key for enrollment")
+	}
+	channel := ChannelDir()
+	if channel == "" {
+		return ownerPairRefused("cannot locate the Machine channel directory for enrollment")
+	}
+	published, err := readPublishedKey(channel)
 	if err != nil {
-		return ownerPairRefused("the installed Machine service must have its daemon public key before enrollment")
+		return ownerPairRefused("cannot read the published Machine channel key for enrollment")
+	}
+	if published == nil {
+		if state.HQ != "" {
+			return ownerPairRefused("the enrolled Machine channel public key is missing; restore the matching public pin from a trusted backup")
+		}
+		return ownerPairRefused("the Machine channel public key is missing; run managed-machine daemon start as the prefix owner to publish it before first HQ enrollment")
+	}
+	if !machine.Equal(published) {
+		return ownerPairRefused("the published Machine channel key does not match the prefix owner's Machine public key")
+	}
+	if state.HQ != "" && hex.EncodeToString(machine) != state.Machine {
+		return ownerPairRefused("the Machine public key does not match the existing owner-approved enrollment")
 	}
 	if machine.Equal(hq) {
 		return ownerPairRefused("Machine and HQ must use distinct public keys")
@@ -209,18 +246,27 @@ func ownerPair(root string, caller Caller, state *ownerPairState, options ownerP
 		if _, err = rand.Read(nonce[:]); err != nil {
 			return serviceFailed(err)
 		}
-		c := &ownerPairChallenge{"machine-pair", machineHex, hqHex, hex.EncodeToString(nonce[:]), now + ownerChallengeTTL}
+		c := &ownerPairChallenge{Action: "machine-pair", Machine: machineHex, HQ: hqHex, Nonce: hex.EncodeToString(nonce[:]), Expires: now + ownerChallengeTTL}
+		if ordinary {
+			c.Action = "machine-pair-ordinary"
+			c.UID = uid
+		}
+		state.FirstHQ, state.Recovery = nil, nil
 		state.Pending, state.PendingUID = c, uid
 		if err = state.save(dir); err != nil {
 			return serviceFailed(err)
 		}
-		return cli.Result{Records: []*output.Record{output.New().Set("action", c.Action).Set("machine_key", c.Machine).Set("hq_key", c.HQ).Set("nonce", c.Nonce).Set("expires_at", c.Expires)}}
+		record := output.New().Set("action", c.Action).Set("machine_key", c.Machine).Set("hq_key", c.HQ).Set("nonce", c.Nonce).Set("expires_at", c.Expires)
+		if ordinary {
+			record.Set("hq_uid", uid)
+		}
+		return cli.Result{Records: []*output.Record{record}}
 	}
 	c := state.Pending
-	if c == nil || state.PendingUID != uid || c.Machine != machineHex || c.HQ != hqHex || c.Expires <= now || c.Expires > now+ownerChallengeTTL {
+	if c == nil || (c.Action == "machine-pair-ordinary") != ordinary || ordinary && c.UID != uid || state.PendingUID != uid || c.Machine != machineHex || c.HQ != hqHex || c.Expires <= now || c.Expires > now+ownerChallengeTTL {
 		return ownerPairRefused("missing, expired or mismatched owner pairing challenge")
 	}
-	if err = verifyOwnerPairProof(state.Owner, options.proof, c); err != nil {
+	if err = verifyOwnerProof(state.Owner, options.proof, c.message()); err != nil {
 		return ownerPairRefused(err.Error())
 	}
 	terminal, err := loadClientKey(filepath.Join(dir, "peers"), "terminal")
@@ -233,7 +279,8 @@ func ownerPair(root string, caller Caller, state *ownerPairState, options ownerP
 	if _, err = os.Lstat(filepath.Join(dir, "peers", "agent-daemon.revoked")); err == nil || !errors.Is(err, os.ErrNotExist) {
 		return ownerPairRefused("HQ enrollment is revoked or its revocation state cannot be read")
 	}
-	state.Machine, state.HQ, state.UID = machineHex, hqHex, uid
+	state.FirstHQ, state.Recovery = nil, nil
+	state.Machine, state.HQ, state.UID, state.HQEpoch = machineHex, hqHex, uid, c.Nonce
 	state.Pending, state.PendingUID = nil, 0
 	if err = state.save(dir); err != nil {
 		return serviceFailed(err)
@@ -241,7 +288,7 @@ func ownerPair(root string, caller Caller, state *ownerPairState, options ownerP
 	return cli.Result{Records: []*output.Record{output.New().Set("service", "agent-machine").Set("client", "agent-daemon").Set("state", "paired").Set("uid", uid)}}
 }
 
-func verifyOwnerPairProof(pin, proof string, c *ownerPairChallenge) error {
+func verifyOwnerProof(pin, proof string, message []byte) error {
 	var reply struct {
 		PublicKey string `json:"public_key"`
 		Signature string `json:"signature"`
@@ -256,7 +303,7 @@ func verifyOwnerPairProof(pin, proof string, c *ownerPairChallenge) error {
 		return err
 	}
 	sig, err := base64.StdEncoding.Strict().DecodeString(reply.Signature)
-	digest := sha256.Sum256(c.message())
+	digest := sha256.Sum256(message)
 	if err != nil || base64.StdEncoding.EncodeToString(sig) != reply.Signature || !ecdsa.VerifyASN1(pub, digest[:], sig) {
 		return errors.New("invalid owner pairing signature")
 	}
