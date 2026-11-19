@@ -147,6 +147,13 @@ error and preserves the existing pairings.
 
 ### Darwin key store
 
+Startup checks the shared `daemon.pub` against the prefix owner's private
+daemon key before activating services or replacing the socket. If the pin
+survives and custody is missing or mismatched, restore the matching private
+state from a trusted backup. Copying the public pin into a new private
+directory cannot restore signing. The existing migration for leaked legacy
+private state still retires its exposed identity.
+
 See [macos-signing.md](macos-signing.md). Constraints from #446 stay: no
 `.app` bundle, no Secure Enclave, no `keychain-access-groups`. The login
 keychain is not used. Empty-password `SecKeychainCreate` must pass a
@@ -236,6 +243,155 @@ the identity service and relays get no execution channel
 The thin client is a debug tool, off unless the prefix owner turns on debug
 mode.
 
+### Administrative device custody on the paired channel
+
+Protected pairing defaults to the dedicated HQ account. An administrator can
+select an eligible ordinary local non-administrator account with `--user NAME`
+on both halves of pairing. Its owner challenge uses `machine-pair-ordinary`
+and includes the verified numeric `hq_uid` between the HQ key and the nonce
+in the signed transcript. The owner reviews that UID. Members plan lookup and
+dedicated service recovery still resolve the dedicated service account.
+
+After pairing, the administrator explicitly runs the bundled
+`agent-bot-keyd hq-device-init` in their own macOS login. This authorizes
+creation of the native device identity for the current Machine, role key,
+UID, owner pin and enrollment epoch. An existing incompatible binding requires
+a separate transition. Status or a request from HQ cannot provision or rotate
+a key. The release ships the helper beside Machine at mode 0700. Machine
+requires its Developer ID signature and release identifier before delegation.
+
+An authenticated `hq-device` request selects one of these operations. Each
+one binds the original request nonce and the kernel-authenticated HQ UID.
+Responses use the normal pinned Machine signature. The admin's keyd verifies
+the second Machine-signed delegation before operating on its matching key.
+
+| Option | Signed state | Purpose |
+| --- | --- | --- |
+| `identity` | `identity` | Read public P-256 identity, RFC 7638 thumbprint, custody generation, hardware storage and current pairing epoch. A verified enrollment also includes the device ID and signed receipt digest/JTI. |
+| `enrollment-proof` | `proved` | Return a fresh ES256 enrollment proof restricted to the released device-authorization audience. |
+| `bind-enrollment` | `bound` | Validate the identity service's signed approved poll receipt against the admin's pending proof and device thumbprint. |
+| `access-assertion` | `asserted` | Use the recorded device ID and a new admin-owned ephemeral key for the fixed OAuth token audience. |
+| `bind-access` | `access-bound` | Validate the server-signed token result for that assertion and return the administrative session thumbprint and deadline. |
+
+The signed channel transcript appends the lines `hq_epoch`, then its value,
+after the normal ten fields for every operation except `identity`. A fresh
+owner proof establishes the epoch. Continuously paired older enrollments use
+`legacy`. Both bind operations additionally append alternating field names
+and values in this exact order: `receipt_body`, `receipt_jti`, `receipt_kid`,
+`receipt_signature`. The body is unpadded base64url of the exact signed HTTP
+200 bytes, limited to 8192 decoded bytes. The receipt signature is unpadded
+base64url Ed25519. Enrollment JTI is `enroll-v1:` plus the lowercase SHA-256
+hex digest of the original compact proof. Token JTI matches the issued access
+assertion. The private keyd message uses the domain
+`agent-bot-machine/keyd-hq-device/v1`, Machine key, HQ key (both padded
+standard base64), decimal peer UID, original nonce, Unix seconds, option,
+three empty historical field slots, then labelled epoch and receipt lines
+as applicable. Both request transcripts use LF with no trailing newline.
+
+An administrator runs `managed-machine daemon revoke-hq` to disable the
+role immediately. The deny marker becomes visible before waiting for
+in-flight work. Machine rechecks the pair at dispatch, after keyd returns
+and before delivering its response. A completed local revoke retires pending
+pairing and service-recovery challenges and waits for preauthorized socket
+writes to finish. Earlier responses already received or buffered, previously
+recorded human approvals, and completed remote effects have their own
+lifecycle. Restoring or re-enrolling revoked custody requires a separate
+explicitly authorized transition. There is no automatic re-pair.
+
+This implementation has a native provider on macOS. Other platforms refuse
+protected device requests until independently authorized hardware custody and
+local peer verification are available. Issuing arbitrary DPoP proofs or SDK
+approval decisions requires additional operation-specific authority. No
+generic signing or credential fallback is provided.
+
+### First HQ provisioning on macOS
+
+Before the dedicated `_agent-bot-hq` role exists, the Homebrew prefix
+administrator runs `managed-machine members plan` in their own login. The
+plan can include the existing `--hq-service` option for a verified HQ release.
+The default service plan binds the control endpoint to the planning account.
+The administrator obtains the owner's P-256 public key independently and pins
+it with `managed-machine daemon pair --pin-owner BASE64`.
+
+The administrator exports the saved plan and a two-minute challenge using the
+default JSON Lines output. Each export replaces the previous first-HQ
+challenge. Transfer the resulting file to the signed-in owner's approval app.
+The owner checks the Machine key, plan identity, digest, and complete account
+and service changes before approving. Transfer the returned JSON proof to the
+administrator. Treat the live proof as an approval until it expires.
+
+```sh
+managed-machine daemon first-hq export "$plan_id" > first-hq.json
+managed-machine daemon first-hq approve "$plan_id" --proof-file owner-proof.json
+sudo managed-machine members apply "$plan_id"
+```
+
+The administrator can withdraw an outstanding request with
+`managed-machine daemon first-hq cancel "$plan_id"`. Canceling in the owner
+app produces no proof. Import consumes the pending challenge and writes the
+existing ten-minute members approval. The final sudo command rechecks the
+current host against the approved digest and claims the ordinary one-use
+receipt. Once the role exists, check that the prefix owner's Machine daemon
+has published its public key on the shared channel. If the per-user daemon is
+installed but has never started, the prefix owner runs `managed-machine daemon
+start` to publish the key before requesting an enrollment challenge. Continue
+with [protected HQ pairing](macos-signing.md#owner-approval-for-a-new-hq-pairing).
+
+If the service step fails after account creation, apply preserves the HQ role
+and attempts to finalize the root-owned receipt at
+`/var/db/managed-machine/members/receipts/<plan-id>.json` with result
+`failed` and `failed_at` naming the service. A receipt still marked
+`started` also consumes the approval. Rollback unloads a service started
+by this apply and removes a newly installed plist if it still matches.
+If launchd leaves its socket behind after confirmed bootout, Machine can
+remove the same inactive socket it observed during that startup. A changed
+or busy endpoint is preserved. macOS 15 rejects the guarded unlink operation.
+Machine reports that limitation and leaves the socket in place.
+After a new bootstrap, Machine allows up to three seconds for launchd to
+publish the public socket. The owner client then checks its metadata and
+performs the authenticated status query. On the physical pilot, launchd
+published a root-owned socket whose inherited descriptor retained a different
+kernel name. HQ must verify that the published endpoint reaches that
+listener. The signed Machine status command exercises the separate role-to-
+Machine channel. See [HQ listener verification](https://github.com/true-line/agent-bot-hq/issues/176).
+
+Run `managed-machine members plan --hq-service "$record"` in the prefix
+administrator's account to inspect the remaining service step and its new
+digest. This readback saves a new plan.
+
+First-HQ transfer requires an absent role. With the role already present,
+installing the remaining service requires a new owner approval for the
+remaining plan. Use the enrolled HQ CLI to export a signed service-recovery
+challenge for that plan. The daily owner reviews it and returns a proof to
+the same paired HQ CLI. This approval covers only the eligible service
+repair. Retain the existing role, enrollment and failed receipt. Follow the
+[paired HQ service recovery procedure](member-accounts.md#paired-hq-service-recovery-on-macos).
+
+The export is one UTF-8 JSON object. Its fields are `action`
+(`first-hq-provision`), `machine_key`, `plan_id`, `plan_digest`, `nonce`,
+`expires_at` (integer Unix seconds), and `plan_canonical`. The canonical plan
+is the exact UTF-8 serialization from `members.Plan.Canonical()`, including its
+final LF. Its SHA-256 must equal `plan_digest`. The Machine public key,
+SHA-256 and 32-byte random nonce are lowercase hex. The app signs the following
+UTF-8 lines, each terminated by LF, with P-256 ECDSA and SHA-256.
+
+```text
+agent-bot-machine-owner/v1
+first-hq-provision
+<machine_key>
+<plan_id>
+<plan_digest>
+<nonce>
+<expires_at in decimal>
+```
+
+The returned object carries `public_key` (base64 of the X9.63 uncompressed
+P-256 point) and `signature` (base64 of the DER ECDSA signature). Machine checks
+the signature against its independently pinned key and revalidates the saved
+plan, host role and Machine identity before recording consent. This transfer
+requires only local administrator commands and the owner app. The signed HQ
+socket continues to enforce its existing verb restrictions.
+
 ### S6 — HQ account (this repo, D6)
 
 agent-bot-machine creates the HQ role account, `_agent-bot-hq` on macOS and
@@ -322,3 +478,49 @@ peer is not a numeric UID, so the key is never bound there.
 6. After S1 merges, open S2 from this file. Do not reopen the login
    keychain design. #442 Linux/Windows `daemon.key` and the parent-dir
    owner check stay on #442.
+
+### Temporary daemon switch on an already-paired Mac
+
+Use a human Terminal in the Homebrew prefix administrator's registered home.
+Keep the installed binary, its service files and the paired HQ client pin in
+place. Use a distinct, trusted candidate path that the administrator controls.
+The candidate must be able to read the existing self-only dedicated Keychain
+item. An ad-hoc build or a new binary with superficially similar signing
+metadata may be denied. The candidate itself performs the custody check.
+
+1. While the released Machine is still serving, run the candidate's absolute
+   path with `daemon verify-identity`. Compare the reported public SHA-256
+   fingerprint to HQ's independently retained Machine fingerprint. This checks
+   the actual candidate against the existing Keychain, private public key,
+   published channel pin and protected enrollment. A refusal leaves the release
+   running. Preserve the existing Keychain item and its ACL.
+2. Stop the released supervisor before running the candidate. The installed
+   release's `daemon stop` unloads both per-user agents, Machine and keyd. To
+   keep keyd available, use the administrator's launchd domain that currently
+   has `dev.qwts.agent-machine` (verify with `launchctl print`), then run
+   `launchctl bootout "$domain/dev.qwts.agent-machine"` for that job only.
+   The original `~/Library/LaunchAgents/dev.qwts.agent-machine.plist` remains
+   on disk. In the same administrator account run the candidate's absolute
+   path with `daemon run --require-identity FINGERPRINT` in the foreground.
+   This form requires the same enrolled key at startup and refuses a running
+   listener. Use the existing home and canonical prefix channel.
+3. Verify a fresh signed status with the paired HQ client. Complete or cancel
+   any outstanding recovery challenge before reverting to a release that does
+   not serve that operation. The approved service repair still requires the
+   prefix administrator's separate human `sudo "$candidate" members apply PLAN_ID`,
+   with `candidate` set to the trusted readiness-capable executable's absolute path.
+4. Stop the candidate in its terminal. If only Machine was unloaded, restore
+   its exact released plist with `launchctl bootstrap "$domain"
+   "$HOME/Library/LaunchAgents/dev.qwts.agent-machine.plist"`, then
+   `launchctl kickstart "$domain/dev.qwts.agent-machine"`. If both agents
+   were stopped using the released CLI, use the original released binary's
+   absolute path with `daemon start` to reactivate them. Verify another
+   signed status against HQ's original Machine pin.
+
+The daemon runs as the prefix owner without sudo. Only the separate members
+apply step runs as root. A switch never requires replacing the signed
+Homebrew executable, repinning the Machine, exporting the signing key, or
+changing the keychain ACL. The verify command reports only a public
+fingerprint. For an existing protected pairing the candidate refuses missing
+or conflicting pins, failed custody, or legacy rotation evidence before
+publishing a key or binding the channel.

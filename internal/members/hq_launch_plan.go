@@ -4,20 +4,77 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"runtime"
 )
 
 const (
-	launchLabel  = "ai.true-line.agent-bot-hq"
-	launchPlist  = "/Library/LaunchDaemons/" + launchLabel + ".plist"
-	launchSocket = "/private/var/agent-bot-hq-control.sock"
-	launchState  = "/var/agent-bot-hq/.agent-bot-hq"
+	launchLabel         = "ai.true-line.agent-bot-hq"
+	launchPlist         = "/Library/LaunchDaemons/" + launchLabel + ".plist"
+	launchControlV1     = "darwin-owner-control/v1"
+	launchControlV2     = "darwin-owner-control/v2"
+	launchRuntimeDir    = "/Library/Application Support/" + launchLabel
+	launchRuntimeSocket = launchRuntimeDir + "/owner-control.sock"
+	launchSocket        = "/private/var/agent-bot-hq-control.sock"
+	launchState         = "/var/agent-bot-hq/.agent-bot-hq"
 )
 
 // The owner approves the exact manager job, artifact, interpreter and owner UID.
 type launchRecord struct {
-	Service  HQService `json:"service"`
-	Plist    string    `json:"plist"`
-	OwnerUID int       `json:"owner_uid"`
+	Service    HQService        `json:"service"`
+	Plist      string           `json:"plist"`
+	OwnerUID   int              `json:"owner_uid"`
+	RuntimeDir *launchDirectory `json:"runtime_directory,omitempty"`
+}
+
+type launchDirectory struct {
+	Path   string `json:"path"`
+	Action string `json:"action"`
+	Owner  string `json:"owner"`
+	Group  string `json:"group"`
+	Mode   string `json:"mode"`
+}
+
+func socketForCapability(capability string) string {
+	if capability == launchControlV2 {
+		return launchRuntimeSocket
+	}
+	return launchSocket
+}
+
+func pathAncestry(path string) []string {
+	var paths []string
+	for {
+		paths = append(paths, path)
+		if path == filepath.Dir(path) {
+			return paths
+		}
+		path = filepath.Dir(path)
+	}
+}
+
+func planLaunchDirectory(h Host, checkACL func([]string) error) (*launchDirectory, error) {
+	parent := filepath.Dir(launchRuntimeDir)
+	if err := trustedPath(h, parent, true); err != nil {
+		return nil, err
+	}
+	ent, exists, err := h.Lstat(launchRuntimeDir)
+	if err != nil {
+		return nil, err
+	}
+	dir := &launchDirectory{Path: launchRuntimeDir, Owner: "root", Group: "wheel", Mode: "0755", Action: ActionCreate}
+	if exists {
+		if !ent.Dir || ent.Owner != dir.Owner || ent.Group != dir.Group || ent.Mode != 0755 {
+			return nil, refuse(RefusedPath, "existing HQ runtime directory must be root:wheel 0755")
+		}
+		dir.Action = ActionNone
+		parent = launchRuntimeDir
+	}
+	if runtime.GOOS == "darwin" {
+		if err := checkACL(pathAncestry(parent)); err != nil {
+			return nil, err
+		}
+	}
+	return dir, nil
 }
 
 func appendLaunchDaemon(p *Plan, in Input, h Host) error {
@@ -39,7 +96,8 @@ func appendLaunchDaemon(p *Plan, in Input, h Host) error {
 	if exists && (hq.UID == owner.UID || hq.Home != HQHome(PlatformDarwin, DarwinHQAccount) || hq.Shell != DarwinNoLoginShell) {
 		return refuse(RefusedAccount, "HQ needs its own locked role account and private home")
 	}
-	if err := verifyDarwinRelease(*s, h); err != nil {
+	capability, err := verifyDarwinRelease(*s, h)
+	if err != nil {
 		return err
 	}
 	// All interpolated strings have passed the portable path/account grammar.
@@ -59,7 +117,7 @@ func appendLaunchDaemon(p *Plan, in Input, h Host) error {
 <key>SockPathName</key><string>%s</string><key>SockPathMode</key><integer>438</integer>
 <key>SockType</key><string>stream</string></dict></dict>
 </dict></plist>
-`, s.ArtifactSHA256, s.NodeSHA256, owner.UID, launchLabel, DarwinHQAccount, DarwinHQAccount, filepath.Join(s.ReleaseDir, "helpers/darwin-owner.rb"), s.Node, filepath.Join(s.ReleaseDir, "hq/main.mjs"), launchState, in.Invoker, launchSocket)
+`, s.ArtifactSHA256, s.NodeSHA256, owner.UID, launchLabel, DarwinHQAccount, DarwinHQAccount, filepath.Join(s.ReleaseDir, "helpers/darwin-owner.rb"), s.Node, filepath.Join(s.ReleaseDir, "hq/main.mjs"), launchState, in.Invoker, socketForCapability(capability))
 	if err := trustedPath(h, filepath.Dir(launchPlist), true); err != nil {
 		return err
 	}
@@ -81,10 +139,26 @@ func appendLaunchDaemon(p *Plan, in Input, h Host) error {
 		}
 		action = ActionWrite
 	}
-	raw, err := json.Marshal(launchRecord{Service: *s, Plist: plist, OwnerUID: owner.UID})
+	rec := launchRecord{Service: *s, Plist: plist, OwnerUID: owner.UID}
+	detail := "install the approved LaunchDaemon and verify status as its owner"
+	if capability == launchControlV2 {
+		rec.RuntimeDir, err = planLaunchDirectory(h, checkDarwinACLs)
+		if err != nil {
+			return err
+		}
+		if exists && rec.RuntimeDir.Action == ActionCreate {
+			return refuse(RefusedPath, "the installed HQ LaunchDaemon is missing its approved runtime directory; reconcile before installing")
+		}
+		verb := "verify"
+		if rec.RuntimeDir.Action == ActionCreate {
+			verb = "create"
+		}
+		detail = fmt.Sprintf("%s %s as root:wheel 0755, install the approved LaunchDaemon and verify status as its owner", verb, launchRuntimeDir)
+	}
+	raw, err := json.Marshal(rec)
 	if err != nil {
 		return err
 	}
-	p.Steps = append(p.Steps, Step{Kind: KindService, Target: launchLabel, Action: action, Owner: in.Invoker, Content: string(raw), Detail: "install the approved LaunchDaemon and verify status as its owner"})
+	p.Steps = append(p.Steps, Step{Kind: KindService, Target: launchLabel, Action: action, Owner: in.Invoker, Content: string(raw), Detail: detail})
 	return nil
 }

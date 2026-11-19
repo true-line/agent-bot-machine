@@ -30,7 +30,7 @@ type installedHQEntry struct {
 
 // macOS ships bsdtar. Check the approved archive directly against every file
 // of its extraction. An installer never extracts or executes a file as root.
-func verifyDarwinRelease(s HQService, h Host) error {
+func verifyDarwinReleaseFiles(s HQService, h Host) error {
 	if err := s.validate(); err != nil {
 		return err
 	}
@@ -105,16 +105,6 @@ func verifyDarwinRelease(s HQService, h Host) error {
 	if err := matchDarwinArchive(archive, remaining); err != nil {
 		return err
 	}
-	meta, err := os.ReadFile(filepath.Join(s.ReleaseDir, "governance/interim-release.json"))
-	if err != nil {
-		return err
-	}
-	var record struct {
-		Target string `json:"target_platform"`
-	}
-	if err = json.Unmarshal(meta, &record); err != nil || record.Target != "darwin" {
-		return refuse(RefusedPath, "HQ interim release must target darwin")
-	}
 	node, err := openPinnedFile(s.Node, s.NodeSHA256)
 	if err != nil {
 		return err
@@ -128,6 +118,37 @@ func verifyDarwinRelease(s HQService, h Host) error {
 		return refuse(RefusedPath, "Node is not executable")
 	}
 	return checkDarwinNode(node)
+}
+
+// Read the layout marker only after matching the complete extraction to its
+// approved archive. Older Darwin releases have no marker and retain v1.
+func verifyDarwinRelease(s HQService, h Host) (string, error) {
+	if err := verifyDarwinReleaseFiles(s, h); err != nil {
+		return "", err
+	}
+	meta, err := os.ReadFile(filepath.Join(s.ReleaseDir, "governance/interim-release.json"))
+	if err != nil {
+		return "", err
+	}
+	return darwinControlCapability(meta)
+}
+
+func darwinControlCapability(meta []byte) (string, error) {
+	var record struct {
+		Target     string          `json:"target_platform"`
+		Capability json.RawMessage `json:"owner_control_capability"`
+	}
+	if json.Unmarshal(meta, &record) != nil || record.Target != "darwin" {
+		return "", refuse(RefusedPath, "HQ interim release must target darwin")
+	}
+	if record.Capability == nil {
+		return launchControlV1, nil
+	}
+	var value string
+	if json.Unmarshal(record.Capability, &value) != nil || value != launchControlV2 {
+		return "", refuse(RefusedPath, "unsupported Darwin owner-control capability in the HQ release")
+	}
+	return value, nil
 }
 
 func openPinnedFile(p, digest string) (*os.File, error) {

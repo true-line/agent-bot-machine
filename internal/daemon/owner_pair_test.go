@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/diag"
 )
 
 func signedOwnerReply(t *testing.T, key *ecdsa.PrivateKey, challenge ownerPairChallenge) (string, string) {
@@ -43,6 +45,8 @@ func signedOwnerReply(t *testing.T, key *ecdsa.PrivateKey, challenge ownerPairCh
 
 func TestMacHQOwnerEnrollment(t *testing.T) {
 	root := t.TempDir()
+	shared := t.TempDir()
+	t.Setenv(channelEnv, shared)
 	dir := stateDir(root)
 	deps := owner(root)
 	deps.Caller = func() (Caller, error) {
@@ -61,7 +65,7 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	machine, _, err := ed25519.GenerateKey(rand.Reader)
+	machine, machineKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,9 +127,65 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	requireErr(command("--pin-owner", otherPin))
 	requireErr(command(enroll...))
 	requireErr(command(append(enroll, "--owner-challenge", "--user", "user")...))
+	// A pre-enrollment first-install challenge cannot survive pairing.
+	st, err := readOwnerPairState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.FirstHQ = &firstHQChallenge{firstHQAction, hex.EncodeToString(machine), approvePlanID, approveDigest, strings.Repeat("c", 64), time.Now().Unix() + ownerChallengeTTL}
+	if err := st.save(dir); err != nil {
+		t.Fatal(err)
+	}
+	sharedPin := filepath.Join(shared, "daemon.pub")
+	refusedUnchanged := func(args []string, want string) {
+		t.Helper()
+		before, err := os.ReadFile(filepath.Join(dir, ownerPairFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := command(args...)
+		if r.Diagnostic == nil || !strings.Contains(r.Diagnostic.Message, want) {
+			t.Fatalf("expected refusal containing %q, got %#v", want, r.Diagnostic)
+		}
+		after, err := os.ReadFile(filepath.Join(dir, ownerPairFile))
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatalf("refusal changed the owner record: %v", err)
+		}
+	}
+	// The role and private key can exist before the per-user daemon first starts.
+	refusedUnchanged(append(enroll, "--owner-challenge"), "daemon start")
+	if _, err := os.Lstat(sharedPin); !os.IsNotExist(err) {
+		t.Fatal("pairing published a key", err)
+	}
+	// Use the same publication step as normal daemon startup.
+	if err := writeChannelPub(shared, machineKey); err != nil {
+		t.Fatal(err)
+	}
 	_, superseded := signedOwnerReply(t, key, challenge())
+	st, err = readOwnerPairState(dir)
+	if err != nil || st.FirstHQ != nil || st.Recovery != nil {
+		t.Fatal("pairing retained the old first-install challenge", err)
+	}
 	c := challenge()
 	_, valid := signedOwnerReply(t, key, c)
+	if err := os.Remove(sharedPin); err != nil {
+		t.Fatal(err)
+	}
+	refusedUnchanged(append(enroll, "--owner-proof", valid), "daemon start")
+	if err := os.WriteFile(sharedPin, public, 0644); err != nil {
+		t.Fatal(err)
+	}
+	refusedUnchanged(append(enroll, "--owner-challenge"), "does not match")
+	refusedUnchanged(append(enroll, "--owner-proof", valid), "does not match")
+	if !mustLoadPub(t, sharedPin).Equal(public) {
+		t.Fatal("pairing replaced the other public key")
+	}
+	if err := os.Remove(sharedPin); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeChannelPub(shared, machineKey); err != nil {
+		t.Fatal(err)
+	}
 	requireErr(submit(superseded))
 	_, wrongSigner := signedOwnerReply(t, other, c)
 	requireErr(submit(wrongSigner))
@@ -178,6 +238,20 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	if !channel(330, "status") || !channel(330, "receipts") || channel(331, "status") || channel(330, "apply") || channel(330, "update") || channel(330, "bootstrap") {
 		t.Fatal("wrong peer, debug or privilege boundary")
 	}
+	// A paired HQ signing a well-formed members approval still needs a
+	// separate action-specific owner proof. This includes recovery plans.
+	membersReq := Request{Verb: approveMembersVerb, PlanID: "plan-20261119T040000Z-abcd",
+		PlanDigest: strings.Repeat("a", 64), Timestamp: time.Now().Unix(), Nonce: "fresh-members"}
+	if err := Sign(private, &membersReq); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(membersReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, code, _ := (&Gate{Dir: dir}).verify(330, raw); code != diag.DaemonPeerRefused {
+		t.Fatalf("paired HQ members approval: %s", code)
+	}
 	// Older binaries might leave a staged key or UID. Neither supersedes
 	// the atomic owner-approved tuple.
 	alt, _, err := ed25519.GenerateKey(rand.Reader)
@@ -194,13 +268,42 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	if err != nil || !reload.AgentDaemon.Equal(public) || reload.AgentDaemonUID != 330 {
 		t.Fatalf("legacy replacement accepted %+v %v", reload, err)
 	}
+	// A new enrollment epoch similarly supersedes a post-pair recovery.
+	st, err = readOwnerPairState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Recovery = &recoveryChallenge{recoveryVerb, st.Machine, st.HQ, st.Owner, approvePlanID, approveDigest, strings.Repeat("d", 64), time.Now().Unix() + ownerChallengeTTL, st.UID}
+	if err := st.save(dir); err != nil {
+		t.Fatal(err)
+	}
 	c = challenge()
 	expired, err := readOwnerPairState(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if expired.FirstHQ != nil || expired.Recovery != nil {
+		t.Fatal("new enrollment retained a previous challenge")
+	}
 	expired.Pending.Expires = time.Now().Unix() - 1
 	if err := expired.save(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(sharedPin); err != nil {
+		t.Fatal(err)
+	}
+	refusedUnchanged(append(enroll, "--owner-challenge"), "restore the matching public pin")
+	if err := os.WriteFile(sharedPin, alt, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "daemon.pub"), alt, 0600); err != nil {
+		t.Fatal(err)
+	}
+	refusedUnchanged(append(enroll, "--owner-challenge"), "existing owner-approved enrollment")
+	if err := os.WriteFile(filepath.Join(dir, "daemon.pub"), machine, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sharedPin, machine, 0644); err != nil {
 		t.Fatal(err)
 	}
 	_, late := signedOwnerReply(t, key, *expired.Pending)
@@ -260,7 +363,7 @@ func TestOwnerPairInteroperability(t *testing.T) {
 	if hex.EncodeToString(sum[:]) != "3e6f1280c032cf910328fc8d054585f605479825312b33862260ed74ab3d6169" {
 		t.Fatal("canonical proof bytes changed")
 	}
-	if err := verifyOwnerPairProof(public, `{"public_key":"`+public+`","signature":"`+signature+`"}`, &c); err != nil {
+	if err := verifyOwnerProof(public, `{"public_key":"`+public+`","signature":"`+signature+`"}`, c.message()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -302,5 +405,101 @@ func TestFirstPinRacesLegacyEnrollment(t *testing.T) {
 	}
 	if p.OwnerPresenceRequired == p.AgentDaemon.Equal(pub) {
 		t.Fatal("racing modes were mixed")
+	}
+}
+
+func TestExplicitOrdinaryHQOwnerEnrollment(t *testing.T) {
+	root := t.TempDir()
+	dir := stateDir(root)
+	if _, err := ensureStateDirAndPeers(dir); err != nil {
+		t.Fatal(err)
+	}
+	deps := owner(root)
+	deps.Caller = func() (Caller, error) {
+		return Caller{Username: "admin", UID: 501, Home: root, RegisteredHome: root, PrefixOwner: "admin", DarwinAdmin: true}, nil
+	}
+	machine, machineKey := keyPair(t)
+	shared := t.TempDir()
+	t.Setenv(channelEnv, shared)
+	if err := writeChannelPub(shared, machineKey); err != nil {
+		t.Fatal(err)
+	}
+	hq, private := keyPair(t)
+	ownerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "daemon.pub"), machine, 0600); err != nil {
+		t.Fatal(err)
+	}
+	account := &user.User{Username: "operator", Uid: "28123", HomeDir: "/Users/operator"}
+	origLookup, origEligibility := lookupUser, ordinaryHQAccount
+	t.Cleanup(func() { lookupUser, ordinaryHQAccount = origLookup, origEligibility })
+	lookupUser = func(n string) (*user.User, error) {
+		if n == account.Username {
+			return account, nil
+		}
+		return nil, user.UnknownUserError(n)
+	}
+	ordinaryHQAccount = func(u *user.User) bool { return u.Username == "operator" && u.Uid == "28123" }
+	invoke := func(args ...string) cli.Result { return run(deps, cli.Context{}, append([]string{"pair"}, args...)) }
+	pin, _ := signedOwnerReply(t, ownerKey, ownerPairChallenge{})
+	if r := invoke("--pin-owner", pin); r.Diagnostic != nil {
+		t.Fatal(r.Diagnostic.Message)
+	}
+	enroll := []string{"--enroll", hex.EncodeToString(hq), "--fingerprint", publicFingerprint(hq), "--client", "agent-daemon"}
+	submit := func(options ...string) cli.Result {
+		return invoke(append(append([]string{}, enroll...), options...)...)
+	}
+	if submit("--owner-challenge").Diagnostic == nil || submit("--owner-challenge", "--user", "").Diagnostic == nil {
+		t.Fatal("automatically selected ordinary account")
+	}
+	ch := submit("--owner-challenge", "--user", "operator")
+	if ch.Diagnostic != nil {
+		t.Fatal(ch.Diagnostic.Message)
+	}
+	raw, err := ch.Records[0].MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c ownerPairChallenge
+	if err = json.Unmarshal(raw, &c); err != nil || c.Action != "machine-pair-ordinary" || c.UID != 28123 {
+		t.Fatal("missing explicit approval scope")
+	}
+	changed := c
+	changed.UID++
+	_, wrong := signedOwnerReply(t, ownerKey, changed)
+	if submit("--owner-proof", wrong, "--user", "operator").Diagnostic == nil {
+		t.Fatal("accepted signature for another UID")
+	}
+	_, good := signedOwnerReply(t, ownerKey, c)
+	account.Uid = "501"
+	if submit("--owner-proof", good, "--user", "operator").Diagnostic == nil {
+		t.Fatal("accepted account changed to Machine administrator")
+	}
+	account.Uid = "28123"
+	if r := submit("--owner-proof", good, "--user", "operator"); r.Diagnostic != nil {
+		t.Fatal(r.Diagnostic.Message)
+	}
+	p, err := currentDevicePairing(dir)
+	if err != nil || p.HQEpoch != c.Nonce || !devicePairAllows(p, 28123, hq) || devicePairAllows(p, 28124, hq) {
+		t.Fatal("ordinary approved identity binding")
+	}
+	channel := func(peer int, req Request) bool {
+		req.Nonce, _ = newNonce()
+		req.Timestamp = time.Now().Unix()
+		_, code, _ := (&Gate{Dir: dir}).verify(peer, signed(t, private, req))
+		return code == ""
+	}
+	for _, q := range []Request{{Verb: "status"}, {Verb: deviceVerb, Option: "identity"}} {
+		if !channel(28123, q) || channel(28124, q) {
+			t.Fatal("ordinary account caller UID not enforced")
+		}
+	}
+	if channel(28123, Request{Verb: membersPlansVerb, Option: "list"}) {
+		t.Fatal("ordinary HQ accessed dedicated role plan channel")
+	}
+	if submit("--owner-proof", good, "--user", "operator").Diagnostic == nil {
+		t.Fatal("replayed ordinary pairing proof")
 	}
 }

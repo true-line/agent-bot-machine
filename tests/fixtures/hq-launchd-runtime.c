@@ -10,19 +10,36 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#ifdef MM_FIXTURE_OWNER_V2
+#define FIXTURE_CAPABILITY "darwin-owner-control/v2"
+#define FIXTURE_SOCKET "/Library/Application Support/ai.true-line.agent-bot-hq/owner-control.sock"
+#else
+#define FIXTURE_CAPABILITY "darwin-owner-control/v1"
+#define FIXTURE_SOCKET "/private/var/agent-bot-hq-control.sock"
+#endif
+
 int main(int argc, char **argv) {
     if (argc < 3) return 2;
+    if (!strcmp(argv[2], "check-owner-control") || !strcmp(argv[2], "status")) {
+        char cwd[2];
+        if (!getcwd(cwd, sizeof(cwd)) || strcmp(cwd, "/")) return 10;
+    }
     if (!strcmp(argv[2], "check-owner-control")) {
-        puts("{\"capability\":\"darwin-owner-control/v1\"}"); return 0;
+        puts("{\"capability\":\"" FIXTURE_CAPABILITY "\"}"); return 0;
     }
     struct sockaddr_un addr = {.sun_family = AF_UNIX};
-    strlcpy(addr.sun_path, "/private/var/agent-bot-hq-control.sock", sizeof(addr.sun_path));
+    strlcpy(addr.sun_path, FIXTURE_SOCKET, sizeof(addr.sun_path));
     if (!strcmp(argv[2], "status")) {
         int fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd < 0 || connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) return 3;
         FILE *response = fdopen(fd, "r"); char buf[512];
         if (!response || !fgets(buf, sizeof(buf), response)) return 4;
+#ifdef MM_FIXTURE_FAIL_OWNER_STATUS
+        // The owner reached the running fixture through its actual launchd socket.
+        return 42;
+#else
         puts(buf); return 0;
+#endif
     }
     // run --home <state> --owner-account <owner>
     if (argc != 7 || strcmp(argv[2], "run") || strcmp(argv[3], "--home") || strcmp(argv[5], "--owner-account")) return 5;

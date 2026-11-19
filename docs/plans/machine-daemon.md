@@ -146,6 +146,44 @@ flowchart LR
 - `apply <plan-id>`: only a saved plan ID (ADR-0012).
 - `update`: re-run the declared flavor.
 - `catalog`: accept a signed catalog envelope from the paired agent-daemon.
+- Paired HQ device operations use the administrative
+  [keyd device provider](../../keyd/README.md#managed-device-custody-on-macos).
+  Machine checks each named purpose. HQ receives public identity, the
+  requested proof or verified status. Private device and DPoP keys stay in
+  administrative custody. An unavailable provider refuses the operation on
+  every profile. [Platform custody decision](https://github.com/true-line/agent-bot-platform/discussions/91)
+- `members-plans` reads saved members plans on macOS and Linux. Its signed
+  request uses the existing `option` and `plan_id` fields. With `option: list`
+  it returns state `listed` and body `{"plan_ids":[...],"next_after":"..."}`.
+  IDs are sorted ascending. Each page has up to 64 IDs. Supply the previous
+  `next_after` as the optional exclusive `plan_id` cursor. Its absence from
+  the response means the last page. With `option: get`, supply one plan ID.
+  State `found` has `plan_id`, `plan_digest` and `plan_canonical` in its body.
+  The last field is Machine's canonical UTF-8 JSON including its trailing LF.
+  HQ verifies the signed response and recomputes SHA-256 before review.
+  On each request Machine resolves the platform's dedicated account
+  (`_agent-bot-hq` on Darwin, `agent-bot-hq` on Linux). That UID must match
+  both the local socket peer and the live agent-daemon enrollment, and must
+  differ from root and the prefix owner. A legacy custom account binding
+  does not qualify.
+
+  Like human root apply, lookup starts from the prefix owner's verified home
+  and reads the platform default store: `Library/Application Support/managed-machine`
+  on macOS or `.local/share/managed-machine` on Linux, under `members/plans`.
+  Generate the plan in that store. A plan command that used an explicit
+  `MANAGED_MACHINE_STATE_DIR` or nondefault `XDG_DATA_HOME` has a separate store.
+  The request cannot name a home or path. Every opened directory from the home
+  down must be owned by the service's prefix owner and protected against group
+  and other writes. Saved files must be private, singly linked regular files.
+  On Darwin, read-only directory ACL grants and deny entries are permitted.
+  ACL grants on a plan file, or grants of write or unknown rights on a directory,
+  refuse access. The directory scan limit is 8,192 entries. Fetch bounds the saved
+  file at 256 KiB and the response at the existing 64 KiB frame limit.
+  [Plan retrieval decision](https://github.com/true-line/agent-bot-platform/discussions/50)
+- `hq-service-recovery` is a macOS-only protected transition. Its exact
+  signed message and one-operation handoff are specified in
+  [paired HQ service recovery](member-accounts.md#paired-hq-service-recovery-on-macos).
+
 - `approve-members`: record the owner's approval of one member accounts
   plan ([member-accounts.md](member-accounts.md)). The request carries
   `plan_id` and `plan_digest` and nothing else, and both are in the signed

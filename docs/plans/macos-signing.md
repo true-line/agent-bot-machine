@@ -66,7 +66,17 @@ Secure Enclave key. Machine verifies its proof in the Homebrew prefix owner's
 admin account. The Machine daemon continues to use its dedicated keychain for
 its own Ed25519 identity. [D4 and the cross-account channel](cross-account-channel.md#s5--agent-bot-is-the-control-plane-other-repos-p7p8)
 
-For a fresh enrollment obtain the owner's P-256 public key directly from the
+On a fresh Mac, the prefix administrator first runs `managed-machine members
+plan`. When its `hq-account` step calls for creating `_agent-bot-hq`, complete
+the [first-HQ plan transfer](cross-account-channel.md#first-hq-provisioning-on-macos)
+and human apply before requesting an enrollment challenge. The prefix owner's
+per-user Machine daemon publishes its public key on its first ordinary
+startup. If it is installed but has never started, run
+`managed-machine daemon start` as the prefix owner before requesting the
+challenge. Enrollment checks that the published key matches the private
+state's public key again when the owner proof is submitted.
+
+For enrollment obtain the owner's P-256 public key directly from the
 independently verified, provisioned owner client. The prefix owner runs
 `managed-machine daemon pair --pin-owner BASE64`. Obtain HQ's Ed25519 public
 key and SHA-256 fingerprint from the provisioned HQ service. In the prefix
@@ -88,10 +98,12 @@ A challenge is valid for two minutes; requesting a replacement invalidates
 its predecessor. Machine checks the signature under its existing owner pin and
 binds the accepted HQ key to the local `_agent-bot-hq` UID. An existing HQ
 enrollment needs a separate authorized transition. Replacing the owner key
-also requires a separate rotation procedure. On hosts with an owner pin, only
-signed `status` and `receipts` from that HQ account are currently authorized.
-Additional verbs require their own action-specific presence checks before
-they can be enabled. A signature verifies possession of the pinned key;
+also requires a separate rotation procedure. On hosts with an owner pin, the bound HQ account
+can request signed `status`, `receipts` and the read-only `members-plans`
+operation. The narrowly scoped [paired HQ service recovery](member-accounts.md#paired-hq-service-recovery-on-macos)
+requires a fresh owner signature bound to the Machine, enrolled HQ, and
+verified service plan. Other widening actions still require their own owner
+presence checks. A signature verifies possession of the pinned key;
 provisioning and physical qualification establish its hardware provenance.
 
 **Dedicated-keychain ACL threat model.** The self-only `SecAccessRef` ACL
