@@ -5,10 +5,11 @@ A native MCP server that holds souls' GitHub App keys
 agent-bot-machine builds it and signs it with the agent-machine Developer ID.
 Its upstream source lives in agent-bot-identity (#767). The snapshot and
 update procedure are in [UPSTREAM.md](UPSTREAM.md). Each agent-bot release
-pins this crate's version (`KEYD_PINNED_VERSION`), and agent-machine ships
-exactly that build. The agent-bot side of the protocol is in
+pins the helper version in `KEYD_PINNED_VERSION`. Machine v0.12.4 and
+Identity v0.15.20 both use helper version `0.2.1`. The agent-bot side of the protocol is in
 [docs/keyd-protocol.md](https://github.com/qwts/agent-bot-identity/blob/19d7dfaa72cbbb259a988c55c65ac75c3425f3d0/docs/keyd-protocol.md).
-The launchd label is `dev.qwts.agent-bot.keyd`.
+The launchd label is `dev.qwts.agent-bot.keyd`. The Developer ID signing
+identifier on the released helper is `ai.true-line.agent-bot-keyd`.
 
 keyd holds keys and signs App JWTs. agent-bot's daemon decides who may mint.
 
@@ -90,17 +91,34 @@ These records are login Keychain generic passwords under service `agent-bot.keyd
 
 ## Sockets
 
-Both sockets live in `<state>/keyd/` (0700). `<state>` is agent-bot's state
-directory: `$XDG_STATE_HOME/agent-bot` or `~/.local/state/agent-bot`. Both
-sockets are 0600, and keyd checks each peer's user ID.
+On macOS, Homebrew installs `agent-bot-keyd` beside `managed-machine`
+with mode `0700`. The nonroot administrator who owns `/opt/homebrew` runs
+`managed-machine daemon install` to register the two LaunchAgents. Machine
+passes `--state-dir` set to that administrator's `~/.local/state/agent-bot`
+even when `XDG_STATE_HOME` is set. Standalone invocations without
+`--state-dir` use `$XDG_STATE_HOME/agent-bot` if set, or that home default.
+Both sockets are mode `0600` under `<state>/keyd/` (mode `0700`), and
+keyd checks each peer's user ID.
 
 | socket | speaks | for |
 | --- | --- | --- |
 | `keyd.sock` | MCP (newline-delimited JSON-RPC) | `credential`, `git_credential` |
 | `owner.sock` | JSON-RPC | `owner/status`, `owner/import`, `owner/remove`, `owner/pin`, `owner/presence`, `owner/pins-attest`, `owner/pins-status`, `owner/app-status`, `owner/app-import`, `owner/app-import-new`, `owner/app-remove` |
 
-Each call leaves a receipt in `keyd/audit.jsonl` (0600). Receipts never hold a
-secret.
+To check the running helper from the prefix owner's session, send MCP
+`initialize` directly to its socket. This reads service metadata without
+opening the Keychain or writing an audit receipt.
+
+```sh
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"health","version":"1"}}}' |
+  /usr/bin/nc -w 3 -U "$HOME/.local/state/agent-bot/keyd/keyd.sock"
+```
+
+For Machine v0.12.4, check that the response has `id: 1`,
+`result.serverInfo.name` equal to `agent-bot-keyd`, and
+`result.serverInfo.version` equal to `0.2.1`. Machine's `daemon status`
+checks its own socket. Identity's `owner/status` reads the daemon pin in
+the Keychain. Key operations produce receipts in `keyd/audit.jsonl` (0600).
 
 ## Who may mint: daemon-signed grants
 
@@ -241,8 +259,9 @@ The format is in
 ## Build and test
 
 ```sh
-cargo test                                 # in keyd/
-node scripts/build-keyd.mjs                # into src-tauri/binaries/
+cd keyd
+cargo test --locked
+cargo build --release --locked --bin agent-bot-keyd
 ```
 
 Tests never open the login keychain. The store test uses a keychain file of
