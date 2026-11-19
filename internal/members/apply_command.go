@@ -193,6 +193,15 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if digest != approval.PlanDigest {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: the host or the request changed after the approval; plan and approve again", planID)
 	}
+	if prior := saved.UpgradeFrom; prior != nil {
+		priorDigest, err := prior.Plan.Digest()
+		if err != nil {
+			return failure(diag.MembersPlanFailed, "cannot digest the prior HQ plan: %v", err)
+		}
+		if err := receiptForUpgrade(h, prior.ID, priorDigest, owner, checkDarwinACLs); err != nil {
+			return failure(diag.MembersApplyFailed, "cannot verify prior HQ apply receipt: %v", err)
+		}
+	}
 	var r Root = OSRoot{upgradeApproval: approval, checkUpgradePair: pairCheck}
 	if deps.Root != nil {
 		r = deps.Root()

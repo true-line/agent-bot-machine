@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -85,20 +86,17 @@ func TestDarwinHQUpgradeBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-func TestDarwinHQUpgradeRequiresAppliedActivePredecessor(t *testing.T) {
-	for _, scenario := range []string{"ordinary plan", "prior changed", "active job gone", "receipt absent", "plist changed", "new account requested", "same release", "prior grant writable"} {
+func TestDarwinHQUpgradeRequiresActivePredecessor(t *testing.T) {
+	for _, scenario := range []string{"ordinary plan", "invalid prior ID", "active job gone", "plist changed", "new account requested", "same release"} {
 		t.Run(scenario, func(t *testing.T) {
 			in, h := upgradeWorld(t)
-			rp := filepath.Join("/private"+DarwinReceiptsDir, in.UpgradeFrom.ID+".json")
 			switch scenario {
 			case "ordinary plan":
 				in.UpgradeFrom = nil
-			case "prior changed":
-				in.UpgradeFrom.Plan.Steps[1].Detail += "changed"
+			case "invalid prior ID":
+				in.UpgradeFrom.ID = "invalid"
 			case "active job gone":
 				in.upgradeObservation.loaded = func(HQService, string) (bool, string, error) { return false, "", nil }
-			case "receipt absent":
-				delete(h.entries, rp)
 			case "plist changed":
 				h.files[launchPlist] += " "
 			case "new account requested":
@@ -106,10 +104,6 @@ func TestDarwinHQUpgradeRequiresAppliedActivePredecessor(t *testing.T) {
 			case "same release":
 				rec, _ := priorLaunchRecord(in.UpgradeFrom.Plan, in.Invoker)
 				in.HQService = &rec.Service
-			case "prior grant writable":
-				e := h.entries[rp]
-				e.Mode = 0666
-				h.entries[rp] = e
 			}
 			if _, err := Build(in, h); err == nil {
 				t.Fatal("accepted", scenario)
@@ -244,5 +238,37 @@ func TestUpgradeRecordPublicationAndReplacement(t *testing.T) {
 func TestHQUpgradeDarwinKernel(t *testing.T) {
 	if supportsGuardedUpgrade("24.6.0") || supportsGuardedUpgrade("unknown") || !supportsGuardedUpgrade("25.0.0") {
 		t.Fatal("wrong guarded socket support")
+	}
+}
+
+func TestHQUpgradePlansWithoutRootReceiptAndApplyChecksIt(t *testing.T) {
+	for _, tc := range []string{"exact", "missing", "writable", "changed plan", "failed receipt"} {
+		t.Run(tc, func(t *testing.T) {
+			in, h := upgradeWorld(t)
+			path := filepath.Join("/private"+DarwinReceiptsDir, in.UpgradeFrom.ID+".json")
+			switch tc {
+			case "missing":
+				delete(h.entries, path)
+			case "writable":
+				entry := h.entries[path]
+				entry.Mode = 0666
+				h.entries[path] = entry
+			case "changed plan":
+				in.UpgradeFrom.Plan.Steps[1].Detail += " changed"
+			case "failed receipt":
+				h.files[path] = strings.Replace(h.files[path], "applied", "failed", 1)
+			}
+			if _, err := Build(in, h); err != nil {
+				t.Fatal("unprivileged planning must not require access to the root receipt:", err)
+			}
+			digest, err := in.UpgradeFrom.Plan.Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = receiptForUpgrade(h, in.UpgradeFrom.ID, digest, in.Invoker, in.upgradeObservation.acl)
+			if (err == nil) != (tc == "exact") {
+				t.Fatalf("privileged receipt verification: %v", err)
+			}
+		})
 	}
 }

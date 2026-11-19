@@ -92,8 +92,10 @@ func appendServiceUpgrade(p *Plan, in Input, h Host, next launchRecord) error {
 	if err != nil {
 		return err
 	}
-	if err := receiptForUpgrade(h, prev.ID, digest, in.Invoker, observe.acl); err != nil {
-		return err
+	// This is the candidate receipt reference. The prefix account can verify the
+	// saved plan and live service, but only root can read the applied receipt.
+	if !ValidApproval(prev.ID, digest) {
+		return errors.New("invalid prior plan reference")
 	}
 	old, err := priorLaunchRecord(prev.Plan, in.Invoker)
 	if err != nil {
@@ -128,7 +130,7 @@ func appendServiceUpgrade(p *Plan, in Input, h Host, next launchRecord) error {
 	if err != nil {
 		return err
 	}
-	p.Steps = append(p.Steps, Step{Kind: KindService, Target: launchLabel, Owner: in.Invoker, Action: upgradeAction, Content: string(raw), Detail: fmt.Sprintf("replace the running HQ from applied plan %s, verify the new owner-control service, and restore the reviewed prior release if activation fails", prev.ID)})
+	p.Steps = append(p.Steps, Step{Kind: KindService, Target: launchLabel, Owner: in.Invoker, Action: upgradeAction, Content: string(raw), Detail: fmt.Sprintf("verify the prior root receipt for plan %s before replacing the running HQ, verify the new owner-control service, and restore the reviewed prior release if activation fails", prev.ID)})
 	return nil
 }
 

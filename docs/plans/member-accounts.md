@@ -173,8 +173,11 @@ member approvals, first installation, and enrollment on their existing terms.
 
 The prefix administrator stages an independently verified new HQ release and
 runs `managed-machine members plan --hq-service NEW_SERVICE_JSON --upgrade-from PREVIOUS_PLAN_ID`.
-Machine requires the retained previous saved plan, its completed root apply
-receipt, the matching installed plist and a running dedicated HQ job.
+The planner checks the retained previous saved plan, matching installed plist
+and running dedicated HQ job. It includes the previous plan ID and digest
+in the proposal. Root verifies that reference against its private completed
+receipt before consuming the approval and again under the service lock before
+stopping HQ.
 The previous receipt commits to the original canonical plan through its
 digest. Machine verifies both releases, their extracted files, the same
 pinned Node executable and the protected version 2 owner-control directory.

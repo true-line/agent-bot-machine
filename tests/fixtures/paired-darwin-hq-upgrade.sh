@@ -63,23 +63,64 @@ require_release() {
          .hq.sockets.ownerControl.account==$owner and .hq.sockets.ownerControl.uid==$uid
          and (.hq.signer|.backend=="machine" and .key_storage=="hardware" and .available==true and .thumbprint==$thumb)' >/dev/null
 }
+# Only the disposable runner's own successful repair receipt is involved.
+# Its original inode is returned before the test proceeds to any real switch.
+check_private_predecessor_receipt() {
+    local previous="$RECEIPTS/$repair_id.json" inode hash before pid_before
+    [[ "$(sudo stat -f '%u' "$previous")" == 0 ]]
+    sudo jq -e --arg id "$repair_id" --arg digest "$repair_digest" --arg owner "$ME" --arg role "$role" '
+        .plan_id==$id and .plan_digest==$digest and .owner==$owner and .hq_account==$role and .dir=="none"
+        and .members==[] and .result=="applied" and .changes==1 and (.finished_at|type=="string" and length>0)
+        and (.failed_at // "")==""' "$previous" >/dev/null
+    sudo chmod 0600 "$previous"
+    [[ ! -r "$previous" ]] || fail 'ordinary planning can unexpectedly read the private root receipt'
+    inode="$(sudo stat -f '%d:%i' "$previous")"
+    hash="$(shasum -a 256 "$plist" | awk '{print $1}')"
+    before="$(stat -f '%d:%i' "$plist")"
+    pid_before="$(job_pid)"
+
+    # Export and authorize the plan normally while only root can read its receipt.
+    approve_upgrade "$repair_id" "$repair_digest" "$WORK/upgrade-public.json"
+    (
+        held="$RECEIPTS/.ci-withheld-$repair_id.json"
+        sudo test ! -e "$held" && sudo test ! -L "$held" || fail 'unexpected receipt staging file'
+        restore_receipt() {
+            if sudo test -e "$held"; then
+                [[ "$(sudo stat -f '%d:%i' "$held")" == "$inode" ]] && sudo test ! -e "$previous" &&
+                    sudo test ! -L "$previous" && sudo mv "$held" "$previous"
+            fi
+        }
+        trap restore_receipt EXIT
+        sudo mv "$previous" "$held"
+        if (cd "$signer" && sudo "$MM" members apply "$upgrade_id") >"$signer/missing-prior.log" 2>&1; then
+            fail 'upgrade touched a service without its predecessor receipt'
+        fi
+        grep -Fq "$repair_id.json" "$signer/missing-prior.log" ||
+            grep -Eiq '(prior|previous).*(receipt|apply record)' "$signer/missing-prior.log" ||
+            fail 'upgrade failed for a reason other than the missing predecessor receipt'
+    )
+    [[ "$(sudo stat -f '%d:%i' "$previous")" == "$inode" && "$(job_pid)" == "$pid_before" &&
+       "$(stat -f '%d:%i' "$plist")" == "$before" && "$(shasum -a 256 "$plist" | awk '{print $1}')" == "$hash" ]]
+    paired_status
+    ok 'ordinary upgrade review accepted a private receipt; root refused its absence before changing the job'
+}
 upgrade_case() {
     local baseline prior_sha prior_inode active before bad_tree bad_archive bad_sum
     prior_inode="$(stat -f '%d:%i' "$plist")"
     prior_sha="$(shasum -a 256 "$plist" | awk '{print $1}')"
     before="$(job_pid)"
     if [[ "$MM_HQ_UPGRADE_TEST" == legacy ]]; then
-        approve_upgrade "$repair_id" "$repair_digest" "$WORK/upgrade-public.json"
-        if (cd "$signer" && sudo "$MM" members apply "$upgrade_id") > "$signer/legacy-upgrade.log" 2>&1; then
+        if "$MM" members plan --hq-service "$WORK/upgrade-public.json" --upgrade-from "$repair_id" > "$signer/legacy-upgrade.log" 2>&1; then
             fail 'legacy software service unexpectedly upgraded'
         fi
-        grep -Fq 'separately authorized custody migration' "$signer/legacy-upgrade.log"
+        grep -Fq 'requires a separate custody migration' "$signer/legacy-upgrade.log"
         [[ "$(job_pid)" == "$before" && "$(stat -f '%d:%i' "$plist")" == "$prior_inode" ]]
         [[ "$(shasum -a 256 "$plist" | awk '{print $1}')" == "$prior_sha" ]]
         paired_status
         ok 'service-only upgrade refused the existing software signer before stopping the system job'
         return
     fi
+    check_private_predecessor_receipt
     baseline="$(cd / && "$stage/node" "$stage/hq/hq/main.mjs" status --owner-control --json | jq -er '.hq.signer|select(.available and .backend=="machine" and .key_storage=="hardware")|.thumbprint')"
     require_release "$stage/hq" "$baseline"
     # Only the explicitly marked negative candidate is synthetic: the public
