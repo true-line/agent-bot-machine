@@ -269,7 +269,10 @@ pub(crate) fn command(init: bool) -> Result<(), &'static str> {
         return Err(UNAVAILABLE);
     }
     let request = serde_json::from_slice(&raw).map_err(|_| UNAVAILABLE)?;
-    let result = hq_device::run(&items, &native, &pair, request, crate::server::unix_now())?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| UNAVAILABLE)?;
+    let result = hq_device::run(&items, &native, &pair, request, now)?;
     native.check_live()?;
     writeln!(std::io::stdout().lock(), "{result}").map_err(|_| UNAVAILABLE)
 }

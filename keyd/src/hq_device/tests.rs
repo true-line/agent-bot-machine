@@ -3,6 +3,10 @@ use crate::store::tests::Memory;
 use ed25519_dalek::{Signer, SigningKey};
 use std::cell::{Cell, RefCell};
 
+fn seconds(n: u64) -> Duration {
+    Duration::from_secs(n)
+}
+
 #[derive(Default)]
 struct Fake {
     created: Cell<u8>,
@@ -73,14 +77,15 @@ fn request_with_nonce(p: &Pair, op: &str, nonce: &str, now: u64) -> Request {
 }
 #[test]
 fn public_identity_and_enrollment_are_typed_and_offline() {
+    let at = Duration::from_secs(100);
     let (items, native, p) = (Memory::default(), Fake::default(), pair());
-    assert!(run(&items, &native, &p, request(&p, "identity", 100), 100).is_err());
+    assert!(run(&items, &native, &p, request(&p, "identity", 100), at).is_err());
     assert_eq!(native.created.get(), 0);
     initialize(&items, &native, p.clone()).unwrap();
     assert!(initialize(&items, &native, p.clone()).is_err());
     assert_eq!(native.created.get(), 1);
     let before_identity = items.read(SERVICE, ITEM).unwrap();
-    let id = run(&items, &native, &p, request(&p, "identity", 100), 100).unwrap();
+    let id = run(&items, &native, &p, request(&p, "identity", 100), at).unwrap();
     assert_eq!(items.read(SERVICE, ITEM).unwrap(), before_identity);
     assert_eq!(id["key_storage"], "hardware");
     assert_eq!(id["generation"], 1);
@@ -92,7 +97,7 @@ fn public_identity_and_enrollment_are_typed_and_offline() {
         &native,
         &p,
         request_with_nonce(&p, "enrollment-proof", &proof_nonce, 100),
-        100,
+        at,
     )
     .unwrap();
     let jwt = proof["proof"]
@@ -124,24 +129,25 @@ fn public_identity_and_enrollment_are_typed_and_offline() {
         &native,
         &p,
         request_with_nonce(&p, "enrollment-proof", &proof_nonce, 100),
-        100
+        at
     )
     .is_err());
     assert_eq!(native.signed.borrow().len(), 1);
 }
 #[test]
 fn binding_freshness_and_unavailable_purposes_fail_closed() {
+    let at = Duration::from_secs(100);
     let (items, native, p) = (Memory::default(), Fake::default(), pair());
     initialize(&items, &native, p.clone()).unwrap();
     for op in ["access-assertion", "sign", "rekey", "approval", "dpop"] {
-        assert!(run(&items, &native, &p, request(&p, op, 100), 100).is_err());
+        assert!(run(&items, &native, &p, request(&p, op, 100), at).is_err());
     }
     for ts in [69, 131] {
-        assert!(run(&items, &native, &p, request(&p, "identity", ts), 100).is_err());
+        assert!(run(&items, &native, &p, request(&p, "identity", ts), at).is_err());
     }
     let mut req = request(&p, "identity", 100);
     req.option = "enrollment-proof".into();
-    assert!(run(&items, &native, &p, req, 100).is_err());
+    assert!(run(&items, &native, &p, req, at).is_err());
     for i in 0..4 {
         let mut other = p.clone();
         match i {
@@ -150,7 +156,7 @@ fn binding_freshness_and_unavailable_purposes_fail_closed() {
             2 => other.machine_pub = STANDARD.encode([5; 32]),
             _ => other.owner.push('x'),
         }
-        assert!(run(&items, &native, &other, request(&p, "identity", 100), 100).is_err());
+        assert!(run(&items, &native, &other, request(&p, "identity", 100), at).is_err());
     }
     let bad = json!({"machine_pub":p.machine_pub,"hq_pub":p.hq_pub,"hq_uid":123,"timestamp":100,"req_nonce":"abcdefgh","option":"identity","signature":"x","aud":"https://test.invalid"});
     assert!(serde_json::from_value::<Request>(bad).is_err());
@@ -214,7 +220,7 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
         &native,
         &p,
         request(&p, "enrollment-proof", now),
-        now,
+        seconds(now),
     )
     .unwrap();
     let jti = format!(
@@ -230,7 +236,7 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
             &native,
             &p,
             receipt(&p, "bind-enrollment", poll, authority, body.as_bytes(), jti),
-            poll,
+            seconds(poll),
             pins,
         )
     };
@@ -264,7 +270,14 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
     )
     .is_err());
     assert_eq!(
-        run(&items, &native, &p, request(&p, "identity", poll), poll).unwrap(),
+        run(
+            &items,
+            &native,
+            &p,
+            request(&p, "identity", poll),
+            seconds(poll)
+        )
+        .unwrap(),
         bound
     );
     let access = run(
@@ -272,7 +285,7 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
         &native,
         &p,
         request(&p, "access-assertion", poll),
-        poll,
+        seconds(poll),
     )
     .unwrap();
     let parts = access["assertion"]
@@ -296,7 +309,7 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
             &native,
             &p,
             receipt(&p, "bind-access", at, key, body.as_bytes(), token_jti),
-            at,
+            seconds(at),
             &pins,
         )
     };
@@ -332,7 +345,7 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
         &native,
         &replaced,
         request(&replaced, "identity", poll),
-        poll
+        seconds(poll)
     )
     .is_err());
 }
@@ -347,12 +360,65 @@ fn revoke_during_native_work_withholds_result_and_pending_proof() {
         &provider,
         &p,
         request(&p, "enrollment-proof", 100),
-        100
+        seconds(100)
     )
     .is_err());
     let record: Record =
         serde_json::from_slice(&items.read(SERVICE, ITEM).unwrap().unwrap()).unwrap();
     assert!(record.pending.is_empty());
-    assert!(run(&items, &provider, &p, request(&p, "identity", 101), 101).is_err());
+    assert!(run(
+        &items,
+        &provider,
+        &p,
+        request(&p, "identity", 101),
+        seconds(101)
+    )
+    .is_err());
     assert_eq!(provider.signed.borrow().len(), 1);
+}
+
+#[test]
+fn receipt_window_uses_the_actual_instant_across_offsets_and_fractional_boundaries() {
+    let signer = SigningKey::from_bytes(&[7; 32]);
+    let pins = manifest(&signer)
+        .replace(
+            "2026-01-01T00:00:00Z",
+            "2025-12-31T19:00:00.125000001-05:00",
+        )
+        .replace(
+            "2027-01-01T00:00:00Z",
+            "2026-01-01T05:30:00.875000001+05:30",
+        );
+    let midnight = 1_767_225_600;
+    let signed = receipt(
+        &pair(),
+        "bind-enrollment",
+        midnight,
+        &signer,
+        b"{}",
+        "test-jti",
+    );
+    for (nanos, accepted) in [
+        (125_000_000, false),
+        (125_000_001, true),
+        (875_000_000, true),
+        (875_000_001, false),
+        (875_000_002, false),
+    ] {
+        let now = Duration::new(midnight, nanos);
+        assert_eq!(verify_receipt(&signed, &pins, now).is_ok(), accepted);
+    }
+    let active = Duration::new(midnight, 500_000_000);
+    for invalid in [
+        "2025-02-31T00:00:00Z",
+        "2025-12-31T23:59:60Z",
+        "2026-01-01 00:00:00Z",
+        "2026-01-01T00:00:00z",
+        "2026-01-01T00:00:00+24:00",
+        "2026-01-01T00:00:00",
+    ] {
+        let bad = pins.replace("2025-12-31T19:00:00.125000001-05:00", invalid);
+        assert!(verify_receipt(&signed, &bad, active).is_err());
+    }
+    assert!(verify_receipt(&signed, &pins.replace("active", "retired"), active).is_err());
 }

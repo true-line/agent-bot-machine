@@ -138,8 +138,7 @@ fn go() -> Result<(), &'static str> {
     let items = State(dir.join("disposable-state.json"));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+        .map_err(|_| "clock")?;
     match std::env::args().nth(1).as_deref() {
         Some("hq-device-init") => hq_device::initialize(&items, &Soft, pair),
         Some("hq-device") => {
