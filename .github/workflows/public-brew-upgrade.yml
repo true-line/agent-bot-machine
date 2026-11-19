@@ -4,12 +4,14 @@ on:
     paths:
       - Formula/managed-machine.rb
       - tests/public-brew-upgrade-macos.sh
+      - tests/fixtures/public-brew-services-macos.py
       - .github/workflows/public-brew-upgrade.yml
   push:
     branches: [main]
     paths:
       - Formula/managed-machine.rb
       - tests/public-brew-upgrade-macos.sh
+      - tests/fixtures/public-brew-services-macos.py
       - .github/workflows/public-brew-upgrade.yml
 permissions:
   contents: read
