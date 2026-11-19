@@ -12,7 +12,7 @@ import (
 )
 
 type keyStore interface {
-	Load() ([]byte, bool, error)
+	Load(repair bool) ([]byte, bool, error)
 	Save(seed []byte) error
 	Delete() error
 }
@@ -24,12 +24,12 @@ func zeroBytes(b []byte) {
 }
 
 func loadOrCreateKey(path string) (ed25519.PrivateKey, error) {
-	return loadOrCreateKeyWithStore(path, defaultKeyStore(path))
+	return establishChannelKey(path, defaultKeyStore(path), ChannelDir(), false)
 }
 
 func loadOrCreateKeyWithStore(path string, store keyStore) (ed25519.PrivateKey, error) {
 	if store != nil {
-		seed, ok, err := store.Load()
+		seed, ok, err := store.Load(true)
 		if err != nil {
 			// Fail closed on locked keychain, denied access, or malformed store entry:
 			// never generate a replacement key or fall back to a plaintext file.
@@ -169,59 +169,90 @@ func verifyPrivateDir(path string) error {
 	return verifyDirOwner(path, info)
 }
 
+func legacyRotationPending(dir, shared string) (bool, error) {
+	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(dir)
+		if err != nil {
+			return false, err
+		}
+		if shared == "" || filepath.Clean(target) != filepath.Clean(shared) {
+			return false, fmt.Errorf("refusing symlinked daemon directory %s", dir)
+		}
+		return true, nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if shared != "" {
+		for _, name := range legacyPrivateFiles {
+			if _, err := os.Lstat(filepath.Join(shared, name)); err == nil {
+				return true, nil
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return false, err
+			}
+		}
+	}
+	return false, nil
+}
+
 // purgeLegacySharedState removes leaked secrets from <prefix>/var/agent-machine
 // (v0.11.2/v0.11.3 stored keys there), unlinks a ~/.config/agent-machine
 // symlink that pointed at it, and rotates daemon.key, client.key, and peers/
 // because those files were readable by other local accounts. The directory
 // itself stays: it is the cross-account channel (socket + daemon.pub).
-func purgeLegacySharedState(dir, legacySharedDir string, store keyStore) error {
-	rotated := false
-	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		target, lerr := os.Readlink(dir)
-		if lerr != nil {
-			return lerr
-		}
-		if legacySharedDir != "" && filepath.Clean(target) == filepath.Clean(legacySharedDir) {
-			if err := os.Remove(dir); err != nil {
+func purgeLegacySharedState(dir, shared string, store keyStore) error {
+	pending, err := legacyRotationPending(dir, shared)
+	if err != nil || !pending {
+		return err
+	}
+	// A second migration must recheck the evidence after the first finishes;
+	// it must never erase custody created after a successful migration.
+	if err := os.MkdirAll(shared, 0755); err != nil {
+		return err
+	}
+	unlock, err := lockLegacyChannel(shared)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	pending, err = legacyRotationPending(dir, shared)
+	if err != nil || !pending {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	linked := info != nil && info.Mode()&os.ModeSymlink != 0
+	// Retain the evidence that permits rotation until private custody and
+	// the previous pin are both retired. A retry after any partial cleanup
+	// must still recognize the authorized migration.
+	if !linked {
+		for _, name := range []string{"daemon.key", "daemon.pub", "client.key", "daemon.keychain-db"} {
+			if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
-			rotated = true
-		} else {
-			return fmt.Errorf("refusing symlinked daemon directory %s", dir)
 		}
+		if err := os.RemoveAll(filepath.Join(dir, "peers")); err != nil {
+			return err
+		}
+	} else if err := os.RemoveAll(filepath.Join(shared, "daemon.keychain-db")); err != nil {
+		return err
 	}
-	if legacySharedDir != "" {
-		if _, err := os.Lstat(legacySharedDir); err == nil {
-			leaked := false
-			for _, name := range []string{"daemon.key", "client.key", "daemon.keychain-db", "peers"} {
-				p := filepath.Join(legacySharedDir, name)
-				if _, err := os.Lstat(p); err == nil {
-					leaked = true
-					if err := os.RemoveAll(p); err != nil {
-						return err
-					}
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return err
-				}
-			}
-			if leaked {
-				rotated = true
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
+	if store != nil {
+		if err := store.Delete(); err != nil {
 			return err
 		}
 	}
-	if rotated {
-		_ = os.Remove(filepath.Join(dir, "daemon.key"))
-		_ = os.Remove(filepath.Join(dir, "daemon.pub"))
-		_ = os.Remove(filepath.Join(dir, "client.key"))
-		_ = os.Remove(filepath.Join(dir, "daemon.keychain-db"))
-		_ = os.RemoveAll(filepath.Join(dir, "peers"))
-		if store != nil {
-			if err := store.Delete(); err != nil {
-				return err
-			}
+	if err := os.Remove(filepath.Join(shared, "daemon.pub")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, name := range legacyPrivateFiles {
+		if err := os.RemoveAll(filepath.Join(shared, name)); err != nil {
+			return err
 		}
+	}
+	if linked {
+		return os.Remove(dir)
 	}
 	return nil
 }

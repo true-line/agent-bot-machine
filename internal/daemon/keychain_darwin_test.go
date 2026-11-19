@@ -83,8 +83,8 @@ func TestDarwinKeychainNeverImportsExec(t *testing.T) {
 				importsExec = true
 			}
 		}
-		if importsExec && name != "keys.go" && name != "activate.go" {
-			t.Fatalf("%s imports os/exec; only keys.go (runKeyHelperCmd) and activate.go (launchctl/systemctl) may import os/exec in internal/daemon", name)
+		if importsExec && name != "keys.go" && name != "activate.go" && name != "hq_device_keyd_darwin.go" && name != "ordinary_hq.go" {
+			t.Fatalf("%s imports os/exec; unexpected process boundary in internal/daemon", name)
 		}
 
 		// Ban raw process-spawning primitives across all non-test files in internal/daemon.
@@ -129,6 +129,14 @@ func TestDarwinKeychainNeverImportsExec(t *testing.T) {
 		case "keys.go":
 			if len(execCalls) != 1 || execCalls[0] != "runKeyHelperCmd:Command" {
 				t.Fatalf("keys.go exec.* calls = %v, want [runKeyHelperCmd:Command]", execCalls)
+			}
+		case "hq_device_keyd_darwin.go":
+			if strings.Join(execCalls, ",") != "verifyDeviceCode:CommandContext,runDeviceKeyd:CommandContext" {
+				t.Fatalf("unexpected device custody subprocess: %v", execCalls)
+			}
+		case "ordinary_hq.go":
+			if strings.Join(execCalls, ",") != "eligibleOrdinaryHQ:CommandContext" {
+				t.Fatalf("unexpected account lookup subprocess: %v", execCalls)
 			}
 		case "activate.go":
 			for _, c := range execCalls {
@@ -181,7 +189,7 @@ func TestDarwinKeychainStoreInProcessRoundTrip(t *testing.T) {
 	store := newTestStore(t, acct)
 	_ = store.Delete()
 
-	got, ok, err := store.Load()
+	got, ok, err := store.Load(true)
 	if err != nil || ok || got != nil {
 		t.Fatalf("expected absent item before save, got ok=%v err=%v", ok, err)
 	}
@@ -192,7 +200,7 @@ func TestDarwinKeychainStoreInProcessRoundTrip(t *testing.T) {
 	if err := store.Save(seed1); err != nil {
 		t.Fatalf("Save(seed1): %v", err)
 	}
-	got, ok, err = store.Load()
+	got, ok, err = store.Load(true)
 	if err != nil || !ok || !bytes.Equal(got, seed1) {
 		t.Fatalf("Load after Save(seed1): ok=%v err=%v match=%v", ok, err, bytes.Equal(got, seed1))
 	}
@@ -206,7 +214,7 @@ func TestDarwinKeychainStoreInProcessRoundTrip(t *testing.T) {
 	if err := store.Save(seed2); err != nil {
 		t.Fatalf("Save(seed2) in-place update: %v", err)
 	}
-	got, ok, err = store.Load()
+	got, ok, err = store.Load(true)
 	if err != nil || !ok || !bytes.Equal(got, seed2) {
 		t.Fatalf("Load after Save(seed2): ok=%v err=%v match=%v", ok, err, bytes.Equal(got, seed2))
 	}
@@ -214,7 +222,7 @@ func TestDarwinKeychainStoreInProcessRoundTrip(t *testing.T) {
 	if err := store.Delete(); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	got, ok, err = store.Load()
+	got, ok, err = store.Load(true)
 	if err != nil || ok || got != nil {
 		t.Fatalf("expected absent item after Delete, got ok=%v err=%v", ok, err)
 	}
@@ -299,7 +307,7 @@ func TestDarwinKeychainRejectsPrePlantedOpenOrMultiAppACLAndReplacesOnSave(t *te
 	plantItem(t, store, openAccess, attackerSeed)
 
 	// Load and loadOrCreateKeyWithStore must refuse the pre-planted open-ACL item.
-	if got, ok, err := store.Load(); err == nil || ok || got != nil {
+	if got, ok, err := store.Load(true); err == nil || ok || got != nil {
 		t.Fatalf("Load accepted pre-planted open-ACL item: ok=%v err=%v", ok, err)
 	} else if !strings.Contains(err.Error(), "allows all applications") {
 		t.Fatalf("Load error = %v, want 'allows all applications'", err)
@@ -334,7 +342,7 @@ func TestDarwinKeychainRejectsPrePlantedOpenOrMultiAppACLAndReplacesOnSave(t *te
 	if err := store.Save(realSeed); err != nil {
 		t.Fatalf("Save over pre-planted open-ACL item: %v", err)
 	}
-	got, ok, err := store.Load()
+	got, ok, err := store.Load(true)
 	if err != nil || !ok || !bytes.Equal(got, realSeed) {
 		t.Fatalf("Load after Save replaced open-ACL item: ok=%v err=%v", ok, err)
 	}
@@ -351,7 +359,7 @@ func TestDarwinKeychainRejectsPrePlantedOpenOrMultiAppACLAndReplacesOnSave(t *te
 	if err != nil {
 		t.Fatalf("in-place Save(rotatedSeed) on valid self-only item: %v", err)
 	}
-	got, ok, err = store.Load()
+	got, ok, err = store.Load(true)
 	if err != nil || !ok || !bytes.Equal(got, rotatedSeed) {
 		t.Fatalf("Load after in-place Save(rotatedSeed): ok=%v err=%v", ok, err)
 	}
@@ -360,7 +368,7 @@ func TestDarwinKeychainRejectsPrePlantedOpenOrMultiAppACLAndReplacesOnSave(t *te
 	// 2. Pre-seed an item whose ACL trusts both self and /usr/bin/security.
 	multiAccess := createMultiAppAccess(t, store.service)
 	plantItem(t, store, multiAccess, attackerSeed)
-	if got, ok, err := store.Load(); err == nil || ok || got != nil {
+	if got, ok, err := store.Load(true); err == nil || ok || got != nil {
 		t.Fatalf("Load accepted pre-planted multi-app ACL item: ok=%v err=%v", ok, err)
 	} else if !strings.Contains(err.Error(), "trusts 2 applications, want 1") {
 		t.Fatalf("Load error = %v, want 'trusts 2 applications, want 1'", err)
@@ -406,7 +414,7 @@ func TestDarwinKeychainMigratesLegacyDiskKeyIntoDedicatedKeychain(t *testing.T) 
 	t.Cleanup(func() { _ = store.Delete() })
 	_ = store.Delete()
 
-	if got, ok, err := store.Load(); err != nil || ok || got != nil {
+	if got, ok, err := store.Load(true); err != nil || ok || got != nil {
 		t.Fatalf("expected absent item before migration, got ok=%v err=%v", ok, err)
 	}
 
@@ -435,7 +443,7 @@ func TestDarwinKeychainMigratesLegacyDiskKeyIntoDedicatedKeychain(t *testing.T) 
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("dedicated keychain mode %v, want 0600", info.Mode().Perm())
 	}
-	got, ok, err := store.Load()
+	got, ok, err := store.Load(true)
 	if err != nil || !ok || !bytes.Equal(got, seedDisk) {
 		t.Fatalf("dedicated keychain after daemon.key migration: ok=%v err=%v", ok, err)
 	}
@@ -453,7 +461,7 @@ func TestDarwinKeychainWorksWithoutLoginKeychain(t *testing.T) {
 	if err := store.Save(seed); err != nil {
 		t.Fatalf("Save without login keychain: %v", err)
 	}
-	got, ok, err := store.Load()
+	got, ok, err := store.Load(true)
 	if err != nil || !ok || !bytes.Equal(got, seed) {
 		t.Fatalf("Load without login keychain: ok=%v err=%v", ok, err)
 	}
@@ -473,7 +481,7 @@ func TestDarwinKeychainReopenUnlocksWithoutPassword(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	for i := 0; i < 3; i++ {
-		got, ok, err := store.Load()
+		got, ok, err := store.Load(true)
 		if err != nil || !ok || !bytes.Equal(got, seed) {
 			t.Fatalf("Load #%d: ok=%v err=%v", i+1, ok, err)
 		}
