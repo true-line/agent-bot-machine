@@ -57,3 +57,13 @@ When syncing this crate, preserve Machine's macOS account gate in
 `src/account.rs` and its call at process entry. The custody binary runs
 under the administrator who owns Homebrew, including when invoked directly
 from a second copy of the release archive.
+
+Machine validates existing file-Keychain trusted applications across a Homebrew
+keg change by comparing their complete stored signing requirements. The legacy
+trusted application data accessor returns the display pathname. The adapter uses
+the public, deprecated CSSM ACL API on a fresh in-memory access containing only
+the original trusted application. It recognizes the standard macOS
+code-signature subject and refuses unknown layouts. An unsigned legacy subject
+is confined to its original path and recorded executable hash. A signed upgrade can validate the
+record after the old executable is removed.
+[Apple's ACL subject encoding](https://github.com/apple-oss-distributions/Security/blob/db15acbe6a7f257a859ad9a3bb86097bfe0679d9/OSX/libsecurity_cdsa_utilities/lib/acl_codesigning.cpp#L54-L72)

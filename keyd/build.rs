@@ -12,6 +12,11 @@ fn main() {
         _ => panic!("unsupported macOS architecture"),
     };
     let deployment = env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "11.0".into());
+    println!("cargo:rerun-if-changed=native/TrustedApplication.c");
+    cc::Build::new()
+        .file("native/TrustedApplication.c")
+        .flag("-Wno-deprecated-declarations")
+        .compile("trusted_application");
     let status = Command::new("/usr/bin/xcrun")
         .args([
             "swiftc",
