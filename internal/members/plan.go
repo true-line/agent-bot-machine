@@ -91,10 +91,12 @@ const (
 
 // Input is what the owner asked for.
 type Input struct {
-	HQService *HQService
-	HQAccount string
-	Dir       string
-	Members   []string
+	upgradeObservation *upgradeObservation
+	UpgradeFrom        *priorServicePlan
+	HQService          *HQService
+	HQAccount          string
+	Dir                string
+	Members            []string
 	// Invoker is the account running the plan. It can never be a member.
 	Invoker string
 	// Platform is PlatformDarwin on macOS and empty on Linux. It is not part
@@ -256,6 +258,9 @@ func Build(in Input, h Host) (Plan, error) {
 	in, err := Normalize(in)
 	if err != nil {
 		return Plan{}, err
+	}
+	if in.UpgradeFrom != nil && (in.Platform != PlatformDarwin || in.HQService == nil || in.HQAccount != DarwinHQAccount || len(in.Members) != 0) {
+		return Plan{}, refuse(RefusedList, "upgrade requires a dedicated macOS service-only plan")
 	}
 	p := Plan{Version: PlanVersion, HQAccount: in.HQAccount, Dir: in.Dir, Members: in.Members, Steps: []Step{}}
 	if p.Members == nil {

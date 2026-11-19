@@ -287,7 +287,7 @@ func runService(ctx context.Context, root, requiredIdentity string) error {
 		MembersPlans: func(option, id string) ([]byte, error) { return readMembersPlans(root, option, id) },
 		ServiceRecovery: func(req Request) Response {
 			return recoverHQService(dir, priv.Public().(ed25519.PublicKey), req, time.Now, func(id, digest string, uid int) (string, error) {
-				return currentRecoveryPlan(root, account, id, digest, uid)
+				return currentPairedServicePlan(req.Verb, root, account, id, digest, uid)
 			})
 		},
 		ApproveMembers: func(planID, digest string) ([]byte, string, string) {

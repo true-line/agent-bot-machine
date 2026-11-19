@@ -92,8 +92,12 @@ func readOwnerPairState(dir string) (*ownerPairState, error) {
 	if err != nil {
 		return nil, err
 	}
+	return decodeOwnerPairState(data)
+}
+
+func decodeOwnerPairState(data []byte) (*ownerPairState, error) {
 	var s ownerPairState
-	if err = json.Unmarshal(data, &s); err != nil {
+	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, err
 	}
 	if _, err := ownerKey(s.Owner); err != nil {

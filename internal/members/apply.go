@@ -206,15 +206,16 @@ func applyStep(s Step, h Host, r Root) error {
 
 // Receipt is the record of one apply. It holds no secret.
 type Receipt struct {
-	PlanID     string   `json:"plan_id"`
-	PlanDigest string   `json:"plan_digest"`
-	Owner      string   `json:"owner"`
-	HQAccount  string   `json:"hq_account"`
-	Dir        string   `json:"dir"`
-	Members    []string `json:"members"`
-	Changes    int      `json:"changes"`
-	StartedAt  string   `json:"started_at"`
-	FinishedAt string   `json:"finished_at,omitempty"`
+	Upgrade    *upgradeReceiptEvidence `json:"service_upgrade,omitempty"`
+	PlanID     string                  `json:"plan_id"`
+	PlanDigest string                  `json:"plan_digest"`
+	Owner      string                  `json:"owner"`
+	HQAccount  string                  `json:"hq_account"`
+	Dir        string                  `json:"dir"`
+	Members    []string                `json:"members"`
+	Changes    int                     `json:"changes"`
+	StartedAt  string                  `json:"started_at"`
+	FinishedAt string                  `json:"finished_at,omitempty"`
 	// Result is started, applied or failed.
 	Result string `json:"result"`
 	// FailedAt names the step a failed apply stopped at.

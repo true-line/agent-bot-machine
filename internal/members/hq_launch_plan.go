@@ -100,24 +100,7 @@ func appendLaunchDaemon(p *Plan, in Input, h Host) error {
 	if err != nil {
 		return err
 	}
-	// All interpolated strings have passed the portable path/account grammar.
-	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<!-- Managed by managed-machine members. -->
-<!-- archive %s node %s owner UID %d -->
-<plist version="1.0"><dict>
-<key>Label</key><string>%s</string>
-<key>UserName</key><string>%s</string>
-<key>GroupName</key><string>%s</string>
-<key>Umask</key><integer>63</integer>
-<key>ProgramArguments</key><array>
-<string>/usr/bin/ruby</string><string>--disable-gems</string><string>%s</string><string>launch</string>
-<string>%s</string><string>%s</string><string>run</string><string>--home</string><string>%s</string>
-<string>--owner-account</string><string>%s</string></array>
-<key>Sockets</key><dict><key>owner-control</key><dict>
-<key>SockPathName</key><string>%s</string><key>SockPathMode</key><integer>438</integer>
-<key>SockType</key><string>stream</string></dict></dict>
-</dict></plist>
-`, s.ArtifactSHA256, s.NodeSHA256, owner.UID, launchLabel, DarwinHQAccount, DarwinHQAccount, filepath.Join(s.ReleaseDir, "helpers/darwin-owner.rb"), s.Node, filepath.Join(s.ReleaseDir, "hq/main.mjs"), launchState, in.Invoker, socketForCapability(capability))
+	plist := renderLaunchPlist(*s, owner.UID, in.Invoker, capability)
 	if err := trustedPath(h, filepath.Dir(launchPlist), true); err != nil {
 		return err
 	}
@@ -134,7 +117,7 @@ func appendLaunchDaemon(p *Plan, in Input, h Host) error {
 		if err != nil {
 			return err
 		}
-		if !ok || actual != plist {
+		if !ok || (actual != plist && in.UpgradeFrom == nil) {
 			return refuse(RefusedPath, "existing LaunchDaemon differs from the approved job; reconcile before installing")
 		}
 		action = ActionWrite
@@ -142,7 +125,11 @@ func appendLaunchDaemon(p *Plan, in Input, h Host) error {
 	rec := launchRecord{Service: *s, Plist: plist, OwnerUID: owner.UID}
 	detail := "install the approved LaunchDaemon and verify status as its owner"
 	if capability == launchControlV2 {
-		rec.RuntimeDir, err = planLaunchDirectory(h, checkDarwinACLs)
+		checkACL := checkDarwinACLs
+		if in.upgradeObservation != nil {
+			checkACL = in.upgradeObservation.acl
+		}
+		rec.RuntimeDir, err = planLaunchDirectory(h, checkACL)
 		if err != nil {
 			return err
 		}
@@ -155,10 +142,34 @@ func appendLaunchDaemon(p *Plan, in Input, h Host) error {
 		}
 		detail = fmt.Sprintf("%s %s as root:wheel 0755, install the approved LaunchDaemon and verify status as its owner", verb, launchRuntimeDir)
 	}
+	if in.UpgradeFrom != nil {
+		return appendServiceUpgrade(p, in, h, rec)
+	}
 	raw, err := json.Marshal(rec)
 	if err != nil {
 		return err
 	}
 	p.Steps = append(p.Steps, Step{Kind: KindService, Target: launchLabel, Action: action, Owner: in.Invoker, Content: string(raw), Detail: detail})
 	return nil
+}
+
+func renderLaunchPlist(s HQService, uid int, owner, capability string) string {
+	// All interpolated strings have passed the portable path/account grammar.
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!-- Managed by managed-machine members. -->
+<!-- archive %s node %s owner UID %d -->
+<plist version="1.0"><dict>
+<key>Label</key><string>%s</string>
+<key>UserName</key><string>%s</string>
+<key>GroupName</key><string>%s</string>
+<key>Umask</key><integer>63</integer>
+<key>ProgramArguments</key><array>
+<string>/usr/bin/ruby</string><string>--disable-gems</string><string>%s</string><string>launch</string>
+<string>%s</string><string>%s</string><string>run</string><string>--home</string><string>%s</string>
+<string>--owner-account</string><string>%s</string></array>
+<key>Sockets</key><dict><key>owner-control</key><dict>
+<key>SockPathName</key><string>%s</string><key>SockPathMode</key><integer>438</integer>
+<key>SockType</key><string>stream</string></dict></dict>
+</dict></plist>
+`, s.ArtifactSHA256, s.NodeSHA256, uid, launchLabel, DarwinHQAccount, DarwinHQAccount, filepath.Join(s.ReleaseDir, "helpers/darwin-owner.rb"), s.Node, filepath.Join(s.ReleaseDir, "hq/main.mjs"), launchState, owner, socketForCapability(capability))
 }

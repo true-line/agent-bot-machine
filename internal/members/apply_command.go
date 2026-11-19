@@ -3,6 +3,7 @@ package members
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 
 // ApplyDeps is what apply reads the world through beyond Deps.
 type ApplyDeps struct {
+	CheckUpgradePair func(dir, account, commitment string, run func() error) error
 	// Euid is the effective uid. When nil, os.Geteuid.
 	Euid func() int
 	// ProcessEnv is this process's environment. When nil, os.Environ.
@@ -153,13 +155,34 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if err != nil || daemonDir == "" || daemonAccount == "" {
 		return failure(diag.MembersNotApproved, "agent-machine's state directory could not be located")
 	}
+	pairCheck := func(a Approval, run func() error) error {
+		if deps.CheckUpgradePair == nil {
+			return errors.New("cannot verify the original protected HQ pairing")
+		}
+		return deps.CheckUpgradePair(daemonDir, daemonAccount, a.PairCommitment, run)
+	}
+	realUpgrade := saved.UpgradeFrom != nil && platform == PlatformDarwin && deps.Root == nil
+	if realUpgrade {
+		handled, e := resumeServiceUpgrade(saved, owner, pairCheck)
+		if handled {
+			if e != nil {
+				return failure(diag.MembersApplyFailed, "reconciling earlier approved HQ transition: %v", e)
+			}
+			return cli.Result{Records: []*output.Record{output.New().Set("plan_id", planID).Set("plan_digest", saved.PlanDigest).Set("applied", true).Set("receipt", ReceiptPath(planID))}}
+		}
+	}
+
 	approval, why := loadApproval(h, daemonDir, daemonAccount, planID, platform, deps.Time())
 	if why != "" {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: %s", planID, why)
 	}
 
+	if saved.UpgradeFrom != nil && (approval.Purpose != UpgradePurpose || !digestPattern.MatchString(approval.MachineFingerprint)) {
+		return failure(diag.MembersNotApproved, "upgrade requires the paired HQ service upgrade owner approval")
+	}
+
 	// The host as it is now.
-	p, err := Build(Input{HQService: saved.HQService, HQAccount: saved.Plan.HQAccount, Dir: saved.Plan.Dir, Members: saved.Plan.Members, Invoker: owner, Platform: platform}, h)
+	p, err := Build(Input{UpgradeFrom: saved.UpgradeFrom, HQService: saved.HQService, HQAccount: saved.Plan.HQAccount, Dir: saved.Plan.Dir, Members: saved.Plan.Members, Invoker: owner, Platform: platform}, h)
 	if err != nil {
 		return mapRefusal(err, diag.MembersPlanFailed, "cannot read the host")
 	}
@@ -170,7 +193,7 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if digest != approval.PlanDigest {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: the host or the request changed after the approval; plan and approve again", planID)
 	}
-	var r Root = OSRoot{}
+	var r Root = OSRoot{upgradeApproval: approval, checkUpgradePair: pairCheck}
 	if deps.Root != nil {
 		r = deps.Root()
 	}
@@ -185,14 +208,28 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if err != nil {
 		return failure(diag.MembersApplyFailed, "cannot write the receipt: %v", err)
 	}
+	if !claimed && realUpgrade {
+		// A process may exit between consuming this exact approval and publishing
+		// its transaction record. The live-only plan just rebuilt, unexpired fresh
+		// approval, and matching started receipt allow that one start to finish.
+		prior, e := currentUpgradeReceipt(approval, owner)
+		claimed = e == nil && prior.Result == "started"
+	}
 	if !claimed {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: its approval was already used (%s)", planID, ReceiptPath(planID))
 	}
 
-	finish := func(result, failedAt string) {
+	finish := func(result, failedAt string) error {
 		receipt.Result, receipt.FailedAt = result, failedAt
 		receipt.FinishedAt = deps.Time().UTC().Format(approvalTime)
-		_ = r.Finish(planID, encodeReceipt(receipt))
+		return r.Finish(planID, encodeReceipt(receipt))
+	}
+	if realUpgrade {
+		// Completion is recorded under the same lock as verification and rollback.
+		if err := r.ActivateHQ(p.Steps[1]); err != nil {
+			return failure(diag.MembersApplyFailed, "HQ service upgrade: %v", err)
+		}
+		return cli.Result{Records: []*output.Record{output.New().Set("plan_id", planID).Set("plan_digest", digest).Set("applied", true).Set("receipt", ReceiptPath(planID))}}
 	}
 	if err := Apply(p, h, r); err != nil {
 		at := ""
@@ -212,7 +249,9 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		finish("failed", "verification")
 		return failure(diag.MembersApplyFailed, "the host is not as planned after the apply: %d steps remain", n)
 	}
-	finish("applied", "")
+	if err := finish("applied", ""); err != nil {
+		return failure(diag.MembersApplyFailed, "applied host changes but could not finish the root receipt: %v", err)
+	}
 
 	records := []*output.Record{output.New().
 		Set("plan_id", planID).
@@ -282,4 +321,22 @@ func loadApproval(h Host, daemonDir, account, planID, platform string, now time.
 		return Approval{}, "the approval expired at " + a.ExpiresAt + "; approve it again"
 	}
 	return a, ""
+}
+
+func readPriorServicePlan(state, id string) (*priorServicePlan, error) {
+	if !plan.ValidID(id) {
+		return nil, errors.New("invalid prior members plan id")
+	}
+	f, err := os.Open(filepath.Join(state, "members", "plans", id+".json"))
+	if err != nil {
+		return nil, errors.New("cannot open prior saved members plan")
+	}
+	defer f.Close()
+	const limit = 256 << 10
+	raw, err := io.ReadAll(io.LimitReader(f, limit+1))
+	var saved Saved
+	if err != nil || len(raw) > limit || json.Unmarshal(raw, &saved) != nil || saved.PlanID != id {
+		return nil, errors.New("cannot read the prior saved members plan")
+	}
+	return &priorServicePlan{ID: id, Plan: saved.Plan}, nil
 }

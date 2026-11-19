@@ -169,6 +169,47 @@ existing human-run `sudo managed-machine members apply PLAN_ID` acts on the
 host and verifies the running service. The protected route leaves generic
 member approvals, first installation, and enrollment on their existing terms.
 
+### Updating a running paired HQ release on macOS
+
+The prefix administrator stages an independently verified new HQ release and
+runs `managed-machine members plan --hq-service NEW_SERVICE_JSON --upgrade-from PREVIOUS_PLAN_ID`.
+Machine requires the retained previous saved plan, its completed root apply
+receipt, the matching installed plist and a running dedicated HQ job.
+The previous receipt commits to the original canonical plan through its
+digest. Machine verifies both releases, their extracted files, the same
+pinned Node executable and the protected version 2 owner-control directory.
+The role, owner UID and state location are part of the reviewed plan.
+
+The paired HQ CLI exports `hq-service-upgrade` through the signed Machine
+channel. The challenge, transport signature and owner transcript use the
+service recovery field order above with `hq-service-upgrade` as the purpose.
+The service step has action `upgrade`. Its content includes
+`previous_plan_id`, `previous_plan_digest`, `previous` and `next`.
+The last two values are the full service records, including their plists.
+The owner reviews this exact change and returns a fresh proof signed by
+the existing owner key. A compatible protected owner proof provider is
+required. The administrator runs `sudo managed-machine members apply PLAN_ID`
+in their own terminal.
+
+The service update supports an already Machine-backed HQ on Apple Silicon
+running Darwin kernel 25 or later. Both releases must report the same public
+hardware signer identity and generation. An older software signer requires
+a separate custody migration before this operation. Machine checks this
+before stopping the running HQ. It also checks the current HQ pairing and
+its enrollment epoch, validates the existing job's UID, then records the
+reviewed inputs before unloading it. The two verified plists exchange
+atomically. Launchd restarts HQ using the new release. Machine verifies the
+owner endpoint and the signed HQ-to-Machine status through the dedicated role.
+
+After interruption, repeat the same `members apply PLAN_ID` command. The
+root transaction record identifies the exact reviewed files, original pairing
+and last phase. Machine can confirm a running new release or restore the
+verified previous one. It leaves an unidentified job, changed plist or
+unverified endpoint intact for administrator reconciliation. A completed
+receipt permits a read-only verification when the previous terminal result
+was lost. Retain the old release, its saved plan and the shared Node binary
+through completion.
+
 ### How root is obtained
 
 The owner runs `sudo managed-machine members apply <plan-id>` in their own
