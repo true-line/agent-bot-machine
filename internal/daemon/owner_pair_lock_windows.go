@@ -18,3 +18,5 @@ func openFirstHQProof(string) (*os.File, error) {
 func lockLegacyChannel(string) (func() error, error) {
 	return nil, errors.New("legacy shared Unix channel is unavailable on Windows")
 }
+
+func lockDevicePairing(string) (func() error, error) { return nil, errHQDevice }

@@ -344,3 +344,94 @@ func TestFirstPinRacesLegacyEnrollment(t *testing.T) {
 		t.Fatal("racing modes were mixed")
 	}
 }
+
+func TestExplicitOrdinaryHQOwnerEnrollment(t *testing.T) {
+	root := t.TempDir()
+	dir := stateDir(root)
+	if _, err := ensureStateDirAndPeers(dir); err != nil {
+		t.Fatal(err)
+	}
+	deps := owner(root)
+	deps.Caller = func() (Caller, error) {
+		return Caller{Username: "admin", UID: 501, Home: root, RegisteredHome: root, PrefixOwner: "admin", DarwinAdmin: true}, nil
+	}
+	machine, _ := keyPair(t)
+	hq, private := keyPair(t)
+	ownerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "daemon.pub"), machine, 0600); err != nil {
+		t.Fatal(err)
+	}
+	account := &user.User{Username: "operator", Uid: "28123", HomeDir: "/Users/operator"}
+	origLookup, origEligibility := lookupUser, ordinaryHQAccount
+	t.Cleanup(func() { lookupUser, ordinaryHQAccount = origLookup, origEligibility })
+	lookupUser = func(n string) (*user.User, error) {
+		if n == account.Username {
+			return account, nil
+		}
+		return nil, user.UnknownUserError(n)
+	}
+	ordinaryHQAccount = func(u *user.User) bool { return u.Username == "operator" && u.Uid == "28123" }
+	invoke := func(args ...string) cli.Result { return run(deps, cli.Context{}, append([]string{"pair"}, args...)) }
+	pin, _ := signedOwnerReply(t, ownerKey, ownerPairChallenge{})
+	if r := invoke("--pin-owner", pin); r.Diagnostic != nil {
+		t.Fatal(r.Diagnostic.Message)
+	}
+	enroll := []string{"--enroll", hex.EncodeToString(hq), "--fingerprint", publicFingerprint(hq), "--client", "agent-daemon"}
+	submit := func(options ...string) cli.Result {
+		return invoke(append(append([]string{}, enroll...), options...)...)
+	}
+	if submit("--owner-challenge").Diagnostic == nil || submit("--owner-challenge", "--user", "").Diagnostic == nil {
+		t.Fatal("automatically selected ordinary account")
+	}
+	ch := submit("--owner-challenge", "--user", "operator")
+	if ch.Diagnostic != nil {
+		t.Fatal(ch.Diagnostic.Message)
+	}
+	raw, err := ch.Records[0].MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c ownerPairChallenge
+	if err = json.Unmarshal(raw, &c); err != nil || c.Action != "machine-pair-ordinary" || c.UID != 28123 {
+		t.Fatal("missing explicit approval scope")
+	}
+	changed := c
+	changed.UID++
+	_, wrong := signedOwnerReply(t, ownerKey, changed)
+	if submit("--owner-proof", wrong, "--user", "operator").Diagnostic == nil {
+		t.Fatal("accepted signature for another UID")
+	}
+	_, good := signedOwnerReply(t, ownerKey, c)
+	account.Uid = "501"
+	if submit("--owner-proof", good, "--user", "operator").Diagnostic == nil {
+		t.Fatal("accepted account changed to Machine administrator")
+	}
+	account.Uid = "28123"
+	if r := submit("--owner-proof", good, "--user", "operator"); r.Diagnostic != nil {
+		t.Fatal(r.Diagnostic.Message)
+	}
+	p, err := currentDevicePairing(dir)
+	if err != nil || p.HQEpoch != c.Nonce || !devicePairAllows(p, 28123, hq) || devicePairAllows(p, 28124, hq) {
+		t.Fatal("ordinary approved identity binding")
+	}
+	channel := func(peer int, req Request) bool {
+		req.Nonce, _ = newNonce()
+		req.Timestamp = time.Now().Unix()
+		_, code, _ := (&Gate{Dir: dir}).verify(peer, signed(t, private, req))
+		return code == ""
+	}
+	for _, q := range []Request{{Verb: "status"}, {Verb: deviceVerb, Option: "identity"}} {
+		if !channel(28123, q) || channel(28124, q) {
+			t.Fatal("ordinary account caller UID not enforced")
+		}
+	}
+	if channel(28123, Request{Verb: membersPlansVerb, Option: "list"}) {
+		t.Fatal("ordinary HQ accessed dedicated role plan channel")
+	}
+	if submit("--owner-proof", good, "--user", "operator").Diagnostic == nil {
+		t.Fatal("replayed ordinary pairing proof")
+	}
+}

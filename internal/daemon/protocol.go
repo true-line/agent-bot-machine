@@ -23,25 +23,30 @@ const timestampSkew = 5 * time.Minute
 // Request is one signed command. Fields the catalog did not declare are
 // rejected by DisallowUnknownFields before a signature is considered.
 type Request struct {
-	Verb           string `json:"verb"`
-	Name           string `json:"name,omitempty"`
-	Option         string `json:"option,omitempty"`
-	Target         string `json:"target,omitempty"`
-	peerUID        int
-	ChallengeNonce string           `json:"challenge_nonce,omitempty"`
-	OwnerSignature string           `json:"owner_signature,omitempty"`
-	PlanID         string           `json:"plan_id,omitempty"`
-	PlanDigest     string           `json:"plan_digest,omitempty"`
-	Soul           string           `json:"soul,omitempty"`
-	Harness        string           `json:"harness,omitempty"`
-	SessionID      string           `json:"session_id,omitempty"`
-	CatalogKey     *CatalogKey      `json:"catalog_key,omitempty"`
-	Floor          *CatalogFloor    `json:"floor,omitempty"`
-	Envelope       *CatalogEnvelope `json:"envelope,omitempty"`
-	Timestamp      int64            `json:"timestamp"`
-	Nonce          string           `json:"nonce"`
-	PublicKey      string           `json:"public_key"`
-	Signature      string           `json:"signature"`
+	Verb             string `json:"verb"`
+	Name             string `json:"name,omitempty"`
+	Option           string `json:"option,omitempty"`
+	Target           string `json:"target,omitempty"`
+	HQEpoch          string `json:"hq_epoch,omitempty"`
+	ReceiptBody      string `json:"receipt_body,omitempty"`
+	ReceiptJTI       string `json:"receipt_jti,omitempty"`
+	ReceiptKID       string `json:"receipt_kid,omitempty"`
+	ReceiptSignature string `json:"receipt_signature,omitempty"`
+	peerUID          int
+	ChallengeNonce   string           `json:"challenge_nonce,omitempty"`
+	OwnerSignature   string           `json:"owner_signature,omitempty"`
+	PlanID           string           `json:"plan_id,omitempty"`
+	PlanDigest       string           `json:"plan_digest,omitempty"`
+	Soul             string           `json:"soul,omitempty"`
+	Harness          string           `json:"harness,omitempty"`
+	SessionID        string           `json:"session_id,omitempty"`
+	CatalogKey       *CatalogKey      `json:"catalog_key,omitempty"`
+	Floor            *CatalogFloor    `json:"floor,omitempty"`
+	Envelope         *CatalogEnvelope `json:"envelope,omitempty"`
+	Timestamp        int64            `json:"timestamp"`
+	Nonce            string           `json:"nonce"`
+	PublicKey        string           `json:"public_key"`
+	Signature        string           `json:"signature"`
 }
 
 // Response is signed by the daemon. Signature is over the other fields.
@@ -72,6 +77,7 @@ type Pairing struct {
 	AgentDaemonUID        int
 	AgentDaemonBound      bool
 	OwnerPresenceRequired bool
+	HQEpoch               string
 }
 
 // Stage records a replacement key and keeps Live authoritative.
@@ -159,16 +165,23 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	}
 	g.seen[req.Nonce] = struct{}{}
 	if !knownVerb(req.Verb) {
-		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, members-plans, hq-service-recovery, approve-members, bootstrap"
+		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, members-plans, hq-service-recovery, hq-device, approve-members, bootstrap"
 	}
 	if id, msg := catalogFields(req, raw); id != "" {
+		return req, id, msg
+	}
+	if id, msg := deviceFields(req, raw); id != "" {
 		return req, id, msg
 	}
 	if id, msg := membersFields(req, raw); id != "" {
 		return req, id, msg
 	}
 	if g.Dir != "" {
-		pairing, err := loadPairing(g.Dir)
+		readPairing := loadPairing
+		if req.Verb == deviceVerb {
+			readPairing = currentDevicePairing
+		}
+		pairing, err := readPairing(g.Dir)
 		if err != nil {
 			return req, diag.DaemonUnknownKey, "pairing state could not be read: " + err.Error()
 		}
@@ -177,13 +190,16 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if req.Verb == recoveryVerb && (!g.Pairing.OwnerPresenceRequired || runtime.GOOS != "darwin") {
 		return req, diag.DaemonPeerRefused, "service recovery requires the protected macOS pairing"
 	}
+	if req.Verb == deviceVerb && !devicePairAllows(g.Pairing, peerUID, ed25519.PublicKey(pub)) {
+		return req, diag.DaemonPeerRefused, "HQ device custody requires the approved HQ pairing"
+	}
 	if req.Verb == membersPlansVerb || req.Verb == recoveryVerb {
 		p := g.Pairing
 		if !p.AgentDaemonBound || p.AgentDaemonUID != peerUID || !p.AgentDaemon.Equal(ed25519.PublicKey(pub)) || !dedicatedMembersPlanPeer(peerUID) {
 			return req, diag.DaemonPeerRefused, "this command requires the enrolled HQ service account"
 		}
 	}
-	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" && req.Verb != membersPlansVerb && req.Verb != recoveryVerb {
+	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" && req.Verb != membersPlansVerb && req.Verb != recoveryVerb && req.Verb != deviceVerb {
 		return req, diag.DaemonPeerRefused, "this command requires its own owner presence proof"
 	}
 	if req.Verb == "bootstrap" {
@@ -239,7 +255,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, approveMembersVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, deviceVerb, approveMembersVerb, "bootstrap":
 		return true
 	default:
 		return false
@@ -352,6 +368,12 @@ func canonical(r Request) []byte {
 	}
 	if r.OwnerSignature != "" {
 		parts = append(parts, "owner_signature", r.OwnerSignature)
+	}
+	if r.Verb == deviceVerb && r.Option != "identity" {
+		parts = append(parts, "hq_epoch", r.HQEpoch)
+	}
+	if r.Verb == deviceVerb && (r.Option == "bind-enrollment" || r.Option == "bind-access") {
+		parts = append(parts, "receipt_body", r.ReceiptBody, "receipt_jti", r.ReceiptJTI, "receipt_kid", r.ReceiptKID, "receipt_signature", r.ReceiptSignature)
 	}
 	return []byte(strings.Join(parts, "\n"))
 }
