@@ -45,9 +45,6 @@ HQ's agent-daemon key is the intended caller: pair --enroll HEX
 --fingerprint HEX --client agent-daemon enrolls it and binds it to the
 dedicated HQ account when the machine has one, or to --user NAME. A bound
 key is accepted only from that account; uid=any means it is not bound.
-On macOS pair --pin-owner BASE64 sets the independently verified owner
-public key once. Subsequent HQ enrollment requires --owner-challenge,
-then --owner-proof JSON for that challenge from the owner approval client.
 Before the dedicated HQ role exists, the prefix administrator can transfer
 a saved members plan to the owner approval client using these commands:
   daemon first-hq export PLAN_ID
@@ -60,6 +57,10 @@ For a paired macOS Machine, verify-identity checks this executable's access
 to the existing Machine signing identity without changing the key or service.
 Use daemon run --require-identity FINGERPRINT for a temporary replacement
 that must use that exact previously paired identity.
+On macOS pair --pin-owner BASE64 sets the independently verified owner
+public key once. Subsequent HQ enrollment requires --owner-challenge,
+then --owner-proof JSON for that challenge from the owner approval client.
+unpair revokes the terminal client. It also accepts --client terminal.
 The terminal client is a debug tool and is off by default. install --debug
 turns it on, and install without --debug turns it off again. While it is
 on, the next human status mints client.key at home and the daemon adopts
@@ -77,6 +78,13 @@ description. Nothing is registered with a system service manager.`,
 }
 
 func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
+	var verb, enroll, fingerprint, clientName, userName string
+	var clientCount int
+	var enrollSet, fingerprintSet, userSet, debug bool
+	var owner ownerPairOptions
+	clientName = "terminal"
+	var requiredIdentity string
+	var identitySet bool
 	if len(args) > 0 && args[0] == "verify-identity" {
 		if len(args) != 1 {
 			return cli.Result{Diagnostic: command.UsageErr("verify-identity takes no arguments")}
@@ -86,22 +94,19 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	if len(args) > 0 && args[0] == "first-hq" {
 		return firstHQ(deps, args[1:])
 	}
-	var verb, enroll, fingerprint, clientName, userName, requiredIdentity string
-	var enrollSet, fingerprintSet, userSet, debug, identitySet bool
-	var owner ownerPairOptions
-	clientName = "terminal"
 	if d := command.Parse(args, command.Spec{
 		Positional:     &verb,
 		PositionalName: "daemon verb",
 		Bools:          map[string]*bool{"--debug": &debug, "--owner-challenge": &owner.challenge},
 		Values: map[string]command.Flag{
 			"--require-identity": {Value: &requiredIdentity, Set: &identitySet},
-			"--pin-owner":        {Value: &owner.pin, Set: &owner.pinSet},
-			"--owner-proof":      {Value: &owner.proof, Set: &owner.proofSet},
-			"--enroll":           {Value: &enroll, Set: &enrollSet},
-			"--fingerprint":      {Value: &fingerprint, Set: &fingerprintSet},
-			"--client":           {Value: &clientName},
-			"--user":             {Value: &userName, Set: &userSet},
+
+			"--pin-owner":   {Value: &owner.pin, Set: &owner.pinSet},
+			"--owner-proof": {Value: &owner.proof, Set: &owner.proofSet},
+			"--enroll":      {Value: &enroll, Set: &enrollSet},
+			"--fingerprint": {Value: &fingerprint, Set: &fingerprintSet},
+			"--client":      {Value: &clientName, Count: &clientCount},
+			"--user":        {Value: &userName, Set: &userSet},
 		},
 	}); d != nil {
 		return cli.Result{Diagnostic: d}
@@ -110,6 +115,9 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	case "run", "install", "start", "stop", "uninstall", "status", "receipts", "pair", "unpair":
 	default:
 		return cli.Result{Diagnostic: command.UsageErr("daemon verb must be run, install, start, stop, uninstall, status, receipts, pair, or unpair")}
+	}
+	if verb == "unpair" && (clientName != "terminal" || clientCount > 1) {
+		return cli.Result{Diagnostic: command.UsageErr("use unpair or unpair --client terminal")}
 	}
 	if enrollSet && verb != "pair" {
 		return cli.Result{Diagnostic: command.UsageErr("--enroll is only valid with pair")}
