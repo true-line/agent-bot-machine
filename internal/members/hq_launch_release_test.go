@@ -48,3 +48,19 @@ func TestRetainedArchiveMatchesCompleteInstalledTree(t *testing.T) {
 		})
 	}
 }
+
+func TestDarwinControlCapability(t *testing.T) {
+	for _, c := range []struct{ body, want string }{
+		{`{"target_platform":"darwin"}`, launchControlV1},
+		{`{"target_platform":"darwin","owner_control_capability":"darwin-owner-control/v2"}`, launchControlV2},
+		{`{"target_platform":"linux","owner_control_capability":"darwin-owner-control/v2"}`, ""},
+		{`{"target_platform":"darwin","owner_control_capability":null}`, ""},
+		{`{"target_platform":"darwin","owner_control_capability":"darwin-owner-control/v3"}`, ""},
+		{`{"target_platform":"darwin","owner_control_capability":{}}`, ""},
+	} {
+		got, err := darwinControlCapability([]byte(c.body))
+		if got != c.want || (err != nil) != (c.want == "") {
+			t.Errorf("%s: %q, %v", c.body, got, err)
+		}
+	}
+}
