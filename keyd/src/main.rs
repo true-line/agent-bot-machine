@@ -27,6 +27,10 @@ mod audit;
 mod consent;
 mod github;
 mod grant;
+#[cfg(any(target_os = "macos", test))]
+mod hq_device;
+#[cfg(target_os = "macos")]
+mod hq_device_darwin;
 mod ids;
 mod paths;
 mod pins;
@@ -133,7 +137,7 @@ fn serve(options: &Options, paths: &paths::Paths) -> Result<(), String> {
 
 #[cfg(not(target_os = "macos"))]
 fn serve(_: &Options, _: &paths::Paths) -> Result<(), String> {
-    Err("agent-bot-keyd serves only on macOS; elsewhere agent-bot keeps keys in the soul's file store".into())
+    Err("agent-bot-keyd has no supported custody provider on this platform".into())
 }
 
 fn main() -> ExitCode {
@@ -143,6 +147,17 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(
+        args.first().map(String::as_str),
+        Some("hq-device" | "hq-device-init")
+    ) {
+        #[cfg(target_os = "macos")]
+        if args.len() == 1 && hq_device_darwin::command(args[0] == "hq-device-init").is_ok() {
+            return ExitCode::SUCCESS;
+        }
+        eprintln!("agent-bot-keyd: device custody unavailable");
+        return ExitCode::FAILURE;
+    }
     if args.first().map(String::as_str) == Some("--version") {
         println!("agent-bot-keyd {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
