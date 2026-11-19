@@ -251,8 +251,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	if pubJob.Needs != "gates" {
 		t.Errorf("publish.needs = %v, want gates", pubJob.Needs)
 	}
-	if pubJob.RunsOn != "ubuntu-24.04" {
-		t.Errorf("publish.runs-on = %q, want ubuntu-24.04", pubJob.RunsOn)
+	if pubJob.RunsOn != "macos-15" {
+		t.Errorf("publish.runs-on = %q, want macos-15 for native app verification", pubJob.RunsOn)
 	}
 	if len(pubJob.Permissions) != 1 || pubJob.Permissions["contents"] != "write" {
 		t.Errorf("publish.permissions = %v, want {contents: write}", pubJob.Permissions)
