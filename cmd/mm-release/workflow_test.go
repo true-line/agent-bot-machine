@@ -87,7 +87,7 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		var allowed int
 		switch e.Name() {
 		case "sign.yml":
-			allowed = 6 // TestSignWorkflowContract checks each reference and its location.
+			allowed = 5 // TestSignWorkflowContract checks each reference and its location.
 		case "version-cut.yml", "prepare-release.yml":
 			var doc workflowDoc
 			if err := tree.Decode(&doc); err != nil {
@@ -324,7 +324,7 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 }
 
 // TestSignWorkflowContract pins the main-only jobs and both signing paths.
-// Only the signer in release reads the six distribution secrets.
+// Only the signer in release reads the five distribution secrets.
 func TestSignWorkflowContract(t *testing.T) {
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -344,6 +344,11 @@ func TestSignWorkflowContract(t *testing.T) {
 	}
 	if len(doc.On) != 2 || doc.On["workflow_dispatch"] == nil || !reflect.DeepEqual(doc.On["push"], push) {
 		t.Errorf("sign.yml triggers = %v, want dispatch or a release request on main", doc.On)
+	}
+	dispatch, _ := doc.On["workflow_dispatch"].(map[string]any)
+	inputs, _ := dispatch["inputs"].(map[string]any)
+	if len(inputs) != 1 || inputs["version"] == nil {
+		t.Fatalf("manual Machine signing takes only a release version, got %v", inputs)
 	}
 	if len(doc.Permissions) != 1 || doc.Permissions["contents"] != "read" {
 		t.Errorf("sign.yml top-level permissions = %v, want {contents: read}", doc.Permissions)
@@ -377,7 +382,7 @@ func TestSignWorkflowContract(t *testing.T) {
 		t.Errorf("sign.permissions = %v, want {contents: write}", job.Permissions)
 	}
 	allowed := map[string]bool{
-		"MACOS_DEVID_P12": true, "MACOS_DEVID_P12_PASSWORD": true, "MACOS_PROVISION_PROFILE": true,
+		"MACOS_DEVID_P12": true, "MACOS_DEVID_P12_PASSWORD": true,
 		"NOTARY_KEY_P8": true, "NOTARY_KEY_ID": true, "NOTARY_ISSUER_ID": true,
 	}
 	seen := map[string]bool{}
@@ -395,9 +400,6 @@ func TestSignWorkflowContract(t *testing.T) {
 				continue
 			}
 			name := strings.TrimSuffix(strings.TrimPrefix(v, "${{ secrets."), " }}")
-			if name == "MACOS_PROVISION_PROFILE" && step.If != "inputs.artifact == 'owner-presence'" {
-				t.Errorf("sign step %d may read the profile on a Machine CLI release", i+1)
-			}
 			if !allowed[name] {
 				t.Errorf("sign step %d reads unexpected secret %q", i+1, v)
 			}

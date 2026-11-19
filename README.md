@@ -382,7 +382,7 @@ repaired, and setup fails if the check still cannot pass.
 2. Review and merge the version PR. Machine builds the five archives and signs and notarizes the macOS CLI and custody helper at that merge commit.
 3. When CI and signing pass, Machine tags the tested commit and publishes the archives, checksums, platform reports and pinned Homebrew formula. A formula-only PR then updates the tap to the published release.
 
-Manual Sign dispatches, including the owner-presence app, require a deployment review. Operators can use `scripts/release prepare` and `scripts/release tag` for recovery. [Signing and release configuration](docs/plans/macos-signing.md)
+Manual Machine signing dispatches require a deployment review. Operators can use `scripts/release prepare` and `scripts/release tag` for recovery. [Signing and release configuration](docs/plans/macos-signing.md)
 
 ---
 

@@ -288,7 +288,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		SetOptional("advice", plan.SharedHQAdvice())}
 	for _, s := range plan.Steps {
 		if platform == PlatformDarwin && s.Kind == KindHQAccount && s.Target == DarwinHQAccount && s.Action == ActionCreate {
-			advice := "The prefix administrator can send this saved plan to the owner approval app with managed-machine daemon first-hq export " + planID
+			advice := "For review by the owner, export this saved plan as the prefix administrator with managed-machine daemon first-hq export " + planID
 			if len(plan.Members) != 0 {
 				advice = "First provision the dedicated HQ role with a members plan without harness accounts, then plan the harness accounts separately."
 			}

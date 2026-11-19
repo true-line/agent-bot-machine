@@ -220,9 +220,6 @@ jobs:
       - name: Test standalone release notarization verdicts
         if: matrix.os == 'darwin'
         run: bash tests/verify-darwin-clis.test.sh
-      - name: Test owner signing profile constraints
-        if: matrix.os == 'darwin'
-        run: bash tests/owner-profile.test.sh
       - name: Machine daemon phase script
         run: bash tests/machine-daemon.test.sh
       - name: Build the native binary

@@ -66,6 +66,15 @@ Secure Enclave key. Machine verifies its proof in the Homebrew prefix owner's
 admin account. The Machine daemon continues to use its dedicated keychain for
 its own Ed25519 identity. [D4 and the cross-account channel](cross-account-channel.md#s5--agent-bot-is-the-control-plane-other-repos-p7p8)
 
+New owner proofs require a separately verified, unbundled provider in the
+signed-in owner's session. The provider must expose the public key for the
+independent pin and require fresh local authorization before signing the
+purpose-specific challenge with the owner's nonexportable P-256 key. For
+a plan, it must bind consent to the machine, plan ID, canonical digest and
+reviewed steps. Machine receives only the public proof. Until a provider
+meets this contract, new approvals are unavailable. Existing pairings
+continue to use their saved pins.
+
 On a fresh Mac, the prefix administrator first runs `managed-machine members
 plan`. When its `hq-account` step calls for creating `_agent-bot-hq`, complete
 the [first-HQ plan transfer](cross-account-channel.md#first-hq-provisioning-on-macos)
@@ -130,7 +139,7 @@ requires the owner's approval and admits the `main` branch and `v*` tags.
 and `managed-machine` (`0755`), identical in layout to the Linux and Windows
 archives.
 
-**Signing.** Merge the bot’s reviewed version PR to start Sign on protected main. The request job checks the merged PR and its approval. The main-only `release` environment supplies the signing identity. A manual dispatch remains available for recovery and the separate owner app.
+**Signing.** Merge the bot’s reviewed version PR to start Sign on protected main. The request job checks the merged PR and its approval. The main-only `release` environment supplies the signing identity. A manual dispatch remains available for Machine release recovery.
 
 The macOS signing job builds the
 deterministic dist, imports the Developer ID identity into a temporary keychain
@@ -166,7 +175,7 @@ Changes merged to `main` open or refresh a version PR. Merging the reviewed vers
 The release workflows use three GitHub environments.
 
 - `release` holds the Apple signing and notarization credentials. Restrict deployments to the branch `main`. Normal Machine releases use the reviewed version change as authorization.
-- `release-manual` requires the designated owner reviewer for manual signing, including owner-presence builds and recovery. Restrict it to the branch `main`. This environment needs no secrets.
+- `release-manual` requires the designated owner reviewer for manual Machine signing. Restrict it to the branch `main`. This environment needs no secrets.
 - `version-cut` restricts release PR and tag automation to the branch `main`. The automation uses the repository installation of the release App and the `CHORES_DUMB_CLIENT_ID` and `CHORES_DUMB_PRIVATE_KEY` credentials. It creates signed release commits and pushes the tag with an installation token so the tag triggers the Release workflow.
 
 During migration, configure the manual gate and verify its required reviewer before removing the separate reviewer from `release`. The signing workflow must already be deployed on `main` before that change.
@@ -205,28 +214,3 @@ During migration, configure the manual gate and verify its required reviewer bef
 1. Merge a change to main and inspect the generated version PR.
 2. Merge the reviewed version PR. Confirm Sign and both CI workflows ran on its merge SHA.
 3. Confirm the tag points to that SHA and the public release has the five archives, checksums, five platform reports and the verified Homebrew formula.
-
-### Signing the owner approval app (HQ #56)
-
-Machine's main-only **Sign** dispatch accepts `owner-presence` as an optional
-artifact. It builds the pinned Identity source on Apple Silicon, using the same
-reviewed release environment, Developer ID identity and notarization service
-as the CLI. The default dispatch still builds the five Machine archives.
-The app is the signed-in owner's approval client. The custody helper continues
-to run under the prefix owner's account.
-
-The existing release environment input `MACOS_PROVISION_PROFILE` from #441
-contains the base64 of the embeddable Developer ID distribution profile for
-`ai.true-line.agent-bot-owner-presence`. Only a distribution profile suitable
-for embedding in the delivered app belongs here. The signer checks the
-team, expiry, application identifier and authorized Keychain group. It selects
-the profile certificate by the SHA-256 digest that the release keychain reports
-for the selected signing identity, then compares its full DER to the signed
-app's leaf certificate. A rejected profile reports the
-first failed field by name. The signer grants only the app's exact group. The profile for the retired
-`AgentBotMachine.app` has a different application identifier.
-
-After notarization, Machine staples the ticket, archives the app and checks
-the extracted copy with codesign, stapler and Gatekeeper. The dispatch creates
-a separate `owner-presence-vX.Y.Z` draft containing the zip and its SHA-256.
-Physical owner presence and the subsequent signed HQ response are pilot checks.
