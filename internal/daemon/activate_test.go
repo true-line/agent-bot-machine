@@ -14,7 +14,7 @@ func TestClassifyLaunchctlBootstrapNotFoundFails(t *testing.T) {
 	if err := classifyLaunchctl("bootstrap", "service already loaded", errors.New("exit 5")); err != nil {
 		t.Fatalf("bootstrap already loaded: %v", err)
 	}
-	if err := classifyLaunchctl("bootout", "Could not find service", errors.New("exit 3")); err != nil {
-		t.Fatalf("bootout missing: %v", err)
+	if err := classifyLaunchctl("bootout", "", errors.New("launchctl executable not found")); err == nil {
+		t.Fatal("missing launchctl must fail")
 	}
 }

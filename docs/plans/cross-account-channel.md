@@ -196,7 +196,10 @@ daemon never reads a shared drop or a user-owned path.
 LaunchAgent (KeepAlive, LimitLoadToSessionType Aqua/Background/StandardIO)
 or the systemd user unit, load it without root, kickstart it, and wait
 until the socket accepts. A bootstrap "not found" is a failure.
-`daemon stop` unloads the unit. `daemon run` stays the foreground
+`daemon stop` unloads the unit. On macOS a service must unload or already
+be absent in both the GUI and user domains. Stop reports any failed domain.
+Uninstall retains the Machine and keyd plists if either service fails to unload.
+`daemon run` stays the foreground
 entry the unit execs. Agent accounts, root, and a foreign HOME stay
 refused. Windows writes the description and does not register a service.
 
