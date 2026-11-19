@@ -112,7 +112,7 @@ func activateLaunchDaemon(step Step) (err error) {
 	}
 	// Different approved plans can race for the same service. Hold this
 	// receipt-directory lock through bootstrap, verification and rollback.
-	lock, err := os.OpenFile(filepath.Join(receiptsDir(), ".hq-launchd.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	lock, err := os.OpenFile(filepath.Join(receiptsDir(), ".hq-launchd.lock"), os.O_CREATE|os.O_RDONLY|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		return err
 	}

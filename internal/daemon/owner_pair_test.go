@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -44,6 +45,8 @@ func signedOwnerReply(t *testing.T, key *ecdsa.PrivateKey, challenge ownerPairCh
 
 func TestMacHQOwnerEnrollment(t *testing.T) {
 	root := t.TempDir()
+	shared := t.TempDir()
+	t.Setenv(channelEnv, shared)
 	dir := stateDir(root)
 	deps := owner(root)
 	deps.Caller = func() (Caller, error) {
@@ -62,7 +65,7 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	machine, _, err := ed25519.GenerateKey(rand.Reader)
+	machine, machineKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +136,31 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	if err := st.save(dir); err != nil {
 		t.Fatal(err)
 	}
+	sharedPin := filepath.Join(shared, "daemon.pub")
+	refusedUnchanged := func(args []string, want string) {
+		t.Helper()
+		before, err := os.ReadFile(filepath.Join(dir, ownerPairFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := command(args...)
+		if r.Diagnostic == nil || !strings.Contains(r.Diagnostic.Message, want) {
+			t.Fatalf("expected refusal containing %q, got %#v", want, r.Diagnostic)
+		}
+		after, err := os.ReadFile(filepath.Join(dir, ownerPairFile))
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatalf("refusal changed the owner record: %v", err)
+		}
+	}
+	// The role and private key can exist before the per-user daemon first starts.
+	refusedUnchanged(append(enroll, "--owner-challenge"), "daemon start")
+	if _, err := os.Lstat(sharedPin); !os.IsNotExist(err) {
+		t.Fatal("pairing published a key", err)
+	}
+	// Use the same publication step as normal daemon startup.
+	if err := writeChannelPub(shared, machineKey); err != nil {
+		t.Fatal(err)
+	}
 	_, superseded := signedOwnerReply(t, key, challenge())
 	st, err = readOwnerPairState(dir)
 	if err != nil || st.FirstHQ != nil || st.Recovery != nil {
@@ -140,6 +168,24 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	}
 	c := challenge()
 	_, valid := signedOwnerReply(t, key, c)
+	if err := os.Remove(sharedPin); err != nil {
+		t.Fatal(err)
+	}
+	refusedUnchanged(append(enroll, "--owner-proof", valid), "daemon start")
+	if err := os.WriteFile(sharedPin, public, 0644); err != nil {
+		t.Fatal(err)
+	}
+	refusedUnchanged(append(enroll, "--owner-challenge"), "does not match")
+	refusedUnchanged(append(enroll, "--owner-proof", valid), "does not match")
+	if !mustLoadPub(t, sharedPin).Equal(public) {
+		t.Fatal("pairing replaced the other public key")
+	}
+	if err := os.Remove(sharedPin); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeChannelPub(shared, machineKey); err != nil {
+		t.Fatal(err)
+	}
 	requireErr(submit(superseded))
 	_, wrongSigner := signedOwnerReply(t, other, c)
 	requireErr(submit(wrongSigner))
@@ -241,6 +287,23 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	}
 	expired.Pending.Expires = time.Now().Unix() - 1
 	if err := expired.save(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(sharedPin); err != nil {
+		t.Fatal(err)
+	}
+	refusedUnchanged(append(enroll, "--owner-challenge"), "restore the matching public pin")
+	if err := os.WriteFile(sharedPin, alt, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "daemon.pub"), alt, 0600); err != nil {
+		t.Fatal(err)
+	}
+	refusedUnchanged(append(enroll, "--owner-challenge"), "existing owner-approved enrollment")
+	if err := os.WriteFile(filepath.Join(dir, "daemon.pub"), machine, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sharedPin, machine, 0644); err != nil {
 		t.Fatal(err)
 	}
 	_, late := signedOwnerReply(t, key, *expired.Pending)
@@ -355,7 +418,12 @@ func TestExplicitOrdinaryHQOwnerEnrollment(t *testing.T) {
 	deps.Caller = func() (Caller, error) {
 		return Caller{Username: "admin", UID: 501, Home: root, RegisteredHome: root, PrefixOwner: "admin", DarwinAdmin: true}, nil
 	}
-	machine, _ := keyPair(t)
+	machine, machineKey := keyPair(t)
+	shared := t.TempDir()
+	t.Setenv(channelEnv, shared)
+	if err := writeChannelPub(shared, machineKey); err != nil {
+		t.Fatal(err)
+	}
 	hq, private := keyPair(t)
 	ownerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

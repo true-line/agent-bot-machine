@@ -62,6 +62,9 @@ a saved members plan to the owner approval client using these commands:
 Export a single JSONL record with default output. Approval records consent
 for the separate human sudo members apply step. A new export supersedes
 any outstanding first-HQ challenge.
+Before first HQ enrollment, the prefix owner's daemon must have published its
+public key on the shared channel. If the installed daemon has never started,
+run managed-machine daemon start as the prefix owner, then request the challenge.
 For a paired macOS Machine, verify-identity checks this executable's access
 to the existing Machine signing identity without changing the key or service.
 Use daemon run --require-identity FINGERPRINT for a temporary replacement

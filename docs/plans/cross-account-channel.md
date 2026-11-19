@@ -324,8 +324,11 @@ The administrator can withdraw an outstanding request with
 app produces no proof. Import consumes the pending challenge and writes the
 existing ten-minute members approval. The final sudo command rechecks the
 current host against the approved digest and claims the ordinary one-use
-receipt. Once the role exists, continue with protected HQ pairing as described
-in [macOS signing](macos-signing.md#owner-approval-for-a-new-hq-pairing).
+receipt. Once the role exists, check that the prefix owner's Machine daemon
+has published its public key on the shared channel. If the per-user daemon is
+installed but has never started, the prefix owner runs `managed-machine daemon
+start` to publish the key before requesting an enrollment challenge. Continue
+with [protected HQ pairing](macos-signing.md#owner-approval-for-a-new-hq-pairing).
 
 If the service step fails after account creation, apply preserves the HQ role
 and attempts to finalize the root-owned receipt at

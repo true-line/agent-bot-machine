@@ -210,9 +210,31 @@ func ownerPair(root string, caller Caller, state *ownerPairState, options ownerP
 	if err != nil {
 		return ownerPairRefused(err.Error())
 	}
-	machine, err := loadPublic(filepath.Join(dir, "daemon.pub"))
+	// Startup publishes the channel pin under this same owner-pairing lock.
+	// Require it for both issuance and consumption before changing any state.
+	machine, err := readPublishedKey(dir)
+	if err != nil || machine == nil {
+		return ownerPairRefused("cannot read the prefix owner's Machine public key for enrollment")
+	}
+	channel := ChannelDir()
+	if channel == "" {
+		return ownerPairRefused("cannot locate the Machine channel directory for enrollment")
+	}
+	published, err := readPublishedKey(channel)
 	if err != nil {
-		return ownerPairRefused("the installed Machine service must have its daemon public key before enrollment")
+		return ownerPairRefused("cannot read the published Machine channel key for enrollment")
+	}
+	if published == nil {
+		if state.HQ != "" {
+			return ownerPairRefused("the enrolled Machine channel public key is missing; restore the matching public pin from a trusted backup")
+		}
+		return ownerPairRefused("the Machine channel public key is missing; run managed-machine daemon start as the prefix owner to publish it before first HQ enrollment")
+	}
+	if !machine.Equal(published) {
+		return ownerPairRefused("the published Machine channel key does not match the prefix owner's Machine public key")
+	}
+	if state.HQ != "" && hex.EncodeToString(machine) != state.Machine {
+		return ownerPairRefused("the Machine public key does not match the existing owner-approved enrollment")
 	}
 	if machine.Equal(hq) {
 		return ownerPairRefused("Machine and HQ must use distinct public keys")
