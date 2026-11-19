@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { download, openReleasePR, validateDraft } from '../scripts/prepare-release.mjs';
+import { download, downloadOwner, openReleasePR, validateDraft } from '../scripts/prepare-release.mjs';
 
 const sha = '1'.repeat(40);
 const releaseSha = '2'.repeat(40);
@@ -198,4 +198,34 @@ test('Sign eligibility uses the checked-out workflow SHA, protected main tip, an
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('owner download binds the two verified assets to the reviewed version and signing commit', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'owner-draft-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const zip = 'AgentBotOwnerPresence_' + version + '_darwin_arm64.zip';
+  const bytes = Buffer.from('fixture archive');
+  const hash = body => createHash('sha256').update(body).digest('hex');
+  const checksum = Buffer.from(hash(bytes) + '  ' + zip + '\n');
+  async function run(name, overrides = {}, sidecar = checksum, response = bytes) {
+    const assets = [zip, zip + '.sha256'].map((name, id) => ({
+      id: id + 1, name, state: 'uploaded', digest: 'sha256:' + hash([bytes, sidecar][id]),
+    }));
+    const draft = { draft: true, tag_name: 'owner-presence-v' + version, target_commitish: sha, assets, ...overrides };
+    return downloadOwner(version, sha, join(root, name), async (path, options) => {
+      if (path === rest + '/releases?per_page=100&page=1') return [draft];
+      assert.equal(options.binary, true);
+      if (path === rest + '/releases/assets/1') return response;
+      assert.equal(path, rest + '/releases/assets/2');
+      return sidecar;
+    });
+  }
+  await run('good');
+  assert.deepEqual(await readFile(join(root, 'good', zip)), bytes);
+  await assert.rejects(run('source', { target_commitish: releaseSha }));
+  await assert.rejects(run('tag', { tag_name: 'v' + version }));
+  await assert.rejects(run('public', { draft: false }));
+  await assert.rejects(run('missing', { assets: [] }));
+  await assert.rejects(run('sidecar', {}, Buffer.from('other checksum')));
+  await assert.rejects(run('corrupt', {}, checksum, Buffer.from('corrupt archive')));
 });

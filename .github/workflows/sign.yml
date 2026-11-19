@@ -1,9 +1,7 @@
 # Sign workflow (docs/plans/macos-signing.md). On a reviewed version request
-# merged to main, or an explicit release dispatch, it builds the five deterministic
-# archives at the dispatched commit, signs and notarizes the darwin binary with
-# the Developer ID identity held in the `release` environment, and uploads the
-# signed dist to a draft release vX.Y.Z. Prepare pins the signed darwin digest
-# in the formula; the tag push publishes this draft unchanged.
+# merged to main, sign the Machine CLI and the owner approval app at the same
+# version. Each matrix job stages a separate draft for tag-driven publication.
+# A manually approved recovery dispatch signs only the selected artifact.
 name: Sign
 
 on:
@@ -43,6 +41,7 @@ jobs:
       pull-requests: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      artifacts: ${{ steps.version.outputs.artifacts }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,17 +82,27 @@ jobs:
       - id: version
         env:
           VERSION_INPUT: ${{ inputs.version }}
+          ARTIFACT_INPUT: ${{ inputs.artifact }}
         shell: bash
         run: |
-          version="$VERSION_INPUT"
+          set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == push ]]; then
             version="$(cat .github/machine-release-version)"
+            artifacts='["machine","owner-presence"]'
+          else
+            version="$VERSION_INPUT"
+            case "${ARTIFACT_INPUT:-machine}" in
+              machine) artifacts='["machine"]' ;;
+              owner-presence) artifacts='["owner-presence"]' ;;
+              *) exit 1 ;;
+            esac
           fi
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo 'Expected a release version of the form X.Y.Z' >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "artifacts=$artifacts" >> "$GITHUB_OUTPUT"
 
   manual-approval:
     name: Approve manual signing
@@ -115,10 +124,14 @@ jobs:
 
   sign:
     needs: [request, manual-approval]
+    strategy:
+      fail-fast: false
+      matrix:
+        artifact: ${{ fromJSON(needs.request.outputs.artifacts) }}
     concurrency:
-      group: sign-${{ inputs.artifact || 'machine' }}-${{ needs.request.outputs.version }}
+      group: sign-${{ matrix.artifact }}-${{ needs.request.outputs.version }}
       cancel-in-progress: false
-    name: sign (darwin/arm64)
+    name: sign ${{ matrix.artifact }} (darwin/arm64)
     if: >-
       ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.request.result == 'success' &&
       ((github.event_name == 'push' && needs.manual-approval.result == 'skipped') ||
@@ -137,7 +150,7 @@ jobs:
     steps:
       - name: Check the requested version
         env:
-          ARTIFACT: ${{ inputs.artifact }}
+          ARTIFACT: ${{ matrix.artifact }}
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="v$VERSION"
@@ -151,19 +164,19 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the pinned Go toolchain
-        if: inputs.artifact != 'owner-presence'
+        if: matrix.artifact == 'machine'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
       - name: Install the pinned Rust toolchain
-        if: inputs.artifact != 'owner-presence'
+        if: matrix.artifact == 'machine'
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - name: Build the deterministic archives
-        if: inputs.artifact != 'owner-presence'
+        if: matrix.artifact == 'machine'
         run: go run ./cmd/mm-release build -version "$VERSION" -out "$RUNNER_TEMP/unsigned"
       - name: Check out the reviewed owner app
-        if: inputs.artifact == 'owner-presence'
+        if: matrix.artifact == 'owner-presence'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: true-line/agent-bot-identity
@@ -172,10 +185,10 @@ jobs:
           persist-credentials: false
           sparse-checkout: owner-presence-macos
       - name: Build the reviewed owner app
-        if: inputs.artifact == 'owner-presence'
+        if: matrix.artifact == 'owner-presence'
         run: owner-source/owner-presence-macos/build.sh "$RUNNER_TEMP/owner"
       - name: Decode the embeddable distribution profile
-        if: inputs.artifact == 'owner-presence'
+        if: matrix.artifact == 'owner-presence'
         env:
           PROFILE: ${{ secrets.MACOS_PROVISION_PROFILE }}
         run: |
@@ -224,7 +237,7 @@ jobs:
           echo "NOTARY_KEY_PATH=$RUNNER_TEMP/notary.p8" >>"$GITHUB_ENV"
       - name: Sign, notarize and verify
         env:
-          ARTIFACT: ${{ inputs.artifact }}
+          ARTIFACT: ${{ matrix.artifact }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
@@ -233,30 +246,32 @@ jobs:
           else
             scripts/sign-darwin "$VERSION" "$RUNNER_TEMP/unsigned" "$RUNNER_TEMP/signed"
           fi
-      - name: Upload the signed dist to the draft release
-        if: inputs.artifact != 'owner-presence'
+      - name: Stage the signed files in the matching draft
         env:
+          ARTIFACT: ${{ matrix.artifact }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="v$VERSION"
-          if draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)"; then
-            if [[ "$draft" != "true" ]]; then
-              echo "Error: release $tag is already published" >&2
-              exit 1
-            fi
-            gh release upload "$tag" "$RUNNER_TEMP"/signed/* --repo "$GITHUB_REPOSITORY" --clobber
+          set -euo pipefail
+          if [[ "$ARTIFACT" == owner-presence ]]; then
+            tag="owner-presence-v$VERSION"
+            title="Owner Approval $VERSION"
+            zip="$RUNNER_TEMP/AgentBotOwnerPresence_${VERSION}_darwin_arm64.zip"
+            files=("$zip" "$zip.sha256")
           else
-            gh release create "$tag" "$RUNNER_TEMP"/signed/* --repo "$GITHUB_REPOSITORY" \
-              --draft --target "$GITHUB_SHA" --title "$tag" --notes "Signed build of $GITHUB_SHA; published when $tag is pushed."
+            tag="v$VERSION"
+            title="$tag"
+            files=("$RUNNER_TEMP"/signed/*)
           fi
-      - name: Create the owner approval draft
-        if: inputs.artifact == 'owner-presence'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          zip="$RUNNER_TEMP/AgentBotOwnerPresence_${VERSION}_darwin_arm64.zip"
-          gh release create "owner-presence-v$VERSION" "$zip" "$zip.sha256" --repo "$GITHUB_REPOSITORY" \
-            --draft --target "$GITHUB_SHA" --title "Owner Approval $VERSION" --notes "Signed by Machine at $GITHUB_SHA."
+          if draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish 2>/dev/null)"; then
+            jq -e --arg sha "$GITHUB_SHA" '.isDraft == true and .targetCommitish == $sha' <<<"$draft" >/dev/null || {
+              echo "Refusing to update $tag: expected a draft targeting $GITHUB_SHA" >&2
+              exit 1
+            }
+            gh release upload "$tag" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
+              --draft --target "$GITHUB_SHA" --title "$title" --notes "Signed by Machine at $GITHUB_SHA."
+          fi
       - name: Remove the signing material
         if: always()
         run: |

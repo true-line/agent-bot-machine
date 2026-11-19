@@ -34,9 +34,14 @@ async function request(path, { method = 'GET', data, optional = false, binary = 
 }
 
 export function validateDraft(draft, version, sha) {
-  requireState(draft?.draft === true && draft.tag_name === 'v' + version && draft.target_commitish === sha,
+  const expected = ['SHA256SUMS', ...platformArchives.map(s => 'managed-machine_' + version + '_' + s)];
+  validateSignedAssets(draft, 'v' + version, sha, expected);
+}
+
+function validateSignedAssets(draft, tag, sha, names) {
+  requireState(draft?.draft === true && draft.tag_name === tag && draft.target_commitish === sha,
     'The release must be a draft for this exact Sign commit and version');
-  const expected = ['SHA256SUMS', ...platformArchives.map(s => 'managed-machine_' + version + '_' + s)].sort();
+  const expected = [...names].sort();
   assert.deepEqual(draft.assets.map(a => a.name).sort(), expected, 'Unexpected draft asset set');
   for (const asset of draft.assets) {
     requireState(Number.isSafeInteger(asset.id) && asset.id > 0 && asset.state === 'uploaded' &&
@@ -44,22 +49,42 @@ export function validateDraft(draft, version, sha) {
   }
 }
 
-export async function download(version, sha, dir, call = request) {
+async function findDraft(tag, call) {
   // Draft releases can have no tag ref yet. The published-by-tag endpoint
   // cannot reliably see them; use the authenticated releases collection.
   let draft;
   for (let page = 1; !draft; page++) {
     const batch = await call(rest + '/releases?per_page=100&page=' + page);
-    draft = batch.find(r => r.tag_name === 'v' + version);
+    draft = batch.find(r => r.tag_name === tag);
     if (!draft && batch.length < 100) break;
   }
-  validateDraft(draft, version, sha);
+  return draft;
+}
+
+async function downloadAssets(draft, dir, call) {
   await mkdir(dir);
   for (const asset of draft.assets) {
     const bytes = await call(rest + '/releases/assets/' + asset.id, { binary: true });
     assert.equal('sha256:' + createHash('sha256').update(bytes).digest('hex'), asset.digest, asset.name);
     await writeFile(join(dir, asset.name), bytes, { flag: 'wx' });
   }
+}
+
+export async function download(version, sha, dir, call = request) {
+  const draft = await findDraft('v' + version, call);
+  validateDraft(draft, version, sha);
+  await downloadAssets(draft, dir, call);
+}
+
+export async function downloadOwner(version, sha, dir, call = request) {
+  const tag = 'owner-presence-v' + version;
+  const zip = 'AgentBotOwnerPresence_' + version + '_darwin_arm64.zip';
+  const draft = await findDraft(tag, call);
+  validateSignedAssets(draft, tag, sha, [zip, zip + '.sha256']);
+  await downloadAssets(draft, dir, call);
+  const digest = draft.assets.find(asset => asset.name === zip).digest.slice('sha256:'.length);
+  assert.equal(await readFile(join(dir, zip + '.sha256'), 'utf8'), digest + '  ' + zip + '\n',
+    'Owner app checksum must identify the verified zip bytes and filename');
 }
 
 const mutation = `mutation($input: CreateCommitOnBranchInput!) {
@@ -150,6 +175,15 @@ async function main() {
   if (operation === 'eligible-version') {
     console.log(eligibleVersion(sha));
     return;
+  }
+  if (operation === 'download-owner') {
+    const version = (await readFile('VERSION', 'utf8')).trim();
+    assert.match(version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
+    assert.equal(git('merge-base', 'HEAD', sha), sha, 'Signing SHA must be in release history');
+    assert.equal(git('show', sha + ':.github/machine-release-version'), version);
+    assert.deepEqual(git('diff', '--name-only', sha, 'HEAD').split('\n').sort(), files,
+      'Only release metadata may differ from the signing tree');
+    return downloadOwner(version, sha, dir);
   }
   assert.equal(sha, process.env.GITHUB_SHA, 'Expected Sign at the trusted workflow checkout');
   const version = (await readFile('.github/machine-release-version', 'utf8')).trim();

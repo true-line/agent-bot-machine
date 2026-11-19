@@ -26,6 +26,8 @@ type workflowJob struct {
 	If          string            `yaml:"if"`
 	RunsOn      string            `yaml:"runs-on"`
 	Environment string            `yaml:"environment"`
+	Strategy    map[string]any    `yaml:"strategy"`
+	Outputs     map[string]string `yaml:"outputs"`
 	Permissions map[string]string `yaml:"permissions"`
 	Steps       []workflowStep    `yaml:"steps"`
 }
@@ -249,8 +251,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	if pubJob.Needs != "gates" {
 		t.Errorf("publish.needs = %v, want gates", pubJob.Needs)
 	}
-	if pubJob.RunsOn != "ubuntu-24.04" {
-		t.Errorf("publish.runs-on = %q, want ubuntu-24.04", pubJob.RunsOn)
+	if pubJob.RunsOn != "macos-15" {
+		t.Errorf("publish.runs-on = %q, want macos-15 for native app verification", pubJob.RunsOn)
 	}
 	if len(pubJob.Permissions) != 1 || pubJob.Permissions["contents"] != "write" {
 		t.Errorf("publish.permissions = %v, want {contents: write}", pubJob.Permissions)
@@ -367,6 +369,10 @@ func TestSignWorkflowContract(t *testing.T) {
 	if !ok || !reflect.DeepEqual(job.Needs, []any{"request", "manual-approval"}) || job.Environment != "release" {
 		t.Fatal("the release signer must depend on version resolution and the manual gate")
 	}
+	if request.Outputs["artifacts"] != "${{ steps.version.outputs.artifacts }}" || request.Outputs["version"] != "${{ steps.version.outputs.version }}" ||
+		!reflect.DeepEqual(job.Strategy, map[string]any{"fail-fast": false, "matrix": map[string]any{"artifact": "${{ fromJSON(needs.request.outputs.artifacts) }}"}}) {
+		t.Fatalf("sign matrix must use the preflight artifact set and version: outputs %v, strategy %v", request.Outputs, job.Strategy)
+	}
 	const signIf = "${{ !cancelled() && github.ref == 'refs/heads/main' && needs.request.result == 'success' && " +
 		"((github.event_name == 'push' && needs.manual-approval.result == 'skipped') || " +
 		"(github.event_name == 'workflow_dispatch' && needs.manual-approval.result == 'success')) }}"
@@ -395,7 +401,7 @@ func TestSignWorkflowContract(t *testing.T) {
 				continue
 			}
 			name := strings.TrimSuffix(strings.TrimPrefix(v, "${{ secrets."), " }}")
-			if name == "MACOS_PROVISION_PROFILE" && step.If != "inputs.artifact == 'owner-presence'" {
+			if name == "MACOS_PROVISION_PROFILE" && step.If != "matrix.artifact == 'owner-presence'" {
 				t.Errorf("sign step %d may read the profile on a Machine CLI release", i+1)
 			}
 			if !allowed[name] {
@@ -515,6 +521,58 @@ func TestSignPreflight(t *testing.T) {
 			}
 			if out, err := cmd.CombinedOutput(); (err == nil) != tc.pass {
 				t.Fatalf("pass = %t, want %t: %s", err == nil, tc.pass, out)
+			}
+		})
+	}
+}
+
+func TestSignVersionAndArtifacts(t *testing.T) {
+	root, err := findRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "sign.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc workflowDoc
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var resolve string
+	for _, step := range doc.Jobs["request"].Steps {
+		if _, ok := step.Env["VERSION_INPUT"]; ok {
+			resolve = step.Run
+		}
+	}
+	for _, tc := range []struct{ name, event, artifact, version, expectedVersion, artifacts string }{
+		{"reviewed version cut", "push", "", "", "1.0.1", `["machine","owner-presence"]`},
+		{"recovery default", "workflow_dispatch", "", "3.0.3", "3.0.3", `["machine"]`},
+		{"recovery owner", "workflow_dispatch", "owner-presence", "4.0.4", "4.0.4", `["owner-presence"]`},
+		{"bad recovery artifact", "workflow_dispatch", "untrusted", "1.0.0", "", ""},
+		{"bad version", "workflow_dispatch", "machine", "invalid", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, ".github"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, ".github", "machine-release-version"), []byte("1.0.1\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			output := filepath.Join(dir, "output")
+			cmd := exec.Command("bash", "-c", resolve)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "GITHUB_EVENT_NAME="+tc.event, "ARTIFACT_INPUT="+tc.artifact, "VERSION_INPUT="+tc.version, "GITHUB_OUTPUT="+output)
+			if out, err := cmd.CombinedOutput(); (err == nil) != (tc.artifacts != "") {
+				t.Fatalf("got error %v: %s", err, out)
+			}
+			if tc.artifacts != "" {
+				got, err := os.ReadFile(output)
+				want := "version=" + tc.expectedVersion + "\nartifacts=" + tc.artifacts + "\n"
+				if err != nil || string(got) != want {
+					t.Fatalf("resolved request = %q, want %q: %v", got, want, err)
+				}
 			}
 		})
 	}
