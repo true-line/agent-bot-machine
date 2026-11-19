@@ -146,6 +146,12 @@ flowchart LR
 - `apply <plan-id>`: only a saved plan ID (ADR-0012).
 - `update`: re-run the declared flavor.
 - `catalog`: accept a signed catalog envelope from the paired agent-daemon.
+- Paired HQ device operations use the administrative
+  [keyd device provider](../../keyd/README.md#managed-device-custody-on-macos).
+  Machine checks each named purpose. HQ receives public identity, the
+  requested proof or verified status. Private device and DPoP keys stay in
+  administrative custody. An unavailable provider refuses the operation on
+  every profile. [Platform custody decision](https://github.com/true-line/agent-bot-platform/discussions/91)
 - `members-plans` reads saved members plans on macOS and Linux. Its signed
   request uses the existing `option` and `plan_id` fields. With `option: list`
   it returns state `listed` and body `{"plan_ids":[...],"next_after":"..."}`.
