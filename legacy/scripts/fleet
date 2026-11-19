@@ -306,7 +306,7 @@ fleet_remove() {
         done
         if [[ "$json" == "1" ]]; then
             local details
-            details="$(python3 -c '
+            details="$(python3 -B -c '
 import json, sys
 machine_id, config_repo, dry_run = sys.argv[1:]
 ev = {}

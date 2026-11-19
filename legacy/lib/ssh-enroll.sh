@@ -367,7 +367,7 @@ ssh_enroll_status_json() {
     [[ -f "$state_file" ]] && machine_id="$(toml_value "$state_file" machine_id)"
     [[ -n "$machine_id" ]] && fleet_registered=1
 
-    python3 - "$account" "$agent_ctx" "$warning" "$key_present" "$key_path" "$pub_path" \
+    python3 -B - "$account" "$agent_ctx" "$warning" "$key_present" "$key_path" "$pub_path" \
         "$fingerprint" "$login" "$auth_reg" "$sign_reg" "$signing_configured" \
         "$fleet_registered" "$machine_id" <<'PY'
 import json, os, sys
