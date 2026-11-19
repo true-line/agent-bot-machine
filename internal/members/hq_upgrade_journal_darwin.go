@@ -31,16 +31,17 @@ type stoppingHQ struct {
 	PID    string              `json:"pid"`
 }
 type upgradeJournal struct {
-	OriginalPlist upgradeNodeIdentity `json:"original_plist"`
-	PreparedPlist upgradeNodeIdentity `json:"prepared_plist"`
-	pair          upgradePairGuard
-	Approval      Approval      `json:"approval"`
-	Owner         string        `json:"owner"`
-	Upgrade       launchUpgrade `json:"upgrade"`
-	Stage         string        `json:"staged_plist"`
-	Signer        upgradeSigner `json:"previous_signer"`
-	Phase         string        `json:"phase"`
-	Stopping      *stoppingHQ   `json:"stopping,omitempty"`
+	BootoutAccepted bool                `json:"bootout_accepted,omitempty"`
+	OriginalPlist   upgradeNodeIdentity `json:"original_plist"`
+	PreparedPlist   upgradeNodeIdentity `json:"prepared_plist"`
+	pair            upgradePairGuard
+	Approval        Approval      `json:"approval"`
+	Owner           string        `json:"owner"`
+	Upgrade         launchUpgrade `json:"upgrade"`
+	Stage           string        `json:"staged_plist"`
+	Signer          upgradeSigner `json:"previous_signer"`
+	Phase           string        `json:"phase"`
+	Stopping        *stoppingHQ   `json:"stopping,omitempty"`
 }
 
 func currentUpgradeReceipt(a Approval, owner string) (Receipt, error) {
@@ -113,18 +114,46 @@ func (j *upgradeJournal) write(path string, exclusive bool) error {
 func (j *upgradeJournal) phase(phase string) error {
 	j.Phase = phase
 	j.Stopping = nil
+	j.BootoutAccepted = false
 	return j.write(filepath.Join(receiptsDir(), upgradeJournalName), false)
 }
 
 func (j *upgradeJournal) stop(r launchRecord, phase string) error {
+	if j.Phase == phase {
+		return errors.New("an interrupted recorded HQ stop requires reapply")
+	}
+	return j.stopPublished(r, phase, false)
+}
+
+// Only a fresh authenticated apply reaches this method, after bounded observation
+// of the exact recorded process. A crash can fall on either side of bootout;
+// if acceptance never became durable, recheck the original record before retry.
+func (j *upgradeJournal) retryRecordedStop(r launchRecord, phase string) error {
+	return j.retryUnconfirmedBootout(phase, func(absent bool) error { return j.stopPublished(r, phase, absent) })
+}
+
+func (j *upgradeJournal) retryUnconfirmedBootout(phase string, retry func(bool) error) error {
+	if j.BootoutAccepted {
+		return errHQJobDraining
+	}
+	if j.Phase != phase || j.Stopping == nil {
+		return errors.New("missing matching HQ stop record")
+	}
+	return retry(j.Stopping.Socket.Inode == 0)
+}
+
+func (j *upgradeJournal) stopPublished(r launchRecord, phase string, absent bool) error {
 	parent, err := os.OpenFile(launchRuntimeDir, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return err
 	}
 	defer parent.Close()
-	sock, err := waitForLaunchSocket(launchRuntimeSocket, 0, 0)
-	if err != nil {
-		return err
+	var sock os.FileInfo
+	if !absent {
+		sock, err = waitForLaunchSocket(launchRuntimeSocket, 0, 0)
+		if err != nil {
+			return err
+		}
 	}
 	return j.stopObserved(r, phase, parent, sock)
 }
@@ -174,11 +203,18 @@ func (j *upgradeJournal) recordBootout(path, phase string, evidence *stoppingHQ,
 	if evidence == nil || (j.Phase == phase && (j.Stopping == nil || *j.Stopping != *evidence)) {
 		return errors.New("preserving changed HQ endpoint or process at recorded stop")
 	}
-	j.Phase, j.Stopping = phase, evidence
+	if j.Phase == phase && j.BootoutAccepted {
+		return errHQJobDraining
+	}
+	j.Phase, j.Stopping, j.BootoutAccepted = phase, evidence, false
 	if err := j.write(path, false); err != nil {
 		return err
 	}
-	return bootout()
+	if err := bootout(); err != nil {
+		return err
+	}
+	j.BootoutAccepted = true
+	return j.write(path, false)
 }
 
 var errHQJobDraining = errors.New("reviewed HQ process remains registered after bootout")
@@ -470,6 +506,26 @@ func claimUpgradeReceipt(id string, raw []byte) error {
 }
 
 func reconcileUpgrade(j upgradeOperations, rec launchUpgrade, result, phase string) error {
+	// A responsive predecessor may still be serving while launchd drains the
+	// recorded process. Its status cannot complete rollback in either stop phase.
+	if phase == "stopping-previous" || phase == "stopping-next" {
+		if result != "started" && result != "failed" {
+			return errors.New("receipt conflicts with a pending HQ stop")
+		}
+		if err := j.clearStoppedEndpoint(); err != nil {
+			if !errors.Is(err, errHQJobDraining) {
+				return err
+			}
+			stopping := rec.Previous
+			if phase == "stopping-next" {
+				stopping = rec.Next
+			}
+			if err := j.retryRecordedStop(stopping, phase); err != nil {
+				return err
+			}
+		}
+		return restartPrevious(j, rec)
+	}
 	if result == "applied" {
 		if e := j.verify(rec.Next); e != nil {
 			return e
@@ -490,7 +546,7 @@ func reconcileUpgrade(j upgradeOperations, rec launchUpgrade, result, phase stri
 		if j.verify(rec.Next) == nil {
 			return j.finish(true)
 		}
-	case "prepared", "stopping-previous", "switching", "stopping-next", "restoring-previous", "starting-previous":
+	case "prepared", "switching", "restoring-previous", "starting-previous":
 	default:
 		return errors.New("unrecognized upgrade phase; preserving verified inputs")
 	}
@@ -517,6 +573,11 @@ func restorePrevious(j upgradeOperations, rec launchUpgrade) error {
 	if e := j.clearStoppedEndpoint(); e != nil {
 		return e
 	}
+	return restartPrevious(j, rec)
+}
+
+func restartPrevious(j upgradeOperations, rec launchUpgrade) error {
+	old, next := rec.Previous, rec.Next
 	if e := j.installed(old); e != nil {
 		if e = j.phase("restoring-previous"); e != nil {
 			return e
@@ -541,6 +602,7 @@ type upgradeOperations interface {
 	active(launchRecord) (bool, error)
 	installed(launchRecord) error
 	stop(launchRecord, string) error
+	retryRecordedStop(launchRecord, string) error
 	clearStoppedEndpoint() error
 	phase(string) error
 	swap(launchRecord, launchRecord) error

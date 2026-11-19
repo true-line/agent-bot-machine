@@ -117,6 +117,9 @@ type testUpgradeHost struct {
 	wrongStatus                                                  string
 	starts, stops                                                int
 	unknownEndpoint                                              bool
+	pending                                                      *upgradeJournal
+	drainOnObservation                                           bool
+	retryAbsent                                                  bool
 }
 
 func (m *testUpgradeHost) active(r launchRecord) (bool, error) {
@@ -144,7 +147,19 @@ func (m *testUpgradeHost) stop(r launchRecord, s string) error {
 	m.stops++
 	return nil
 }
+func (m *testUpgradeHost) retryRecordedStop(r launchRecord, phase string) error {
+	return m.pending.retryUnconfirmedBootout(phase, func(absent bool) error {
+		m.retryAbsent = absent
+		return m.stop(r, phase)
+	})
+}
 func (m *testUpgradeHost) clearStoppedEndpoint() error {
+	if m.activePlist != "" {
+		if !m.drainOnObservation {
+			return errHQJobDraining
+		}
+		m.activePlist = ""
+	}
 	if m.unknownEndpoint {
 		return errors.New("unverified endpoint")
 	}
@@ -216,6 +231,77 @@ func TestHQUpgradeSwitchAndReconciliation(t *testing.T) {
 				t.Fatalf("err=%v state=%+v", err, m)
 			}
 		})
+	}
+}
+
+func TestPendingHQStopCannotCompleteOnResponsivePriorProcess(t *testing.T) {
+	rec := launchUpgrade{Previous: launchRecord{Plist: "old"}, Next: launchRecord{Plist: "new"}}
+	for _, tc := range []struct {
+		name, phase, result          string
+		accepted, drains, leafAbsent bool
+		stops, starts                int
+	}{
+		{"before predecessor bootout", "stopping-previous", "started", false, false, false, 1, 1},
+		{"predecessor drains before acceptance was saved", "stopping-previous", "started", false, true, false, 0, 1},
+		{"accepted stop still drains", "stopping-previous", "started", true, false, false, 0, 0},
+		{"accepted stop completes", "stopping-previous", "started", true, true, false, 0, 1},
+		{"older failed receipt still has draining predecessor", "stopping-previous", "failed", true, false, false, 0, 0},
+		{"older failed receipt restores after stop", "stopping-previous", "failed", true, true, false, 0, 1},
+		{"before candidate bootout without published socket", "stopping-next", "started", false, false, true, 1, 1},
+		{"accepted candidate stop never reissued", "stopping-next", "started", true, false, true, 0, 0},
+		{"candidate drains without published socket", "stopping-next", "started", true, true, true, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target, stage := "old", "new"
+			if tc.phase == "stopping-next" {
+				target, stage = stage, target
+			}
+			evidence := &stoppingHQ{PID: "319"}
+			if !tc.leafAbsent {
+				evidence.Socket.Inode = 83
+			}
+			m := &testUpgradeHost{activePlist: target, installedPlist: target, stagedPlist: stage, phaseName: tc.phase,
+				pending:            &upgradeJournal{Phase: tc.phase, Stopping: evidence, BootoutAccepted: tc.accepted},
+				drainOnObservation: tc.drains}
+			err := reconcileUpgrade(m, rec, tc.result, tc.phase)
+			if m.stops != tc.stops || m.starts != tc.starts || tc.stops > 0 && m.retryAbsent != tc.leafAbsent {
+				t.Fatalf("stops=%d starts=%d absent=%t err=%v", m.stops, m.starts, m.retryAbsent, err)
+			}
+			if tc.starts == 0 {
+				if !errors.Is(err, errHQJobDraining) || m.outcome != "" || m.phaseName != tc.phase {
+					t.Fatalf("completed unresolved stop: %+v %v", m, err)
+				}
+			} else if m.activePlist != "old" || m.outcome != "failed" || m.phaseName != "starting-previous" {
+				t.Fatalf("incomplete restoration: %+v %v", m, err)
+			}
+		})
+	}
+}
+
+func TestUpgradePersistsBootoutAcceptance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "journal")
+	j := &upgradeJournal{Phase: "starting-next"}
+	e := &stoppingHQ{Parent: upgradeNodeIdentity{Inode: 44}, PID: "319"}
+	if err := j.recordBootout(path, "stopping-next", e, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resumed upgradeJournal
+	if err = json.Unmarshal(data, &resumed); err != nil || !resumed.BootoutAccepted || resumed.Stopping == nil || *resumed.Stopping != *e {
+		t.Fatalf("lost accepted stop: %v", err)
+	}
+	stop := func() error { t.Fatal("repeated accepted bootout"); return nil }
+	if !errors.Is(resumed.recordBootout(path, "stopping-next", e, stop), errHQJobDraining) {
+		t.Fatal("accepted stop lost")
+	}
+	// A retry from the original apply may observe progress but cannot submit
+	// another stop, including when the command's result remained uncertain.
+	j.BootoutAccepted = false
+	if err = j.stop(launchRecord{}, "stopping-next"); err == nil {
+		t.Fatal("repeated stop in ordinary apply")
 	}
 }
 
