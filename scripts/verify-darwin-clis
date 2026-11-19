@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Verify the standalone Developer ID executables before repacking them.
+set -euo pipefail
+[[ $# -eq 2 && "$2" =~ ^[A-Z0-9]{10}$ ]] || { echo "usage: verify-darwin-clis TREE TEAM" >&2; exit 2; }
+tree="$1" team="$2"
+for name in managed-machine agent-bot-keyd; do
+    case "$name" in
+        managed-machine) id=ai.true-line.agent-bot-machine ;;
+        agent-bot-keyd) id=ai.true-line.agent-bot-keyd ;;
+    esac
+    # Developer ID chain, application signing leaf, team and executable ID.
+    requirement="notarized and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"$team\" and identifier \"$id\""
+    for attempt in 1 2 3 4 5; do
+        if codesign --verify --strict --check-notarization -R="$requirement" "$tree/$name" >/dev/null 2>&1; then
+            break
+        fi
+        if [[ "$attempt" == 5 ]]; then
+            echo "Error: $name failed the notarized Developer ID signing requirement" >&2
+            exit 1
+        fi
+        sleep 15
+    done
+done

@@ -156,6 +156,10 @@ Marker counts are a triage aid, not proof a test is safe; a stubbed `sudo` strin
 
 ## Replay
 
+Run `bash tests/fleet-cutover-characterization.test.sh` on macOS. The JSON
+refusals and `ssh status --json` must preserve the fixture home, including
+when the system Python would normally create its bytecode cache there.
+
 `bash tests/readonly-characterization.test.sh`, `bash tests/catalog-characterization.test.sh` and `bash tests/host-state-characterization.test.sh` from a neutral directory (offline; need bash, python3, ssh-keygen and git). For the inventory, from a checkout at `e617a0ff`: `grep -rn "skill path" bin lib scripts skills tests Formula`; `managed-machine status --section nothing-here --json` in an isolated tree (the error lists the valid sections); `grep -o "assert_cli_json_error '[a-z-]*'" tests/cli.test.sh | sort -u`; the marker counts with `grep -c` over `tests/*.test.sh`; `git diff --stat ecce0fdf e617a0ff -- bin lib scripts tests Formula skills`. For the private catalog, parse `apps.json` with a JSON library and count fields and kinds only.
 
 ## Not done here

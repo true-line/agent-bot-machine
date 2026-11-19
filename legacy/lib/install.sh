@@ -946,7 +946,7 @@ managed_machine_has_json_flag() {
 # Usage: managed_machine_json_failure <command> <code> <message> <action> [status] [evidence_json]
 managed_machine_json_failure() {
     local command="$1" code="$2" message="$3" action="$4" status="${5:-failed}" evidence_json="${6:-}"
-    python3 - "$command" "$code" "$message" "$action" "$status" "$evidence_json" <<'PY'
+    python3 -B - "$command" "$code" "$message" "$action" "$status" "$evidence_json" <<'PY'
 import json, os, sys
 command, code, message, action, status, evidence_raw = sys.argv[1:]
 try:

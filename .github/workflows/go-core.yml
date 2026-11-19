@@ -217,6 +217,9 @@ jobs:
         env:
           MM_KEYD_CUSTODY_TEST: '1'
         run: bash tests/keyd-custody-macos.test.sh
+      - name: Test standalone release notarization verdicts
+        if: matrix.os == 'darwin'
+        run: bash tests/verify-darwin-clis.test.sh
       - name: Test owner signing profile constraints
         if: matrix.os == 'darwin'
         run: bash tests/owner-profile.test.sh
