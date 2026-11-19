@@ -378,11 +378,11 @@ repaired, and setup fails if the check still cannot pass.
 
 ## Releasing a new version
 
-1. Set `.github/machine-release-version` in a reviewed PR, typically alongside the change being released. The merge to `main` starts signing and notarization of the Machine CLI and the owner approval app on macOS at the requested version.
-2. After Sign succeeds, release automation checks the five archives against a deterministic build and opens a release PR with the new `VERSION` and signed Homebrew digest.
-3. Review and merge the release PR. Once CI passes on its merge commit, automation pushes the annotated Machine tag. The Release workflow verifies the signed draft again, attaches the five platform reports and publishes it.
+1. Merge the changes to `main`. Machine opens or refreshes a version PR. The default bump is a patch. Set a higher target in `.github/machine-release-version` when a different version is needed.
+2. Review and merge the version PR. Machine builds the five archives and signs and notarizes the macOS CLI and custody helper at that merge commit.
+3. When CI and signing pass, Machine tags the tested commit and publishes the archives, checksums, platform reports and pinned Homebrew formula. A formula-only PR then updates the tap to the published release.
 
-The tag workflow includes the signed owner approval app and its checksum in the Machine release. Manual Sign recovery for a single artifact requires a deployment review. Operators can use `scripts/release prepare` and `scripts/release tag` for recovery. [Signing and release configuration](docs/plans/macos-signing.md)
+Manual Sign dispatches, including the owner-presence app, require a deployment review. Operators can use `scripts/release prepare` and `scripts/release tag` for recovery. [Signing and release configuration](docs/plans/macos-signing.md)
 
 ---
 

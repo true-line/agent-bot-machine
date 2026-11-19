@@ -48,9 +48,12 @@ EOF
 chmod +x "$STUB_BIN/ssh-keygen-signer"
 export PATH="$STUB_BIN:$PATH"
 
-# The real repo must not drift: the formula and VERSION name the same release.
+# The tap can trail VERSION while the signed release is being published.
 FORMULA_VERSION="$(sed -nE 's/^[[:space:]]*version "([0-9.]+)"$/\1/p' "$ROOT/Formula/managed-machine.rb" | head -1)"
-[[ -n "$FORMULA_VERSION" && "$FORMULA_VERSION" == "$(tr -d '[:space:]' <"$ROOT/VERSION")" ]]
+python3 - "$FORMULA_VERSION" "$(cat "$ROOT/VERSION")" <<'PYTEST'
+import sys
+assert tuple(map(int, sys.argv[1].split("."))) <= tuple(map(int, sys.argv[2].split(".")))
+PYTEST
 
 # Seed a fixture with the real formula, VERSION, and skill. The fixture
 # skill's range is widened to cover the test versions (7.x-9.x) so the range

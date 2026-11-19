@@ -44,9 +44,6 @@ def candidate(cut):
     if current == previous:
         return ""
     require(version(current) > version(previous), "release version must advance")
-    for rev in [cut + "^1", cut]:
-        require(git("show", f"{rev}:.github/machine-release-version") == current,
-                "VERSION differs from the previously reviewed release request")
     return "v" + current
 
 
@@ -73,20 +70,17 @@ def select_pr(prs, repo, cut, tag):
     return f"{int(matches[0]['number'])} {oid(matches[0]['head']['sha'])}"
 
 
-def lineage(cut, tag, signed_base, pr_head):
+def lineage(cut, tag, base, pr_head):
     require(candidate(cut) == tag, "cut version changed")
-    require(git("show", "-s", "--format=%P", oid(pr_head)) == oid(signed_base),
-            "release PR must have one commit on the immutable signing SHA")
-    require(git("show", "-s", "--format=%s", pr_head) == "Release " + tag,
-            "unexpected release commit subject")
-    require(git("rev-parse", cut + "^{tree}") == git("rev-parse", pr_head + "^{tree}"),
-            "merged tree differs from the reviewed release PR")
-    require(git("merge-base", signed_base, cut) == signed_base, "signing SHA is not a cut ancestor")
-    paths = "Formula/managed-machine.rb\nVERSION"
-    for base in [signed_base, cut + "^1"]:
-        require(git("diff", "--name-only", base, cut) == paths, "unexpected release delta")
-    require(git("show", f"{signed_base}:.github/machine-release-version") == tag[1:],
-            "draft was signed for a different release request")
+    require(git("merge-base", pr_head, cut) == pr_head or
+            git("rev-parse", cut + "^{tree}") == git("rev-parse", pr_head + "^{tree}"),
+            "cut does not contain the reviewed version PR")
+    require(git("show", f"{pr_head}:VERSION") == tag[1:], "reviewed version differs")
+    require(git("rev-parse", cut + "^1") == base, "unexpected cut parent")
+    paths = git("diff", "--name-only", base, cut).splitlines()
+    require(paths == ["VERSION", "skills/managed-machine/SKILL.md"],
+            "a version PR may only bump VERSION and its skill metadata")
+
 
 
 def remote_tag_state(cut, tag):
@@ -112,8 +106,7 @@ def tag_cut(cut, tag):
     git("fetch", "--quiet", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main")
     main = "refs/remotes/origin/main"
     require(git("merge-base", cut, main) == cut, "cut is no longer on main")
-    for path in ["VERSION", ".github/machine-release-version"]:
-        require(git("show", f"{main}:{path}") == tag[1:], "release request was superseded on main")
+    require(git("show", f"{main}:VERSION") == tag[1:], "release was superseded on main")
     env = dict(os.environ, GIT_COMMITTER_NAME="trueline-chores-dumb[bot]",
                GIT_COMMITTER_EMAIL="trueline-chores-dumb[bot]@users.noreply.github.com")
     git("-c", "tag.gpgSign=false", "tag", "-a", tag, oid(cut), "-m", "Release " + tag, env=env)

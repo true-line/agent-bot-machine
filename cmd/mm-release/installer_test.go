@@ -121,6 +121,18 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 	}
 	baseFormulaText := strings.ReplaceAll(string(rawFormula), "\r\n", "\n")
 
+	// Between a version merge and tap synchronization the committed formula
+	// still installs the previous published version. Validate that pin first.
+	pinned := regexp.MustCompile(`(?m)^  version "(\d+\.\d+\.\d+)"$`).FindStringSubmatch(baseFormulaText)
+	digest := regexp.MustCompile(`(?m)^    sha256 "([0-9a-f]{64})"$`).FindStringSubmatch(baseFormulaText)
+	if len(pinned) != 2 || len(digest) != 2 {
+		t.Fatal("missing published Homebrew version or digest")
+	}
+	if err := verifyFormula(formulaPath, pinned[1], digest[1]); err != nil {
+		t.Fatal(err)
+	}
+	candidateTemplate := strings.ReplaceAll(baseFormulaText, pinned[1], version)
+
 	wantCoreArchive := fmt.Sprintf("managed-machine_%s_darwin_arm64.tar.gz", version)
 	wantCoreURL := fmt.Sprintf("https://github.com/true-line/agent-bot-machine/releases/download/v%s/%s", version, wantCoreArchive)
 	darwinArchiveBytes, err := os.ReadFile(filepath.Join(distDir, wantCoreArchive))
@@ -130,10 +142,10 @@ func TestRepoFormulaAndDocsR04(t *testing.T) {
 	darwinSHA := sha256Hex(darwinArchiveBytes)
 
 	archivePin := regexp.MustCompile(`(?m)^(\s*url "` + regexp.QuoteMeta(wantCoreURL) + `"\n\s*sha256 ")[0-9a-f]{64}"$`)
-	if !archivePin.MatchString(baseFormulaText) {
+	if !archivePin.MatchString(candidateTemplate) {
 		t.Fatalf("formula does not pin the public Darwin archive %q with SHA-256", wantCoreURL)
 	}
-	candidateFormulaText := archivePin.ReplaceAllString(baseFormulaText, "${1}"+darwinSHA+`"`)
+	candidateFormulaText := archivePin.ReplaceAllString(candidateTemplate, "${1}"+darwinSHA+`"`)
 	candidateFormulaPath := filepath.Join(t.TempDir(), "managed-machine.rb")
 	if err := os.WriteFile(candidateFormulaPath, []byte(candidateFormulaText), 0o644); err != nil {
 		t.Fatal(err)
