@@ -259,6 +259,26 @@ current host against the approved digest and claims the ordinary one-use
 receipt. Once the role exists, continue with protected HQ pairing as described
 in [macOS signing](macos-signing.md#owner-approval-for-a-new-hq-pairing).
 
+If the service step fails after account creation, apply preserves the HQ role
+and attempts to finalize the root-owned receipt at
+`/var/db/managed-machine/members/receipts/<plan-id>.json` with result
+`failed` and `failed_at` naming the service. A receipt still marked
+`started` also consumes the approval. Rollback unloads a service started
+by this apply and removes a newly installed plist if it still matches.
+After a new bootstrap, Machine allows up to three seconds for launchd to
+publish the public socket. The owner client then checks its metadata and
+performs the authenticated status query. Run `managed-machine members plan --hq-service "$record"` in the prefix
+administrator's account to inspect the remaining service step and its new
+digest. This readback saves a new plan.
+
+First-HQ transfer requires an absent role. With the role already present,
+installing the remaining service requires a new owner approval for the
+remaining plan. Enrolled HQ can currently sign status and receipts on a
+protected macOS channel. The channel refuses a members approval request
+until it can validate an action-specific owner proof. Retain the role,
+failed receipt and saved plans for the supported recovery flow once
+available.
+
 The export is one UTF-8 JSON object. Its fields are `action`
 (`first-hq-provision`), `machine_key`, `plan_id`, `plan_digest`, `nonce`,
 `expires_at` (integer Unix seconds), and `plan_canonical`. The canonical plan

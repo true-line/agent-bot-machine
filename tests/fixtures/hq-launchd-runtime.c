@@ -12,6 +12,10 @@
 
 int main(int argc, char **argv) {
     if (argc < 3) return 2;
+    if (!strcmp(argv[2], "check-owner-control") || !strcmp(argv[2], "status")) {
+        char cwd[2];
+        if (!getcwd(cwd, sizeof(cwd)) || strcmp(cwd, "/")) return 10;
+    }
     if (!strcmp(argv[2], "check-owner-control")) {
         puts("{\"capability\":\"darwin-owner-control/v1\"}"); return 0;
     }

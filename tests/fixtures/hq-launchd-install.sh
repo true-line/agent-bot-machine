@@ -76,7 +76,9 @@ for count in 1 2; do
         # Existing steady-state idempotence fixture after first HQ is complete.
         approve "$id" "$digest"
     fi
-    sudo "$MM" members apply "$id" || fail 'approved LaunchDaemon apply failed'
+    # The role and owner probes must work from a terminal inside a private
+    # directory. The native runtime checks cwd when run through nested sudo.
+    (cd "$signer" && sudo "$MM" members apply "$id") || fail 'approved LaunchDaemon apply failed'
     sudo jq -e --arg id "$id" --arg digest "$digest" '.result == "applied" and .plan_id == $id and .plan_digest == $digest' "$RECEIPTS/$id.json" >/dev/null
     if [[ "$count" == 1 ]]; then
         uid="$(id -u "$role")"
@@ -86,7 +88,7 @@ for count in 1 2; do
         refused MM_MEMBERS_NOT_APPROVED sudo "$MM" members apply "$id"
         refused MM_DAEMON_CALLER_REFUSED "$MM" daemon first-hq export "$id"
     fi
-    "$stage/node" "$stage/hq/hq/main.mjs" status --owner-control --json | jq -e '.hq.sockets.ownerControl.peer_check=="getpeereid"' >/dev/null
+    (cd / && "$stage/node" "$stage/hq/hq/main.mjs" status --owner-control --json) | jq -e '.hq.sockets.ownerControl.peer_check=="getpeereid"' >/dev/null
     [[ "$(sudo stat -f '%Su %Sg %Lp' "$plist")" == 'root wheel 644' ]]
     [[ "$(sudo stat -f '%Su %Lp' /var/agent-bot-hq/.agent-bot-hq)" == "$role 700" ]]
     newpid="$(sudo launchctl print "system/$label" | awk '$1 == "pid" && $2 == "=" {print $3}')"

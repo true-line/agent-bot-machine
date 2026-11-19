@@ -96,6 +96,37 @@ func TestFirstHQPlanBindsOptionalVerifiedService(t *testing.T) {
 	if err != nil || got != digest || !strings.Contains(canonical, launchLabel) || !strings.Contains(canonical, s.ArtifactSHA256) {
 		t.Fatalf("first-HQ service plan: %s, %v", got, err)
 	}
+	t.Run("service rollback leaves a new digest outside first-HQ scope", func(t *testing.T) {
+		// The initial apply created the role, then removed its service plist.
+		name := DarwinHQAccount
+		home := HQHome(PlatformDarwin, name)
+		h.accounts[name] = Account{Name: name, UID: 320, GID: 320, Group: name, Home: home, Shell: DarwinNoLoginShell, DarwinRole: darwinHQRoleName}
+		h.entries[home] = Entry{Dir: true, Mode: 0700, Owner: name, Group: name}
+		defer delete(h.accounts, name)
+		defer delete(h.entries, home)
+		current, err := Build(Input{HQAccount: name, Platform: PlatformDarwin, Invoker: admin, HQService: s}, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.Changes() != 1 || len(current.Steps) != 2 || current.Steps[0].Action != ActionNone || current.Steps[1].Action != ActionCreate {
+			t.Fatalf("remaining plan: %+v", current.Steps)
+		}
+		newDigest, err := current.Digest()
+		if err != nil || newDigest == digest {
+			t.Fatalf("remaining plan digest: %s, %v", newDigest, err)
+		}
+		const newID = "plan-20261119T040000Z-abcd"
+		raw, err := json.Marshal(Saved{Plan: current, HQService: s, PlanID: newID, PlanDigest: newDigest})
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.files[filepath.Join(base, "Library", "Application Support", "managed-machine", "members", "plans", newID+".json")] = string(raw)
+		for _, attempt := range []string{id, newID} {
+			if _, _, err := FirstHQPlan(base, admin, attempt, h); err == nil || !strings.Contains(err.Error(), "role to be absent") {
+				t.Fatalf("accepted non-fresh plan %s: %v", attempt, err)
+			}
+		}
+	})
 	if err := os.WriteFile(s.Node, []byte("changed"), 0755); err != nil {
 		t.Fatal(err)
 	}

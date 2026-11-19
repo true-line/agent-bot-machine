@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
+	"github.com/qwts/managed-machine/internal/diag"
 )
 
 func signedOwnerReply(t *testing.T, key *ecdsa.PrivateKey, challenge ownerPairChallenge) (string, string) {
@@ -177,6 +178,20 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	}
 	if !channel(330, "status") || !channel(330, "receipts") || channel(331, "status") || channel(330, "apply") || channel(330, "update") || channel(330, "bootstrap") {
 		t.Fatal("wrong peer, debug or privilege boundary")
+	}
+	// A paired HQ signing a well-formed members approval still needs a
+	// separate action-specific owner proof. This includes recovery plans.
+	membersReq := Request{Verb: approveMembersVerb, PlanID: "plan-20261119T040000Z-abcd",
+		PlanDigest: strings.Repeat("a", 64), Timestamp: time.Now().Unix(), Nonce: "fresh-members"}
+	if err := Sign(private, &membersReq); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(membersReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, code, _ := (&Gate{Dir: dir}).verify(330, raw); code != diag.DaemonPeerRefused {
+		t.Fatalf("paired HQ members approval: %s", code)
 	}
 	// Older binaries might leave a staged key or UID. Neither supersedes
 	// the atomic owner-approved tuple.

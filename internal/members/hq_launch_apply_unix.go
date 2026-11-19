@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 const launchctl = "/bin/launchctl"
@@ -178,10 +180,13 @@ func activateLaunchDaemon(step Step) (err error) {
 			return err
 		}
 		started = true
+		if err := waitForLaunchSocket(launchSocket, 0, 3*time.Second); err != nil {
+			return inspectFailedLaunch(err)
+		}
 	}
 	out, err := hqProgramOutput("/usr/bin/sudo", "-n", "-H", "-u", step.Owner, "--", rec.Service.Node, main, "status", "--owner-control", "--json")
 	if err != nil {
-		return fmt.Errorf("query launched HQ as approved owner: %w", err)
+		return inspectFailedLaunch(ownerStatusFailure(err))
 	}
 	if !confirmsServiceOwner(out, step.Owner, u.Uid, DarwinHQAccount, launchSocket, "getpeereid") {
 		return errors.New("running HQ did not confirm the approved macOS owner-control endpoint")
@@ -203,4 +208,124 @@ func activateLaunchDaemon(step Step) (err error) {
 		return errors.New("launchd HQ process does not run under the dedicated service UID")
 	}
 	return nil
+}
+
+// Bootstrap can return before launchd publishes its public socket. Once a
+// node exists, the owner client verifies its metadata and authenticates it.
+func waitForLaunchSocket(path string, expectedUID uint32, limit time.Duration) error {
+	deadline := time.Now().Add(limit)
+	for {
+		info, err := os.Lstat(path)
+		switch {
+		case err == nil:
+			stat, ok := info.Sys().(*syscall.Stat_t)
+			if !ok || info.Mode() != os.ModeSocket|0666 || stat.Uid != expectedUID {
+				return errors.New("owner-control socket has unexpected type, owner or mode")
+			}
+			return nil
+		case !errors.Is(err, syscall.ENOENT):
+			return errors.New("cannot inspect the launchd owner-control endpoint")
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return errors.New("launchd did not publish the owner-control socket before the deadline")
+		}
+		time.Sleep(min(25*time.Millisecond, remaining))
+	}
+}
+
+// A failed client may print a complete response or stack trace to stderr.
+func ownerStatusFailure(err error) error {
+	base := "query launched HQ as approved owner: status command did not complete"
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		if code := exit.ExitCode(); code >= 0 {
+			base = fmt.Sprintf("query launched HQ as approved owner: sudo exit status %d", code)
+		}
+		if reason := ownerStatusStderr(exit.Stderr); reason != "" {
+			base += " (" + reason + ")"
+		}
+	}
+	return errors.New(base)
+}
+
+// Only sanitized errors enter this function. Capture launchd's state before
+// deferred rollback unloads the job, including when no public socket appeared.
+func inspectFailedLaunch(stage error) error {
+	job, _ := hqProgramOutput(launchctl, "print", "system/"+launchLabel)
+	return withLaunchState(stage, job)
+}
+
+func withLaunchState(stage error, job []byte) error {
+	var state, runs, lastExit string
+	for _, line := range strings.Split(string(job), "\n") {
+		key, val, ok := strings.Cut(line, " = ")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "\tstate":
+			switch val {
+			case "running", "not running", "waiting", "spawn scheduled", "spawn pending", "exited", "stopped":
+				state = "launchd state " + val
+			}
+		case "\truns":
+			if n, parseErr := strconv.ParseUint(val, 10, 32); parseErr == nil {
+				runs = fmt.Sprintf("launchd runs %d", n)
+			}
+		case "\tlast exit code":
+			if val == "(never exited)" {
+				lastExit = "launchd has never exited"
+			}
+			if n, parseErr := strconv.Atoi(val); parseErr == nil && n >= 0 && n <= 255 {
+				lastExit = fmt.Sprintf("launchd last exit code %d", n)
+			}
+		}
+	}
+	var details []string
+	if state != "" {
+		details = append(details, state)
+	}
+	if runs != "" {
+		details = append(details, runs)
+	}
+	if lastExit != "" {
+		details = append(details, lastExit)
+	}
+	if len(details) == 0 {
+		return stage
+	}
+	return fmt.Errorf("%w (%s)", stage, strings.Join(details, ", "))
+}
+
+func ownerStatusStderr(raw []byte) string {
+	s := strings.TrimSpace(string(raw))
+	var reply struct {
+		Transport string `json:"transport_error"`
+		Code      string `json:"code"`
+	}
+	if json.Unmarshal(raw, &reply) == nil {
+		if reply.Transport != "" {
+			s = reply.Transport
+		} else if reply.Code != "" {
+			return "HQ returned a status refusal"
+		}
+	}
+	switch {
+	case s == "connection closed", strings.HasPrefix(s, "read ECONNRESET"):
+		return "owner-control connection closed"
+	case s == "expected an owner control socket owned by uid 0 at mode 666":
+		return "owner-control socket has unexpected type, owner or mode"
+	case s == "owner control requires a root-managed directory at /private" || s == "owner control requires a root-managed directory at /private/var":
+		return "owner-control socket parent is not root-managed"
+	case s == "connect ENOENT "+launchSocket, s == "ENOENT: no such file or directory, lstat '"+launchSocket+"'":
+		return "owner-control socket missing"
+	case s == "connect ECONNREFUSED "+launchSocket:
+		return "owner-control connection refused"
+	case s == "connect EACCES "+launchSocket, s == "connect EPERM "+launchSocket, s == "EACCES: permission denied, lstat '"+launchSocket+"'", s == "EPERM: operation not permitted, lstat '"+launchSocket+"'":
+		return "owner-control socket access denied"
+	case strings.HasPrefix(s, "sudo: a password is required"):
+		return "sudo requires authentication"
+	}
+	return ""
 }
