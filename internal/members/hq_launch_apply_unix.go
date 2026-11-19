@@ -267,6 +267,10 @@ func activateReviewedLaunch(step Step) (err error) {
 	if !loaded || parseErr != nil || n <= 0 {
 		return errors.New("HQ has no live launchd process")
 	}
+	return verifyHQProcessUID(pid)
+}
+
+func verifyHQProcessUID(pid string) error {
 	role, err := user.Lookup(DarwinHQAccount)
 	if err != nil {
 		return err

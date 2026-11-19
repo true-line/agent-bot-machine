@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/user"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -153,13 +152,8 @@ func upgradeUnderLock(step Step, approval Approval, pair upgradePairGuard) (err 
 	if e != nil || !live || pe != nil || n <= 0 {
 		return errors.New("prior HQ job is no longer running")
 	}
-	role, e := user.Lookup(DarwinHQAccount)
-	if e != nil {
+	if e = verifyHQProcessUID(pid); e != nil {
 		return e
-	}
-	processUID, e := hqProgramOutput("/bin/ps", "-o", "uid=", "-p", pid)
-	if e != nil || strings.TrimSpace(string(processUID)) != role.Uid {
-		return errors.New("prior HQ job is no longer running as its dedicated role")
 	}
 	if e = pairedReleaseStatus(rec.Next.Service, fp); e != nil {
 		return e

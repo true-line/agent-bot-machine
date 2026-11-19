@@ -186,6 +186,9 @@ func (j *upgradeJournal) verify(r launchRecord) error {
 	if e != nil || !run || pe != nil || n <= 0 {
 		return errors.New("reviewed HQ job is not running")
 	}
+	if e = verifyHQProcessUID(pid); e != nil {
+		return e
+	}
 	if e = pairedReleaseStatus(r.Service, j.Approval.MachineFingerprint); e != nil {
 		return e
 	}
