@@ -6,12 +6,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/members"
+	"github.com/qwts/managed-machine/internal/plan"
 )
 
 const maxMessage = 64 << 10
@@ -153,7 +156,7 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	}
 	g.seen[req.Nonce] = struct{}{}
 	if !knownVerb(req.Verb) {
-		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, approve-members, bootstrap"
+		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, members-plans, approve-members, bootstrap"
 	}
 	if id, msg := catalogFields(req, raw); id != "" {
 		return req, id, msg
@@ -168,7 +171,13 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 		}
 		g.Pairing = pairing
 	}
-	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" {
+	if req.Verb == membersPlansVerb {
+		p := g.Pairing
+		if !p.AgentDaemonBound || p.AgentDaemonUID != peerUID || !p.AgentDaemon.Equal(ed25519.PublicKey(pub)) || !dedicatedMembersPlanPeer(peerUID) {
+			return req, diag.DaemonPeerRefused, "members-plans requires the enrolled HQ service account"
+		}
+	}
+	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" && req.Verb != membersPlansVerb {
 		return req, diag.DaemonPeerRefused, "this command requires its own owner presence proof"
 	}
 	if req.Verb == "bootstrap" {
@@ -193,6 +202,25 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	return req, "", ""
 }
 
+// Legacy enrollment may bind agent-daemon to a custom account. Check the
+// current system role independently for this dedicated-account operation.
+func dedicatedMembersPlanPeer(uid int) bool {
+	var role string
+	switch runtime.GOOS {
+	case "darwin":
+		role = members.DarwinHQAccount
+	case "linux":
+		role = members.DefaultHQAccount
+	default:
+		return false
+	}
+	if uid <= 0 || uid == os.Geteuid() {
+		return false
+	}
+	account, err := lookupUser(role)
+	return err == nil && account.Username == role && account.Uid == strconv.Itoa(uid)
+}
+
 func terminalVerb(verb string) bool {
 	switch verb {
 	case "status", "receipts", "update":
@@ -204,7 +232,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", approveMembersVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, approveMembersVerb, "bootstrap":
 		return true
 	default:
 		return false
@@ -256,6 +284,26 @@ const approveMembersVerb = "approve-members"
 // or null value, and refuses everything but plan_id and plan_digest on
 // approve-members. Both identifiers must have their fixed forms.
 func membersFields(req Request, raw []byte) (string, string) {
+	if req.Verb == membersPlansVerb {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return diag.DaemonUndeclared, "invalid members-plans request"
+		}
+		for k := range fields {
+			switch k {
+			case "verb", "option", "plan_id", "nonce", "timestamp", "public_key", "signature":
+			default:
+				return diag.DaemonUndeclared, "unexpected members-plans field"
+			}
+		}
+		_, hasID := fields["plan_id"]
+		if (req.Option != "list" && req.Option != "get") || ((hasID || req.Option == "get") && !plan.ValidID(req.PlanID)) ||
+			len(req.Nonce) > 128 || strings.ContainsAny(req.Nonce, "\r\n") {
+			return diag.DaemonUndeclared, "members-plans requires list with an optional cursor, or get with a plan ID"
+		}
+		return "", ""
+	}
+
 	if req.Verb != approveMembersVerb {
 		if req.PlanDigest != "" || hasRawField(raw, "plan_digest") {
 			return diag.DaemonUndeclared, "plan_digest is not declared on this verb"

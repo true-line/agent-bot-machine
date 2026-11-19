@@ -88,10 +88,10 @@ A challenge is valid for two minutes; requesting a replacement invalidates
 its predecessor. Machine checks the signature under its existing owner pin and
 binds the accepted HQ key to the local `_agent-bot-hq` UID. An existing HQ
 enrollment needs a separate authorized transition. Replacing the owner key
-also requires a separate rotation procedure. On hosts with an owner pin, only
-signed `status` and `receipts` from that HQ account are currently authorized.
-Additional verbs require their own action-specific presence checks before
-they can be enabled. A signature verifies possession of the pinned key;
+also requires a separate rotation procedure. On hosts with an owner pin, the bound HQ account
+can request signed `status`, `receipts` and the read-only `members-plans`
+operation. Widening actions still require their own action-specific owner
+presence checks. A signature verifies possession of the pinned key;
 provisioning and physical qualification establish its hardware provenance.
 
 **Dedicated-keychain ACL threat model.** The self-only `SecAccessRef` ACL

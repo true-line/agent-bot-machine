@@ -224,12 +224,13 @@ func Run(ctx context.Context, root string) error {
 		},
 	}
 	return Serve(ctx, ln, gate, priv, peerCred, Hooks{
-		Status:   func() (string, []byte, error) { return statusBody(dir) },
-		Receipts: func() ([]byte, error) { return receiptsBody(dir) },
-		Plan:     planner.Plan,
-		Apply:    planner.Apply,
-		Update:   planner.Update,
-		Catalog:  func(req Request) (string, string, string) { return session.accept(dir, req) },
+		Status:       func() (string, []byte, error) { return statusBody(dir) },
+		Receipts:     func() ([]byte, error) { return receiptsBody(dir) },
+		Plan:         planner.Plan,
+		Apply:        planner.Apply,
+		Update:       planner.Update,
+		Catalog:      func(req Request) (string, string, string) { return session.accept(dir, req) },
+		MembersPlans: func(option, id string) ([]byte, error) { return readMembersPlans(root, option, id) },
 		ApproveMembers: func(planID, digest string) ([]byte, string, string) {
 			return approveMembers(runtime.GOOS, dir, planID, digest, time.Now())
 		},

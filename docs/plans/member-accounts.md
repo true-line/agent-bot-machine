@@ -311,6 +311,12 @@ asserts the same owners, groups and modes), a deliberately broken rule
 made to generate one), and `approve-members` itself (Go tests in
 `internal/daemon`; the script writes the approval file in the same form).
 
+On split accounts Machine serves saved IDs and canonical plan bytes to the
+enrolled HQ service account through the signed [`members-plans` read
+operation](machine-daemon.md#closed-verb-set). Fetching a plan leaves its
+approval and apply state untouched. The protected approval step for an
+already paired HQ is tracked in [Machine #539](https://github.com/true-line/agent-bot-machine/issues/539).
+
 **Local owner approval is built.** agent-bot-identity's
 [proposal route](https://github.com/true-line/agent-bot-identity/blob/774e177a0c79ef4ab404de4df3cfb35949e4db6a/agent-web.mjs)
 reads the saved plan, verifies its canonical digest, and presents its steps

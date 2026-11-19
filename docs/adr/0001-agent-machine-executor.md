@@ -52,7 +52,12 @@ it is confirmed. The daemon reads the pairing files before each request, so
 other client stays live.
 
 The verbs are `status`, `receipts`, `plan`, `apply`, `update`, `catalog`,
-and `approve-members`. `approve-members` records a plan ID and digest for
+`members-plans`, and `approve-members`. The read-only `members-plans` verb requires
+the enrolled HQ key and the OS UID of the platform’s current dedicated HQ account,
+matching both enrollment and socket credentials. It lists saved plan IDs
+or fetches a single canonical members plan, as specified in the
+[Machine channel plan](../plans/machine-daemon.md#closed-verb-set).
+`approve-members` records a plan ID and digest for
 the member accounts provisioner and starts no process
 ([member-accounts.md](../plans/member-accounts.md)).
 There is no shell verb and no SSH verb. Requests carry identifiers only.

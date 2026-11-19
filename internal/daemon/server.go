@@ -85,6 +85,8 @@ type Hooks struct {
 	Apply    func(planID, name, option, target, soul, harness, session string) string
 	Update   func(name, soul, harness, session string) (string, string)
 	Catalog  func(req Request) (string, string, string)
+	// MembersPlans lists or fetches fixed saved plans from the prefix owner's store.
+	MembersPlans func(option, id string) ([]byte, error)
 	// ApproveMembers records the approval of a member accounts plan and
 	// returns the approval as the response body. It runs nothing.
 	ApproveMembers func(planID, digest string) ([]byte, string, string)
@@ -152,6 +154,19 @@ func (h Hooks) reply(req Request) Response {
 			return refused(diagID, message)
 		}
 		return Response{OK: true, State: state, Message: message}
+	case membersPlansVerb:
+		if h.MembersPlans == nil {
+			return refused(diag.DaemonUnimplemented, "members-plans is not available")
+		}
+		body, err := h.MembersPlans(req.Option, req.PlanID)
+		if err != nil {
+			return refused(diag.MembersPlanFailed, "the requested members plans could not be read")
+		}
+		state := "listed"
+		if req.Option == "get" {
+			state = "found"
+		}
+		return Response{OK: true, State: state, Body: body}
 	case approveMembersVerb:
 		if h.ApproveMembers == nil {
 			return refused(diag.DaemonUnimplemented, "approve-members is not served yet")
