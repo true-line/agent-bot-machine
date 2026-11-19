@@ -152,6 +152,21 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 	if err != nil || len(pairing.Terminal) == 0 {
 		t.Fatalf("paired terminal key %v %v", pairing, err)
 	}
+	for _, args := range [][]string{
+		{"unpair", "--client", "agent-daemon"},
+		{"unpair", "--client=unknown"},
+		{"unpair", "--client", ""},
+		{"unpair", "--client=agent-daemon", "--client", "terminal"},
+	} {
+		res := run(owner(root), cli.Context{}, args)
+		if res.Diagnostic == nil || res.Diagnostic.ID != diag.Usage {
+			t.Fatalf("expected usage error for %q, got %#v", args, res)
+		}
+	}
+	stillPaired, err := loadPairing(dir)
+	if err != nil || !stillPaired.Terminal.Equal(pairing.Terminal) {
+		t.Fatalf("refused unpair changed the terminal pairing: %v", err)
+	}
 	res = run(owner(root), cli.Context{}, []string{"unpair"})
 	if res.Diagnostic != nil {
 		t.Fatal(res.Diagnostic.Message)
@@ -159,6 +174,10 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 	pairing, err = loadPairing(dir)
 	if err != nil || len(pairing.Terminal) != 0 {
 		t.Fatalf("unpaired terminal key %v %v", pairing, err)
+	}
+	res = run(owner(root), cli.Context{}, []string{"unpair", "--client", "terminal"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
 	}
 
 	userRoot := t.TempDir()

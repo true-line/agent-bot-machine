@@ -141,6 +141,10 @@ Two clients only: `terminal` (the owner, in `user`) and `agent-daemon`
 a non-owner. `RefuseClient()` allows user `pair` and signed `status`.
 Catalog remains agent-daemon-only.
 
+`daemon unpair` and `daemon unpair --client terminal` revoke the terminal
+pairing. An explicit request to unpair any other client returns a usage
+error and preserves the existing pairings.
+
 ### Darwin key store
 
 See [macos-signing.md](macos-signing.md). Constraints from #446 stay: no
