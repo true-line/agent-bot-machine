@@ -189,3 +189,8 @@ paired_status
 repair_pid="$(sudo launchctl print "system/$label" | awk '$1=="pid" && $2=="=" {print $3}')"
 [[ "$repair_pid" =~ ^[1-9][0-9]*$ && "$(ps -o uid= -p "$repair_pid" | tr -d ' ')" == "$(id -u "$role")" ]] || fail 'repaired job is not running as HQ'
 ok 'the existing paired role recovered only its service through a signed owner review and root apply'
+
+# A requested native release qualification has no software signing alternative.
+if [[ -n "${MM_HQ_DEVICE_ARCHIVE:-}" ]]; then
+    source "$ROOT/tests/fixtures/paired-darwin-hq-device.sh"
+fi

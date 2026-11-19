@@ -27,6 +27,9 @@ cleanup_launch() {
 }
 trap cleanup_launch EXIT
 sudo chmod 0755 "$stage"
+if [[ -n "${MM_HQ_DEVICE_ARCHIVE:-}" ]]; then
+    source "$ROOT/tests/fixtures/stage-darwin-hq-device.sh"
+fi
 prepare_native_hq_fixture() {
     local fixture="$1"
     shift
