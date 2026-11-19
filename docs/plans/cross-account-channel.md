@@ -267,7 +267,13 @@ and attempts to finalize the root-owned receipt at
 by this apply and removes a newly installed plist if it still matches.
 After a new bootstrap, Machine allows up to three seconds for launchd to
 publish the public socket. The owner client then checks its metadata and
-performs the authenticated status query. Run `managed-machine members plan --hq-service "$record"` in the prefix
+performs the authenticated status query. On the physical pilot, launchd
+published a root-owned socket whose inherited descriptor retained a different
+kernel name. HQ must verify that the published endpoint reaches that
+listener. The signed Machine status command exercises the separate role-to-
+Machine channel. See [HQ listener verification](https://github.com/true-line/agent-bot-hq/issues/176).
+
+Run `managed-machine members plan --hq-service "$record"` in the prefix
 administrator's account to inspect the remaining service step and its new
 digest. This readback saves a new plan.
 
