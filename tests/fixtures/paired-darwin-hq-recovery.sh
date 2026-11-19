@@ -53,7 +53,11 @@ stop_fixture_machine() {
 trap stop_fixture_machine EXIT
 start_fixture_machine() {
     [[ ! -e "$channel" && ! -L "$channel" ]] || fail 'Machine channel already exists'
-    "$MM" daemon run "$@" > "$signer/machine.log" 2>&1 &
+    if [[ -n "${upgrade_test_daemon:-}" ]]; then
+        "$MM" hosted-upgrade-fixture "$machine_pin" > "$signer/machine.log" 2>&1 &
+    else
+        "$MM" daemon run "$@" > "$signer/machine.log" 2>&1 &
+    fi
     machine_pid=$!
     for ((i=0; i<100; i++)); do
         kill -0 "$machine_pid" || fail 'foreground Machine exited before opening the channel'
@@ -89,6 +93,15 @@ paired_status() {
 }
 start_fixture_machine --require-identity "$machine_pin"
 paired_status --daemon-key "$machine_key"
+
+if [[ "${MM_HQ_UPGRADE_TEST:-}" == paired ]]; then
+    [[ "${MM_KEYD_CUSTODY_TEST:-}" == 1 && "${MM_HQ_PREDECESSOR:-}" == paired && -z "${MM_HQ_DEVICE_ARCHIVE:-}" ]]
+    stop_fixture_machine
+    "$provider_dir/agent-bot-keyd" hq-device-init
+    upgrade_test_daemon=true
+    start_fixture_machine --require-identity "$machine_pin"
+    paired_status
+fi
 
 # Remove only the service installed earlier. Keep its role, state and pairs.
 if "$layout_v2"; then runtime_id="$(stat -f '%d:%i' "$runtime_dir")"; fi
@@ -189,6 +202,10 @@ paired_status
 repair_pid="$(sudo launchctl print "system/$label" | awk '$1=="pid" && $2=="=" {print $3}')"
 [[ "$repair_pid" =~ ^[1-9][0-9]*$ && "$(ps -o uid= -p "$repair_pid" | tr -d ' ')" == "$(id -u "$role")" ]] || fail 'repaired job is not running as HQ'
 ok 'the existing paired role recovered only its service through a signed owner review and root apply'
+
+if [[ -n "${MM_HQ_UPGRADE_TEST:-}" ]]; then
+    source "$ROOT/tests/fixtures/paired-darwin-hq-upgrade.sh"
+fi
 
 # A requested native release qualification has no software signing alternative.
 if [[ -n "${MM_HQ_DEVICE_ARCHIVE:-}" ]]; then

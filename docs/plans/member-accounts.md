@@ -553,6 +553,18 @@ layout or release requires an explicit cutover. A second approved apply
 verifies the same loaded job. The experimental v2 layout requires installation
 evidence on a Mac with fully enabled SIP. In the macOS 27 HQ installation
 workflow, the manually selected `require_sip` input enforces this condition.
+
+Hosted upgrade tests run a real system LaunchDaemon under its dedicated
+account. One job verifies that a software predecessor keeps its PID and plist
+when a service-only upgrade is refused. A second uses the public paired HQ
+releases, a disposable owner key and a test executable that delegates to the
+native admin keyd in a temporary Keychain. It checks rollback after a candidate
+status failure, a successful replacement and a read-only retry. The hosted
+test executable is built separately from the distributed Machine binary.
+Testing the distribution signature requirement for the upgrade requires a
+public signed Machine and keyd release supporting both hardware custody and
+the upgrade operation. Physical SIP-enabled evidence remains a separate gate.
+
 For a newly started job that advertises `darwin-hq-launch-exits/v2`, exit
 88 reports a native socket check-in return of 159. Machine includes the
 sandbox classification when this Mac's launchctl confirms it.

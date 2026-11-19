@@ -2,19 +2,32 @@
 # Prepare public, pinned test inputs as an ordinary user. This script neither
 # installs the service nor touches an existing checkout or account.
 set -euo pipefail
-[[ $# == 1 && -d "$1" ]] || { echo 'expected a disposable output directory' >&2; exit 2; }
+[[ $# -ge 1 && $# -le 3 && -d "$1" ]] || { echo 'expected a disposable output directory' >&2; exit 2; }
 fixture="$(cd "$1" && pwd -P)"
 hq_sha=d52f01f517773565b673ec9735f670922e58dc91
 hq_tar_sha=43e99d8d83d2c8623f0b4eb2adbb9bdce1e833e16256b135549de0670e270e14
+case "${2:-original}" in
+    original) ;;
+    paired) hq_sha=1e6484ec11e5b2591cf79c40f80e4a1004f99e46
+        hq_tar_sha=64f63c48b09b2678ae8dc72585ad030ab458d8f0c1b6a19108282af92f6ad526 ;;
+    upgrade) hq_sha=3887da3725222335ed1d4e77c6113a42d9a0ee50
+        hq_tar_sha=9b228d8b9dbe57471b2e4007e8aef08026f3c21ef54c1d863585d6b9ac620a29 ;;
+    *) echo 'unknown HQ test release' >&2; exit 2 ;;
+esac
 node_dist=node-v24.19.0-darwin-arm64
 node_tar_sha=8294b7aa9b03997481c06babf1e8b270c859358f27da57a11509afe537ac381d
 node_sha=27db838bb204ef7c21df2931f5656e4c8fb32e6e947f363a402b49714d32b5b1
 cd "$fixture"
 mkdir bin
-curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-    "https://nodejs.org/dist/v24.19.0/$node_dist.tar.gz" -o node.tar.gz
-printf '%s  node.tar.gz\n' "$node_tar_sha" | shasum -a 256 --check
-tar -xzOf node.tar.gz "$node_dist/bin/node" > bin/node
+if [[ $# == 3 ]]; then
+    [[ "$2" == upgrade && "$3" == /* && -f "$3" && ! -L "$3" ]]
+    cp "$3" bin/node
+else
+    curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+        "https://nodejs.org/dist/v24.19.0/$node_dist.tar.gz" -o node.tar.gz
+    printf '%s  node.tar.gz\n' "$node_tar_sha" | shasum -a 256 --check
+    tar -xzOf node.tar.gz "$node_dist/bin/node" > bin/node
+fi
 printf '%s  bin/node\n' "$node_sha" | shasum -a 256 --check
 chmod 0755 bin/node
 export PATH="$fixture/bin:$PATH"
