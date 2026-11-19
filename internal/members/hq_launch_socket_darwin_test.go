@@ -264,6 +264,7 @@ func TestInterruptedUpgradeBootoutPreservesSocketProvenance(t *testing.T) {
 			if err = json.Unmarshal(b, &restored); err != nil {
 				t.Fatal(err)
 			}
+			restored.pair = func(_ Approval, run func() error) error { return run() }
 			unowned := scenario == "replaced" || scenario == "no capture" || scenario == "original reappears" || scenario == "replacement after absence"
 			if unowned {
 				replacement, e := waitForLaunchSocket(path, uid, 0)
@@ -309,14 +310,14 @@ func TestInterruptedUpgradeBootoutPreservesSocketProvenance(t *testing.T) {
 					return nil
 				}
 				busy := false
-				err = retryBusyHQEndpoint(func() error {
+				err = restored.afterBootout(func(HQService, string) (bool, string, error) { return false, "", nil }, func() error {
 					e := unlinkStoppedSocket(d, filepath.Base(path), f, uid, p)
 					if errors.Is(e, unix.EBUSY) {
 						busy = true
 						releaseSocket()
 					}
 					return e
-				})
+				}, 250*time.Millisecond)
 				if !busy {
 					t.Fatal("kernel did not protect open socket")
 				}
@@ -357,22 +358,76 @@ func TestUpgradeJournalWithoutStopEvidence(t *testing.T) {
 	}
 }
 
-func TestUpgradeRetriesOnlyBusyEndpoint(t *testing.T) {
-	other := errors.New("changed inode or pairing")
-	tries := 0
-	err := retryBusyHQEndpoint(func() error {
-		tries++
-		if tries == 1 {
-			return unix.EBUSY
-		}
-		return other
-	})
-	if !errors.Is(err, other) || tries != 2 {
-		t.Fatalf("tries=%d, err=%v", tries, err)
-	}
-	start := time.Now()
-	err = retryBusyHQEndpoint(func() error { return unix.EBUSY })
-	if !errors.Is(err, unix.EBUSY) || time.Since(start) > 3*time.Second {
-		t.Fatal("busy endpoint did not terminate", err)
+func TestUpgradeWaitsOnlyForRecordedBootout(t *testing.T) {
+	for _, tc := range []struct {
+		name, phase      string
+		steps            []string
+		want             string
+		checks, cleanups int
+	}{
+		{"predecessor drains", "stopping-previous", []string{"draining", "absent"}, "", 2, 1},
+		{"candidate drains", "stopping-next", []string{"draining", "absent"}, "", 2, 1},
+		{"PID reused by different release", "stopping-next", []string{"different argv"}, "cannot verify", 1, 0},
+		{"different PID", "stopping-previous", []string{"changed PID"}, "different or unrecorded", 1, 0},
+		{"no recorded stop", "starting-next", []string{"draining"}, "different or unrecorded", 1, 0},
+		{"revoked while draining", "stopping-previous", []string{"draining", "revoked"}, "pair changed", 2, 0},
+		{"busy then closed", "stopping-next", []string{"busy", "absent"}, "", 2, 2},
+		{"new registration after absence", "stopping-next", []string{"busy", "draining"}, "different or unrecorded", 2, 1},
+		{"recorded job remains registered", "stopping-next", []string{"draining"}, "remains registered", -1, 0},
+		{"endpoint remains busy", "stopping-next", []string{"busy"}, "busy", -1, -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old, next := HQService{ReleaseDir: "old"}, HQService{ReleaseDir: "next"}
+			j := upgradeJournal{Owner: "owner", Phase: tc.phase, Stopping: &stoppingHQ{PID: "123"},
+				Upgrade: launchUpgrade{Previous: launchRecord{Service: old}, Next: launchRecord{Service: next}}}
+			var step string
+			checks, cleanups := 0, 0
+			j.pair = func(_ Approval, run func() error) error {
+				step = tc.steps[min(checks, len(tc.steps)-1)]
+				checks++
+				if step == "revoked" {
+					return errors.New("pair changed")
+				}
+				return run()
+			}
+			wantRelease := next
+			if tc.phase == "stopping-previous" {
+				wantRelease = old
+			}
+			start := time.Now()
+			err := j.afterBootout(func(s HQService, who string) (bool, string, error) {
+				if s != wantRelease || who != j.Owner {
+					t.Fatal("checked a different release or owner")
+				}
+				switch step {
+				case "draining":
+					return true, "123", nil
+				case "changed PID":
+					return true, "456", nil
+				case "different argv":
+					return false, "", errors.New("loaded job differs")
+				case "absent", "busy":
+					return false, "", nil
+				default:
+					t.Fatalf("unexpected inspection: %s", step)
+					return false, "", nil
+				}
+			}, func() error {
+				cleanups++
+				if step == "busy" {
+					return unix.EBUSY
+				}
+				return nil
+			}, 100*time.Millisecond)
+			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatal(err)
+			}
+			if tc.checks >= 0 && tc.checks != checks || tc.cleanups >= 0 && tc.cleanups != cleanups {
+				t.Fatalf("checks=%d cleanups=%d", checks, cleanups)
+			}
+			if tc.checks < 0 && (checks < 2 || time.Since(start) > 3*time.Second) {
+				t.Fatal("expected bounded observation", checks, err)
+			}
+		})
 	}
 }

@@ -181,31 +181,55 @@ func (j *upgradeJournal) recordBootout(path, phase string, evidence *stoppingHQ,
 	return bootout()
 }
 
-// During rollback the last service process may still be closing a descriptor.
-// EBUSY alone permits a short retry. Every attempt repeats the pairing, job,
-// parent, socket identity and listener checks before the guarded unlink.
+var errHQJobDraining = errors.New("reviewed HQ process remains registered after bootout")
+
 func (j *upgradeJournal) clearStoppedEndpoint() error {
-	return retryBusyHQEndpoint(func() error {
-		return j.pair(j.Approval, func() error {
-			active, _, err := loadedLaunchDaemon(j.Upgrade.Next.Service, j.Owner)
-			if err != nil || active {
-				return errors.New("cannot confirm reviewed HQ job stopped")
-			}
-			return clearRecordedEndpoint(launchRuntimeSocket, j.Stopping, func(parent *os.File, sock os.FileInfo, pid string) error {
-				return removeStoppedLaunchSocket(launchRuntimeSocket, parent, sock, pid)
-			})
+	return j.afterBootout(loadedLaunchDaemon, func() error {
+		return clearRecordedEndpoint(launchRuntimeSocket, j.Stopping, func(parent *os.File, sock os.FileInfo, pid string) error {
+			return removeStoppedLaunchSocket(launchRuntimeSocket, parent, sock, pid)
 		})
-	})
+	}, 250*time.Millisecond)
 }
 
-func retryBusyHQEndpoint(remove func() error) error {
-	deadline := time.Now().Add(250 * time.Millisecond)
+// Wait only for the job named in this stop record. Every observation and
+// removal uses a fresh pairing check. Once absence has been observed, any
+// registration is new and must be preserved, even if it has the same argv.
+func (j *upgradeJournal) afterBootout(inspect func(HQService, string) (bool, string, error), cleanup func() error, limit time.Duration) error {
+	release := j.Upgrade.Next.Service
+	if j.Phase == "stopping-previous" {
+		release = j.Upgrade.Previous.Service
+	}
+	recordedPID := ""
+	if j.Stopping != nil && (j.Phase == "stopping-previous" || j.Phase == "stopping-next") {
+		if n, err := strconv.Atoi(j.Stopping.PID); err == nil && n > 0 && strconv.Itoa(n) == j.Stopping.PID {
+			recordedPID = j.Stopping.PID
+		}
+	}
+	gone := false
+	deadline := time.Now().Add(limit)
 	for {
-		err := remove()
-		if !errors.Is(err, syscall.EBUSY) || !time.Now().Before(deadline) {
+		retry := false
+		err := j.pair(j.Approval, func() error {
+			active, pid, err := inspect(release, j.Owner)
+			if err != nil {
+				return errors.New("cannot verify the registered HQ job after bootout")
+			}
+			if active {
+				if !gone && recordedPID != "" && pid == recordedPID {
+					retry = true
+					return errHQJobDraining
+				}
+				return errors.New("preserving a different or unrecorded HQ process after bootout")
+			}
+			gone = true
+			err = cleanup()
+			retry = errors.Is(err, syscall.EBUSY)
+			return err
+		})
+		if err == nil || !retry || !time.Now().Before(deadline) {
 			return err
 		}
-		time.Sleep(25 * time.Millisecond)
+		time.Sleep(min(25*time.Millisecond, time.Until(deadline)))
 	}
 }
 

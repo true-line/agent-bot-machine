@@ -128,6 +128,8 @@ report_upgrade_failure() {
            "cannot identify the approved HQ job to stop", "cannot identify the running HQ process to stop",
            "launchd HQ process does not run under the dedicated service UID", "preserving changed or unobserved HQ endpoint before stop",
            "preserving changed HQ endpoint or process at recorded stop", "cannot confirm reviewed HQ job stopped",
+           "reviewed HQ process remains registered after bootout", "cannot verify the registered HQ job after bootout",
+           "preserving a different or unrecorded HQ process after bootout",
            "protected HQ runtime directory changed after stop", "preserving changed or unverified HQ owner-control endpoint",
            "preserving a listening HQ owner-control endpoint", "cannot verify the HQ owner-control endpoint is inactive",
            "owner-control socket has unexpected type, owner or mode", "cannot inspect the launchd owner-control endpoint",
