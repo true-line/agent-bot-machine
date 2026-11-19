@@ -6,12 +6,13 @@
 # macOS runner, and only when asked:
 #   MM_MEMBERS_REAL_ACCOUNTS=1 bash tests/members-apply-macos.test.sh
 #
-# The approval file is written here in the form agent-machine's
-# approve-members verb writes it. The verb itself is covered by the Go tests
-# in internal/daemon.
+# Generic account cases seed the existing approval record. The dedicated
+# first-HQ case at the end exports and imports a signed owner proof via the
+# production CLI, then applies its exact plan using sudo.
 set -euo pipefail
 
 if [ "${MM_MEMBERS_REAL_ACCOUNTS:-}" != "1" ]; then
+    if [[ "${1:-}" == --real-hq ]]; then echo "real HQ install requires the hosted fixture opt-in" >&2; exit 1; fi
     echo "members-apply-macos: skipped (needs MM_MEMBERS_REAL_ACCOUNTS=1 on a GitHub-hosted macOS runner)"
     exit 0
 fi
@@ -19,6 +20,25 @@ if [ "${GITHUB_ACTIONS:-}" != "true" ] || [ "${MM_MEMBERS_RUNNER:-}" != "github-
     echo "members-apply-macos: real account test requires a disposable GitHub-hosted macOS runner" >&2
     exit 1
 fi
+
+# The real archive case has a separate hosted runner. Keep the macOS 15
+# native fixture and the helper's generic account/approval cases independent.
+case "${1:-}" in
+    "") ;;
+    --real-hq)
+        sw_vers
+        /bin/launchctl version
+        sip_status="$(LC_ALL=C /usr/bin/csrutil status)"
+        printf '%s\n' "$sip_status"
+        if [[ "${MM_HQ_REQUIRE_SIP:-false}" == true && "$sip_status" != 'System Integrity Protection status: enabled.' ]]; then
+            echo 'SIP qualification requires a fully enabled runner' >&2; exit 1
+        fi
+        printf 'Architecture: %s\n' "$(uname -m)"
+        [[ "$#" == 1 && "${RUNNER_ENVIRONMENT:-}" == github-hosted && "$(uname -m)" == arm64 && "$(sw_vers -productVersion)" == 27.* ]] || {
+            echo 'real HQ install requires a disposable GitHub-hosted Apple Silicon macOS 27 runner' >&2; exit 1;
+        } ;;
+    *) echo 'unknown macOS fixture' >&2; exit 2 ;;
+esac
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d)"
@@ -90,6 +110,11 @@ untouched() {
     ! exists "$HQ" || fail "$HQ exists after a refused apply"
     sudo test ! -e "$HQ_HOME" || fail "$HQ_HOME exists after a refused apply"
 }
+
+if [[ "${1:-}" == --real-hq ]]; then
+    source "$ROOT/tests/fixtures/hq-launchd-install.sh"
+    exit 0
+fi
 
 ! exists "$HQ" || fail "$HQ exists before the test"
 
