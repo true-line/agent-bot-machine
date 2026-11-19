@@ -260,7 +260,7 @@ func TestOwnerPairInteroperability(t *testing.T) {
 	if hex.EncodeToString(sum[:]) != "3e6f1280c032cf910328fc8d054585f605479825312b33862260ed74ab3d6169" {
 		t.Fatal("canonical proof bytes changed")
 	}
-	if err := verifyOwnerPairProof(public, `{"public_key":"`+public+`","signature":"`+signature+`"}`, &c); err != nil {
+	if err := verifyOwnerProof(public, `{"public_key":"`+public+`","signature":"`+signature+`"}`, c.message()); err != nil {
 		t.Fatal(err)
 	}
 }

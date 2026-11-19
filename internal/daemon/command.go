@@ -11,12 +11,14 @@ import (
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/command"
 	"github.com/qwts/managed-machine/internal/diag"
+	"github.com/qwts/managed-machine/internal/members"
 	"github.com/qwts/managed-machine/internal/output"
 )
 
 // Deps is the testable surface of daemon install, uninstall, run, and status.
 type Deps struct {
 	command.Deps
+	MembersHost members.Host // nil reads the running host for first-HQ plans
 	GOOS        string
 	Executable  func() (string, error)
 	Caller      func() (Caller, error)
@@ -46,6 +48,14 @@ key is accepted only from that account; uid=any means it is not bound.
 On macOS pair --pin-owner BASE64 sets the independently verified owner
 public key once. Subsequent HQ enrollment requires --owner-challenge,
 then --owner-proof JSON for that challenge from the owner approval client.
+Before the dedicated HQ role exists, the prefix administrator can transfer
+a saved members plan to the owner approval client using these commands:
+  daemon first-hq export PLAN_ID
+  daemon first-hq approve PLAN_ID --proof-file PATH
+  daemon first-hq cancel PLAN_ID
+Export a single JSONL record with default output. Approval records consent
+for the separate human sudo members apply step. A new export supersedes
+any outstanding first-HQ challenge.
 The terminal client is a debug tool and is off by default. install --debug
 turns it on, and install without --debug turns it off again. While it is
 on, the next human status mints client.key at home and the daemon adopts
@@ -63,6 +73,9 @@ description. Nothing is registered with a system service manager.`,
 }
 
 func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
+	if len(args) > 0 && args[0] == "first-hq" {
+		return firstHQ(deps, args[1:])
+	}
 	var verb, enroll, fingerprint, clientName, userName string
 	var enrollSet, fingerprintSet, userSet, debug bool
 	var owner ownerPairOptions
