@@ -166,4 +166,4 @@ On a standalone installation, the public updater refreshes Machine’s tap and u
 
 ## Release
 
-Include the intended CLI version in `.github/machine-release-version` in a reviewed change. Its merge starts signing. Automation verifies the signed draft and opens the release PR with `VERSION` and the Homebrew digest. Merging that PR authorizes the cut. After CI passes on the merge commit, automation tags it and publishes the verified archives. A manual Sign dispatch for recovery or the owner-presence app requires deployment approval.
+Changes merged to `main` open or refresh a version PR. Merging the reviewed version PR starts the five-target Machine build and macOS signing. After CI and signing pass on that merge commit, automation tags it and publishes the verified archives. The published release includes the Homebrew formula with the signed macOS checksum. A separate formula-only PR updates the tap. Manual Sign dispatches require deployment approval.

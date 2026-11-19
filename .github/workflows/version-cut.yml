@@ -4,7 +4,7 @@ name: Version cut
 on:
   workflow_dispatch:
   workflow_run:
-    workflows: [CI, Go core]
+    workflows: [CI, Go core, Sign]
     types: [completed]
     branches: [main]
 
@@ -81,7 +81,8 @@ jobs:
       github.repository == 'true-line/agent-bot-machine' &&
       github.ref == 'refs/heads/main' && github.ref_protected &&
       (github.event.workflow_run.path == '.github/workflows/ci.yml' ||
-       github.event.workflow_run.path == '.github/workflows/go-core.yml') &&
+       github.event.workflow_run.path == '.github/workflows/go-core.yml' ||
+       github.event.workflow_run.path == '.github/workflows/sign.yml') &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
@@ -96,6 +97,7 @@ jobs:
       tag: ${{ steps.cut.outputs.tag }}
       ci: ${{ steps.cut.outputs.ci }}
       core: ${{ steps.cut.outputs.core }}
+      sign: ${{ steps.cut.outputs.sign }}
       pr: ${{ steps.cut.outputs.pr }}
       head: ${{ steps.cut.outputs.head }}
     steps:
@@ -119,11 +121,11 @@ jobs:
             exit 0
           fi
           api="repos/$GITHUB_REPOSITORY/actions/workflows"
-          for workflow in ci.yml go-core.yml; do
+          for workflow in ci.yml go-core.yml sign.yml; do
             run="$(gh api "$api/$workflow/runs?event=push&branch=main&head_sha=$CUT&per_page=100" |
               python3 scripts/version-cut.py ci "$GITHUB_REPOSITORY" "$CUT" "$workflow")"
             if [[ -z "$run" ]]; then echo "Waiting for $workflow on $CUT"; exit 0; fi
-            if [[ "$workflow" == go-core.yml ]]; then core="$run"; else ci="$run"; fi
+            case "$workflow" in go-core.yml) core="$run" ;; ci.yml) ci="$run" ;; sign.yml) sign="$run" ;; esac
           done
           pr_info="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CUT/pulls?per_page=100" |
             python3 scripts/version-cut.py pr "$GITHUB_REPOSITORY" "$CUT" "$tag")"
@@ -131,6 +133,7 @@ jobs:
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
           echo "head=$head" >> "$GITHUB_OUTPUT"
           echo "ci=$ci" >> "$GITHUB_OUTPUT"
+          echo "sign=$sign" >> "$GITHUB_OUTPUT"
           echo "core=$core" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -149,7 +152,7 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Resolve the immutable signing parent of the reviewed release PR
+      - name: Verify the merged version PR and its release-only changes
         id: source
         env:
           CUT: ${{ github.event.workflow_run.head_sha }}
@@ -161,10 +164,8 @@ jobs:
           python3 scripts/version-cut.py trusted "$CUT"
           git fetch --quiet --no-tags origin "refs/pull/$PR/head"
           test "$(git rev-parse FETCH_HEAD)" = "$PR_HEAD"
-          base="$(git rev-parse "$PR_HEAD^1")"
+          base="$(git rev-parse "$CUT^1")"
           python3 scripts/version-cut.py lineage "$CUT" "$TAG" "$base" "$PR_HEAD"
-          git worktree add --quiet --detach "$RUNNER_TEMP/cut-base" "$base"
-          echo "base=$base" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -178,7 +179,7 @@ jobs:
           path: ${{ runner.temp }}/cut-dist
       - name: Download the protected draft and verify each asset digest
         env:
-          SIGN_BASE: ${{ steps.source.outputs.base }}
+          SIGN_BASE: ${{ github.event.workflow_run.head_sha }}
           TAG: ${{ needs.identify.outputs.tag }}
           API_TOKEN: ${{ github.token }}
         run: |
@@ -187,20 +188,9 @@ jobs:
           const { TAG, SIGN_BASE, RUNNER_TEMP } = process.env;
           await download(TAG.slice(1), SIGN_BASE, RUNNER_TEMP + '/cut-signed');
           JS
-      - name: Verify the signed dist and reproduce the reviewed two-file release patch
-        env:
-          CUT: ${{ github.event.workflow_run.head_sha }}
-          TAG: ${{ needs.identify.outputs.tag }}
-          GOTOOLCHAIN: local
+      - name: Verify all five signed-cut archives against the tested build
         run: |
-          set -euo pipefail
-          git show "$CUT:Formula/managed-machine.rb" > "$RUNNER_TEMP/cut-formula.rb"
-          go run ./cmd/mm-release verify-signed -unsigned "$RUNNER_TEMP/cut-dist" -signed "$RUNNER_TEMP/cut-signed" \
-            -team Z5DM34QS5U -require-keyd -formula "$RUNNER_TEMP/cut-formula.rb" -require-pin
-          (cd "$RUNNER_TEMP/cut-base" &&
-            "$GITHUB_WORKSPACE/scripts/release" render "$TAG" "$RUNNER_TEMP/cut-dist" "$RUNNER_TEMP/cut-signed")
-          git -C "$RUNNER_TEMP/cut-base" add -- VERSION Formula/managed-machine.rb
-          test "$(git -C "$RUNNER_TEMP/cut-base" write-tree)" = "$(git rev-parse "$CUT^{tree}")"
+          go run ./cmd/mm-release verify-signed -unsigned "$RUNNER_TEMP/cut-dist" -signed "$RUNNER_TEMP/cut-signed" -team Z5DM34QS5U -require-keyd
 
   tag:
     needs: [identify, verify]
@@ -221,11 +211,12 @@ jobs:
           CUT: ${{ github.event.workflow_run.head_sha }}
           CI: ${{ needs.identify.outputs.ci }}
           CORE: ${{ needs.identify.outputs.core }}
+          SIGN: ${{ needs.identify.outputs.sign }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           python3 scripts/version-cut.py trusted "$CUT"
-          for pair in "ci.yml:$CI" "go-core.yml:$CORE"; do
+          for pair in "ci.yml:$CI" "go-core.yml:$CORE" "sign.yml:$SIGN"; do
             workflow="${pair%:*}"
             current="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?event=push&branch=main&head_sha=$CUT&per_page=100" |
               python3 scripts/version-cut.py ci "$GITHUB_REPOSITORY" "$CUT" "$workflow")"

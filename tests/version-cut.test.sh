@@ -12,7 +12,7 @@ git init -q --bare --initial-branch=main "$tmp/origin"
 git init -q --initial-branch=main "$tmp/work"
 cd "$tmp/work"
 git remote add origin "$tmp/origin"
-mkdir -p Formula .github
+mkdir -p Formula .github skills/managed-machine
 echo 0.11.5 >VERSION
 echo 0.12.0 >.github/machine-release-version
 echo old >Formula/managed-machine.rb
@@ -20,7 +20,7 @@ git add . && git commit -qm 'Request 0.12.0'
 base="$(git rev-parse HEAD)"
 git switch -qc release/v0.12.0
 echo 0.12.0 > VERSION
-echo verified-pin >Formula/managed-machine.rb
+echo validated >skills/managed-machine/SKILL.md
 git add . && git commit -qm 'Release v0.12.0'
 pr="$(git rev-parse HEAD)"
 git switch -q main
@@ -36,7 +36,7 @@ export GITHUB_SHA="$cut"
 run lineage "$cut" "$tag" "$base" "$pr"
 refuses run lineage "$cut" "$tag" "$pr" "$pr"
 refuses run lineage "$cut" "$tag" main "$pr"
-refuses run lineage "$cut" "$tag" "$base" "$cut"
+refuses run lineage "$cut" "$tag" "$base" "$base"
 refuses run candidate "$pr"
 [[ "$(run existing "$cut" "$tag")" == missing ]]
 
@@ -84,8 +84,8 @@ refuses run existing "$cut" "$tag"
 git --git-dir="$tmp/origin" update-ref -d refs/tags/v0.13.0
 git tag -d "$tag" >/dev/null
 git switch -q main
-echo 0.13.0 >.github/machine-release-version
-git add .github && git commit -qm 'Superseding release request'
+echo 0.13.0 >VERSION
+git add VERSION && git commit -qm 'Superseding release request'
 git push -q origin main
 export GITHUB_SHA="$(git rev-parse HEAD)"
 refuses run tag "$cut" "$tag"
@@ -100,9 +100,9 @@ git checkout -q main
 refuses run trusted "$wrong" # Local object, but outside the trusted main history.
 git checkout -q drift
 export GITHUB_SHA="$wrong"
-refuses run lineage "$wrong" "$tag" "$base" "$wrong"
-echo 0.13.0 >VERSION
-git add VERSION && git commit -qm 'Wrong release request'
+refuses run lineage "$wrong" "$tag" "$base" "$pr"
+echo 0.11.1 >VERSION
+git add VERSION && git commit -qm 'Version went backwards'
 export GITHUB_SHA="$(git rev-parse HEAD)"
 refuses run candidate "$GITHUB_SHA"
 # The renderer may read an older signing tree, but its Go verifier runs in

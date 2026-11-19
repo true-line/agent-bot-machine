@@ -255,7 +255,8 @@ if pre_p01_test is not None:
 PY
 }
 
-verify_formula_structure "$ROOT/Formula/managed-machine.rb" "$VERSION"
+pinned="$(sed -nE 's/^  version "([0-9.]+)"$/\1/p' "$ROOT/Formula/managed-machine.rb")"
+verify_formula_structure "$ROOT/Formula/managed-machine.rb" "$pinned"
 verify_formula_structure "$FORMULA" "$VERSION"
 
 # Exercise `def install` and `test do` in Ruby for both the repository's

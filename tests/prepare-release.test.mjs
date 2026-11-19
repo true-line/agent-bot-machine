@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { download, downloadOwner, openReleasePR, validateDraft } from '../scripts/prepare-release.mjs';
+import { download, openReleasePR, validateDraft, skillForVersion, publishedPin } from '../scripts/prepare-release.mjs';
 
 const sha = '1'.repeat(40);
 const releaseSha = '2'.repeat(40);
@@ -29,6 +29,7 @@ function fixture() {
         return { content: Buffer.from(state.requestVersion).toString('base64') };
       case '/git/ref/tags/v' + version: return state.tag;
       case '/git/ref/heads/' + branch: return state.branch && { object: { sha: state.branch } };
+      case '/compare/' + releaseSha + '...' + sha: return {ahead_by: 0};
       case '/git/refs':
         assert.deepEqual(args.data, { ref: 'refs/heads/' + branch, sha });
         state.branch = sha;
@@ -81,10 +82,10 @@ test('superseded request and existing tag perform no writes', async () => {
   }
 });
 
-test('main changing under the same request fails with a concrete recovery', async () => {
+test('a superseding main push owns the next PR update', async () => {
   const { state, call } = fixture();
   state.currentMain = releaseSha;
-  await assert.rejects(() => openReleasePR(options, call), /new reviewed version request/);
+  await openReleasePR(options, call);
   assert.deepEqual(state.writes, []);
 });
 
@@ -138,94 +139,65 @@ test('download checks the bytes of each asset and refuses a corrupt response', a
 });
 
 
-test('only trusted workflow code runs in both jobs, before draft access or App credential creation', async () => {
-  const yml = await readFile(new URL('../.github/workflows/prepare-release.yml', import.meta.url), 'utf8');
-  const jobs = yml.split('  open-pr:');
-  assert.equal(jobs.length, 2);
-  assert.match(jobs[0], /github.ref == 'refs\/heads\/main' && github.ref_protected/);
-  for (const [i, job] of jobs.entries()) {
-    assert.ok(job.includes('ref: ${{ github.sha }}'));
-    assert.ok(!job.includes('ref: ${{ github.event.workflow_run.head_sha }}'));
-    const check = job.indexOf('scripts/prepare-release.mjs eligible-version');
-    assert.ok(check > job.indexOf('ref: ${{ github.sha }}'));
-    assert.ok(check < job.indexOf(i === 0 ? 'Read the signed draft' : 'Mint the release PR App token'));
-  }
-});
-
-test('Sign eligibility uses the checked-out workflow SHA, protected main tip, and main history', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'mm-sign-eligibility-'));
+test('a main push prepares a version PR before signing and version merges do not loop', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'machine-version-pr-'));
   const script = fileURLToPath(new URL('../scripts/prepare-release.mjs', import.meta.url));
-  const source = join(root, 'source');
-  const checkout = join(root, 'checkout');
-  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ALLOW_PROTOCOL: 'file',
-    GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid',
-    GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid' };
-  function git(cwd, ...args) {
-    const result = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+  const env = { ...process.env, EVENT: 'push', GITHUB_REPOSITORY: repository,
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_AUTHOR_NAME: 'test',
+    GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid',
+    GITHUB_OUTPUT: join(root, 'output') };
+  function git(...args) {
+    const result = spawnSync('git', args, {cwd: root, env, encoding: 'utf8'});
     assert.equal(result.status, 0, result.stderr);
     return result.stdout.trim();
   }
-  function check(trustedSha, signSha) {
-    return spawnSync(process.execPath, [script, 'eligible-version', signSha], {
-      cwd: checkout, env: { ...env, GITHUB_REPOSITORY: repository, GITHUB_SHA: trustedSha }, encoding: 'utf8',
-    });
+  function prepare() {
+    const result = spawnSync(process.execPath, [script, 'prepare'], {cwd: root, env, encoding: 'utf8'});
+    assert.equal(result.status, 0, result.stderr);
   }
   try {
-    git(root, 'init', '-q', '-b', 'main', source);
-    await mkdir(join(source, '.github'));
-    await writeFile(join(source, '.github/machine-release-version'), version + '\n');
-    git(source, 'add', '.github');
-    git(source, 'commit', '-qm', 'request release');
-    const sign = git(source, 'rev-parse', 'HEAD');
-    git(root, 'clone', '-q', source, checkout);
-    assert.equal(check(sign, sign).stdout.trim(), version);
-    git(source, 'switch', '-qc', 'elsewhere');
-    git(source, 'commit', '--allow-empty', '-qm', 'outside main');
-    const outside = git(source, 'rev-parse', 'HEAD');
-    git(checkout, 'fetch', '-q', 'origin', 'refs/heads/elsewhere');
-    assert.notEqual(check(sign, outside).status, 0);
-    git(source, 'switch', '-q', 'main');
-    git(source, 'commit', '--allow-empty', '-qm', 'advance main');
-    const next = git(source, 'rev-parse', 'HEAD');
-    assert.notEqual(check(sign, sign).status, 0);
-    assert.notEqual(check(sign, next).status, 0);
-    assert.notEqual(check(next, sign).status, 0);
-    await writeFile(join(source, '.github/machine-release-version'), '0.12.2\n');
-    git(source, 'commit', '-qam', 'replace request');
-    const superseded = check(sign, sign);
-    assert.equal(superseded.status, 0, superseded.stderr);
-    assert.equal(superseded.stdout.trim(), '');
+    git('init', '-q', '-b', 'main');
+    await mkdir(join(root, '.github'));
+    await mkdir(join(root, 'skills/managed-machine'), {recursive: true});
+    await writeFile(join(root, 'VERSION'), '0.12.1\n');
+    await writeFile(join(root, '.github/machine-release-version'), '0.12.4\n');
+    const file = join(root, 'skills/managed-machine/SKILL.md');
+    const skill = '  qwts-versions: ">=0.11.0 <0.12.2"\n  qwts-validated: "0.12.1"\n';
+    await writeFile(file, skill);
+    git('add', '.'); git('commit', '-qm', 'baseline');
+    env.BEFORE = git('rev-parse', 'HEAD');
+    await writeFile(join(root, 'source'), 'first change');
+    git('add', 'source'); git('commit', '-qm', 'change');
+    env.GITHUB_SHA = git('rev-parse', 'HEAD');
+    prepare();
+    assert.equal(await readFile(env.GITHUB_OUTPUT, 'utf8'), 'version=0.12.4\n');
+    assert.equal(await readFile(file, 'utf8'), skillForVersion(skill, '0.12.4'));
+    assert.match(await readFile(file, 'utf8'), /<0\.12\.5/);
+    git('add', 'VERSION', 'skills'); git('commit', '-qm', 'Release v0.12.4');
+    env.BEFORE = env.GITHUB_SHA;
+    env.GITHUB_SHA = git('rev-parse', 'HEAD');
+    await writeFile(env.GITHUB_OUTPUT, '');
+    prepare();
+    assert.equal(await readFile(env.GITHUB_OUTPUT, 'utf8'), '');
+    await writeFile(join(root, 'source'), 'next change');
+    git('commit', '-qam', 'next change');
+    env.BEFORE = env.GITHUB_SHA;
+    env.GITHUB_SHA = git('rev-parse', 'HEAD');
+    prepare();
+    assert.equal(await readFile(env.GITHUB_OUTPUT, 'utf8'), 'version=0.12.5\n');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('owner download binds the two verified assets to the reviewed version and signing commit', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'owner-draft-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const zip = 'AgentBotOwnerPresence_' + version + '_darwin_arm64.zip';
-  const bytes = Buffer.from('fixture archive');
-  const hash = body => createHash('sha256').update(body).digest('hex');
-  const checksum = Buffer.from(hash(bytes) + '  ' + zip + '\n');
-  async function run(name, overrides = {}, sidecar = checksum, response = bytes) {
-    const assets = [zip, zip + '.sha256'].map((name, id) => ({
-      id: id + 1, name, state: 'uploaded', digest: 'sha256:' + hash([bytes, sidecar][id]),
-    }));
-    const draft = { draft: true, tag_name: 'owner-presence-v' + version, target_commitish: sha, assets, ...overrides };
-    return downloadOwner(version, sha, join(root, name), async (path, options) => {
-      if (path === rest + '/releases?per_page=100&page=1') return [draft];
-      assert.equal(options.binary, true);
-      if (path === rest + '/releases/assets/1') return response;
-      assert.equal(path, rest + '/releases/assets/2');
-      return sidecar;
-    });
-  }
-  await run('good');
-  assert.deepEqual(await readFile(join(root, 'good', zip)), bytes);
-  await assert.rejects(run('source', { target_commitish: releaseSha }));
-  await assert.rejects(run('tag', { tag_name: 'v' + version }));
-  await assert.rejects(run('public', { draft: false }));
-  await assert.rejects(run('missing', { assets: [] }));
-  await assert.rejects(run('sidecar', {}, Buffer.from('other checksum')));
-  await assert.rejects(run('corrupt', {}, checksum, Buffer.from('corrupt archive')));
+test('tap sync pins the published macOS checksum and preserves formula code on main', async () => {
+  const current = await readFile(new URL('../Formula/managed-machine.rb', import.meta.url), 'utf8');
+  const version = current.match(/^  version "([0-9.]+)"$/m)[1];
+  const sha = current.match(/^    sha256 "([a-f0-9]{64})"$/m)[1];
+  const digest = 'a'.repeat(64);
+  const published = current.replaceAll(version, '9.9.9').replace(sha, digest);
+  assert.equal(publishedPin(current, version, '9.9.9', 'sha256:' + digest, published), published);
+  assert.throws(() => publishedPin(current, version, '9.9.9', 'sha256:' + 'b'.repeat(64), published));
+  assert.equal(publishedPin(current + '# newer code\n', version, '9.9.9', 'sha256:' + digest, published),
+    published + '# newer code\n');
 });
