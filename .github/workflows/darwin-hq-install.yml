@@ -9,6 +9,7 @@ on:
       - 'tests/members-apply-macos.test.sh'
       - 'tests/fixtures/*darwin-hq*'
       - 'tests/fixtures/hq-launchd-install.sh'
+      - 'tests/fixtures/hq-launchd-runtime.c'
   push:
     branches: [main]
     paths:
@@ -19,6 +20,7 @@ on:
       - 'tests/members-apply-macos.test.sh'
       - 'tests/fixtures/*darwin-hq*'
       - 'tests/fixtures/hq-launchd-install.sh'
+      - 'tests/fixtures/hq-launchd-runtime.c'
   workflow_dispatch:
 permissions:
   contents: read
@@ -46,3 +48,23 @@ jobs:
         run: |
           command -v gtar >/dev/null || brew install gnu-tar
           bash tests/members-apply-macos.test.sh --real-hq
+  rollback-macos-15:
+    name: HQ socket rollback on macOS 15
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check socket preservation when guarded removal is unavailable
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          sw_vers
+          [[ "$(sw_vers -productVersion)" == 15.* ]]
+          go test -v -count=1 -race ./internal/members -run '^TestRollbackOfObservedLaunchSocket$'
