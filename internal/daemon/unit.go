@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-const darwinServiceLabel = "dev.qwts.agent-machine"
+const (
+	darwinServiceLabel     = "dev.qwts.agent-machine"
+	darwinKeydServiceLabel = "dev.qwts.agent-bot.keyd"
+)
 
 // A system LaunchDaemon, a systemd system unit, and a Windows service
 // registration all need a privilege this daemon does not have. The unit is
@@ -17,7 +20,7 @@ const darwinServiceLabel = "dev.qwts.agent-machine"
 func unitPath(goos, root string) (string, error) {
 	switch goos {
 	case "darwin":
-		return filepath.Join(root, "Library", "LaunchAgents", "dev.qwts.agent-machine.plist"), nil
+		return filepath.Join(root, "Library", "LaunchAgents", darwinServiceLabel+".plist"), nil
 	case "linux":
 		return filepath.Join(root, ".config", "systemd", "user", "agent-machine.service"), nil
 	case "windows":
@@ -62,7 +65,7 @@ func keydUnitPath(goos, root string) (string, error) {
 	if goos != "darwin" {
 		return "", fmt.Errorf("agent-bot-keyd runs only on darwin")
 	}
-	return filepath.Join(root, "Library", "LaunchAgents", "dev.qwts.agent-bot.keyd.plist"), nil
+	return filepath.Join(root, "Library", "LaunchAgents", darwinKeydServiceLabel+".plist"), nil
 }
 
 func keydAgent(stateDir, bin string) string {
@@ -71,7 +74,7 @@ func keydAgent(stateDir, bin string) string {
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>dev.qwts.agent-bot.keyd</string>
+	<string>%s</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>%s</string>
@@ -85,7 +88,7 @@ func keydAgent(stateDir, bin string) string {
 	<true/>
 </dict>
 </plist>
-`, xmlEscape(bin), xmlEscape(stateDir))
+`, darwinKeydServiceLabel, xmlEscape(bin), xmlEscape(stateDir))
 }
 
 // InstallKeyd writes the per-user LaunchAgent for the agent-bot-keyd binary

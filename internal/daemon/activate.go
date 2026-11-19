@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -58,13 +60,24 @@ func ReloadUserService(goos string) error {
 func DeactivateUserService(goos, path string) error {
 	switch goos {
 	case "darwin":
-		uid := os.Getuid()
-		err1 := launchctl("bootout", fmt.Sprintf("gui/%d", uid), path)
-		err2 := launchctl("bootout", fmt.Sprintf("user/%d", uid), path)
-		if err1 == nil || err2 == nil {
-			return nil
+		var label string
+		switch filepath.Base(path) {
+		case darwinServiceLabel + ".plist":
+			label = darwinServiceLabel
+		case darwinKeydServiceLabel + ".plist":
+			label = darwinKeydServiceLabel
+		default:
+			return fmt.Errorf("unknown Machine launchd unit %q", filepath.Base(path))
 		}
-		return err1
+		uid := os.Getuid()
+		var failures []error
+		for _, domain := range []string{"gui", "user"} {
+			target := fmt.Sprintf("%s/%d/%s", domain, uid, label)
+			if err := launchctl("bootout", target); err != nil {
+				failures = append(failures, fmt.Errorf("launchctl bootout %s: %w", target, err))
+			}
+		}
+		return errors.Join(failures...)
 	case "linux":
 		err := systemctl("disable", "--now", "agent-machine.service")
 		if err == nil || strings.Contains(err.Error(), "does not exist") {
@@ -114,11 +127,14 @@ func classifyLaunchctl(op, out string, err error) error {
 	text := strings.ToLower(strings.TrimSpace(out))
 	switch op {
 	case "bootout":
-		if strings.Contains(text, "no such process") ||
-			strings.Contains(text, "could not find") ||
-			strings.Contains(text, "not found") ||
-			strings.Contains(text, "no such file") {
-			return nil
+		// Target-form bootout distinguishes ESRCH and launchd's missing
+		// domain/service statuses from I/O, permission and executable errors.
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			switch exit.ExitCode() {
+			case 3, 112, 113:
+				return nil
+			}
 		}
 	case "bootstrap":
 		if strings.Contains(text, "already") {
