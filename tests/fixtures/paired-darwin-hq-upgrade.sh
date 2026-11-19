@@ -107,6 +107,13 @@ check_private_predecessor_receipt() {
 # Keep private status documents, owner proofs and raw command lines off CI logs.
 # Only emit fixed product classifications from the first diagnostic.
 report_upgrade_failure() {
+    # Only fixed enum values from this disposable job's root-owned journal.
+    sudo jq -r '
+      .phase as $phase | (["prepared","stopping-previous","switching","starting-next","stopping-next","restoring-previous","starting-previous"] |
+      if index($phase) then $phase else "unknown" end) as $safe
+      | "HQ journal phase: " + $safe + "; endpoint: " +
+        (if .stopping == null then "not recorded" elif .stopping.socket.inode == 0 then "observed absent" else "recorded" end)
+    ' "$RECEIPTS/.hq-service-upgrade.json" >&2 2>/dev/null || :
     jq -Rsr '
       ([split("\n")[] | fromjson? | objects | select(.diagnostic and (.message|type=="string"))] | first) as $d
       | if $d == null then "Machine did not emit a recognized diagnostic record" else
@@ -117,6 +124,15 @@ report_upgrade_failure() {
            "dedicated HQ did not confirm its previously paired Machine", "HQ did not confirm the expected owner endpoint and available signer",
            "preserving endpoint while its HQ process may still exist", "preserving busy HQ endpoint",
            "preserved HQ transition evidence after stop", "preserved HQ transition evidence after attempted swap",
+           "missing approved HQ socket directory", "protected HQ runtime directory changed before stop",
+           "cannot identify the approved HQ job to stop", "cannot identify the running HQ process to stop",
+           "launchd HQ process does not run under the dedicated service UID", "preserving changed or unobserved HQ endpoint before stop",
+           "preserving changed HQ endpoint or process at recorded stop", "cannot confirm reviewed HQ job stopped",
+           "protected HQ runtime directory changed after stop", "preserving changed or unverified HQ owner-control endpoint",
+           "preserving a listening HQ owner-control endpoint", "cannot verify the HQ owner-control endpoint is inactive",
+           "owner-control socket has unexpected type, owner or mode", "cannot inspect the launchd owner-control endpoint",
+           "guarded unlink is unavailable", "unexpected owner pairing lock", "unexpected owner pairing evidence",
+           "bootout failed", "no such file or directory",
            "launchd did not publish the owner-control socket before the deadline",
            "query launched HQ as approved owner: sudo exit status 42", "cannot confirm the HQ job was unloaded",
            "preserving an unrecognized HQ job during upgrade rollback", "preserving endpoint without exact recorded stop provenance",
