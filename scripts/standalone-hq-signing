@@ -1,0 +1,257 @@
+#!/usr/bin/ruby --disable-gems
+# Run from verified release source. This utility never executes HQ or Machine.
+require 'digest'
+require 'etc'
+require 'open3'
+require 'json'
+require 'tempfile'
+require 'fcntl'
+
+class StandaloneHQSigning
+  ROLE = '_agent-bot-hq'
+  PRODUCT = 'ai.true-line.agent-bot-hq'
+  ACTIVE = 'declaration-v1'
+  PENDING = 'declaration-pending-v1'
+  GATE = 'transition-v1'
+  GATE_CONTENT = "agent-bot-hq/standalone-transition/v1\n"
+  RETIRED = 'machine-retired-v1'
+  TOMBSTONE = "agent-bot-hq/machine-retired/v1\n"
+  PREFIXES = ['/opt/homebrew', '/usr/local'].freeze
+
+  def initialize(library: '/Library', prefixes: PREFIXES, uid: 0)
+    @library, @prefixes, @uid = library, prefixes, uid
+    @product = File.join(library, 'Application Support', PRODUCT)
+    @directory = File.join(@product, 'standalone')
+  end
+
+  def status(path)
+    File.lstat(path)
+  rescue Errno::ENOENT
+    nil
+  end
+
+  def protected_path(path, directory:, mode: nil, group: 0)
+    s = File.lstat(path)
+    valid = directory ? s.directory? : (s.file? && s.nlink == 1)
+    valid &&= s.uid == @uid && (s.mode & 022).zero?
+    valid &&= (s.mode & 07777) == mode if mode
+    valid &&= s.gid == group if mode && group && @uid.zero?
+    raise 'unsafe installation path' unless valid
+    listing, ok = Open3.capture2('/bin/ls', '-lde', path)
+    raise 'unsafe installation ACL' unless ok.success? && listing.lines.drop(1).none? { |line| line.include?(' allow ') }
+    s
+  end
+
+  def operate(action)
+    protected_path(@library, directory: true)
+    protected_path(File.dirname(@product), directory: true)
+    [@product, @directory].each do |path|
+      unless status(path)
+        raise 'protected HQ signer installation required' unless action == :retire
+        Dir.mkdir(path, 0755)
+        File.chown(@uid, 0, path) if @uid.zero?
+        File.chmod(0755, path)
+        sync_dir(File.dirname(path))
+      end
+      protected_path(path, directory: true, mode: 0755)
+    end
+    retired = File.join(@directory, RETIRED)
+    active = File.join(@directory, ACTIVE)
+    pending = File.join(@directory, PENDING)
+    gate = File.join(@directory, GATE)
+    if action == :retire
+      # New native requests stop immediately. A legitimate in-flight reader
+      # may still be draining; only allow Machine after it relinquishes the gate.
+      publish(retired, TOMBSTONE)
+      if status(gate)
+        exclusive_gate(gate) do
+          [active, pending].each { |p| remove_record(p) }
+        end
+      elsif status(active) || status(pending)
+        raise 'cannot drain standalone signing without its installed transition record'
+      end
+      return
+    end
+    raise 'standalone signing was permanently retired on this host' if status(retired)
+    uid, uuid, home, gid = role_identity
+    helper = File.join(@directory, 'hq-signer')
+    protected_path(helper, directory: false, mode: 0555)
+    sha = approved_helper_digest
+    raise 'installed helper differs from the reviewed release' unless Digest::SHA256.file(helper).hexdigest == sha
+    verify_signature(helper)
+    publish(gate, GATE_CONTENT, mode: 0640, group: gid)
+    exclusive_gate(gate) do
+      raise 'standalone signing was permanently retired on this host' if status(retired)
+      publish(pending, "agent-bot-hq/standalone-declaration-pending/v1\n")
+      begin
+        check_machine(home)
+        raise 'standalone signing was permanently retired on this host' if status(retired)
+        text = "agent-bot-hq/standalone-signing/v1\nrole=#{ROLE}\nuid=#{uid}\nuuid=#{uuid}\nno-custom-machine-installation=true\nhelper-sha256=#{sha}\n"
+        publish(active, text)
+      ensure
+        remove_record(pending)
+      end
+    end
+  end
+
+  def remove_record(path)
+    return unless status(path)
+    protected_path(path, directory: false, mode: 0644)
+    File.unlink(path)
+    sync_dir(@directory)
+  end
+
+  def exclusive_gate(path)
+    st = protected_path(path, directory: false, mode: 0640, group: nil)
+    File.open(path, File::RDWR | File::NOFOLLOW) do |gate|
+      raise 'invalid standalone transition record' unless gate.stat.ino == st.ino && gate.stat.dev == st.dev &&
+        gate.read(GATE_CONTENT.bytesize + 1) == GATE_CONTENT
+      # Darwin struct flock: start, length, pid, type, whence. Only the root
+      # writer can take F_WRLCK; HQ receives read permission through its private GID.
+      gate.fcntl(Fcntl::F_SETLK, [0, 0, 0, Fcntl::F_WRLCK, IO::SEEK_SET].pack('qqiss'))
+      yield
+    end
+  rescue Errno::EAGAIN, Errno::EACCES
+    raise 'a standalone signing operation is draining; retry the same transition'
+  end
+
+  def installer_manifest
+    # Shipped with this administrator utility in the SAME authenticated installer release.
+    # Refuse an operator-selected file, a manifest in the HQ role home, and mutable parents.
+    directory = File.expand_path(__dir__)
+    raise 'install this verified administrator utility at its protected location' unless directory == File.join(@directory, 'installer')
+    directory.split('/').reject(&:empty?).inject('/') do |parent, part|
+      path = File.join(parent, part)
+      protected_path(path, directory: true)
+      path
+    end
+    protected_path(File.join(directory, File.basename(__FILE__)), directory: false)
+    manifest = File.join(directory, 'standalone-hq-release.json')
+    protected_path(manifest, directory: false)
+    manifest
+  end
+
+  def approved_helper_digest
+    manifest = installer_manifest
+    raise 'invalid standalone helper release manifest' if File.size(manifest) > 2048
+    data = JSON.parse(File.binread(manifest, 2048))
+    sha = data['helper_sha256']
+    unless data.keys.sort == %w[helper_sha256 hq_source schema] &&
+           data['schema'] == 'agent-bot-hq/standalone-helper-release/v1' &&
+           data['hq_source'].is_a?(String) && data['hq_source'].match?(/\A[0-9a-f]{40}\z/) &&
+           sha.is_a?(String) && sha.match?(/\A[0-9a-f]{64}\z/)
+      raise 'this installer release does not qualify a standalone HQ signing helper'
+    end
+    sha
+  end
+
+  def verify_signature(helper)
+    # The independently pinned executable is exact; also verify the public code identity.
+    requirement = 'anchor apple generic and identifier "ai.true-line.hq.signer" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
+    _, ok = Open3.capture2e('/usr/bin/codesign', '--verify', '--strict', '--all-architectures', "-R=#{requirement}", helper)
+    raise 'installed HQ helper signature is invalid' unless ok.success?
+  end
+
+  def role_identity
+    user = Etc.getpwnam(ROLE)
+    home = File.realpath(user.dir)
+    unless user.name == ROLE && user.uid > 0 && home == '/private/var/agent-bot-hq' &&
+           ['/usr/bin/false', '/sbin/nologin'].include?(user.shell)
+      raise 'verified dedicated HQ account required'
+    end
+    st = File.lstat(home)
+    raise 'verified private HQ role home required' unless st.directory? && st.uid == user.uid && (st.mode & 07777) == 0700
+    entry, ok = Open3.capture2('/usr/bin/dscl', '.', '-read', "/Users/#{ROLE}", 'UniqueID', 'GeneratedUID')
+    attrs = entry.lines.map { |s| s.chomp.split(': ', 2) }.to_h
+    uuid = attrs.fetch('GeneratedUID', '')
+    raise 'verified local HQ account identity required' unless ok.success? && attrs['UniqueID'] == user.uid.to_s &&
+      uuid.match?(/\A[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\z/)
+    group = Etc.getgrgid(user.gid)
+    group_data, group_ok = Open3.capture2('/usr/bin/dscl', '.', '-read', "/Groups/#{ROLE}")
+    attrs = group_data.split(/(?=^\S+:)/).map { |s| s.strip.split(/:\s*/, 2) }.to_h
+    users, users_ok = Open3.capture2('/usr/bin/dscl', '.', '-list', '/Users', 'PrimaryGroupID')
+    primary = users.lines.map { |line| line.strip.split(/\s+/, 2) }.select { |_, id| id == user.gid.to_s }.map(&:first)
+    unless group_ok.success? && users_ok.success? && group.name == ROLE && primary == [ROLE] &&
+           attrs['PrimaryGroupID'] == user.gid.to_s && attrs['NestedGroups'].to_s.empty? &&
+           (attrs['GroupMembership'].to_s.split - [ROLE]).empty? && (attrs['GroupMembers'].to_s.upcase.split - [uuid]).empty?
+      raise 'verified private primary group for the dedicated HQ account required'
+    end
+    [user.uid, uuid, home, user.gid]
+  end
+
+  def registered_home(uid)
+    Etc.getpwuid(uid).dir
+  end
+
+  def locally_registered_homes
+    listing, ok = Open3.capture2('/usr/bin/dscl', '.', '-list', '/Users', 'UniqueID')
+    raise 'cannot verify local Machine pairing history' unless ok.success?
+    listing.lines.map do |line|
+      name, id = line.strip.split(/\s+/, 2)
+      raise 'cannot verify local account identity' unless id && id.match?(/\A-?[0-9]+\z/)
+      next unless id.to_i >= 500
+      account = Etc.getpwnam(name)
+      raise 'cannot verify the registered local account home' unless account.uid == id.to_i && account.dir.start_with?('/') && File.stat(account.dir).directory?
+      account.dir
+    end.compact
+  end
+
+  def check_machine(home)
+    homes = [home] + locally_registered_homes
+    @prefixes.each do |prefix|
+      next unless status(prefix)
+      raise 'cannot verify the standard Homebrew prefix' unless File.lstat(prefix).directory?
+      %w[bin/managed-machine bin/agent-machine bin/agent-bot-keyd opt/managed-machine Cellar/managed-machine var/agent-machine].each do |item|
+        raise 'standard Machine installation or pairing evidence exists' if status(File.join(prefix, item))
+      end
+      # The local prefix owner's registered home contains the private pair and its revocation.
+      brew = File.join(prefix, 'bin/brew')
+      homes << registered_home(File.stat(brew).uid) if status(brew)
+      owner_uid = File.stat(prefix).uid
+      homes << registered_home(owner_uid) if owner_uid > 0
+    end
+    homes.uniq.each do |h|
+      raise 'existing Machine account state requires review' if status(File.join(h, '.config/agent-machine'))
+    end
+  end
+
+  def sync_dir(path)
+    File.open(path, File::RDONLY | File::NOFOLLOW) { |f| f.fsync }
+  end
+
+  def publish(path, text, mode: 0644, group: 0)
+    if status(path)
+      protected_path(path, directory: false, mode: mode, group: group)
+      raise 'existing record conflicts with the requested transition' unless File.binread(path, text.bytesize + 1) == text
+      return
+    end
+    Tempfile.create(['.pending-', '.record'], @directory) do |f|
+      f.write(text)
+      f.chown(@uid, group) if @uid.zero?
+      f.chmod(mode)
+      f.fsync
+      begin
+        File.link(f.path, path) # Never replace the stable locking inode.
+      rescue Errno::EEXIST
+        raise "concurrent standalone transition; retry"
+      end
+    end
+    sync_dir(@directory)
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  begin
+    abort 'macOS administrator required' unless RUBY_PLATFORM.include?('darwin') && Process.euid.zero?
+    action = case ARGV
+             when ['declare', '--confirm-no-custom-machine'] then :declare
+             when ['retire'] then :retire
+             else abort 'usage: standalone-hq-signing declare --confirm-no-custom-machine | retire'
+             end
+    StandaloneHQSigning.new.operate(action)
+    puts(action == :retire ? 'Standalone signing permanently retired.' : 'Standalone signing declared.')
+  rescue StandardError => e
+    warn "Standalone signing unavailable: #{e.message}"
+    exit 1
+  end
+end

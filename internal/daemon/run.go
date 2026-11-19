@@ -222,6 +222,9 @@ func Run(ctx context.Context, root string) error {
 }
 
 func runService(ctx context.Context, root, requiredIdentity string) error {
+	if err := prepareMachineLifecycle(root); err != nil {
+		return err
+	}
 	dir := stateDir(root)
 	priv, err := serviceKey(root, requiredIdentity)
 	if err != nil {

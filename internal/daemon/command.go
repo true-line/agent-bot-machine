@@ -193,6 +193,11 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	if err != nil {
 		return serviceFailed(err)
 	}
+	if verb == "install" || verb == "start" || verb == "pair" {
+		if err := prepareMachineLifecycle(root); err != nil {
+			return serviceFailed(err)
+		}
+	}
 	switch verb {
 	case "status":
 		on, err := Installed(goos, root)

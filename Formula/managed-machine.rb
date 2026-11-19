@@ -27,7 +27,24 @@ class ManagedMachine < Formula
     sha256 "e98ea0d764b13e9b30c714bb9b299fff80ec1f07cbcd30e4037f3bdb795a2b6e"
   end
 
+  def check_standalone_signing
+    dir = "/Library/Application Support/ai.true-line.agent-bot-hq/standalone"
+    %w[declaration-pending-v1 declaration-v1].each do |name|
+      begin
+        File.lstat(File.join(dir, name))
+      rescue Errno::ENOENT
+        next
+      end
+      odie "The administrator must finish or retire the standalone HQ signing declaration before installing Machine"
+    end
+  end
+
   def install
+    check_standalone_signing
+    # The issuer inventories all standard Machine kegs after setting its
+    # pending marker. Publish this one before checking the marker again.
+    prefix.mkpath
+    check_standalone_signing
     libexec.mkpath
     libexec.install "install.sh"
     legacy = libexec / "legacy"
@@ -72,6 +89,7 @@ class ManagedMachine < Formula
   end
 
   def post_install
+    check_standalone_signing
     chmod 0700, bin / "agent-bot-keyd"
   end
 

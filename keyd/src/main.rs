@@ -37,6 +37,8 @@ mod pins;
 mod presence;
 mod relay;
 mod server;
+#[cfg(target_os = "macos")]
+mod standalone;
 mod store;
 
 use std::path::PathBuf;
@@ -113,6 +115,7 @@ fn exit_status(error: &store::StoreError) -> u8 {
 
 #[cfg(target_os = "macos")]
 fn serve(options: &Options, paths: &paths::Paths) -> Result<(), String> {
+    standalone::begin_custody()?;
     let items = items(options);
     let listeners = server::listen(paths)?;
     let keyd = Arc::new(server::Keyd {

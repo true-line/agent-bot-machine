@@ -78,6 +78,11 @@ func firstHQ(deps Deps, args []string) (result cli.Result) {
 	if err != nil {
 		return serviceFailed(err)
 	}
+	if action != "cancel" {
+		if err := prepareMachineLifecycle(root); err != nil {
+			return serviceFailed(err)
+		}
+	}
 	dir := stateDir(root)
 	// Refuse foreign or linked private state before taking the same lock
 	// that protects the owner pin and HQ enrollment.
