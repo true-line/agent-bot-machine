@@ -194,7 +194,7 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		return serviceFailed(err)
 	}
 	if verb == "install" || verb == "start" || verb == "pair" {
-		if err := prepareMachineLifecycle(root); err != nil {
+		if err := checkMachineAdmission(); err != nil {
 			return serviceFailed(err)
 		}
 	}
@@ -284,6 +284,11 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "stopped")
 		return cli.Result{Records: []*output.Record{rec}}
 	case "pair":
+		if enrollSet || owner.pinSet {
+			if err := prepareMachineLifecycle(root); err != nil {
+				return serviceFailed(err)
+			}
+		}
 		if goos == "darwin" && (owner.pinSet || hqEnroll) {
 			// Serialize the first pin with legacy enrollment as well. Once a
 			// pin exists every HQ enrollment on this host needs owner presence.
@@ -348,6 +353,9 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 			rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "paired").Set("path", path)
 			return cli.Result{Records: []*output.Record{rec}}
 		}
+		if err := prepareMachineLifecycle(root); err != nil {
+			return serviceFailed(err)
+		}
 		path, err := PairClient(root)
 		if err != nil {
 			return serviceFailed(err)
@@ -377,6 +385,9 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 
 func ensureService(deps Deps, ctx cli.Context, goos, root, userName string, install, debug bool) cli.Result {
 	if err := checkChannelIdentity(root); err != nil {
+		return serviceFailed(err)
+	}
+	if err := prepareMachineLifecycle(root); err != nil {
 		return serviceFailed(err)
 	}
 	exec, err := deps.executable(ctx)

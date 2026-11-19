@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,5 +49,17 @@ func TestAdministratorStandaloneDeclaration(t *testing.T) {
 	cmd := exec.Command("/usr/bin/ruby", "--disable-gems", "../../tests/fixtures/standalone-hq-signing.rb")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("public fixture: %v: %s", err, out)
+	}
+}
+
+func TestPinnedRestartWithoutStatePreservesHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(channelEnv, t.TempDir())
+	pub, _ := keyPair(t)
+	if err := runService(context.Background(), home, publicFingerprint(pub)); !errors.Is(err, errChannelIdentity) {
+		t.Fatalf("pinned restart without enrollment: %v", err)
+	}
+	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
+		t.Fatalf("pinned restart changed the private home: %v, %v", entries, err)
 	}
 }

@@ -195,13 +195,18 @@ func serviceKey(root, requiredIdentity string) (ed25519.PrivateKey, error) {
 			return nil, errChannelIdentity
 		}
 	}
-	if key != nil {
-		return key, nil
-	}
-	if runtime.GOOS != "windows" && channel != "" {
+	if key == nil && runtime.GOOS != "windows" && channel != "" {
 		if err := checkPublishedKey(dir, channel, legacy, store); err != nil {
 			return nil, err
 		}
+	}
+	// Only publish the first-use footprint after validating any previous identity.
+	if err := prepareMachineLifecycle(root); err != nil {
+		zeroBytes(key)
+		return nil, err
+	}
+	if key != nil {
+		return key, nil
 	}
 	if err := purgeLegacySharedState(dir, legacy, store); err != nil {
 		return nil, err
@@ -222,7 +227,7 @@ func Run(ctx context.Context, root string) error {
 }
 
 func runService(ctx context.Context, root, requiredIdentity string) error {
-	if err := prepareMachineLifecycle(root); err != nil {
+	if err := checkMachineAdmission(); err != nil {
 		return err
 	}
 	dir := stateDir(root)

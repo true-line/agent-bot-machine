@@ -19,6 +19,10 @@ func checkStandaloneAdmission(library string) error {
 	return nil
 }
 
+// Check before reading protected custody. The lifecycle check repeats this
+// after identity validation, immediately around publication of the footprint.
+func checkMachineAdmission() error { return checkStandaloneAdmission("/Library") }
+
 // The issuer publishes a pending record before its final inventory of local
 // registered homes. Publishing the normal Machine state before checking again
 // means either the issuer observes Machine or Machine observes the declaration.
