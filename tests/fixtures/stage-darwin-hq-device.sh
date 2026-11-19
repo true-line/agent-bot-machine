@@ -18,6 +18,25 @@ verify_homebrew_device_install() {
     [[ "$("$prefix/bin/managed-machine" --version)" == "$version" ]]
 }
 
+# Exercise both formula installations before any service uses the keg.
+qualify_homebrew_device_release() (
+    set -euo pipefail
+    local brew="$1" prefix="$2" version="$3" digest="$4" unpack="$5"
+    local formula=true-line/agent-bot-machine/managed-machine
+    umask 022
+    install_homebrew_device_release "$brew" "$version" "$digest"
+    verify_homebrew_device_install "$prefix" "$version" "$unpack" >/dev/null 2>&1 || {
+        echo 'FAIL: installed Homebrew release verification' >&2; exit 1;
+    }
+    "$brew" test "$formula" >/dev/null 2>&1 || { echo 'FAIL: installed Homebrew formula test' >&2; exit 1; }
+    "$brew" reinstall --formula "$formula" >/dev/null 2>&1 || { echo 'FAIL: Homebrew formula reinstall' >&2; exit 1; }
+    verify_homebrew_device_install "$prefix" "$version" "$unpack" >/dev/null 2>&1 || {
+        echo 'FAIL: reinstalled Homebrew release verification' >&2; exit 1;
+    }
+    "$brew" test "$formula" >/dev/null 2>&1 || { echo 'FAIL: reinstalled Homebrew formula test' >&2; exit 1; }
+    echo 'PASS: formula tests and signed release checks passed after install and reinstall'
+)
+
 # Called by the dedicated-role fixture before enrollment or key creation.
 stage_signed_device_release() {
     [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
@@ -27,8 +46,7 @@ stage_signed_device_release() {
     unpack_signed_device_release "$MM_HQ_DEVICE_ARCHIVE" "$MM_HQ_DEVICE_SHA256" "$unpack" || fail 'invalid signed device release'
     if [[ "${MM_HQ_DEVICE_HOMEBREW:-false}" == true ]]; then
         tap_homebrew_device_release /opt/homebrew/bin/brew /opt/homebrew
-        install_homebrew_device_release /opt/homebrew/bin/brew "$MM_HQ_DEVICE_VERSION" "$MM_HQ_DEVICE_SHA256"
-        verify_homebrew_device_install /opt/homebrew "$MM_HQ_DEVICE_VERSION" "$unpack" || fail 'invalid installed Homebrew release'
+        qualify_homebrew_device_release /opt/homebrew/bin/brew /opt/homebrew "$MM_HQ_DEVICE_VERSION" "$MM_HQ_DEVICE_SHA256" "$unpack"
         custody_dir=/opt/homebrew/bin
         ok 'the active Homebrew Machine and private keyd match the reviewed signed release'
     else

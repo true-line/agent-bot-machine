@@ -20,6 +20,4 @@ read -r version digest <<< "$pin"
 asset="managed-machine_${version}_darwin_arm64.tar.gz"
 fetch_public_device_archive "$version" "$work" "$digest"
 unpack_signed_device_release "$work/$asset" "$digest" "$work/unpacked"
-install_homebrew_device_release "$brew" "$version" "$digest"
-verify_homebrew_device_install "$prefix" "$version" "$work/unpacked"
-echo 'PASS: both Homebrew executables match the signed public release, active keg and installed modes'
+qualify_homebrew_device_release "$brew" "$prefix" "$version" "$digest" "$work/unpacked"
