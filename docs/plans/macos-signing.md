@@ -69,7 +69,12 @@ its own Ed25519 identity. [D4 and the cross-account channel](cross-account-chann
 On a fresh Mac, the prefix administrator first runs `managed-machine members
 plan`. When its `hq-account` step calls for creating `_agent-bot-hq`, complete
 the [first-HQ plan transfer](cross-account-channel.md#first-hq-provisioning-on-macos)
-and human apply before requesting an enrollment challenge.
+and human apply before requesting an enrollment challenge. The prefix owner's
+per-user Machine daemon publishes its public key on its first ordinary
+startup. If it is installed but has never started, run
+`managed-machine daemon start` as the prefix owner before requesting the
+challenge. Enrollment checks that the published key matches the private
+state's public key again when the owner proof is submitted.
 
 For enrollment obtain the owner's P-256 public key directly from the
 independently verified, provisioned owner client. The prefix owner runs
