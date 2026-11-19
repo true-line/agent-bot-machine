@@ -4,13 +4,14 @@ import { spawnSync } from 'node:child_process';
 import { createHash, createPublicKey, generateKeyPairSync, randomBytes, sign, verify } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { exerciseNativeChannel } from './keyd-device-channel.mjs';
 
 function requireCheck(condition) {
   if (!condition) throw new Error('native keyd acceptance failed');
 }
 
-function exercise() {
+async function exercise() {
   requireCheck(process.platform === 'darwin' && process.arch === 'arm64' &&
     process.env.GITHUB_ACTIONS === 'true' && process.env.RUNNER_ENVIRONMENT === 'github-hosted' &&
     process.env.MM_KEYD_CUSTODY_TEST === '1');
@@ -73,7 +74,7 @@ function exercise() {
         dsaEncoding: 'ieee-p1363' }, Buffer.from(signature, 'base64url')));
     refused(child('hq-device', enroll));
     requireCheck(ok(request('identity')).thumbprint === thumb);
-    put('peers/agent-daemon.revoked', '');
+    await exerciseNativeChannel(dirname(helper), machine, hq, epoch, thumb);
     refused(child('hq-device', request('identity')));
   } finally {
     rmSync(state, { recursive: true, force: true });
@@ -82,7 +83,7 @@ function exercise() {
 }
 
 try {
-  exercise();
+  await exercise();
   console.log('PASS native admin keyd initialization, independent ES256 verification, restart and revocation');
 } catch {
   console.error('FAIL native admin keyd process or custody check');

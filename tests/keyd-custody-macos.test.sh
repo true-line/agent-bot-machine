@@ -54,7 +54,7 @@ if ! /usr/bin/xcrun swift -e 'import CryptoKit; import Darwin; exit(SecureEnclav
 fi
 echo 'Hosted Secure Enclave available'
 [[ "$(id -u)" == "$(stat -f %u /opt/homebrew)" ]]
-role=_mm_keyd_ci_hq
+role=_agent-bot-hq
 if dscl . -read "/Users/$role" >/dev/null 2>&1; then
     echo 'FAIL disposable HQ account already exists' >&2; exit 1
 fi
@@ -64,14 +64,21 @@ while dscl . -list /Users UniqueID | awk -v u="$role_uid" '$2 == u { found=1 } E
     [[ "$role_uid" -lt 700 ]]
 done
 sudo -n dscl . -create "/Users/$role"
-trap 'sudo -n dscl . -delete "/Users/$role" >/dev/null; rm -rf "$temp"' EXIT
+trap 'sudo -n dscl . -delete "/Users/$role" >/dev/null; sudo -n rm -rf "$temp/role-home"; rm -rf "$temp"' EXIT
 sudo -n dscl . -create "/Users/$role" UniqueID "$role_uid"
 sudo -n dscl . -create "/Users/$role" PrimaryGroupID 20
 sudo -n dscl . -create "/Users/$role" UserShell /usr/bin/false
-sudo -n dscl . -create "/Users/$role" NFSHomeDirectory /var/empty
+sudo -n install -d -m 0700 -o "$role_uid" -g 20 "$temp/role-home"
+sudo -n dscl . -create "/Users/$role" NFSHomeDirectory "$temp/role-home"
 sudo -n dscl . -create "/Users/$role" IsHidden 1
 [[ "$(id -u "$role")" == "$role_uid" ]]
 refused "$role" hq-device-init
 refused "$role" hq-device
 sudo -n chmod 0700 "$helper"
+# The production launcher still requires the Team's Developer ID signature.
+# PRs exercise the same signed request gate and native helper via a Go test
+# binary. A published signed pair is exercised separately on dispatch.
+(cd "$root" && go test -c -o "$temp/machine-test" ./internal/daemon && go build -o "$temp/managed-machine" ./cmd/managed-machine)
+install -m 0755 "$(command -v node)" "$temp/node"
+install -m 0644 "$root/tests/fixtures/paired-darwin-hq-device.mjs" "$temp/role-check.mjs"
 bash "$root/tests/fixtures/with-keyd-test-keychain.sh" node "$root/tests/fixtures/keyd-device-native.mjs" "$helper" "$role_uid"
