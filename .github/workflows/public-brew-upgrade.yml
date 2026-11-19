@@ -1,0 +1,27 @@
+name: Public Homebrew upgrade
+on:
+  pull_request:
+    paths:
+      - Formula/managed-machine.rb
+      - tests/public-brew-upgrade-macos.sh
+      - .github/workflows/public-brew-upgrade.yml
+  push:
+    branches: [main]
+    paths:
+      - Formula/managed-machine.rb
+      - tests/public-brew-upgrade-macos.sh
+      - .github/workflows/public-brew-upgrade.yml
+permissions:
+  contents: read
+jobs:
+  upgrade:
+    name: Published releases on macOS 27
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Upgrade the previous public formula and clean its old keg
+        run: bash tests/public-brew-upgrade-macos.sh
