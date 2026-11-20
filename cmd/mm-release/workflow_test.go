@@ -157,7 +157,7 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		if strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.With["name"] == "dist" {
 			sawDistDL = true
 		}
-		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.With["name"] == "release-gate-${{ matrix.os }}-${{ matrix.arch }}" {
+		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.With["name"] == "release-gate-${{ matrix.os }}-${{ matrix.arch }}-attempt-${{ github.run_attempt }}" {
 			sawRGUpload = true
 		}
 	}
