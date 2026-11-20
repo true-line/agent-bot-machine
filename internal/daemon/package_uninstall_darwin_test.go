@@ -356,7 +356,7 @@ func TestVerifyPackageServicesRequiresKnownFilesAndLiveJobs(t *testing.T) {
 			file := filepath.Join(agents, tc.label+".plist")
 			// launchd may still have the registered job after its plist was removed.
 			job := func(bin string, args []string) []byte {
-				return []byte("path = " + file + "\nprogram = " + bin + "\narguments = {\n" + bin + "\n" + strings.Join(args, "\n") + "\n}\n\tpid = 12345\n")
+				return []byte("\tpath = " + file + "\n\tprogram = " + bin + "\n\targuments = {\n\t\t" + bin + "\n\t\t" + strings.Join(args, "\n\t\t") + "\n\t}\n\tpid = 12345\n")
 			}
 			args := tc.args
 			program := tc.program
@@ -368,6 +368,14 @@ func TestVerifyPackageServicesRequiresKnownFilesAndLiveJobs(t *testing.T) {
 					return job(program, args), true, nil
 				}
 				return nil, false, nil
+			}
+			if tc.label == darwinKeydServiceLabel {
+				if _, err := inspectPackageServices(prefix, caller, readJob); err == nil {
+					t.Fatal("shared label and argv alone identified the keyd installer")
+				}
+				if err := os.WriteFile(file, []byte(keydAgent(state, program)), 0600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			snapshot, err := inspectPackageServices(prefix, caller, readJob)
 			if err != nil || len(snapshot.pids) != 1 || snapshot.pids[0] != 12345 {

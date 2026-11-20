@@ -17,6 +17,11 @@ import (
 	"github.com/qwts/managed-machine/internal/output"
 )
 
+type serviceUnitReview struct {
+	remove     func() error
+	retainKeyd bool
+}
+
 // Deps is the testable surface of daemon install, uninstall, run, and status.
 type Deps struct {
 	command.Deps
@@ -26,6 +31,7 @@ type Deps struct {
 	Caller        func() (Caller, error)
 	Root          func() (string, error)
 	LockLifecycle func(string, int) (*os.File, error)
+	ReadUserJob   func(int, string, string) ([]byte, bool, error)
 	Activate      func(path string) error
 	Deactivate    func(path string) error
 	WaitHealthy   func() error
@@ -204,6 +210,27 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	if err != nil {
 		return serviceFailed(err)
 	}
+	var reviewed serviceUnitReview
+	if goos == "darwin" && writesServices && deps.ReadUserJob != nil {
+		executable, err := deps.executable(ctx)
+		if err != nil {
+			return serviceFailed(err)
+		}
+		reviewed, err = inspectServiceLifecycle(caller, root, executable, verb, deps.ReadUserJob)
+		if err != nil {
+			return serviceFailed(err)
+		}
+		if reviewed.retainKeyd && deps.Deactivate != nil {
+			deactivate := deps.Deactivate
+			keydPath, _ := keydUnitPath(goos, root)
+			deps.Deactivate = func(path string) error {
+				if path == keydPath {
+					return nil
+				}
+				return deactivate(path)
+			}
+		}
+	}
 	switch verb {
 	case "status":
 		on, err := Installed(goos, root)
@@ -275,11 +302,17 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 				return serviceFailed(err)
 			}
 		}
-		if err := Uninstall(goos, root); err != nil {
-			return serviceFailed(err)
-		}
-		if err := UninstallKeyd(goos, root); err != nil {
-			return serviceFailed(err)
+		if reviewed.remove != nil {
+			if err := reviewed.remove(); err != nil {
+				return serviceFailed(err)
+			}
+		} else {
+			if err := Uninstall(goos, root); err != nil {
+				return serviceFailed(err)
+			}
+			if err := UninstallKeyd(goos, root); err != nil {
+				return serviceFailed(err)
+			}
 		}
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "absent")
 		return cli.Result{Records: []*output.Record{rec}}

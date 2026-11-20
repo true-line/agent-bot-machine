@@ -69,6 +69,7 @@ func main() {
 		},
 		Root:          os.UserHomeDir,
 		LockLifecycle: statedir.LockMacPackage,
+		ReadUserJob:   brew.ReadMachineUserJob,
 		Activate: func(path string) error {
 			return daemon.ActivateUserService(runtime.GOOS, path)
 		},

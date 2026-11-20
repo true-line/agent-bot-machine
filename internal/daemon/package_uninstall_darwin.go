@@ -299,11 +299,78 @@ func (observe packageObservers) requireHQAbsent() error {
 }
 
 type packageServiceSnapshot struct {
-	plists []packageLeaf
-	pids   []int
+	retainedKeyd bool
+	plists       []packageLeaf
+	pids         []int
 }
 
 func inspectPackageServices(prefix string, caller Caller, readJob func(int, string, string) ([]byte, bool, error)) (*packageServiceSnapshot, error) {
+	return inspectUserServices(caller, readJob, true, false, func(program string, keyd, fromPlist bool) bool {
+		return isPackageProgram(prefix, program, keyd)
+	})
+}
+
+// Both products use the same keyd label and may select the same binary and
+// arguments. Only Machine's exact plist establishes who installed that job.
+func inspectServiceLifecycle(caller Caller, root, executable, verb string, readJob func(int, string, string) ([]byte, bool, error)) (serviceUnitReview, error) {
+	if filepath.Clean(root) != filepath.Clean(caller.RegisteredHome) || !filepath.IsAbs(executable) || filepath.Clean(executable) != executable {
+		return serviceUnitReview{}, errors.New("cannot identify the Machine executable or registered service home")
+	}
+	keyd, err := KeydBinary(executable)
+	if err != nil {
+		return serviceUnitReview{}, err
+	}
+	_, err = os.Stat(keyd)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return serviceUnitReview{}, err
+	}
+	bundled := err == nil
+	removing := verb == "stop" || verb == "uninstall"
+	// Machine-only startup does not operate on keyd. During teardown a
+	// previously installed Machine keyd still needs to be accounted for.
+	includeKeyd := bundled || removing
+	var priorMachine string
+	snapshot, err := inspectUserServices(caller, readJob, includeKeyd, removing && !bundled, func(program string, isKeyd, fromPlist bool) bool {
+		// A manually installed executable may have moved during an upgrade.
+		// Recover the old executable and its sibling only from Machine's exact
+		// registered LaunchAgent, not from the shared keyd label or live argv.
+		if !isKeyd && fromPlist && filepath.IsAbs(program) && filepath.Clean(program) == program &&
+			(filepath.Base(program) == "managed-machine" || filepath.Base(program) == "agent-machine") {
+			priorMachine = program
+		}
+		if priorMachine != "" {
+			if !isKeyd && program == priorMachine {
+				return true
+			}
+			priorKeyd, err := KeydBinary(priorMachine)
+			if isKeyd && err == nil && program == priorKeyd {
+				return true
+			}
+		}
+		if isKeyd && program == keyd || !isKeyd && program == executable {
+			return true
+		}
+		for _, prefix := range []string{"/opt/homebrew", "/usr/local"} {
+			if isPackageProgram(prefix, executable, false) && isPackageProgram(prefix, program, isKeyd) {
+				return true
+			}
+		}
+		return false
+	})
+	if err != nil {
+		return serviceUnitReview{}, err
+	}
+	return serviceUnitReview{retainKeyd: snapshot.retainedKeyd, remove: func() error {
+		for _, leaf := range snapshot.plists {
+			if err := leaf.removePlist(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}}, nil
+}
+
+func inspectUserServices(caller Caller, readJob func(int, string, string) ([]byte, bool, error), includeKeyd, allowIndependentKeyd bool, accept func(string, bool, bool) bool) (*packageServiceSnapshot, error) {
 	var snapshot packageServiceSnapshot
 	agents := filepath.Join(caller.RegisteredHome, "Library", "LaunchAgents")
 	if info, err := os.Lstat(agents); err == nil {
@@ -316,8 +383,13 @@ func inspectPackageServices(prefix string, caller Caller, readJob func(int, stri
 	state := filepath.Join(caller.RegisteredHome, ".local", "state", "agent-bot")
 	for _, label := range []string{darwinServiceLabel, darwinKeydServiceLabel} {
 		keyd := label == darwinKeydServiceLabel
+		if keyd && !includeKeyd {
+			continue
+		}
 		path := filepath.Join(agents, label+".plist")
 		leaf := packageLeaf{path: path}
+		var recordedProgram string
+		var independent bool
 		info, err := os.Lstat(path)
 		if err == nil {
 			if !info.Mode().IsRegular() || info.Size() > 64<<10 || int(info.Sys().(*syscall.Stat_t).Uid) != caller.UID || info.Mode().Perm()&0022 != 0 || info.Sys().(*syscall.Stat_t).Nlink != 1 {
@@ -328,7 +400,9 @@ func inspectPackageServices(prefix string, caller Caller, readJob func(int, stri
 				return nil, err
 			}
 			var plist struct {
-				Arrays []struct {
+				Keys    []string `xml:"dict>key"`
+				Strings []string `xml:"dict>string"`
+				Arrays  []struct {
 					Args []string `xml:"string"`
 				} `xml:"dict>array"`
 			}
@@ -340,14 +414,26 @@ func inspectPackageServices(prefix string, caller Caller, readJob func(int, stri
 			if keyd {
 				want = keydAgent(state, program)
 			}
-			if !isPackageProgram(prefix, program, keyd) || !bytes.Equal(data, []byte(want)) {
+			// Identity publishes its own bin/label registration after its plist.
+			// Only a Machine-only teardown can leave that separate service alone.
+			if keyd && allowIndependentKeyd && !bytes.Equal(data, []byte(want)) &&
+				len(plist.Keys) >= 2 && plist.Keys[0] == "Label" && plist.Keys[1] == "ProgramArguments" &&
+				len(plist.Strings) == 1 && plist.Strings[0] == label &&
+				slices.Equal(plist.Arrays[0].Args, []string{program, "serve", "--state-dir", state}) &&
+				independentKeydRecorded(state, program, caller.UID) {
+				snapshot.retainedKeyd = true
+				independent = true
+			} else if !bytes.Equal(data, []byte(want)) || !accept(program, keyd, true) {
 				return nil, errors.New("preserving a customized or unrelated Machine LaunchAgent")
 			}
+			recordedProgram = program
 			leaf.info, leaf.body = info, data
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-		snapshot.plists = append(snapshot.plists, leaf)
+		if !independent {
+			snapshot.plists = append(snapshot.plists, leaf)
+		}
 		for _, domain := range []string{"gui", "user"} {
 			job, loaded, err := readJob(caller.UID, domain, label)
 			if err != nil {
@@ -359,15 +445,26 @@ func inspectPackageServices(prefix string, caller Caller, readJob func(int, stri
 			var source, program string
 			var pid int
 			var args []string
+			if keyd && leaf.info == nil {
+				return nil, errors.New("preserving a loaded keyd without its Machine LaunchAgent file; verify it with its owning service manager")
+			}
+			argsSeen := false
 			inArgs := false
 			for _, raw := range strings.Split(string(job), "\n") {
-				line := strings.TrimSpace(raw)
 				if inArgs {
-					if line == "}" {
+					if raw == "\t}" {
 						inArgs = false
 					} else {
-						args = append(args, line)
+						value, ok := strings.CutPrefix(raw, "\t\t")
+						if !ok {
+							return nil, errors.New("cannot verify the loaded Machine service arguments")
+						}
+						args = append(args, value)
 					}
+					continue
+				}
+				line, top := strings.CutPrefix(raw, "\t")
+				if !top || strings.HasPrefix(line, "\t") {
 					continue
 				}
 				switch {
@@ -379,14 +476,25 @@ func inspectPackageServices(prefix string, caller Caller, readJob func(int, stri
 					}
 					pid = n
 				case line == "arguments = {":
+					if argsSeen {
+						return nil, errors.New("cannot verify multiple Machine argument lists")
+					}
+					argsSeen = true
 					inArgs = true
-				case strings.HasPrefix(line, "path = ") && source == "":
+				case strings.HasPrefix(line, "path = "):
+					if source != "" {
+						return nil, errors.New("cannot verify multiple Machine service paths")
+					}
 					source = strings.TrimPrefix(line, "path = ")
-				case strings.HasPrefix(line, "program = ") && program == "":
+				case strings.HasPrefix(line, "program = "):
+					if program != "" {
+						return nil, errors.New("cannot verify multiple Machine service programs")
+					}
 					program = strings.TrimPrefix(line, "program = ")
 				}
 			}
-			if source != path || !isPackageProgram(prefix, program, keyd) || len(args) == 0 || !isPackageProgram(prefix, args[0], keyd) {
+			if inArgs || source != path || len(args) == 0 || args[0] != program || (!independent && !accept(program, keyd, false)) ||
+				keyd && program != recordedProgram {
 				return nil, errors.New("preserving an unverified loaded Machine service")
 			}
 			want := []string{"daemon", "run"}
@@ -402,6 +510,29 @@ func inspectPackageServices(prefix string, caller Caller, readJob func(int, stri
 		}
 	}
 	return &snapshot, nil
+}
+
+// Read only Identity's installation metadata, never its custody data.
+func independentKeydRecorded(state, program string, uid int) bool {
+	if !filepath.IsAbs(program) || filepath.Clean(program) != program {
+		return false
+	}
+	file, err := os.OpenFile(filepath.Join(state, "keyd", "keyd.json"), os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 || int(info.Sys().(*syscall.Stat_t).Uid) != uid {
+		return false
+	}
+	data, err := io.ReadAll(io.LimitReader(file, (64<<10)+1))
+	var record struct {
+		Bin   string
+		Label *string
+	}
+	return err == nil && len(data) <= 64<<10 && json.Unmarshal(data, &record) == nil &&
+		record.Bin == program && (record.Label == nil || *record.Label == darwinKeydServiceLabel)
 }
 
 type packageLeaf struct {
@@ -448,6 +579,12 @@ func stopPackageServices(deps Deps, prefix string, caller Caller, observe packag
 		return err
 	}
 	for i, leaf := range leaves {
+		if i < 2 {
+			if err := leaf.removePlist(); err != nil {
+				return err
+			}
+			continue
+		}
 		current, err := os.Lstat(leaf.path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -458,17 +595,30 @@ func stopPackageServices(deps Deps, prefix string, caller Caller, observe packag
 		if !leaf.unchanged(current) {
 			return errors.New("preserving a Machine service file that changed during unload")
 		}
-		if i < 2 {
-			body, err := os.ReadFile(leaf.path)
-			if err != nil || !bytes.Equal(body, leaf.body) {
-				return errors.New("preserving a Machine LaunchAgent changed during unload")
-			}
-			if err := os.Remove(leaf.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-		} else if err := removeStoppedPackageSocket(leaf, caller.UID, legacyMacSocketUnlink); err != nil {
+		if err := removeStoppedPackageSocket(leaf, caller.UID, legacyMacSocketUnlink); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (leaf packageLeaf) removePlist() error {
+	current, err := os.Lstat(leaf.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !leaf.unchanged(current) {
+		return errors.New("preserving a Machine LaunchAgent that changed during unload")
+	}
+	body, err := os.ReadFile(leaf.path)
+	if err != nil || !bytes.Equal(body, leaf.body) {
+		return errors.New("preserving a Machine LaunchAgent changed during unload")
+	}
+	if err := os.Remove(leaf.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	return nil
 }
