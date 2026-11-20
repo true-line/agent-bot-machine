@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"crypto/sha256"
+	"debug/macho"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -96,6 +97,21 @@ func TestFirstHQPlanBindsOptionalVerifiedService(t *testing.T) {
 	if err != nil || got != digest || !strings.Contains(canonical, launchLabel) || !strings.Contains(canonical, s.ArtifactSHA256) {
 		t.Fatalf("first-HQ service plan: %s, %v", got, err)
 	}
+	t.Run("Intel-only Node with the correct digest", func(t *testing.T) {
+		intel := append([]byte(nil), node...)
+		binary.LittleEndian.PutUint32(intel[4:8], uint32(macho.CpuAmd64))
+		candidate := *s
+		candidate.Node = filepath.Join(base, "node-intel")
+		if err := os.WriteFile(candidate.Node, intel, 0755); err != nil {
+			t.Fatal(err)
+		}
+		h.entries[candidate.Node] = h.entries[s.Node]
+		candidate.NodeSHA256 = fmt.Sprintf("%x", sha256.Sum256(intel))
+		_, err := Build(Input{HQAccount: DarwinHQAccount, HQService: &candidate, Platform: PlatformDarwin, Invoker: admin}, h)
+		if err == nil || !strings.Contains(err.Error(), "arm64 executable slice") {
+			t.Fatalf("expected a native runtime diagnostic before plan approval, got %v", err)
+		}
+	})
 	t.Run("service rollback leaves a new digest outside first-HQ scope", func(t *testing.T) {
 		// The initial apply created the role, then removed its service plist.
 		name := DarwinHQAccount
