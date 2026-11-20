@@ -533,6 +533,7 @@ func TestBundledDarwinKeydReadiness(t *testing.T) {
 		}
 		checked <- err
 	}()
+	caller.Home = home + "/" // legal spelling of the same registered home
 	res = run(deps, cli.Context{}, []string{"start"})
 	if res.Diagnostic != nil {
 		t.Fatal(res.Diagnostic.Message)
@@ -544,4 +545,52 @@ func TestBundledDarwinKeydReadiness(t *testing.T) {
 	if err := <-checked; err != nil {
 		t.Fatal(err)
 	}
+
+	// A new Machine executable without the helper beside it must preserve
+	// the previous registration and stop before activating either unit.
+	deps.Executable = func() (string, error) { return filepath.Join(home, "new", "managed-machine"), nil }
+	activated := false
+	deps.Activate = func(string) error { activated = true; return nil }
+	keydPlist, err := keydUnitPath("darwin", home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machinePlist, err := unitPath("darwin", home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err := os.ReadFile(machinePlist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = run(deps, cli.Context{}, []string{"start"})
+	if res.Diagnostic == nil || !strings.Contains(res.Diagnostic.Message, "restore agent-bot-keyd") || activated {
+		t.Fatalf("missing companion reported ready or activated an old unit: %#v", res.Diagnostic)
+	}
+	if current, err := os.ReadFile(machinePlist); err != nil || !bytes.Equal(current, prior) {
+		t.Fatal("changed the existing Machine LaunchAgent before the missing-companion refusal", err)
+	}
+	body := keydAgent(filepath.Join(home, ".local", "state", "agent-bot"), filepath.Join(bin, "agent-bot-keyd"))
+	if current, err := os.ReadFile(keydPlist); err != nil || string(current) != body {
+		t.Fatal("changed the existing keyd LaunchAgent", err)
+	}
+
+	// An independent plist does not turn a manual binary into a bundle.
+	custom := strings.Replace(body, "<string>serve</string>", "<string>custom</string>", 1)
+	if err := os.WriteFile(keydPlist, []byte(custom), 0600); err != nil {
+		t.Fatal(err)
+	}
+	deps.Activate = func(path string) error {
+		if path != machinePlist {
+			t.Fatal("activated a unit from an unrelated registration")
+		}
+		return nil
+	}
+	if res := run(deps, cli.Context{}, []string{"start"}); res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	if current, err := os.ReadFile(keydPlist); err != nil || string(current) != custom {
+		t.Fatal("changed an unrelated LaunchAgent", err)
+	}
+
 }

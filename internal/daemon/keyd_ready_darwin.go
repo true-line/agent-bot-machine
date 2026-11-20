@@ -25,7 +25,7 @@ var (
 )
 
 func waitBundledKeyd(caller Caller, timeout time.Duration) error {
-	if caller.UID <= 0 || !caller.DarwinAdmin || caller.PrefixOwner == "" || caller.UID != os.Geteuid() || caller.Home != caller.RegisteredHome {
+	if caller.UID <= 0 || !caller.DarwinAdmin || caller.PrefixOwner == "" || caller.UID != os.Geteuid() || caller.RegisteredHome == "" || filepath.Clean(caller.Home) != filepath.Clean(caller.RegisteredHome) {
 		return errKeydEndpoint
 	}
 	until := time.Now().Add(timeout)

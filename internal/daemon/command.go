@@ -388,6 +388,11 @@ func ensureService(deps Deps, ctx cli.Context, caller Caller, goos, root, userNa
 		if err != nil {
 			return serviceFailed(err)
 		}
+		if goos == "darwin" && filepath.Base(upath) == darwinKeydServiceLabel+".plist" && previous != nil {
+			if err := checkRegisteredKeyd(previous, exec, filepath.Join(root, ".local", "state", "agent-bot")); err != nil {
+				return serviceFailed(err)
+			}
+		}
 		before = append(before, unitBackup{path: upath, previous: previous})
 	}
 	path, err := Install(goos, root, exec, "")

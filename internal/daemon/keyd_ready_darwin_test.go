@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,6 +88,10 @@ func TestBundledKeydDeadlineAndDelayedBind(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(home) })
+	// Directory-inherited read-only permissions do not grant foreign writers.
+	if out, err := exec.Command("/bin/chmod", "+a", "everyone allow readattr,readsecurity,directory_inherit", home).CombinedOutput(); err != nil {
+		t.Fatalf("set test home ACL: %v %s", err, out)
+	}
 	dir := filepath.Join(home, ".local", "state", "agent-bot", "keyd")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)

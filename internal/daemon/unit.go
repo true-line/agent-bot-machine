@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/xml"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,6 +102,28 @@ func UninstallKeyd(goos, root string) error {
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	return nil
+}
+
+// When a previously bundled install moves, keep a missing sibling from being
+// mistaken for a manual Machine-only install. The old plist is evidence for a
+// refusal only. Its executable path is never opened or used for activation.
+func checkRegisteredKeyd(previous []byte, executable, stateDir string) error {
+	bin, err := KeydBinary(executable)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(bin); !os.IsNotExist(err) {
+		return err
+	}
+	var plist struct {
+		Args []string `xml:"dict>array>string"`
+	}
+	if xml.Unmarshal(previous, &plist) == nil && len(plist.Args) == 4 &&
+		filepath.IsAbs(plist.Args[0]) && filepath.Base(plist.Args[0]) == "agent-bot-keyd" &&
+		string(previous) == keydAgent(stateDir, plist.Args[0]) {
+		return fmt.Errorf("the existing Machine-managed keyd LaunchAgent requires a bundled helper; restore agent-bot-keyd beside the current Machine executable and retry")
 	}
 	return nil
 }
