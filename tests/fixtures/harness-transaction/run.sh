@@ -90,6 +90,30 @@ install_digest_for_rule="$tx_digest"
    '.[0].changes==0 and .[0].installed_plan_id==$id' >/dev/null
 ok 'paired harness install and read-only reapply preserved the completed root receipt'
 (cd / && sudo -n -H -u "$role" -- /usr/bin/env "GITHUB_ACTIONS=$GITHUB_ACTIONS" "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT" /usr/bin/python3 -I "$stage/checkin.py" "$tx_digest")
+# HQ #200 carries the handoff and Darwin launcher. Its own broker catalog is
+# empty. Load the unchanged plugin and production catalog from the #198 tar.
+broker_commit=72d160d37e78e016d65c46dc424e0f192f50c3ce
+broker_tar_sha=99a94b4099da6333e8af46801a2177cc420217b5f731d31f0af6a5aa5e6a8a62
+souls_commit=86d167618ec9c61e15af10f065e87776c0de85b2
+souls_tar_sha=282c9f5f1bc1a94d1805722036404796f9b43f16e89ead8428e0ff973981c25f
+checkout_review_source souls agent-bot-souls "$souls_commit"
+(cd "$subjects/accounts" && PATH="$stage:$PATH" bash scripts/ci-build-darwin-artifact.sh "$broker_commit" "$WORK/packaged-broker.tar")
+git -C "$subjects/souls" archive --format=tar --prefix=souls/ "$souls_commit" lib governance > "$WORK/souls.tar"
+input_stage="$stage/packaged-check"
+sudo mkdir -m 0755 "$input_stage"
+for item in packaged-broker souls; do
+    expected="$broker_tar_sha"
+    [[ "$item" != souls ]] || expected="$souls_tar_sha"
+    sudo install -o root -g wheel -m 0444 "$WORK/$item.tar" "$input_stage/$item.tar"
+    [[ "$(shasum -a 256 "$input_stage/$item.tar" | awk '{print $1}')" == "$expected" ]] || fail 'unexpected release input'
+done
+sudo tar -xf "$input_stage/packaged-broker.tar" -C "$input_stage" hq/governance hq/vendor/plugins
+sudo tar -xf "$input_stage/souls.tar" -C "$input_stage"
+sudo install -o root -g wheel -m 0444 "$root/packaged-soul.mjs" "$root/fixture-policy.json" "$input_stage/"
+state="$(sudo -n -H -u "$role" -- /usr/bin/mktemp -d /private/var/agent-bot-hq/tx.XXXXXXXX)"
+(cd / && sudo -n -H -u "$role" -- /usr/bin/env -i PATH=/usr/bin:/bin HQ_INTERIM_OFFLINE=1 \
+    "GITHUB_ACTIONS=$GITHUB_ACTIONS" "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT" \
+    "$stage/node" "$input_stage/packaged-soul.mjs" "$stage/hq" "$input_stage/hq" "$input_stage/souls" "$state" "$input_stage/fixture-policy.json")
 handoff retire "$install_id_for_rule"
 # Check from the same privilege domain as removal. Only a missing leaf
 # beneath an open, existing directory establishes absence.
