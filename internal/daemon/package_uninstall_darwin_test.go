@@ -21,6 +21,18 @@ func absentPackageServices() packageObservers {
 }
 
 func TestHomebrewPackageUninstall(t *testing.T) {
+	for _, filename := range []string{"keyd-original.plist", "keyd-background.plist"} {
+		t.Run(filename, func(t *testing.T) {
+			template, err := os.ReadFile(filepath.Join("testdata", filename))
+			if err != nil {
+				t.Fatal(err)
+			}
+			testHomebrewPackageUninstall(t, string(template))
+		})
+	}
+}
+
+func testHomebrewPackageUninstall(t *testing.T, keydTemplate string) {
 	base, err := os.MkdirTemp("/private/tmp", "abu.")
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +96,8 @@ func TestHomebrewPackageUninstall(t *testing.T) {
 	for _, label := range []string{darwinServiceLabel, darwinKeydServiceLabel} {
 		text := darwinAgent(home, core)
 		if label == darwinKeydServiceLabel {
-			text = keydAgent(filepath.Join(home, ".local", "state", "agent-bot"), filepath.Join(keg, "bin", "agent-bot-keyd"))
+			text = strings.NewReplacer("{{PROGRAM}}", filepath.Join(keg, "bin", "agent-bot-keyd"),
+				"{{STATE}}", filepath.Join(home, ".local", "state", "agent-bot")).Replace(keydTemplate)
 		}
 		put(filepath.Join(home, "Library", "LaunchAgents", label+".plist"), text, 0600)
 	}

@@ -410,20 +410,23 @@ func inspectUserServices(caller Caller, readJob func(int, string, string) ([]byt
 				return nil, errors.New("preserving an unrecognized Machine LaunchAgent")
 			}
 			program := plist.Arrays[0].Args[0]
-			want := darwinAgent(caller.RegisteredHome, program)
+			var managed bool
 			if keyd {
-				want = keydAgent(state, program)
+				// Installation and removal recognize the same exact Machine releases.
+				managed = machineKeydRegistration(data, state)
+			} else {
+				managed = string(data) == darwinAgent(caller.RegisteredHome, program)
 			}
 			// Identity publishes its own bin/label registration after its plist.
 			// Only a Machine-only teardown can leave that separate service alone.
-			if keyd && allowIndependentKeyd && !bytes.Equal(data, []byte(want)) &&
+			if keyd && allowIndependentKeyd && !managed &&
 				len(plist.Keys) >= 2 && plist.Keys[0] == "Label" && plist.Keys[1] == "ProgramArguments" &&
 				len(plist.Strings) == 1 && plist.Strings[0] == label &&
 				slices.Equal(plist.Arrays[0].Args, []string{program, "serve", "--state-dir", state}) &&
 				independentKeydRecorded(state, program, caller.UID) {
 				snapshot.retainedKeyd = true
 				independent = true
-			} else if !bytes.Equal(data, []byte(want)) || !accept(program, keyd, true) {
+			} else if !managed || !accept(program, keyd, true) {
 				return nil, errors.New("preserving a customized or unrelated Machine LaunchAgent")
 			}
 			recordedProgram = program
