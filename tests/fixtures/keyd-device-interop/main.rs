@@ -14,6 +14,9 @@ use std::{
 };
 mod hq_device;
 mod store {
+    // This adapter reads ordinary disposable files and never calls Keychain.
+    pub fn keychain_read_interaction_denied(_: &str) -> bool { false }
+
     pub trait Items {
         fn read(&self, s: &str, a: &str) -> Result<Option<Vec<u8>>, String>;
         fn write(&self, s: &str, a: &str, v: &[u8]) -> Result<(), String>;
