@@ -378,3 +378,44 @@ func TestHQServiceUpgradeChecksCurrentPairBeforeCutover(t *testing.T) {
 		t.Fatal("revoked HQ accepted")
 	}
 }
+
+// An upgrade can finish preflight while an administrator revokes the role.
+// The actual launch submission must pass the live guard after preflight.
+func TestHQUpgradeRevocationDuringBootstrapPreflight(t *testing.T) {
+	f := newRecoveryFixture(t)
+	state, err := readOwnerPairState(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockOwnerPairing(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = unlock(); err != nil {
+		t.Fatal(err)
+	}
+	commitment := pairCommitment(state)
+	if err := CheckHQUpgradePair(f.dir, account.Username, commitment, nil); err != nil {
+		t.Fatal(err)
+	}
+	ready := make(chan struct{})
+	result := make(chan error, 1)
+	launched := false
+	go func() {
+		<-ready
+		result <- CheckHQUpgradePair(f.dir, account.Username, commitment, func() error { launched = true; return nil })
+	}()
+	err = revokeHQ(f.dir)
+	close(ready)
+	admission := <-result
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admission == nil || launched {
+		t.Fatal("submitted launch after revocation completed")
+	}
+}

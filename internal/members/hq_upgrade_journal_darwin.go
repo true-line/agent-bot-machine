@@ -635,7 +635,8 @@ func (j *upgradeJournal) start(r launchRecord) error {
 	if e := j.pair(j.Approval, nil); e != nil {
 		return e
 	}
-	return startReviewedRecord(r, j.Owner, func(parent *os.File, published os.FileInfo) error {
+	guardBootstrap := func(submit func() error) error { return j.pair(j.Approval, submit) }
+	return startReviewedRecord(r, j.Owner, guardBootstrap, func(parent *os.File, published os.FileInfo) error {
 		phase := "stopping-previous"
 		if r.Plist == j.Upgrade.Next.Plist {
 			phase = "stopping-next"
