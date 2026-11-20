@@ -20,6 +20,12 @@ use crate::store::Items;
 
 pub(crate) trait Enclave {
     fn check_live(&self) -> Result<(), &'static str>;
+    fn proof_time(&self) -> Result<u64, &'static str> {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|t| t.as_secs())
+            .map_err(|_| UNAVAILABLE)
+    }
     fn create(&self) -> Result<Vec<u8>, &'static str>;
     fn public(&self, reference: &[u8]) -> Result<[u8; 65], &'static str>;
     fn sign(&self, reference: &[u8], message: &[u8]) -> Result<[u8; 64], &'static str>;
@@ -44,6 +50,8 @@ pub(crate) struct Request {
     req_nonce: String,
     timestamp: u64,
     option: String,
+    #[serde(default, deserialize_with = "optional_text")]
+    session: Option<String>,
     #[serde(default, deserialize_with = "optional_text")]
     receipt_body: Option<String>,
     #[serde(default, deserialize_with = "optional_text")]
@@ -75,6 +83,7 @@ impl Request {
                     | "bind-enrollment"
                     | "access-assertion"
                     | "bind-access"
+                    | "whoami"
             )
         {
             return Err(UNAVAILABLE);
@@ -94,6 +103,18 @@ impl Request {
             self.machine_pub, self.hq_pub, self.hq_uid, self.req_nonce, self.timestamp, self.option
         );
         transcript.push_str(&format!("\nhq_epoch\n{}", self.hq_epoch));
+        match (&*self.option, &self.session) {
+            ("whoami", Some(s))
+                if s.len() == 43
+                    && URL
+                        .decode(s)
+                        .is_ok_and(|b| b.len() == 32 && URL.encode(&b) == *s) =>
+            {
+                transcript.push_str(&format!("\nsession\n{s}"));
+            }
+            ("whoami", _) | (_, Some(_)) => return Err(UNAVAILABLE),
+            _ => (),
+        }
         for (label, field) in [
             ("receipt_body", &self.receipt_body),
             ("receipt_jti", &self.receipt_jti),
@@ -373,6 +394,54 @@ pub(crate) fn initialize(
     Ok(())
 }
 
+fn whoami_proof(
+    record: &Record,
+    request: &Request,
+    provider: &dyn Enclave,
+    now: u64,
+) -> Result<Value, &'static str> {
+    record.bound.as_ref().ok_or(UNAVAILABLE)?;
+    let selector = request.session.as_deref().ok_or(UNAVAILABLE)?;
+    let session = record
+        .sessions
+        .iter()
+        .find(|s| s.thumbprint == selector && s.issued <= now && s.expires > now)
+        .ok_or(UNAVAILABLE)?;
+    let token = session.token.as_ref().ok_or(UNAVAILABLE)?;
+    if URL.decode(&token.ath).map_err(|_| UNAVAILABLE)?.len() != 32 {
+        return Err(UNAVAILABLE);
+    }
+    let reference = STANDARD
+        .decode(&session.reference)
+        .map_err(|_| UNAVAILABLE)?;
+    let (jwk, thumb) = identity(&provider.public(&reference)?)?;
+    if thumb != selector || thumb == record.thumbprint {
+        return Err(UNAVAILABLE);
+    }
+    provider.check_live()?;
+    let issued = provider.proof_time()?;
+    if issued < now || issued >= session.expires || issued.abs_diff(request.timestamp) > WINDOW {
+        return Err(UNAVAILABLE);
+    }
+    let proof = jwt(
+        provider,
+        &reference,
+        json!({"alg":"ES256","typ":"dpop+jwt","jwk":jwk}),
+        json!({"htm":"GET","htu":format!("{ORIGIN}/api/daemon/whoami"),"ath":token.ath,"iat":issued,"jti":nonce()?}),
+    )?;
+    // Its request nonce is already durable. Only release the proof while the
+    // same pairing and bound session remain valid after native signing.
+    provider.check_live()?;
+    let completed = provider.proof_time()?;
+    if completed < issued
+        || completed >= session.expires
+        || completed.abs_diff(request.timestamp) > WINDOW
+    {
+        return Err(UNAVAILABLE);
+    }
+    Ok(json!({"session":thumb,"proof":proof}))
+}
+
 pub(crate) fn run(
     items: &dyn Items,
     provider: &dyn Enclave,
@@ -546,6 +615,7 @@ fn execute(
             }
             result = json!({"session":session.thumbprint,"expires_at":expires_at});
         }
+        "whoami" => return whoami_proof(&record, &request, provider, now),
         _ => return Err(UNAVAILABLE),
     }
     if request.option == "bind-enrollment" {
