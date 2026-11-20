@@ -413,6 +413,45 @@ func TestInstallKeydUpgradesItsOwnUnitAndPreservesConcurrentRegistration(t *test
 	assertPointsTo("old")
 }
 
+func TestKeydMigratesOriginalLoginSessionRegistration(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, ".local", "state", "agent-bot")
+	executable := filepath.Join(root, "managed-machine")
+	bin := filepath.Join(root, "agent-bot-keyd")
+	if err := os.WriteFile(bin, []byte("fixture"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	path, err := keydUnitPath("darwin", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := renderKeydAgent(state, bin, "")
+	if err := os.WriteFile(path, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planKeydUnit("darwin", root, executable, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.write(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(got), "<string>Aqua</string>") || !strings.Contains(string(got), "<string>Background</string>") {
+		t.Fatalf("install did not enable GUI and background sessions: %v", err)
+	}
+	if err := plan.rollback(); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(path)
+	if err != nil || string(got) != legacy {
+		t.Fatalf("rollback did not restore the previous registration: %v", err)
+	}
+}
+
 func TestKeydUnitRechecksExistingRegistrationBeforeReuseAndRollback(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, ".local", "state", "agent-bot")

@@ -430,6 +430,15 @@ leaves an independent keyd unit in place, including when Machine activation
 fails. Moving an existing Machine-managed unit to a new keg requires the
 bundled helper at its new location.
 
+Machine registers bundled keyd for the prefix administrator’s graphical
+(`Aqua`) and background (`Background`) login sessions. An administrator
+connected through SSH can start the per-user service before opening a graphical
+session. The administrator’s Keychain must still be available for operations
+that require it. On upgrade, Machine recognizes its exact earlier plist with
+no session list. If activation fails after migration, rollback restores that
+previous registration. The native regression test exercises both registration
+formats and checks the restored plist byte for byte.
+
 Acceptance: install and uninstall are idempotent, run from the owner's account,
 and refuse agent accounts, root/SYSTEM, foreign-HOME callers, and a caller
 that does not own the shared prefix when that prefix exists; the AGENTS.md
