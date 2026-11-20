@@ -11,6 +11,7 @@ struct Fake {
     revoked: Cell<bool>,
     revoke_after_sign: Cell<bool>,
     signed: RefCell<Vec<Vec<u8>>>,
+    create_error: Option<&'static str>,
 }
 impl Enclave for Fake {
     fn proof_time(&self) -> Result<u64, &'static str> {
@@ -23,6 +24,9 @@ impl Enclave for Fake {
         Ok(())
     }
     fn create(&self) -> Result<Vec<u8>, &'static str> {
+        if let Some(error) = self.create_error {
+            return Err(error);
+        }
         self.created.set(self.created.get() + 1);
         Ok(vec![self.created.get()])
     }
@@ -95,6 +99,76 @@ fn request_for_session(
     }
     serde_json::from_value(wire).unwrap()
 }
+#[test]
+fn initialization_preserves_creation_failure_and_leaves_custody_absent() {
+    let items = Memory::default();
+    let provider = Fake {
+        create_error: Some("creation refused"),
+        ..Default::default()
+    };
+    assert_eq!(
+        initialize(&items, &provider, pair()),
+        Err("creation refused")
+    );
+    assert!(items.read(SERVICE, ITEM).unwrap().is_none());
+}
+
+#[test]
+fn admin_lookup_denial_stops_before_creation_and_peers_receive_only_unavailable() {
+    use crate::store::StoreError;
+    use std::sync::atomic::{AtomicU8, Ordering};
+    struct ReadError {
+        status: i32,
+        reads: AtomicU8,
+    }
+    impl ReadError {
+        fn new(status: i32) -> Self {
+            Self {
+                status,
+                reads: AtomicU8::new(0),
+            }
+        }
+    }
+    impl Items for ReadError {
+        fn read(&self, _: &str, _: &str) -> Result<Option<Vec<u8>>, StoreError> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            Err(StoreError::KeychainRead(self.status))
+        }
+        fn write(&self, _: &str, _: &str, _: &[u8]) -> Result<(), String> {
+            panic!("unexpected write")
+        }
+        fn insert(&self, _: &str, _: &str, _: &[u8]) -> Result<bool, String> {
+            panic!("unexpected insert")
+        }
+        fn remove(&self, _: &str, _: &str) -> Result<bool, String> {
+            panic!("unexpected removal")
+        }
+    }
+    let native = Fake::default();
+    let p = pair();
+    let items = ReadError::new(-25308);
+    assert_eq!(
+        initialize(&items, &native, p.clone()),
+        Err("macOS denied user interaction while reading existing device custody from Keychain")
+    );
+    assert_eq!(
+        initialize(&ReadError::new(-1), &native, p.clone()),
+        Err(UNAVAILABLE)
+    );
+    assert_eq!(
+        run(
+            &items,
+            &native,
+            &p,
+            request(&p, "identity", 0),
+            Default::default()
+        ),
+        Err(UNAVAILABLE)
+    );
+    assert_eq!(items.reads.load(Ordering::Relaxed), 2);
+    assert_eq!(native.created.get(), 0);
+}
+
 #[test]
 fn public_identity_and_enrollment_are_typed_and_offline() {
     let (items, native, p) = (Memory::default(), Fake::default(), pair());
