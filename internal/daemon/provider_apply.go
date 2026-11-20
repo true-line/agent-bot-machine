@@ -461,7 +461,6 @@ func (s recordingStep) Verify(context.Context) (execute.Evidence, error) {
 // operations. The daemon's RPC surface exposes none of them.
 var noSystemHQ = brew.NoManagedHQ
 var darwinCustodyPIDs = brew.MachineCustodyPIDs
-var unusedMachineSocket = brew.UnusedMachineSocket
 var readMachineUserJob = brew.ReadMachineUserJob
 var removeHQFirst = brew.ErrRemoveHQFirst
 

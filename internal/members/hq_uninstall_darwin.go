@@ -180,23 +180,32 @@ type uninstallHost struct {
 }
 
 func newUninstallHost(r launchRecord, owner string) uninstallHost {
+	observe := func() (bool, string, error) { return loadedLaunchDaemon(r.Service, owner) }
 	return uninstallHost{
-		observe:      func() (bool, string, error) { return loadedLaunchDaemon(r.Service, owner) },
+		observe:      observe,
 		plist:        func() (upgradeNodeIdentity, error) { return checkedUninstallPlist(r.Plist) },
 		unlinkPlist:  func() error { return os.Remove(launchPlist) },
 		syncPlistDir: func() error { return syncUpgradeDir(filepath.Dir(launchPlist)) },
 		capture:      uninstallEndpoint,
-		clean:        checkUninstallEndpoint,
-		waitPID:      waitForUninstalledHQPID,
-		bootout:      func() error { return runProgram(launchctl, "bootout", "system/"+launchLabel) },
-		readRecord:   readUninstallEvidence,
+		clean: func(path string, stop *stoppingHQ, preview bool) error {
+			return checkUninstallEndpoint(path, stop, preview, func() error {
+				active, _, err := observe()
+				if err != nil || active {
+					return errors.New("cannot verify absence of the reviewed HQ job")
+				}
+				return waitForUninstalledHQPID(stop.PID)
+			})
+		},
+		waitPID:    waitForUninstalledHQPID,
+		bootout:    func() error { return runProgram(launchctl, "bootout", "system/"+launchLabel) },
+		readRecord: readUninstallEvidence,
 	}
 }
 
 // A registered on-demand job may have no running process. Its exact plist
 // and argv permit targeted bootout. Only launchd may clear an occupied leaf
 // in this case; the removal has no identified process from which to claim it.
-func checkUninstallEndpoint(path string, s *stoppingHQ, preview bool) error {
+func checkUninstallEndpoint(path string, s *stoppingHQ, preview bool, confirmStopped func() error) error {
 	if s != nil && s.Parent.Inode == 0 {
 		if _, e := os.Lstat(path); errors.Is(e, os.ErrNotExist) {
 			return nil
@@ -210,9 +219,46 @@ func checkUninstallEndpoint(path string, s *stoppingHQ, preview bool) error {
 		if preview {
 			return nil
 		}
-		return removeStoppedLaunchSocket(path, parent, sock, pid)
+		err := removeStoppedLaunchSocket(path, parent, sock, pid)
+		if !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOTSUP) {
+			return err
+		}
+		release, sysErr := unix.Sysctl("kern.osrelease")
+		major, _, _ := strings.Cut(release, ".")
+		if sysErr != nil || major != "24" {
+			return err
+		}
+		return unlinkDetachedUninstallSocket(parent, filepath.Base(path), sock, 0, func() error {
+			if err := confirmStopped(); err != nil {
+				return err
+			}
+			if err := trustedPath(OSHost{}, parent.Name(), true); err != nil {
+				return err
+			}
+			return checkDarwinACLs(pathAncestry(parent.Name()))
+		})
 	})
 }
+
+// Only receipt-backed uninstall can take this Darwin 24 path. The callers
+// hold the package and HQ lifecycle locks and have captured the running job,
+// PID, protected parent and socket before bootout. Recheck them after probes.
+func unlinkDetachedUninstallSocket(parent *os.File, name string, sock os.FileInfo, uid uint32, confirmStopped func() error) error {
+	if err := checkStoppedSocketIdentity(parent, name, sock, uid); err != nil {
+		return err
+	}
+	if err := CheckDetachedDarwinSocket(filepath.Join(parent.Name(), name)); err != nil {
+		return err
+	}
+	if err := confirmStopped(); err != nil {
+		return err
+	}
+	if err := checkStoppedSocketIdentity(parent, name, sock, uid); err != nil {
+		return err
+	}
+	return unix.Unlinkat(int(parent.Fd()), name, 0)
+}
+
 func removeReviewedHQ(dir string, h uninstallHost, endpoint string, want uninstallEvidence, preview bool) (string, error) {
 	journal := filepath.Join(dir, uninstallJournalName)
 	donePath := filepath.Join(dir, want.PlanID+".hq-uninstalled.json")

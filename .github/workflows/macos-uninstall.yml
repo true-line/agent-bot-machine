@@ -36,6 +36,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Verify removal preserves a socket still open in another process
+        run: go test -v -count=1 -race ./internal/members -run '^TestHQDatagramProbeOfPublishedStream$'
       - name: Qualify the checkout through a disposable local Homebrew tap
         run: |
           sw_vers

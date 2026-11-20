@@ -2,6 +2,8 @@ package daemon
 
 import "github.com/qwts/managed-machine/internal/members"
 
+var unusedMachineSocket = members.CheckDetachedDarwinSocket
+
 func currentPairedServicePlan(verb, home, owner, id, digest string, uid int) (string, error) {
 	dir, err := openMembersPlans(home)
 	if err != nil {

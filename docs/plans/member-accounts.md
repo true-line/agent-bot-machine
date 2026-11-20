@@ -235,9 +235,12 @@ receipt until removal finishes. This explicit local invocation is the
 administrator's new decision to unload the service.
 
 The command removes the fixed system launchd job, its verified plist and any
-endpoint observed for the identified job. On macOS versions without guarded
-socket unlink, launchd may remove the socket itself. If a socket remains,
-Machine reports it and preserves the journal for a later retry. A running or
+endpoint observed for the identified job. On macOS 15, if launchd leaves the socket behind, Machine rechecks
+the recorded job and process are gone and probes both Unix socket types
+at the recorded filesystem entry. It removes the entry only when both
+report a detached socket and the protected parent and entry still match.
+If Machine cannot establish that the socket is unused, it preserves the
+journal and endpoint for a later retry. A running or
 unidentified replacement, or an occupied endpoint without job provenance,
 requires administrator reconciliation. Repeat the same command to resume an
 interrupted removal or confirm a completed one.

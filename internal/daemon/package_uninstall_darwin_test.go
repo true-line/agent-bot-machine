@@ -310,7 +310,10 @@ func TestDarwin15RetainsBoundNonListeningPackageSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer syscall.Close(fd)
-	if err := syscall.Bind(fd, &syscall.SockaddrUnix{Name: path}); err != nil {
+	if err := syscall.Bind(fd, &syscall.SockaddrUnix{Name: path + ".original"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".original", path); err != nil {
 		t.Fatal(err)
 	}
 	legacy := func(parent int, path string, uid int, original unix.Stat_t) error {

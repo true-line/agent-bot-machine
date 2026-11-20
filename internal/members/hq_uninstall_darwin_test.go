@@ -271,3 +271,99 @@ func TestHQUninstallAuditTailAfterCLIReinstall(t *testing.T) {
 		t.Fatal(result, e)
 	}
 }
+
+func TestUninstallDetachedSocketRequiresUnchangedStoppedJob(t *testing.T) {
+	for _, scenario := range []string{"closed", "bound", "listening", "permission changed", "job present", "replacement", "parent replaced"} {
+		t.Run(scenario, func(t *testing.T) {
+			base, err := os.MkdirTemp("/private/tmp", "hq-rm.")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(base) })
+			dir := filepath.Join(base, "runtime")
+			if err := os.Mkdir(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			parent, err := os.Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer parent.Close()
+			name := "owner.sock"
+			path := filepath.Join(dir, name)
+			bind := func() int {
+				t.Helper()
+				fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := syscall.Bind(fd, &syscall.SockaddrUnix{Name: path + ".original"}); err != nil {
+					syscall.Close(fd)
+					t.Fatal(err)
+				}
+				if err := os.Rename(path+".original", path); err != nil {
+					syscall.Close(fd)
+					t.Fatal(err)
+				}
+				if err := os.Chmod(path, 0666); err != nil {
+					syscall.Close(fd)
+					t.Fatal(err)
+				}
+				return fd
+			}
+			fd := bind()
+			if scenario == "listening" {
+				if err := syscall.Listen(fd, 1); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario == "listening" || scenario == "bound" {
+				defer syscall.Close(fd)
+			} else {
+				syscall.Close(fd)
+			}
+			recorded, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			confirmed := false
+			check := func() error {
+				confirmed = true
+				switch scenario {
+				case "job present":
+					return errors.New("reviewed job is still registered")
+				case "replacement":
+					if err := os.Rename(path, path+".old"); err != nil {
+						t.Fatal(err)
+					}
+					syscall.Close(bind())
+				case "permission changed":
+					return os.Chmod(path, 0600)
+				case "parent replaced":
+					if err := os.Rename(dir, dir+".old"); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Mkdir(dir, 0700); err != nil {
+						t.Fatal(err)
+					}
+					syscall.Close(bind())
+				}
+				return nil
+			}
+			err = unlinkDetachedUninstallSocket(parent, name, recorded, uint32(os.Getuid()), check)
+			after, statErr := os.Lstat(path)
+			if scenario == "closed" {
+				if err != nil || !confirmed || !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("closed removal: %v, confirmation %v, stat %v", err, confirmed, statErr)
+				}
+				return
+			}
+			if err == nil || statErr != nil {
+				t.Fatalf("refused removal: %v, stat %v", err, statErr)
+			}
+			if (scenario == "replacement" || scenario == "parent replaced") == os.SameFile(recorded, after) {
+				t.Fatal("incorrect preserved identity")
+			}
+		})
+	}
+}

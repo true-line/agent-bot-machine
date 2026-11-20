@@ -78,16 +78,6 @@ func UninstallMachineFormula(prefix string, env []string) error {
 	return nil
 }
 
-// UnusedMachineSocket detects bound-but-not-listening sockets on older Darwin.
-// Exit 1 with no diagnostics or output means the specific leaf has no open FD.
-func UnusedMachineSocket(path string) error {
-	out, err := exec.Command("/usr/sbin/lsof", "-nP", "-t", "-a", "-U", "--", path).CombinedOutput()
-	if len(out) == 0 && exitedWith(err, 1) {
-		return nil
-	}
-	return errors.New("a process holds the Machine endpoint or its open descriptors could not be verified")
-}
-
 // ReadMachineUserJob reads current job metadata without logging its environment.
 func ReadMachineUserJob(uid int, domain, label string) ([]byte, bool, error) {
 	target := domain + "/" + strconv.Itoa(uid) + "/" + label
