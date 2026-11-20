@@ -90,6 +90,13 @@ install_formula() {
         fi
     done
     if [[ "$needs_link" == true ]]; then
+        # Homebrew skips link when its record still points at this keg, even
+        # after an individual command disappears. Let Homebrew clear its own
+        # links only after checking every command name for conflicts above.
+        local linked_keg="$prefix/var/homebrew/linked/managed-machine"
+        if [[ -L "$linked_keg" && "$linked_keg" -ef "$prefix/opt/managed-machine" ]]; then
+            "$brew" unlink "$formula"
+        fi
         "$brew" link "$formula"
         for name in managed-machine agent-machine agent-bot-keyd; do
             [[ "$prefix/bin/$name" -ef "$prefix/opt/managed-machine/bin/$name" ]] ||
