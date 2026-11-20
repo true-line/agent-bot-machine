@@ -70,7 +70,11 @@ func uninstallDarwinHQ(owner, state, id string, preview bool) (string, error) {
 	defer outer.Close()
 	physicalReceipts := filepath.Join("/private", DarwinReceiptsDir)
 	var result string
-	err = withHQResourceLock(syscall.LOCK_EX|syscall.LOCK_NB, 0, func() error {
+	mode := syscall.LOCK_EX
+	if preview {
+		mode = syscall.LOCK_SH
+	}
+	err = withHQResourceLock(physicalReceipts, mode|syscall.LOCK_NB, func() error {
 		if _, e := os.Lstat(filepath.Join(physicalReceipts, upgradeJournalName)); !errors.Is(e, os.ErrNotExist) {
 			return errors.New("an HQ upgrade requires reconciliation before uninstall")
 		}
@@ -469,7 +473,7 @@ func listHQUninstallPlans(owner, state string) ([]string, string, error) {
 	}
 	ids := []string{}
 	var resume string
-	err = withHQResourceLock(syscall.LOCK_SH|syscall.LOCK_NB, 0, func() error {
+	err = withHQResourceLock(base, syscall.LOCK_SH|syscall.LOCK_NB, func() error {
 		pending := filepath.Join(base, uninstallJournalName)
 		if _, e := os.Lstat(pending); e == nil {
 			raw, e := readProtectedUpgradeFile(pending)

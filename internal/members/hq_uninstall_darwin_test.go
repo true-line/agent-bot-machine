@@ -367,3 +367,102 @@ func TestUninstallDetachedSocketRequiresUnchangedStoppedJob(t *testing.T) {
 		})
 	}
 }
+
+// v0.12.4 built and encoded these synthetic first-install files. Its writer
+// persisted the plan and receipt without creating the later service lock.
+func TestUninstallV0124ServiceReceipt(t *testing.T) {
+	const id = "plan-20261020T010203Z-cafe"
+	legacy := filepath.Join("testdata", "hq-v0.12.4")
+	state := t.TempDir()
+	plans := filepath.Join(state, "members", "plans")
+	if err := os.MkdirAll(plans, 0700); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(filepath.Join(legacy, id+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plans, id+".json"), saved, 0600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := uninstallPlan(state, id, uint32(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := priorLaunchRecord(p, "operator")
+	if err != nil || record.RuntimeDir != nil || record.OwnerUID != 501 ||
+		record.Plist != renderLaunchPlist(record.Service, 501, "operator", launchControlV1) {
+		t.Fatal("lost compatibility with the released v1 service plan", err)
+	}
+	digest, err := p.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := os.ReadFile(filepath.Join(legacy, "receipt.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join("/private"+DarwinReceiptsDir, id+".json")
+	host := emptyHost()
+	for _, parent := range pathAncestry(filepath.Dir(path)) {
+		host.entries[parent] = Entry{Dir: true, Owner: "root", Mode: 0755}
+	}
+	host.entries[path] = Entry{Regular: true, Owner: "root", Mode: 0600}
+	for _, result := range []string{"applied", "failed", "started"} {
+		host.files[path] = strings.Replace(string(receipt), `"applied"`, `"`+result+`"`, 1)
+		err := receiptForUpgrade(host, id, digest, "operator", func([]string) error { return nil })
+		if (err == nil) != (result == "applied") {
+			t.Fatalf("release receipt %s: %v", result, err)
+		}
+	}
+}
+
+func TestUninstallV0124ResourceLock(t *testing.T) {
+	f := newUninstallFixture(t, true)
+	read := syscall.LOCK_SH | syscall.LOCK_NB
+	write := syscall.LOCK_EX | syscall.LOCK_NB
+	preview := func() error {
+		result, err := f.run(true)
+		if err == nil && result != "would-uninstall" {
+			t.Fatalf("unexpected preview %q", result)
+		}
+		return err
+	}
+	if err := withHQResourceLock(f.dir, read, preview); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(f.dir); err != nil || len(entries) != 0 {
+		t.Fatalf("preview wrote state in a legacy directory: %v, %v", entries, err)
+	}
+	// The legacy reader must discard a snapshot overlapping the first new
+	// writer. Every later contender uses the permanent lock created here.
+	err := withHQResourceLock(f.dir, read, func() error {
+		return withHQResourceLock(f.dir, write, func() error {
+			for _, mode := range []int{read, write} {
+				err := withHQResourceLock(f.dir, mode, func() error {
+					t.Fatal("ran alongside the first writer")
+					return nil
+				})
+				if !errors.Is(err, syscall.EWOULDBLOCK) {
+					t.Fatalf("expected held lock, got %v", err)
+				}
+			}
+			return nil
+		})
+	})
+	if err == nil || !strings.Contains(err.Error(), "retry") {
+		t.Fatal("accepted overlapping legacy inspection", err)
+	}
+	if err := withHQResourceLock(f.dir, read, preview); err != nil {
+		t.Fatal(err)
+	}
+	if err := withHQResourceLock(f.dir, write, func() error {
+		result, err := f.run(false)
+		if err == nil && result != "uninstalled" {
+			t.Fatalf("unexpected removal %q", result)
+		}
+		return err
+	}); err != nil || f.stops != 1 {
+		t.Fatal("legacy install did not complete removal", err)
+	}
+}

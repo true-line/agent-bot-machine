@@ -96,7 +96,7 @@ func withLaunchLock(owner string, mode int, run func() error) error {
 		return err
 	}
 	defer outer.Close()
-	return withHQResourceLock(mode, os.O_CREATE, func() error {
+	return withHQResourceLock(receiptsDir(), mode, func() error {
 		if _, err := os.Lstat(filepath.Join(receiptsDir(), uninstallJournalName)); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("an interrupted HQ uninstall requires reconciliation with members uninstall-hq")
 		}
@@ -104,10 +104,28 @@ func withLaunchLock(owner string, mode int, run func() error) error {
 	})
 }
 
-func withHQResourceLock(mode, flags int, run func() error) error {
-	// Different approved plans can race for the same service. Hold this
-	// receipt-directory lock through bootstrap, verification and rollback.
-	lock, err := os.OpenFile(filepath.Join(receiptsDir(), ".hq-launchd.lock"), flags|os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
+func withHQResourceLock(dir string, mode int, run func() error) error {
+	// Older releases wrote root receipts without a lock file. Writers always
+	// open or create the permanent inode; nobody rotates or removes it.
+	path := filepath.Join(dir, ".hq-launchd.lock")
+	flags := os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+	if mode&syscall.LOCK_EX != 0 {
+		flags |= os.O_CREATE
+	}
+	lock, err := os.OpenFile(path, flags, 0600)
+	if errors.Is(err, os.ErrNotExist) && mode&syscall.LOCK_SH != 0 {
+		// A legacy preview/list has no side effects. Discard the snapshot if
+		// a modern writer created the lock while we were reading.
+		if err := run(); err != nil {
+			return err
+		}
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		return errors.New("HQ service coordination changed during inspection; retry")
+	}
 	if err != nil {
 		return err
 	}
@@ -115,7 +133,6 @@ func withHQResourceLock(mode, flags int, run func() error) error {
 	if err := syscall.Flock(int(lock.Fd()), mode); err != nil {
 		return err
 	}
-
 	return run()
 }
 

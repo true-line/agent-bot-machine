@@ -212,9 +212,15 @@ done
 if "$real_hq"; then
     ok 'signed first-HQ install served cooperative status; the refused repeat apply preserved its PID'
     if [[ "$1" == --real-hq-uninstall ]]; then
+        # v0.12.4 wrote the applied receipt without a service lock. Recreate
+        # that directory layout after the disposable install has finished.
+        lock="$RECEIPTS/.hq-launchd.lock"
+        [[ "$(sudo stat -f '%u:%Lp:%z' "$lock")" == '0:600:0' ]] || fail 'unexpected fixture lock'
+        sudo mv "$lock" "$RECEIPTS/.fixture-held-first-install-lock"
         home_identity="$(sudo stat -f '%d:%i:%u:%g:%Lp' /var/agent-bot-hq)"
         sudo "$MM" members uninstall-hq --list | jq -e --arg id "$install_id" '.matching_plan_ids == [$id]' >/dev/null
         sudo "$MM" members uninstall-hq "$install_id" --dry-run | jq -e '.result == "would-uninstall"' >/dev/null
+        if sudo test -e "$lock" || sudo test -L "$lock"; then fail 'list or preview created a lock'; fi
         [[ "$(sudo launchctl print "system/$label" | awk '$1 == "pid" && $2 == "=" {print $3}')" == "$pid" ]] || fail 'preview changed HQ PID'
         sudo "$MM" members uninstall-hq "$install_id" | jq -e '.result == "uninstalled"' >/dev/null
         if sudo launchctl print "system/$label" >/dev/null 2>&1; then
