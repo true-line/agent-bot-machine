@@ -49,10 +49,31 @@ The owner's digest approval and root apply create each harness role with
 a unique UID, a same-name private group, a locked password, shell
 `/usr/bin/false`, and a 0700 home at `/var/agent-bot-harness-<account>`.
 Existing harness accounts must match the managed role. Shared HQ and owner
-accounts are refused for a harness plan. Darwin only provisions the accounts
-in this plan. The Linux endpoint, launch and egress steps below are separate
-parts of the protected-harness qualification on macOS.
-The disposable macOS acceptance test is `tests/members-apply-macos.test.sh`.
+accounts are refused for a harness plan. Omitting the endpoint directory
+or using a shared HQ config with a Linux broker path preserves the existing
+account-only plan and its digest. On macOS, only the fixed path below opts in.
+
+To stage broker directories, set `harnesses.dir` in the same HQ config to
+`/Library/Application Support/ai.true-line.agent-bot-hq/ipc` and run
+`managed-machine members plan --hq-config <file>`. The dedicated HQ service's
+root-owned v2 runtime directory must already exist. The plan includes the
+`root:wheel` 0755 `ipc` directory and one `_agent-bot-hq:<account>` 2750 child
+per distinct account. HQ creates `broker.sock` inside its account directory.
+The Linux launch rule and egress policy are separate from this operation.
+
+The normal `sudo managed-machine members apply <plan-id>` checks the exact
+approved digest again. First-HQ and paired service-recovery proofs cannot
+approve this broader plan. A protected pairing needs an owner approval path
+for harness plans before its operator can apply one.
+
+The harness plan has its own root apply receipt containing its ID and digest.
+Existing directories must match their reviewed metadata. An apply failure
+retains earlier completed steps. Plan again and review the remaining changes.
+Omitting an account from a subsequent plan preserves its directory and data.
+The HQ service receipt does not confer removal authority for the harness
+accounts, homes, broker directories or their contents.
+
+The account provisioning fixture is `tests/members-apply-macos.test.sh`.
 
 ### What is created
 
