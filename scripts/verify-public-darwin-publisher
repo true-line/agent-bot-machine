@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# A positive match requires separate review of the entire public certificate DER.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+approved="$root/.github/macos-public-publisher-sha256"
+refuse() { echo 'Public macOS publisher verification failed' >&2; exit 1; }
+[[ -f "$approved" ]] && grep -Eq '^[0-9a-f]{64}$' "$approved" || refuse
+[[ "$#" == 1 && "$1" == --configured ]] && exit 0
+[[ "$#" == 2 ]] || refuse
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+case "$1" in
+    --tree) tree="$2" ;;
+    --archive)
+        tree="$work/binaries"
+        mkdir "$tree"
+        for name in managed-machine agent-bot-keyd; do
+            tar -xOzf "$2" "$name" > "$tree/$name" 2>/dev/null || refuse
+            chmod 0700 "$tree/$name"
+        done ;;
+    *) refuse ;;
+esac
+for name in managed-machine agent-bot-keyd; do
+    if [[ "$name" == managed-machine ]]; then id=ai.true-line.agent-bot-machine
+    else id=ai.true-line.agent-bot-keyd; fi
+    bin="$tree/$name"
+    team="$(codesign -d --verbose=2 "$bin" 2>&1 | sed -n 's/^TeamIdentifier=//p')" || refuse
+    [[ "$team" =~ ^[A-Z0-9]{10}$ ]] || refuse
+    org='True Line AI LLC'
+    requirement="anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"$team\" and certificate leaf[subject.O] = \"$org\" and certificate leaf[subject.CN] = \"Developer ID Application: $org ($team)\" and identifier \"$id\""
+    codesign --verify --strict "-R=$requirement" "$bin" >/dev/null 2>&1 || refuse
+    prefix="$work/$name-cert"
+    codesign -d --extract-certificates="$prefix" "$bin" >/dev/null 2>&1 || refuse
+    [[ -s "${prefix}0" ]] || refuse
+    digest="$(shasum -a 256 "${prefix}0" | awk '{print $1}')" || refuse
+    [[ "$digest" =~ ^[0-9a-f]{64}$ ]] && grep -Fxq "$digest" "$approved" || refuse
+done

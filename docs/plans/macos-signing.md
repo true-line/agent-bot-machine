@@ -14,8 +14,8 @@ related_issues: [442, 446]
 
 ## Intent
 
-Owner direction (2026-11-01, #446): ship the darwin/arm64 `managed-machine` CLI
-binary signed with the owner's Developer ID Application certificate and
+The original signing decision (2026-11-01, #446) called for the darwin/arm64
+`managed-machine` CLI to be Developer ID Application signed and
 notarized by Apple as a plain CLI binary — no `.app` bundle, no embedded
 provisioning profile, no `keychain-access-groups` entitlement, and no Secure
 Enclave key wrap.
@@ -169,6 +169,21 @@ are rejected. With
 `-require-pin` the formula must pin the signed darwin digest.
 
 ### Release automation
+
+The public Darwin release requires the organization publisher True Line AI LLC on
+both executables. Before enabling a new certificate, review its complete public
+DER for identifying personal information, including all subject fields and
+extensions. Add only its SHA-256 digest to `.github/macos-public-publisher-sha256`
+through a reviewed change. The existing Team ID and signing requirements still
+apply. An empty allowlist prevents public signing. Private
+local signing confers no release authorization.
+
+The release workflow checks the embedded organization, full publisher name and
+reviewed leaf on the signed binaries before notarization, on the repacked
+archive before draft upload, and on the bytes downloaded before publication.
+It verifies the complete draft asset inventory and digests immediately before
+publishing the checked release ID. Keep other release writers idle during this
+last step because GitHub exposes asset edits and publication as separate operations.
 
 Changes merged to `main` open or refresh a version PR. Merging the reviewed version PR starts the five-target Machine build and macOS signing. After CI and signing pass on that merge commit, automation tags it and publishes the verified archives. The published release includes the Homebrew formula with the signed macOS checksum. A separate formula-only PR updates the tap.
 

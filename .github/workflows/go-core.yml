@@ -219,7 +219,10 @@ jobs:
         run: bash tests/keyd-custody-macos.test.sh
       - name: Test standalone release notarization verdicts
         if: matrix.os == 'darwin'
-        run: bash tests/verify-darwin-clis.test.sh
+        run: |
+          bash tests/verify-darwin-clis.test.sh
+          bash tests/public-darwin-publisher.test.sh
+          python3 tests/public-release-draft.test.py
       - name: Machine daemon phase script
         run: bash tests/machine-daemon.test.sh
       - name: Build the native binary

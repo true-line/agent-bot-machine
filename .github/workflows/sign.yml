@@ -138,6 +138,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Require a reviewed public publisher before loading signing material
+        run: bash scripts/verify-public-darwin-publisher --configured
       - name: Install the pinned Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -191,7 +193,7 @@ jobs:
         env:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
-        run: scripts/sign-darwin "$VERSION" "$RUNNER_TEMP/unsigned" "$RUNNER_TEMP/signed"
+        run: scripts/sign-darwin --public-release "$VERSION" "$RUNNER_TEMP/unsigned" "$RUNNER_TEMP/signed"
       - name: Upload the signed dist to the draft release
         env:
           GH_TOKEN: ${{ github.token }}

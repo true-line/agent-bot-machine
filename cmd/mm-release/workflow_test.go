@@ -249,8 +249,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	if pubJob.Needs != "gates" {
 		t.Errorf("publish.needs = %v, want gates", pubJob.Needs)
 	}
-	if pubJob.RunsOn != "ubuntu-24.04" {
-		t.Errorf("publish.runs-on = %q, want ubuntu-24.04", pubJob.RunsOn)
+	if pubJob.RunsOn != "macos-15" {
+		t.Errorf("publish.runs-on = %q, want macos-15", pubJob.RunsOn)
 	}
 	if len(pubJob.Permissions) != 1 || pubJob.Permissions["contents"] != "write" {
 		t.Errorf("publish.permissions = %v, want {contents: write}", pubJob.Permissions)
@@ -260,16 +260,18 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	}
 
 	var (
-		sawCheckout       bool
-		sawDistDownload   bool
-		sawGateDownload   bool
-		sawMatrix         bool
-		sawTagVerifyStep  bool
-		sawSignedVerify   bool
-		sawPublishedDraft bool
+		sawCheckout        bool
+		sawDistDownload    bool
+		sawGateDownload    bool
+		sawMatrix          bool
+		sawTagVerifyStep   bool
+		sawSignedVerify    bool
+		sawDraftSnapshot   bool
+		sawPublicPublisher bool
+		sawPublishedDraft  bool
 	)
 	const wantSignedVerify = `go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -require-keyd -formula Formula/managed-machine.rb -require-pin`
-	const wantPublish = `gh release edit "$TAG" --draft=false --verify-tag`
+	const wantPublish = `gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false`
 	for i, step := range pubJob.Steps {
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
 			sawCheckout = true
@@ -292,10 +294,23 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 			strings.Contains(step.Run, "mm-release verify -dist dist") {
 			sawTagVerifyStep = true
 		}
+		if strings.Contains(step.Run, "verify-public-draft.py downloaded") {
+			sawDraftSnapshot = true
+		}
+		if strings.Contains(step.Run, "verify-public-darwin-publisher --archive") {
+			if !sawSignedVerify || !sawDraftSnapshot {
+				t.Fatal("public publisher check must use the downloaded, verified release")
+			}
+			sawPublicPublisher = true
+		}
 		if strings.Contains(step.Run, wantSignedVerify) {
 			sawSignedVerify = true
 		}
 		if strings.Contains(step.Run, wantPublish) {
+			check := strings.Index(step.Run, "verify-public-draft.py publish")
+			if !sawPublicPublisher || check < 0 || check >= strings.Index(step.Run, wantPublish) {
+				t.Fatal("publishing requires the embedded public publishers and current draft inventory")
+			}
 			sawPublishedDraft = true
 			if step.Env["GH_TOKEN"] != "${{ github.token }}" {
 				t.Errorf("publish step GH_TOKEN = %q, want ${{ github.token }}", step.Env["GH_TOKEN"])
@@ -385,8 +400,21 @@ func TestSignWorkflowContract(t *testing.T) {
 		"MACOS_DEVID_P12": true, "MACOS_DEVID_P12_PASSWORD": true,
 		"NOTARY_KEY_P8": true, "NOTARY_KEY_ID": true, "NOTARY_ISSUER_ID": true,
 	}
+	configured, publicSigned := false, false
 	seen := map[string]bool{}
 	for i, step := range job.Steps {
+		if strings.Contains(step.Run, "verify-public-darwin-publisher --configured") {
+			configured = true
+		}
+		if strings.Contains(step.Run, "scripts/sign-darwin --public-release") {
+			if !configured {
+				t.Fatal("release signing must check publisher configuration first")
+			}
+			publicSigned = true
+		}
+		if strings.Contains(step.Run, "gh release upload") && !publicSigned {
+			t.Fatal("draft asset upload requires public publisher validation")
+		}
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
 			if v, ok := step.With["persist-credentials"]; !ok || v != false {
 				t.Errorf("sign step %d checkout persist-credentials = %v, want false", i+1, v)
