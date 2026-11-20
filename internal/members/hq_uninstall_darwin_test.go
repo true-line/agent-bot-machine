@@ -466,3 +466,45 @@ func TestUninstallV0124ResourceLock(t *testing.T) {
 		t.Fatal("legacy install did not complete removal", err)
 	}
 }
+
+type uninstallLookupFailure struct{ *fakeHost }
+
+func (h uninstallLookupFailure) Lstat(string) (Entry, bool, error) {
+	return Entry{}, false, os.ErrPermission
+}
+
+func TestHQUninstallReceiptDiscoveryBeforeFirstApply(t *testing.T) {
+	base := filepath.Join("/private", DarwinReceiptsDir)
+	db := "/private/var/db"
+	trusted := Entry{Owner: "root", Dir: true, Mode: 0755}
+	h := bare()
+	for _, dir := range pathAncestry(db) {
+		h.entries[dir] = trusted
+	}
+	for _, last := range []string{db, filepath.Dir(filepath.Dir(base)), filepath.Dir(base), base} {
+		h.entries[last] = trusted
+		var checked []string
+		got, err := hqUninstallReceiptsPresent(h, func(paths []string) error {
+			checked = paths
+			return nil
+		})
+		if err != nil || got != (last == base) || len(checked) == 0 || checked[0] != last || checked[len(checked)-1] != "/" {
+			t.Fatalf("at %s: present=%t ACL paths=%v error=%v", last, got, checked, err)
+		}
+	}
+	delete(h.entries, base)
+	for _, unsafe := range []Entry{{Owner: "root"}, {Owner: "other", Dir: true}, {Owner: "root", Dir: true, Mode: 0777}} {
+		h.entries[filepath.Dir(base)] = unsafe
+		if _, err := hqUninstallReceiptsPresent(h, func([]string) error { return nil }); err == nil {
+			t.Fatal("absent leaf concealed an unsafe parent")
+		}
+	}
+	h.entries[filepath.Dir(base)] = trusted
+	denied := func([]string) error { return os.ErrPermission }
+	if _, err := hqUninstallReceiptsPresent(h, denied); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("ACL inspection error lost: %v", err)
+	}
+	if _, err := hqUninstallReceiptsPresent(uninstallLookupFailure{h}, func([]string) error { return nil }); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("metadata inspection error lost: %v", err)
+	}
+}

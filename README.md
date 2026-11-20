@@ -72,6 +72,8 @@ sudo managed-machine members uninstall-hq PLAN_ID --dry-run
 sudo managed-machine members uninstall-hq PLAN_ID
 ```
 
+If first enrollment stopped before an HQ service was installed, there is no HQ plan to remove. If you installed the flat owner CLI separately, use [Identity’s owner CLI removal procedure](https://github.com/true-line/agent-bot-identity/blob/a0b21c227b38d72e445106ba660e172ff115d164/owner-presence-macos/FIRST-ENROLLMENT.md#remove-the-owner-cli) with the approved publisher and signed release digest. You can remove that helper before creating an account or pairing Machine.
+
 For a Machine-only install, start here. Run this command as the Homebrew owner without `sudo`.
 
 ```sh

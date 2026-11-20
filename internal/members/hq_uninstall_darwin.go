@@ -457,6 +457,31 @@ func uninstallRecord(owner, state, id string, uid uint64) (launchRecord, string,
 	return rec, cap, digest, nil
 }
 
+// Before the first root apply, some or all of Machine's receipt directories
+// can be absent. Validate the existing ancestry, including the system's db
+// directory, before treating that absence as an empty read-only snapshot.
+func hqUninstallReceiptsPresent(h Host, checkACL func([]string) error) (bool, error) {
+	base := filepath.Join("/private", DarwinReceiptsDir)
+	dir := base
+	for dir != "/private/var/db" && dir != filepath.Dir(dir) {
+		_, present, err := h.Lstat(dir)
+		if err != nil {
+			return false, err
+		}
+		if present {
+			break
+		}
+		dir = filepath.Dir(dir)
+	}
+	if err := trustedPath(h, dir, true); err != nil {
+		return false, err
+	}
+	if err := checkACL(pathAncestry(dir)); err != nil {
+		return false, err
+	}
+	return dir == base, nil
+}
+
 // Candidate IDs are offered only when a completed root receipt authenticates
 // the retained plan and the live plist has exactly its reviewed contents.
 func listHQUninstallPlans(owner, state string) ([]string, string, error) {
@@ -464,14 +489,15 @@ func listHQUninstallPlans(owner, state string) ([]string, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	base := filepath.Join("/private", DarwinReceiptsDir)
-	if err = trustedPath(OSHost{}, base, true); err != nil {
-		return nil, "", err
-	}
-	if err = checkDarwinACLs(pathAncestry(base)); err != nil {
+	present, err := hqUninstallReceiptsPresent(OSHost{}, checkDarwinACLs)
+	if err != nil {
 		return nil, "", err
 	}
 	ids := []string{}
+	if !present {
+		return ids, "", nil
+	}
+	base := filepath.Join("/private", DarwinReceiptsDir)
 	var resume string
 	err = withHQResourceLock(base, syscall.LOCK_SH|syscall.LOCK_NB, func() error {
 		pending := filepath.Join(base, uninstallJournalName)

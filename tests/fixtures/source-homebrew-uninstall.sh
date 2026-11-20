@@ -51,5 +51,12 @@ git -C "$work/tap" -c user.name='Machine CI' -c user.email=fixture@invalid -c co
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1
 "$brew" tap "$tap" "file://$work/tap"
 "$brew" install --formula "$tap/managed-machine"
+# An installation stopped before the first HQ apply has no root receipt store.
+receipts=/private/var/db/managed-machine/members/receipts
+sudo -n /bin/test ! -e "$receipts"
+sudo -n "$prefix/bin/managed-machine" members uninstall-hq --list |
+    jq -e '.matching_plan_ids == [] and (has("resume_plan_id") | not)' >/dev/null
+sudo -n /bin/test ! -e "$receipts"
+echo 'PASS: fresh HQ uninstall discovery returned no plans and created no receipt directory'
 MM_KEYD_CUSTODY_TEST=1 bash tests/fixtures/with-keyd-test-keychain.sh \
     bash tests/fixtures/homebrew-uninstall-cycle.sh "$version" "$work/source"
