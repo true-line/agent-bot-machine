@@ -159,6 +159,7 @@ func TestPrivateStateDirPermissionsAndNoUserAccess(t *testing.T) {
 		}
 		os.RemoveAll(base)
 	})
+	t.Setenv(channelEnv, filepath.Join(base, "channel"))
 	dir := StateDir(base)
 	if want := filepath.Join(base, ".config", "agent-machine"); dir != want {
 		t.Fatalf("StateDir(%q) = %q, want %q", base, dir, want)

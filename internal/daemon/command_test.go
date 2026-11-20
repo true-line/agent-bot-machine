@@ -144,6 +144,7 @@ func TestDaemonUsage(t *testing.T) {
 
 func TestDaemonPairAndUnpair(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv(channelEnv, filepath.Join(root, "channel"))
 	debugOn(t, stateDir(root))
 	res := run(owner(root), cli.Context{}, []string{"pair"})
 	if res.Diagnostic != nil {

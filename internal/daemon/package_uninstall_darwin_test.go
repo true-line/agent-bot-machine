@@ -161,6 +161,50 @@ esac
 	keydUnit := filepath.Join(home, "Library", "LaunchAgents", darwinKeydServiceLabel+".plist")
 	preserved := []string{core, receipt, machineUnit, keydUnit, filepath.Join(channel, "daemon.sock"),
 		filepath.Join(private, "keyd.sock"), filepath.Join(private, "owner.sock")}
+	t.Run("verified independent Identity owner present", func(t *testing.T) {
+		owned, err := os.ReadFile(keydUnit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := filepath.Dir(private)
+		program := filepath.Join(t.TempDir(), "agent-bot-keyd")
+		put(program, "independent executable", 0700)
+		independent := strings.ReplaceAll(keydAgent(state, program), "\t", "  ")
+		put(keydUnit, independent, 0600)
+		record := filepath.Join(private, "keyd.json")
+		binding := fmt.Sprintf("{\"bin\":%q,\"label\":%q}\n", program, darwinKeydServiceLabel)
+		put(record, binding, 0600)
+		t.Cleanup(func() {
+			put(keydUnit, string(owned), 0600)
+			observe = absentPackageServices()
+			if err := os.Remove(record); err != nil {
+				t.Error(err)
+			}
+		})
+		observe.job = func(_ int, domain, label string) ([]byte, bool, error) {
+			if domain == "gui" && label == darwinKeydServiceLabel {
+				return []byte("\tpath = " + keydUnit + "\n\tprogram = " + program + "\n\targuments = {\n\t\t" + program + "\n\t\tserve\n\t\t--state-dir\n\t\t" + state + "\n\t}\n"), true, nil
+			}
+			return nil, false, nil
+		}
+		if !independentKeydRecorded(state, program, caller.UID) {
+			t.Fatal("invalid independent registration")
+		}
+		if err := runRemove(func() error { return nil }); err == nil || !strings.Contains(err.Error(), "preserving a customized or unrelated Machine LaunchAgent") || stops != 0 {
+			t.Fatalf("unexpected result: %v, stops %d", err, stops)
+		}
+		for _, path := range preserved {
+			if _, err := os.Lstat(path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for path, want := range map[string]string{program: "independent executable", keydUnit: independent, record: binding} {
+			b, err := os.ReadFile(path)
+			if err != nil || string(b) != want {
+				t.Fatal("changed independent resource", path, err)
+			}
+		}
+	})
 	machineFailure := errors.New("Machine bootout failed")
 	keydFailure := errors.New("keyd bootout failed")
 	normalStop := deps.Deactivate
