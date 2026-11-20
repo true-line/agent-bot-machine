@@ -51,7 +51,9 @@ func TestHostedNativeDeviceMachine(t *testing.T) {
 	if err != nil {
 		t.Fatal("fixture pairing unavailable")
 	}
-	path := filepath.Join(stage, "device.sock")
+	// Both the packaged HQ and the independent verifier dial the normal channel.
+	// The hosted shell fixture exclusively created its empty public directory.
+	path := ChannelSocket()
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal("could not open fixture socket")

@@ -2,13 +2,13 @@
 # Prepare public, pinned test inputs as an ordinary user. This script neither
 # installs the service nor touches an existing checkout or account.
 set -euo pipefail
-[[ $# == 1 && -d "$1" ]] || { echo 'expected a disposable output directory' >&2; exit 2; }
+[[ -d "${1:-}" && ( $# == 1 || ( $# == 2 && "$2" == --paired-device ) ) ]] || { echo 'expected a disposable output directory' >&2; exit 2; }
 fixture="$(cd "$1" && pwd -P)"
 hq_sha=d52f01f517773565b673ec9735f670922e58dc91
 hq_tar_sha=43e99d8d83d2c8623f0b4eb2adbb9bdce1e833e16256b135549de0670e270e14
 # Only the native custody lane needs the paired-device release. The other
 # package/installation checks retain their previously qualified HQ artifact.
-if [[ -n "${MM_HQ_DEVICE_ARCHIVE:-}" ]]; then
+if [[ -n "${MM_HQ_DEVICE_ARCHIVE:-}" || "${2:-}" == --paired-device ]]; then
     hq_sha=beee0040231bd59e112e8eb178128c34acc58871
     hq_tar_sha=d71d3c2c52017b47e91d59ce5f35e397f49a58e8c8fde9b0bfaff6d6e148e362
 fi
