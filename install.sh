@@ -74,6 +74,28 @@ install_formula() {
     else
         "$brew" install "$formula"
     fi
+
+    # A current keg can retain its opt link after brew unlink removes its
+    # commands. Check all formula-owned bin names before asking brew to link.
+    local prefix name command target needs_link=false
+    prefix="$("$brew" --prefix)"
+    for name in managed-machine agent-machine agent-bot-keyd; do
+        command="$prefix/bin/$name"
+        target="$prefix/opt/managed-machine/bin/$name"
+        [[ -f "$target" && -x "$target" ]] || die "The installed Machine package is missing $name."
+        if [[ -e "$command" || -L "$command" ]]; then
+            [[ "$command" -ef "$target" ]] || die "$command is occupied. Resolve the conflict and rerun the installer."
+        else
+            needs_link=true
+        fi
+    done
+    if [[ "$needs_link" == true ]]; then
+        "$brew" link "$formula"
+        for name in managed-machine agent-machine agent-bot-keyd; do
+            [[ "$prefix/bin/$name" -ef "$prefix/opt/managed-machine/bin/$name" ]] ||
+                die "Homebrew did not link $name. Check the formula links and rerun the installer."
+        done
+    fi
 }
 
 # Keep the tap and package transaction in the existing prefix owner's
