@@ -11,7 +11,7 @@ stop_fixture_machine
 "$MM" daemon verify-identity | jq -e --arg pin "$machine_pin" '.state=="verified" and .fingerprint==$pin' >/dev/null
 epoch="$(jq -er '.nonce' "$signer/pair.json")"
 role_check() {
-    (cd / && sudo -n -H -u "$role" -- /usr/bin/env GITHUB_ACTIONS=true "$stage/node" "$stage/device-check.mjs" "$1" "$channel" "$epoch")
+    (cd / && sudo -n -H -u "$role" -- /usr/bin/env GITHUB_ACTIONS=true "$stage/node" "$stage/device-check.mjs" "$1" "$channel" "$epoch" "${2:-}")
 }
 role_check outage
 # Explicit native initialization runs once as the prefix owner on a throwaway
@@ -20,11 +20,15 @@ role_check outage
 start_fixture_machine --require-identity "$machine_pin"
 paired_status
 thumb="$(role_check identity)"
-[[ "$thumb" =~ ^[A-Za-z0-9_-]{43}$ && "$(role_check prove)" == "$thumb" ]] || fail 'native enrollment assertion unavailable'
+[[ "$thumb" =~ ^[A-Za-z0-9_-]{43}$ ]] || fail 'native device identity unavailable'
+proof_id_before="$(role_check prove "$thumb")" || fail 'native enrollment proof unavailable before restart'
 stop_fixture_machine
 role_check outage
 start_fixture_machine --require-identity "$machine_pin"
 [[ "$(role_check identity)" == "$thumb" ]] || fail 'device identity changed after Machine restart'
+proof_id_after="$(role_check prove "$thumb")" || fail 'native enrollment proof unavailable after restart'
+[[ "$proof_id_before" =~ ^[0-9a-f]{64}$ && "$proof_id_after" =~ ^[0-9a-f]{64}$ && "$proof_id_before" != "$proof_id_after" ]] ||
+    fail 'native enrollment proofs must have distinct verified IDs across Machine restart'
 # Establish a real connection before human administrator revocation. The role
 # sends its normal signed enrollment request only after the command returns.
 gate="$signer/device-gate"
@@ -43,4 +47,4 @@ printf 'send\n' >&3
 wait "$waiting" || fail 'previously open request did not receive an authenticated refusal'
 exec 3>&-
 role_check refused
-ok 'native enrollment signature verified; Machine stop and trusted HQ revocation cut off the dedicated role'
+ok 'fresh native enrollment signatures verified across restart; outage and revocation cut off the dedicated role'
