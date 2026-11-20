@@ -1,5 +1,5 @@
 #!/bin/bash
-# Qualify the public formula on a fresh hosted runner without starting either service.
+# Qualify the public formula on a fresh hosted runner and exercise the lifecycle after publication.
 set -euo pipefail
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
    "$(uname -sm)" == 'Darwin arm64' && "$(id -u)" != 0 &&
@@ -30,5 +30,6 @@ fetch_public_device_archive "$version" "$work" "$digest"
 unpack_signed_device_release "$work/$asset" "$digest" "$work/unpacked"
 qualify_homebrew_device_release "$brew" "$prefix" "$version" "$digest" "$work/unpacked" "$source_commit"
 if [[ "$#" == 1 ]]; then
+    qualify_published_device_lifecycle "$work/managed-machine.rb" "$version" "$work/unpacked" "$source_commit"
     cmp "$work/managed-machine.rb" "$recipe" || { echo 'The release formula changed during qualification' >&2; exit 1; }
 fi

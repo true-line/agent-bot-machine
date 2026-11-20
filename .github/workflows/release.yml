@@ -34,17 +34,18 @@ jobs:
     uses: ./.github/workflows/go-core.yml
 
   public-homebrew:
-    name: Install the published macOS release
+    name: Install and qualify the published macOS release
     needs: publish
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ needs.publish.outputs.source_commit }}
           persist-credentials: false
-      - name: Download and install the release-attached formula
+      - name: Verify the released package and service lifecycle
         env:
           MM_HQ_TAP_REVISION: ${{ needs.publish.outputs.source_commit }}
           MM_HQ_DEVICE_VERSION: ${{ needs.publish.outputs.version }}

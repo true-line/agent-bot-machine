@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -67,6 +68,44 @@ class HomebrewDevicePinTest(unittest.TestCase):
                 self.assertEqual(result.returncode == 0, ok)
                 log = Path(work, "operations")
                 self.assertEqual(log.read_text().splitlines() if log.exists() else [], operations)
+
+    def test_published_lifecycle_requires_every_nonhistorical_archive(self):
+        checkout = "c" * 40
+        template = (PATH.parents[2] / pins.FORMULA).read_text()
+        baseline_version, baseline_digest = pins.pin(template)
+        script = """
+            expected_checkout="$4"
+            source "$1/stage-darwin-hq-device.sh"
+            git() { [[ "$*" == 'rev-parse HEAD' ]] && echo "$expected_checkout"; }
+            qualify_published_device_lifecycle "$1/formula" "$2" "$1/unpacked" "$3"
+        """
+        cases = [
+            # version, checksum, source, cycle exit code (None = absent), ran, succeeded
+            (*pins.LEGACY, checkout, None, False, True),
+            (pins.LEGACY[0], "0" * 64, checkout, 0, False, False),
+            ("0.12.5", "b" * 64, checkout, None, False, False),
+            ("0.12.5", "b" * 64, "d" * 40, 0, False, False),
+            ("0.12.5", "b" * 64, checkout, 0, True, True),
+            ("0.12.5", "b" * 64, checkout, 1, True, False),
+        ]
+        for version, digest, source, cycle_exit, ran, success in cases:
+            with self.subTest(version=version, digest=digest, source=source, cycle_exit=cycle_exit), tempfile.TemporaryDirectory() as tmp:
+                work = Path(tmp)
+                for name in ["stage-darwin-hq-device.sh", "install-homebrew-darwin-hq-device.sh", PATH.name]:
+                    shutil.copyfile(PATH.with_name(name), work / name)
+                (work / "formula").write_text(template.replace(baseline_version, version).replace(baseline_digest, digest))
+                (work / "unpacked").mkdir()
+                (work / "with-keyd-test-keychain.sh").write_text('[[ "$MM_KEYD_CUSTODY_TEST" == 1 ]] || exit 1\nexec "$@"\n')
+                if cycle_exit is not None:
+                    (work / "homebrew-launch-agents.py").touch()
+                    (work / "homebrew-uninstall-cycle.sh").write_text(
+                        'set -eu\nprintf "%s\\n" "$1" > "$2/ran"\n' + f'exit {cycle_exit}\n')
+                proc = subprocess.run(["bash", "-c", script, "test", tmp, version, source, checkout], capture_output=True)
+                self.assertEqual(proc.returncode == 0, success, proc.stderr)
+                self.assertEqual((work / "unpacked/ran").exists(), ran)
+                if ran:
+                    self.assertEqual((work / "unpacked/ran").read_text(), version + "\n")
+                    self.assertEqual((work / "unpacked/RELEASE_COMMIT").read_text(), checkout + "\n")
 
     def test_published_recipe_requires_the_verified_bytes(self):
         fixture = PATH.with_name("install-homebrew-darwin-hq-device.sh")

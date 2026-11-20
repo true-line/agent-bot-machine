@@ -37,14 +37,20 @@ def at(revision):
     return pin(subprocess.check_output(["git", "show", f"{revision}:{FORMULA}"], text=True))
 
 
+def published_mode(current):
+    if current[0] == LEGACY[0]:
+        if current != LEGACY:
+            raise ValueError("a published Homebrew version changed its archive checksum")
+        return "package"
+    return "custody"
+
+
 def qualification(previous, current):
     if previous == current:
         return "unchanged"
-    if previous[0] == current[0] or (current[0] == LEGACY[0] and current != LEGACY):
+    if previous[0] == current[0]:
         raise ValueError("a published Homebrew version changed its archive checksum")
-    if current == LEGACY:
-        return "package"
-    return "custody"
+    return published_mode(current)
 
 
 def push_selection(env, read=at):
@@ -62,7 +68,9 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--event"]:
         for key, value in push_selection(os.environ).items():
             print(f"{key}={value}")
+    elif len(sys.argv) == 3 and sys.argv[1] == "--published-mode":
+        print(published_mode(pin(Path(sys.argv[2]).read_text(encoding="utf-8"))))
     elif len(sys.argv) == 2:
         print(*pin(Path(sys.argv[1]).read_text(encoding="utf-8")))
     else:
-        sys.exit("expected a formula path or --event")
+        sys.exit("expected a formula path, --published-mode FORMULA, or --event")
