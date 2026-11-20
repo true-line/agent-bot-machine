@@ -25,10 +25,10 @@ func uninstallMacPackage(deps Deps) error {
 	if err != nil {
 		return err
 	}
-	return removeMacPackage(deps, executable, []string{"/opt/homebrew", "/usr/local"}, noSystemHQ, packageObservers{job: readMachineUserJob, processes: darwinCustodyPIDs})
+	return removeMacPackage(deps, executable, []string{"/opt/homebrew", "/usr/local"}, packageObservers{noSystemHQ: noSystemHQ, grantAbsent: checkPackageLaunchGrant, job: readMachineUserJob, processes: darwinCustodyPIDs})
 }
 
-func removeMacPackage(deps Deps, executable string, prefixes []string, checkHQ func() error, observe packageObservers) error {
+func removeMacPackage(deps Deps, executable string, prefixes []string, observe packageObservers) error {
 	caller, err := deps.caller()
 	if err != nil {
 		return err
@@ -58,7 +58,7 @@ func removeMacPackage(deps Deps, executable string, prefixes []string, checkHQ f
 		return err
 	}
 	defer lock.Close()
-	if err := checkHQ(); err != nil {
+	if err := observe.requireHQAbsent(); err != nil {
 		return err
 	}
 	if err := verifyHomebrewRemovalPrefix(prefix, caller.RegisteredHome); err != nil {
@@ -67,7 +67,7 @@ func removeMacPackage(deps Deps, executable string, prefixes []string, checkHQ f
 	if err := stopPackageServices(deps, prefix, caller, observe); err != nil {
 		return err
 	}
-	if err := checkHQ(); err != nil {
+	if err := observe.requireHQAbsent(); err != nil {
 		return err
 	}
 	if err := uninstallHomebrewFormula(prefix, caller.RegisteredHome); err != nil {
@@ -285,8 +285,17 @@ func isPackageProgram(prefix, program string, keyd bool) bool {
 }
 
 type packageObservers struct {
-	job       func(int, string, string) ([]byte, bool, error)
-	processes func(int) ([]byte, error)
+	noSystemHQ  func() error
+	grantAbsent func() error
+	job         func(int, string, string) ([]byte, bool, error)
+	processes   func(int) ([]byte, error)
+}
+
+func (observe packageObservers) requireHQAbsent() error {
+	if err := observe.grantAbsent(); err != nil {
+		return err
+	}
+	return observe.noSystemHQ()
 }
 
 type packageServiceSnapshot struct {

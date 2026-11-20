@@ -248,6 +248,16 @@ and endpoint are already absent, an explicit uninstall records completion for
 that plan. Repeating its removal leaves a later installation of the same release intact.
 A dry run leaves the receipt unchanged.
 
+Retire any installed harness launch grant through the paired HQ before removing
+HQ or its Machine package. Both operations preserve the launcher, sandbox
+profile, launch policy and sudoers rule. If the service is already absent,
+an outstanding grant still prevents completion of a new uninstall receipt.
+An administrator must reconcile partial or changed grant files. If the prefix
+owner cannot inspect sudoers.d, package uninstall can continue only when all
+three public grant files and their recognized staging names are absent. A staging name from an interrupted grant transition also
+preserves the original plan for recovery. Unrelated dotfiles and retained audit
+receipts do not block removal.
+
 If a crash occurs after the job, process, socket and plist are gone, only
 the root audit record may still need its final directory sync and rename.
 Package removal can proceed once those public service resources are gone.

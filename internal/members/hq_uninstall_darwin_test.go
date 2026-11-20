@@ -28,6 +28,7 @@ func newUninstallFixture(t *testing.T, active bool) *uninstallFixture {
 	}
 	f.endpoint = filepath.Join(f.dir, "test.sock")
 	f.h = uninstallHost{
+		grantAbsent:  func() error { return nil },
 		observe:      func() (bool, string, error) { return f.job, f.pid, nil },
 		plist:        func() (upgradeNodeIdentity, error) { return f.plist, nil },
 		waitPID:      func(string) error { return nil },
@@ -558,5 +559,159 @@ func TestHQUninstallReceiptDiscoveryBeforeFirstApply(t *testing.T) {
 	}
 	if _, err := hqUninstallReceiptsPresent(uninstallLookupFailure{h}, func([]string) error { return nil }); !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("metadata inspection error lost: %v", err)
+	}
+}
+
+func TestUninstallHarnessLaunchFileVisibility(t *testing.T) {
+	dir := t.TempDir()
+	const runtimeDir = "/Library/Application Support/ai.true-line.agent-bot-hq"
+	const rule = "/private/etc/sudoers.d/agent-bot-hq-harness-launch"
+	files := []string{runtimeDir + "/harness-launch", runtimeDir + "/harness-egress.sb", runtimeDir + "/harness-launch-policy.json", rule}
+	local := func(path string) string { return filepath.Join(dir, strings.TrimPrefix(path, "/")) }
+	var denied string
+	lstat := func(path string) (os.FileInfo, error) {
+		if path == denied {
+			return nil, &os.PathError{Op: "lstat", Path: path, Err: os.ErrPermission}
+		}
+		return os.Lstat(local(path))
+	}
+	readDir := func(path string) ([]os.DirEntry, error) {
+		if path == denied {
+			return nil, os.ErrPermission
+		}
+		return readUninstallGrantDir(local(path))
+	}
+	check := func(root bool) error { return checkUninstallLaunchFiles(lstat, readDir, root) }
+	for _, root := range []bool{false, true} {
+		if err := check(root); err != nil {
+			t.Fatal("fresh Mac with absent runtime and sudoers directories", root, err)
+		}
+	}
+	for _, path := range files {
+		if err := os.MkdirAll(filepath.Dir(local(path)), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, root := range []bool{false, true} {
+		if err := check(root); err != nil {
+			t.Fatal("empty installation", root, err)
+		}
+		for _, path := range files {
+			// Even a lone, dangling artifact must survive for reconciliation.
+			if err := os.Symlink("missing", local(path)); err != nil {
+				t.Fatal(err)
+			}
+			if err := check(root); err == nil || !strings.Contains(err.Error(), "retire") {
+				t.Fatalf("accepted remaining %s (root=%v): %v", filepath.Base(path), root, err)
+			}
+			if target, err := os.Readlink(local(path)); err != nil || target != "missing" {
+				t.Fatal("guard changed dangling artifact", err)
+			}
+			if err := os.Remove(local(path)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	const id = "plan-20261120T120000Z-abcd"
+	for _, path := range files {
+		staged := filepath.Join(filepath.Dir(local(path)), ".harness-"+id+"-"+filepath.Base(path))
+		if err := os.Symlink("missing", staged); err != nil {
+			t.Fatal(err)
+		}
+		for _, root := range []bool{false, true} {
+			if err := check(root); err == nil || !strings.Contains(err.Error(), "staged") {
+				t.Fatal("overlooked staged file", filepath.Base(path), root, err)
+			}
+		}
+		if target, err := os.Readlink(staged); err != nil || target != "missing" {
+			t.Fatal("changed staged link", err)
+		}
+		if err := os.Remove(staged); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An arbitrary hidden file, a malformed plan ID, a different grant file
+	// in the wrong directory, and a retained receipt do not obstruct removal.
+	for _, path := range []string{
+		runtimeDir + "/.unrelated", runtimeDir + "/.harness-malformed-harness-launch",
+		runtimeDir + "/.harness-" + id + "-agent-bot-hq-harness-launch",
+		filepath.Dir(rule) + "/.harness-" + id + "-harness-launch",
+		runtimeDir + "/" + id + ".harness-install.json",
+	} {
+		if err := os.Symlink("missing", local(path)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := check(true); err != nil {
+		t.Fatal("unrelated entries blocked uninstall", err)
+	}
+	denied = filepath.Dir(rule)
+	if err := check(false); err != nil {
+		t.Fatal("prefix owner cannot list sudoers.d", err)
+	}
+	if err := check(true); err == nil {
+		t.Fatal("root ignored inaccessible staged rule directory")
+	}
+	denied = runtimeDir
+	if err := check(false); err == nil {
+		t.Fatal("inaccessible runtime directory could conceal an interrupted grant")
+	}
+	denied = rule
+	if err := check(false); err != nil {
+		t.Fatal("inaccessible sudoers.d with all public grant files absent", err)
+	}
+	if err := check(true); err == nil {
+		t.Fatal("root ignored inaccessible sudoers entry")
+	}
+	if err := os.WriteFile(local(files[0]), []byte("staged"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(false); err == nil {
+		t.Fatal("inaccessible sudoers concealed a remaining launcher")
+	}
+	if err := os.Remove(local(files[0])); err != nil {
+		t.Fatal(err)
+	}
+	denied = files[1]
+	if err := check(false); err == nil {
+		t.Fatal("ignored inaccessible public grant path")
+	}
+	denied = ""
+	if err := os.WriteFile(local(rule), []byte("custom content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(false); err == nil {
+		t.Fatal("accepted a visible custom sudoers entry")
+	}
+	if got, err := os.ReadFile(local(rule)); err != nil || string(got) != "custom content" {
+		t.Fatal("custom sudoers entry changed", err)
+	}
+}
+
+func TestUninstallHarnessGrantPreservesServiceAndRetirementAuthority(t *testing.T) {
+	stillInstalled := errors.New("fixture grant remains")
+	for _, active := range []bool{true, false} {
+		f := newUninstallFixture(t, active)
+		if !active {
+			f.plist = upgradeNodeIdentity{}
+		}
+		f.h.grantAbsent = func() error { return stillInstalled }
+		for _, preview := range []bool{true, false} {
+			if _, err := f.run(preview); !errors.Is(err, stillInstalled) {
+				t.Fatal("uninstall ignored the grant", active, preview, err)
+			}
+			entries, err := os.ReadDir(f.dir)
+			if err != nil || len(entries) != 0 || f.stops != 0 || f.unlinks != 0 || f.job != active {
+				t.Fatal("grant refusal changed service or receipt", active, entries, err)
+			}
+		}
+		f.h.grantAbsent = func() error { return nil }
+		if _, err := f.run(false); err != nil {
+			t.Fatal("explicit removal after retirement", err)
+		}
+		f.h.grantAbsent = func() error { t.Fatal("old receipt inspected a later grant"); return stillInstalled }
+		if result, err := f.run(false); result != "already-uninstalled" || err != nil {
+			t.Fatal("completed receipt replay", result, err)
+		}
 	}
 }

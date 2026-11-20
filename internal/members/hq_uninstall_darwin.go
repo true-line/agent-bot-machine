@@ -169,9 +169,70 @@ func uninstallEndpoint(path, pid string, job bool) (*stoppingHQ, error) {
 	return observedStopEvidence(parent, filepath.Base(path), st, pid, 0)
 }
 
+// CheckDarwinHarnessLaunchRemoval preserves the paired approval path until the
+// exact installed launch grant has been retired. Call under the lifecycle lock.
+func CheckDarwinHarnessLaunchRemoval() error {
+	return checkUninstallLaunchFiles(os.Lstat, readUninstallGrantDir, os.Geteuid() == 0)
+}
+
+func readUninstallGrantDir(path string) ([]os.DirEntry, error) {
+	dir, err := os.OpenFile(path, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	return dir.ReadDir(-1)
+}
+
+func checkUninstallLaunchFiles(lstat func(string) (os.FileInfo, error), readDir func(string) ([]os.DirEntry, error), privileged bool) error {
+	const sudoers = "/private/etc/sudoers.d"
+	unknown := errors.New("cannot verify absence of harness launch files. Have the administrator inspect the grant before uninstall")
+	for _, group := range []struct {
+		dir   string
+		files []string
+	}{
+		{launchRuntimeDir, []string{"harness-launch", "harness-egress.sb", "harness-launch-policy.json"}},
+		{sudoers, []string{"agent-bot-hq-harness-launch"}},
+	} {
+		// The prefix owner may be unable to inspect sudoers.d. By the time
+		// we reach it all public payloads and their staging names are absent.
+		inaccessibleRule := !privileged && group.dir == sudoers
+		for _, name := range group.files {
+			_, err := lstat(filepath.Join(group.dir, name))
+			if err == nil {
+				return errors.New("retire the installed harness launch grant through paired HQ before uninstall, or have the administrator reconcile partial or changed files")
+			}
+			if !errors.Is(err, os.ErrNotExist) && !(inaccessibleRule && errors.Is(err, os.ErrPermission)) {
+				return unknown
+			}
+		}
+		entries, err := readDir(group.dir)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) || inaccessibleRule && errors.Is(err, os.ErrPermission) {
+				continue
+			}
+			return unknown
+		}
+		for _, entry := range entries {
+			staged, ok := strings.CutPrefix(entry.Name(), ".harness-")
+			if !ok {
+				continue
+			}
+			for _, name := range group.files {
+				id, ok := strings.CutSuffix(staged, "-"+name)
+				if ok && validUninstallID(id) {
+					return errors.New("a harness launch transition has staged files. Have the administrator resume or reconcile the original plan before uninstall")
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // The two launchd calls and protected file observations are independent
 // system boundaries. Fixture tests run the same journal and removal ordering.
 type uninstallHost struct {
+	grantAbsent  func() error
 	observe      func() (bool, string, error)
 	plist        func() (upgradeNodeIdentity, error)
 	unlinkPlist  func() error
@@ -186,6 +247,7 @@ type uninstallHost struct {
 func newUninstallHost(r launchRecord, owner string) uninstallHost {
 	observe := func() (bool, string, error) { return loadedLaunchDaemon(r.Service, owner) }
 	return uninstallHost{
+		grantAbsent:  CheckDarwinHarnessLaunchRemoval,
 		observe:      observe,
 		plist:        func() (upgradeNodeIdentity, error) { return checkedUninstallPlist(r.Plist) },
 		unlinkPlist:  func() error { return os.Remove(launchPlist) },
@@ -297,6 +359,11 @@ func removeReviewedHQ(dir string, h uninstallHost, endpoint string, want uninsta
 			}
 		}
 		return "already-uninstalled", nil
+	}
+	// Even an absent service can still have the only unspent installation
+	// receipt. Keep it available for retirement rather than consuming it here.
+	if e = h.grantAbsent(); e != nil {
+		return "", e
 	}
 	if active && plist.Inode == 0 {
 		return "", errors.New("preserving a registered HQ job without its matching plist")

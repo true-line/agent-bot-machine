@@ -17,7 +17,7 @@ import (
 )
 
 func absentPackageServices() packageObservers {
-	return packageObservers{job: func(int, string, string) ([]byte, bool, error) { return nil, false, nil }, processes: func(int) ([]byte, error) { return nil, nil }}
+	return packageObservers{grantAbsent: func() error { return nil }, job: func(int, string, string) ([]byte, bool, error) { return nil, false, nil }, processes: func(int) ([]byte, error) { return nil, nil }}
 }
 
 func TestHomebrewPackageUninstall(t *testing.T) {
@@ -112,8 +112,20 @@ esac
 	t.Setenv(channelEnv, filepath.Join(prefix, "var", "agent-machine"))
 	observe := absentPackageServices()
 	runRemove := func(check func() error) error {
-		return removeMacPackage(deps, core, []string{prefix}, check, observe)
+		observe.noSystemHQ = check
+		return removeMacPackage(deps, core, []string{prefix}, observe)
 	}
+	grantPresent := errors.New("grant is still installed")
+	observe.grantAbsent = func() error { return grantPresent }
+	if err := runRemove(func() error { return nil }); !errors.Is(err, grantPresent) || stops != 0 {
+		t.Fatal("package removal must preserve both services for grant retirement", err)
+	}
+	for _, path := range []string{core, receipt, filepath.Join(home, "Library", "LaunchAgents", darwinServiceLabel+".plist")} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatal("package removal changed files while a launch grant remains", err)
+		}
+	}
+	observe = absentPackageServices()
 	if err := runRemove(func() error { return removeHQFirst }); !errors.Is(err, removeHQFirst) || stops != 0 {
 		t.Fatalf("HQ gate: %v; stops=%d", err, stops)
 	}
