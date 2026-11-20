@@ -40,6 +40,7 @@ func Command(deps Deps) cli.Command {
 const usage = `Usage: managed-machine members plan [--hq-account <account>] (--hq-config <path> | --members <a,b,...>) [--dir <path>]
        managed-machine members plan [--hq-service <record.json>]  (macOS dedicated HQ only)
        managed-machine members plan --hq-service <record.json> --upgrade-from <prior-plan-id>
+       managed-machine members plan --harness-account-provision (--members <a,b,...> | --hq-config <path>) [--dir <path>]
        managed-machine members plan --harness-launch-install <adapters.json>
        managed-machine members plan --harness-launch-retire <installed-plan-id>
        sudo managed-machine members apply <plan-id>
@@ -72,7 +73,11 @@ A macOS Machine with an owner pin supports these transfers for local owner revie
   with --upgrade-from, then use the paired HQ CLI's hq-service-upgrade export
   and approve commands for the new plan ID. An interrupted upgrade resumes
   through members apply with that same ID.
-These transfers require a dedicated HQ-only plan without harness accounts.
+These service transfers require a dedicated HQ-only plan without harness accounts.
+For harness accounts, use --harness-account-provision with --members or --hq-config.
+The dedicated paired HQ exports the exact reviewed IDs, private homes and optional
+broker directories with machine harness-account-provision and returns the owner proof.
+After a failed or interrupted apply, plan and approve the remaining steps again.
 A Darwin harness launch plan records exact adapter, Machine and sandbox digests
 for review. Enrolled dedicated HQ can export and submit the matching owner
 proof with machine harness-launch-install or machine harness-launch-retire.
@@ -189,8 +194,10 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	var hqAccount, hqConfigPath, list, dir, serviceRecord, priorID string
 	var installFile, retireID string
 	var launchFlags int
+	var harnessAccounts bool
 	var hasList, hasDir, hasUpgrade bool
 	if d := command.Parse(args[1:], command.Spec{
+		Bools: map[string]*bool{"--harness-account-provision": &harnessAccounts},
 		Values: map[string]command.Flag{
 			"--harness-launch-install": {Value: &installFile, Count: &launchFlags},
 			"--harness-launch-retire":  {Value: &retireID, Count: &launchFlags},
@@ -230,7 +237,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return cli.Result{Diagnostic: command.UsageErr("--dir goes with --members; --hq-config names its own directory")}
 	}
 
-	in := Input{HQAccount: hqAccount, Dir: dir, Platform: platform}
+	in := Input{HarnessAccounts: harnessAccounts, HQAccount: hqAccount, Dir: dir, Platform: platform}
 	if hqConfigPath != "" {
 		read := deps.ReadFile
 		if read == nil {
@@ -350,6 +357,9 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		Set("applied", false).
 		Set("hq_account_dedicated", plan.SharedHQAdvice() == "").
 		SetOptional("advice", plan.SharedHQAdvice())}
+	if in.HarnessAccounts {
+		records[0].Set("purpose", HarnessAccountsPurpose)
+	}
 	if in.HarnessLaunch != nil {
 		records[0].Set("advice", "Dedicated paired HQ can request an owner proof for this digest. Apply is disabled. Regenerate the plan and request a fresh owner proof with the release that will apply it.")
 	}
@@ -370,6 +380,9 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			SetOptional("mode", s.Mode).
 			SetOptional("detail", s.Detail).
 			SetOptional("content", s.Content))
+		if s.UID != 0 {
+			records[len(records)-1].Set("uid", s.UID).Set("gid", s.GID)
+		}
 	}
 	return cli.Result{Records: records}
 }
