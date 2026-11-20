@@ -92,6 +92,57 @@ sudo -n dscl . -create "/Users/$role" IsHidden 1
 refused "$role" hq-device-init
 refused "$role" hq-device
 sudo -n chmod 0700 "$helper"
+
+# The prefix owner negotiates on the release binary's actual same-UID MCP
+# socket. The handshake requires no enrollment, keys or credential operations.
+python3 - "$helper" "$temp" <<'PY'
+import json
+from pathlib import Path
+import socket
+import subprocess
+import sys
+from tempfile import TemporaryDirectory
+import time
+
+helper, stage = sys.argv[1:]
+version = subprocess.check_output([helper, "--version"], text=True).strip().split()[-1]
+with TemporaryDirectory(dir=stage) as state:
+    endpoint = Path(state, "keyd", "keyd.sock")
+    keychain = Path(state, "unused.keychain-db")
+    process = subprocess.Popen([helper, "serve", "--state-dir", state, "--keychain", keychain])
+    try:
+        deadline = time.monotonic() + 10
+        # keyd binds the MCP listener before its owner listener.
+        while not endpoint.with_name("owner.sock").is_socket():
+            if process.poll() is not None or time.monotonic() >= deadline:
+                raise RuntimeError("staged keyd did not publish its MCP socket")
+            time.sleep(0.05)
+        for requested, expected in [("2025-03-26", "2025-03-26"), ("2025-06-18", "2025-06-18"),
+                                    ("2099-01-01", "2025-06-18"), (None, "2025-06-18")]:
+            params = {"capabilities": {}, "clientInfo": {"name": "fixture", "version": "1"}}
+            if requested is not None:
+                params["protocolVersion"] = requested
+            message = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": params}
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(5)
+                client.connect(str(endpoint))
+                client.sendall(json.dumps(message).encode() + b"\n")
+                with client.makefile("rb") as replies:
+                    reply = json.loads(replies.readline(8192))
+            assert reply["jsonrpc"] == "2.0" and reply["id"] == 1 and "error" not in reply
+            assert reply["result"]["protocolVersion"] == expected, requested
+            assert reply["result"]["serverInfo"] == {"name": "agent-bot-keyd", "version": version}
+        assert not keychain.exists()
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+print("Release keyd negotiated supported, unknown and omitted MCP revisions over its socket.")
+PY
 # The production launcher still requires the Team's Developer ID signature.
 # PRs exercise the same signed request gate and native helper via a Go test
 # binary. A published signed pair is exercised separately on dispatch.

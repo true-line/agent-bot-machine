@@ -399,6 +399,33 @@ class Formula
   end
 end
 
+# Homebrew gained the steps DSL, set_permissions, and its recursive keyword
+# in separate releases. The original stub below exercises the pre-DSL path.
+[:absent, :recursive_only, :non_recursive].each do |capability|
+  steps = []
+  dsl = Class.new
+  if capability == :recursive_only
+    dsl.define_method(:set_permissions) { |path, mode, base:| raise "recursive-only DSL used" }
+  elsif capability == :non_recursive
+    dsl.define_method(:set_permissions) { |path, mode, base:, recursive: true| steps << [path, mode, base, recursive] }
+  end
+  base = Class.new(Formula)
+  base.define_singleton_method(:post_install_steps) { |&block| dsl.new.instance_exec(&block) }
+  namespace = Module.new
+  namespace.const_set(:Formula, base)
+  brew = namespace.const_set(:Homebrew, Module.new)
+  brew.const_set(:InstallSteps, Module.new).const_set(:DSL, dsl)
+  namespace.module_eval(formula_src, formula_path)
+  recipe = namespace.const_get(:ManagedMachine, false)
+  legacy = recipe.instance_methods(false).include?(:post_install)
+  if capability == :non_recursive
+    raise "deprecated callback registered" if legacy
+    raise "unexpected permission steps: #{steps.inspect}" unless steps == [["bin/agent-bot-keyd", "0700", :prefix, false]]
+  else
+    raise "missing legacy callback" unless legacy && steps.empty?
+  end
+end
+
 load formula_path
 
 # Branch 1: post-P01 layout (`legacy/bin/managed-machine` exists).

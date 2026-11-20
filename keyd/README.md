@@ -135,6 +135,11 @@ even when `XDG_STATE_HOME` is set. Standalone invocations without
 Both sockets are mode `0600` under `<state>/keyd/` (mode `0700`), and
 keyd checks each peer's user ID.
 
+On the MCP channel, `initialize` supports revisions `2025-03-26` and
+`2025-06-18`. It returns the requested revision when supported and advertises
+`2025-06-18` otherwise. Omitting the revision also selects `2025-06-18`.
+The separate `serverInfo.version` field identifies the helper build.
+
 | socket | speaks | for |
 | --- | --- | --- |
 | `keyd.sock` | MCP (newline-delimited JSON-RPC) | `credential`, `git_credential` |

@@ -36,6 +36,10 @@ Machine also carries the typed Keychain read error from Identity
 `3ced60eb1cfbbcfd640876a1904f59089e530f4b` and the `presence-key` exit
 status from `484133d00d5224de882f0c36e0cdb190aa7e427d`.
 
+Bundled helper 0.2.2 negotiates the two MCP revisions documented in the
+[helper README](README.md). Identity checks the helper's package version
+against its `KEYD_PINNED_VERSION`; coordinate the two component releases.
+
 agent-bot-machine builds and signs this source with the agent-machine
 Developer ID. Fetching the JavaScript component alone does not update the
 native helper.

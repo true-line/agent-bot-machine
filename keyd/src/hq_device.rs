@@ -8,6 +8,8 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::time::Duration;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 pub(crate) const UNAVAILABLE: &str = "device custody unavailable";
 pub(crate) const READ_INTERACTION_DENIED: &str =
@@ -232,7 +234,20 @@ struct Pin {
     not_after: String,
 }
 
-fn release_key(manifest: &str, kid: &str, now: u64) -> Result<VerifyingKey, &'static str> {
+fn pin_time(text: &str) -> Result<i128, &'static str> {
+    // HQ and the service use uppercase RFC 3339 without leap seconds. The
+    // time parser also accepts alternate separators and leap-second stand-ins.
+    let bytes = text.as_bytes();
+    if bytes.get(10) != Some(&b'T') || bytes.get(17..19) == Some(b"60") || text.ends_with('z') {
+        return Err(UNAVAILABLE);
+    }
+    OffsetDateTime::parse(text, &Rfc3339)
+        .map(|t| t.unix_timestamp_nanos())
+        .map_err(|_| UNAVAILABLE)
+}
+
+fn release_key(manifest: &str, kid: &str, instant: Duration) -> Result<VerifyingKey, &'static str> {
+    let now = i128::try_from(instant.as_nanos()).map_err(|_| UNAVAILABLE)?;
     let pins: Manifest = serde_json::from_str(manifest).map_err(|_| UNAVAILABLE)?;
     if pins.server != ORIGIN {
         return Err(UNAVAILABLE);
@@ -241,12 +256,7 @@ fn release_key(manifest: &str, kid: &str, now: u64) -> Result<VerifyingKey, &'st
     let mut pubkeys = std::collections::HashSet::new();
     let mut selected = None;
     for p in pins.keys {
-        let date = |s: &str| {
-            s.parse::<der::DateTime>()
-                .map(|t| t.unix_duration().as_secs())
-                .map_err(|_| UNAVAILABLE)
-        };
-        let (start, end) = (date(&p.not_before)?, date(&p.not_after)?);
+        let (start, end) = (pin_time(&p.not_before)?, pin_time(&p.not_after)?);
         if start >= end
             || !matches!(p.status.as_str(), "active" | "next" | "retired")
             || p.kid.is_empty()
@@ -276,7 +286,7 @@ fn release_key(manifest: &str, kid: &str, now: u64) -> Result<VerifyingKey, &'st
 fn verify_receipt(
     req: &Request,
     manifest: &str,
-    now: u64,
+    instant: Duration,
 ) -> Result<(Vec<u8>, String, String), &'static str> {
     let jti = req.receipt_jti.as_deref().ok_or(UNAVAILABLE)?;
     let enc = req.receipt_body.as_deref().ok_or(UNAVAILABLE)?;
@@ -288,7 +298,7 @@ fn verify_receipt(
     let key = release_key(
         manifest,
         req.receipt_kid.as_deref().ok_or(UNAVAILABLE)?,
-        now,
+        instant,
     )?;
     let encoded = req.receipt_signature.as_deref().ok_or(UNAVAILABLE)?;
     let bytes = URL.decode(encoded).map_err(|_| UNAVAILABLE)?;
@@ -307,10 +317,10 @@ fn verify_receipt(
 fn binding(
     req: &Request,
     manifest: &str,
-    now: u64,
+    instant: Duration,
     record: &Record,
 ) -> Result<Bound, &'static str> {
-    let (raw, sha, jti) = verify_receipt(req, manifest, now)?;
+    let (raw, sha, jti) = verify_receipt(req, manifest, instant)?;
     #[derive(Deserialize)]
     struct Approved {
         device_id: String,
@@ -341,7 +351,7 @@ fn binding(
     } else if !record
         .pending
         .iter()
-        .any(|p| p.jti == bound.receipt_jti && p.expires >= now)
+        .any(|p| p.jti == bound.receipt_jti && p.expires >= instant.as_secs())
     {
         return Err(UNAVAILABLE);
     }
@@ -455,14 +465,14 @@ pub(crate) fn run(
     provider: &dyn Enclave,
     pair: &Pair,
     request: Request,
-    now: u64,
+    instant: Duration,
 ) -> Result<Value, &'static str> {
     execute(
         items,
         provider,
         pair,
         request,
-        now,
+        instant,
         include_str!("../trusted/server-keys.json"),
     )
 }
@@ -472,9 +482,10 @@ fn execute(
     provider: &dyn Enclave,
     pair: &Pair,
     request: Request,
-    now: u64,
+    instant: Duration,
     manifest: &str,
 ) -> Result<Value, &'static str> {
+    let now = instant.as_secs();
     request.verify(pair, now)?;
     provider.check_live()?;
     let data = items
@@ -545,7 +556,7 @@ fn execute(
             result["proof"] = Value::String(proof);
         }
         "bind-enrollment" => {
-            let bound = binding(&request, manifest, now, &record)?;
+            let bound = binding(&request, manifest, instant, &record)?;
             record.bound = Some(bound);
             record.pending.clear();
         }
@@ -579,7 +590,7 @@ fn execute(
         }
         "bind-access" => {
             let bound = record.bound.as_ref().ok_or(UNAVAILABLE)?;
-            let (raw, sha, jti) = verify_receipt(&request, manifest, now)?;
+            let (raw, sha, jti) = verify_receipt(&request, manifest, instant)?;
             let session = record
                 .sessions
                 .iter_mut()
