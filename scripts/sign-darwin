@@ -39,9 +39,13 @@ tar -xzf "$unsigned/$archive" -C "$tree"
 cp "$root/keyd/target/release/agent-bot-keyd" "$tree/agent-bot-keyd"
 chmod 0700 "$tree/agent-bot-keyd"
 
-identity="$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" \
-    | awk -v t="($team)" '/"Developer ID Application: / && index($0, t) { print $2; exit }')"
-[[ "$identity" =~ ^[0-9A-F]{40}$ ]] || { echo "Error: required Developer ID Application identity unavailable" >&2; exit 1; }
+if "$public_release"; then
+    identity="$(bash "$root/scripts/verify-public-darwin-publisher" --identity "$SIGN_KEYCHAIN" "$team")"
+else
+    identity="$(security find-identity -v -p codesigning "$SIGN_KEYCHAIN" \
+        | awk -v t="($team)" '/"Developer ID Application: / && index($0, t) { print $2; exit }')"
+    [[ "$identity" =~ ^[0-9A-F]{40}$ ]] || { echo "Error: required Developer ID Application identity unavailable" >&2; exit 1; }
+fi
 
 sign_clis() {
     codesign --force --timestamp --options runtime --keychain "$SIGN_KEYCHAIN" \
@@ -70,13 +74,22 @@ if "$public_release"; then bash "$root/scripts/verify-public-darwin-publisher" -
 mkdir -p "$work/payload"
 cp "$tree/managed-machine" "$tree/agent-bot-keyd" "$work/payload/"
 ditto -c -k "$work/payload" "$work/cli.zip"
-result="$(xcrun notarytool submit "$work/cli.zip" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" \
-    --issuer "$NOTARY_ISSUER_ID" --wait --timeout 30m --output-format json)"
+submit=(xcrun notarytool submit "$work/cli.zip" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID"
+        --issuer "$NOTARY_ISSUER_ID" --wait --timeout 30m --output-format json)
+if "$public_release"; then
+    result="$("${submit[@]}" 2>/dev/null)" || { echo 'Error: Apple notarization submission failed' >&2; exit 1; }
+else
+    result="$("${submit[@]}")"
+fi
 status="$(plutil -extract status raw -o - - <<<"$result")"
 if [[ "$status" != "Accepted" ]]; then
-    id="$(plutil -extract id raw -o - - <<<"$result" || true)"
-    echo "Error: notarization of cli.zip returned '$status'" >&2
-    [[ -n "$id" ]] && xcrun notarytool log "$id" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" >&2 || true
+    if "$public_release"; then
+        echo 'Error: Apple did not accept the public release for notarization' >&2
+    else
+        id="$(plutil -extract id raw -o - - <<<"$result" || true)"
+        echo "Error: notarization of cli.zip returned '$status'" >&2
+        [[ -n "$id" ]] && xcrun notarytool log "$id" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" >&2 || true
+    fi
     rm -f "$NOTARY_KEY_PATH"
     exit 1
 fi

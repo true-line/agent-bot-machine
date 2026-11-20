@@ -54,6 +54,38 @@ if SIGN_KEYCHAIN=fixture NOTARY_KEY_PATH=fixture NOTARY_KEY_ID=fixture NOTARY_IS
 [[ "$(cat "$work/out")" == 'Public macOS publisher verification failed' ]]
 shasum -a 256 "$work/tree/managed-machine" | awk '{print $1}' > "$policy"
 "$verify" --configured
+
+# The release keychain may contain more than one valid identity for a team.
+# Include an unapproved certificate with the same company label, an approved
+# certificate without a private key, and one usable approved identity.
+cat > "$work/bin/security" <<'STUB'
+#!/usr/bin/env bash
+set -eu
+[[ "${!#}" == fixture.keychain ]]
+case "$1" in
+    find-identity) cat "$IDENTITY_ROWS" ;;
+    find-certificate) cat "$CERT_ROWS" ;;
+    *) exit 1 ;;
+esac
+STUB
+chmod +x "$work/bin/security"
+export IDENTITY_ROWS="$work/identity-rows" CERT_ROWS="$work/certificate-rows"
+label='Developer ID Application: True Line AI LLC (EXAMPLE123)'
+old="$(printf 'B%.0s' {1..40})"
+without_key="$(printf 'C%.0s' {1..40})"
+selected="$(printf 'D%.0s' {1..40})"
+approved="$(head -1 "$policy")"
+other_approved="$(printf 'a%.0s' {1..64})"
+printf '%s\n' "$other_approved" >> "$policy"
+uncleared="$(printf 'E%.0s' {1..64})"
+printf '  1) %s "%s"\n  2) %s "%s"\n' "$old" "$label" "$selected" "$label" > "$IDENTITY_ROWS"
+printf 'SHA-256 hash: %s\nSHA-1 hash: %s\n' "$uncleared" "$old" "$other_approved" "$without_key" "$approved" "$selected" > "$CERT_ROWS"
+[[ "$("$verify" --identity fixture.keychain EXAMPLE123)" == "$selected" ]]
+printf '  1) %s "%s"\n' "$old" "$label" > "$IDENTITY_ROWS"
+refused --identity fixture.keychain EXAMPLE123
+printf '  1) %s "%s"\n' "$selected" 'Developer ID Application: Example (EXAMPLE123)' > "$IDENTITY_ROWS"
+refused --identity fixture.keychain EXAMPLE123
+
 "$verify" --tree "$work/tree"
 if [[ "$(uname -s)" == Darwin ]]; then NATIVE_EXTRACTION=1 "$verify" --tree "$work/tree"; fi
 (cd "$work/tree" && tar -czf "$work/archive.tar.gz" managed-machine agent-bot-keyd)

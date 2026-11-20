@@ -6,9 +6,33 @@ approved="$root/.github/macos-public-publisher-sha256"
 refuse() { echo 'Public macOS publisher verification failed' >&2; exit 1; }
 [[ -f "$approved" ]] && grep -Eq '^[0-9a-f]{64}$' "$approved" || refuse
 [[ "$#" == 1 && "$1" == --configured ]] && exit 0
-[[ "$#" == 2 ]] || refuse
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+org='True Line AI LLC'
+if [[ "${1:-}" == --identity ]]; then
+    [[ "$#" == 3 && "$3" =~ ^[A-Z0-9]{10}$ ]] || refuse
+    label="Developer ID Application: $org ($3)"
+    # codesign selects identities by SHA-1. Link usable identities to the
+    # approved SHA-256 of the same certificate in this release keychain.
+    security find-identity -v -p codesigning "$2" 2>/dev/null |
+        awk -F '"' -v label="$label" '$2 == label { print $1 }' |
+        awk '{print toupper($2)}' > "$work/identities" || refuse
+    identity="$(security find-certificate -a -Z -c "$label" "$2" 2>/dev/null |
+        awk '
+            FILENAME == ARGV[1] { pins[$0] = 1; next }
+            FILENAME == ARGV[2] { usable[$0] = 1; next }
+            /^SHA-256 hash: / { approved = (tolower($3) in pins); next }
+            /^SHA-1 hash: / {
+                id = toupper($3)
+                if (approved && id in usable && !selected) { print id; selected = 1 }
+                approved = 0
+            }
+        ' "$approved" "$work/identities" -)" || refuse
+    [[ "$identity" =~ ^[0-9A-F]{40}$ ]] || refuse
+    printf '%s\n' "$identity"
+    exit 0
+fi
+[[ "$#" == 2 ]] || refuse
 case "$1" in
     --tree) tree="$2" ;;
     --archive)
@@ -26,7 +50,6 @@ for name in managed-machine agent-bot-keyd; do
     bin="$tree/$name"
     team="$(codesign -d --verbose=2 "$bin" 2>&1 | sed -n 's/^TeamIdentifier=//p')" || refuse
     [[ "$team" =~ ^[A-Z0-9]{10}$ ]] || refuse
-    org='True Line AI LLC'
     requirement="anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"$team\" and certificate leaf[subject.O] = \"$org\" and certificate leaf[subject.CN] = \"Developer ID Application: $org ($team)\" and identifier \"$id\""
     codesign --verify --strict "-R=$requirement" "$bin" >/dev/null 2>&1 || refuse
     prefix="$work/$name-cert"
