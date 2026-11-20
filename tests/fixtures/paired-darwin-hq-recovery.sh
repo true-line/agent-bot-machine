@@ -13,6 +13,13 @@ checkout_review_source() {
     git -C "$subjects/$name" checkout -q --detach FETCH_HEAD
     [[ "$(git -C "$subjects/$name" rev-parse HEAD)" == "$sha" ]] || exit 1
 }
+if [[ "${MM_HARNESS_TRANSACTION:-}" == 1 ]]; then
+    checkout_review_source identity agent-bot-identity a1ebed03d36336a52f9c9432e925cd216c1613e4
+    presence="$subjects/identity/owner-presence-macos"
+    xcrun --sdk macosx swiftc -swift-version 5 -parse-as-library \
+        "$presence/PairingChallenge.swift" "$presence/HarnessLaunchPlan.swift" \
+        "$ROOT/tests/fixtures/harness-transaction/review.swift" -o "$signer/check-harness-plan"
+else
 checkout_review_source conformance soul-conformance e41baba741bab974fee19acb09b5edb446a3d1f0
 suite="$subjects/conformance/suites/paired-hq-recovery"
 # This pinned Identity version recognizes both legacy plans and the v2
@@ -31,6 +38,7 @@ const key = createPrivateKey(readFileSync(pem)).export({format:'jwk'});
 if (key.crv !== 'P-256') throw Error('expected the fixture P-256 key');
 writeFileSync(raw, Buffer.from(key.d, 'base64url'), {mode:0o600, flag:'wx'});
 JS
+fi
 
 hq_machine() {
     (cd / && sudo -n -H -u "$role" -- "$stage/node" "$stage/hq/hq/main.mjs" machine "$@")
@@ -93,6 +101,10 @@ paired_status() {
 }
 start_fixture_machine --require-identity "$machine_pin"
 paired_status --daemon-key "$machine_key"
+if [[ "${MM_HARNESS_TRANSACTION:-}" == 1 ]]; then
+    source "$ROOT/tests/fixtures/harness-transaction/run.sh"
+    return 0
+fi
 
 if [[ "${MM_HQ_UPGRADE_TEST:-}" == paired ]]; then
     [[ "${MM_KEYD_CUSTODY_TEST:-}" == 1 && "${MM_HQ_PREDECESSOR:-}" == paired && -z "${MM_HQ_DEVICE_ARCHIVE:-}" ]] || exit 1

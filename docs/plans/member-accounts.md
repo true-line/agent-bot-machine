@@ -58,10 +58,19 @@ The enrolled dedicated HQ can export the Machine-signed challenge and return
 a fresh owner proof with `machine harness-launch-install` or
 `machine harness-launch-retire`. Machine rechecks the authenticated role, pairing,
 canonical plan and host artifacts before recording approval. The approval binds
-the purpose, Machine fingerprint, pairing and exact plan digest. Root apply
-continues to refuse both operations. Regenerate the plan with the apply-capable
-release and obtain a fresh approval for its digest. Replacing the Machine executable
-changes the proposed installation digest.
+the purpose, Machine fingerprint, pairing and exact plan digest. Replacing the
+Machine executable changes the proposed installation digest.
+
+Root install requires an independent qualification for every native adapter and
+its arguments. This build has no production qualification verifier. It refuses
+every production install and launch. The transaction fixture uses disposable
+files. It stages the launcher, sandbox and policy before publishing the effective
+sudoers rule. Publication and the positive root receipt each require a current
+pairing and unexpired approval. External validation runs between these checks.
+Loss of authority during validation withdraws the exact recorded rule. The original
+installation receipt and file identities are required for retirement. Retirement
+removes the rule first and preserves account homes, pairing and audit records.
+
 
 ## Target
 
@@ -550,6 +559,19 @@ adapter mapping renders the exact file contents returned for review. This
 version can create and review a saved installation or retirement plan. Applying
 it requires the typed owner approval, matching launcher and qualified adapter
 release tracked in [Machine #585](https://github.com/true-line/agent-bot-machine/issues/585).
+
+During installation the fixed launcher requires the reviewed policy file.
+Machine keeps that file staged while it checks the installed sudoers command.
+It publishes the policy only after syncing the matching successful root receipt.
+If interrupted between those operations, a retry verifies the recorded files,
+current pairing and owner approval before publishing the original staged policy.
+An already active, unchanged installation can return its prior receipt as
+`already-applied` after a read-only verification without a fresh approval.
+If an interrupted retirement already removed all four files, Machine can
+record `retirement-observed` after confirming their absence, the original
+receipts, continued pairing and idle target accounts. This result issues no
+fresh approval and changes no installed grant.
+
 
 The protected approval step for an
 already paired HQ is tracked in [Machine #539](https://github.com/true-line/agent-bot-machine/issues/539).

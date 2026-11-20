@@ -52,6 +52,19 @@ WORK="$(mktemp -d)"
 chmod 755 "$WORK"
 MM="$WORK/managed-machine"
 (cd "$ROOT" && go build -o "$MM" ./cmd/managed-machine)
+if [[ "${MM_HARNESS_TRANSACTION:-}" == 1 ]]; then
+    [[ "${1:-}" == --real-hq && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
+       "${MM_HQ_PREDECESSOR:-}" == harness && -z "${MM_HQ_DEVICE_ARCHIVE:-}" && -z "${MM_HQ_UPGRADE_TEST:-}" ]] || exit 1
+    for existing in "$HOME/.config/agent-machine" "$(brew --prefix)/var/agent-machine"; do
+        [[ ! -e "$existing" && ! -L "$existing" ]] || { echo 'requires unused Machine state' >&2; exit 1; }
+    done
+    qualification="$ROOT/tests/fixtures/harness-transaction"
+    (cd "$ROOT" && CGO_ENABLED=0 go build -trimpath -ldflags=-buildid= -o "$WORK/member-adapter" "$qualification/adapter/main.go")
+    python3 "$qualification/prepare-test-overlay.py" "$ROOT" "$WORK/qualification" "$WORK/member-adapter"
+    (cd "$ROOT" && go test -overlay "$WORK/qualification/overlay.json" -count=1 -run '^TestHostedFixtureScope$' ./internal/members &&
+        go build -overlay "$WORK/qualification/overlay.json" -o "$WORK/fixture-machine" ./cmd/managed-machine)
+    MM="$WORK/fixture-machine"
+fi
 
 HQ=_abhq-ci
 HQ_HOME=/var/abhq-ci

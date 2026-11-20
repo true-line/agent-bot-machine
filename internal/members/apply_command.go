@@ -1,8 +1,10 @@
 package members
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/user"
@@ -115,7 +117,13 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 
 	if saved.isHarnessLaunchPlan() {
-		return failure(diag.MembersNotApproved, "this build verifies paired owner approval but cannot install or retire a harness launch rule")
+		if platform != PlatformDarwin || saved.HarnessLaunch == nil || saved.HQService != nil || saved.UpgradeFrom != nil {
+			return failure(diag.MembersNotApproved, "a harness rule requires its own exact Darwin plan")
+		}
+		canonical, err := saved.CanonicalForReview()
+		if err != nil || !ValidApproval(saved.PlanID, saved.PlanDigest) || fmt.Sprintf("%x", sha256.Sum256(canonical)) != saved.PlanDigest {
+			return failure(diag.MembersNotApproved, "invalid saved harness launch policy")
+		}
 	}
 
 	// The approval agent-machine recorded.
@@ -143,12 +151,45 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		}
 	}
 
+	if r := saved.HarnessLaunch; r != nil && r.Action == "install" && deps.Root == nil {
+		complete, err := completedHarnessInstall(saved, owner, daemonAccount, pairCheck)
+		if err != nil {
+			return failure(diag.MembersApplyFailed, "checking prior harness installation: %v", err)
+		}
+		if complete {
+			return cli.Result{Records: []*output.Record{output.New().Set("plan_id", planID).Set("plan_digest", saved.PlanDigest).Set("result", "already-applied").Set("receipt", ReceiptPath(planID))}}
+		}
+	}
+	if r := saved.HarnessLaunch; r != nil && r.Action == "retire" && deps.Root == nil {
+		result, err := finishAbsentHarnessRetirement(saved, owner, daemonAccount, pairCheck)
+		if err != nil {
+			return failure(diag.MembersApplyFailed, "reconciling harness retirement: %v", err)
+		}
+		if result != "" {
+			row := output.New().Set("plan_id", planID).Set("plan_digest", saved.PlanDigest).Set("receipt", ReceiptPath(planID))
+			if result == "applied" {
+				row.Set("applied", true)
+			} else {
+				row.Set("result", result)
+			}
+			return cli.Result{Records: []*output.Record{row}}
+		}
+	}
 	approval, why := loadApproval(h, daemonDir, daemonAccount, planID, platform, deps.Time())
 	if why != "" {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: %s", planID, why)
 	}
 
-	if saved.UpgradeFrom == nil && (approval.Purpose != "" || approval.MachineFingerprint != "" || approval.PairCommitment != "") {
+	if r := saved.HarnessLaunch; r != nil {
+		if approval.Purpose != HarnessPurpose(r.Action) || !digestPattern.MatchString(approval.PairCommitment) || !digestPattern.MatchString(approval.MachineFingerprint) || approval.PlanDigest != saved.PlanDigest {
+			return failure(diag.MembersNotApproved, "harness rule requires its own paired owner approval")
+		}
+		if err := applyHarnessGrant(saved, approval, owner, daemonAccount, pairCheck); err != nil {
+			return failure(diag.MembersApplyFailed, "could not apply the reviewed harness rule: %v", err)
+		}
+		return cli.Result{Records: []*output.Record{output.New().Set("plan_id", planID).Set("plan_digest", saved.PlanDigest).Set("applied", true).Set("receipt", ReceiptPath(planID))}}
+	}
+	if saved.UpgradeFrom == nil && (approval.Purpose != "" || approval.PairCommitment != "" || approval.MachineFingerprint != "") {
 		return failure(diag.MembersNotApproved, "a paired purpose-specific approval cannot authorize this operation")
 	}
 	if saved.UpgradeFrom != nil && (approval.Purpose != UpgradePurpose || !digestPattern.MatchString(approval.MachineFingerprint)) {

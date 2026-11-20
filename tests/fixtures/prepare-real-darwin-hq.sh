@@ -10,6 +10,8 @@ release="${2:-original}"
 if [[ $# == 1 && -n "${MM_HQ_DEVICE_ARCHIVE:-}" ]]; then release=--paired-device; fi
 case "$release" in
     original) ;;
+    harness) hq_sha=1d3761e77e6b77a451347839a04dd4cea7a47904
+        hq_tar_sha=31445a31e0eb78bd855b5a74902750d7e858c7c43553ca7320596b91877e89e8 ;;
     --paired-device) hq_sha=a71bcebe62bc107dce91b33ba057cc133de2d5e3
         hq_tar_sha=b80a7b9bc00f65fd169602a57282202f510092f7a7abcc2b5c2c83fc2e687744 ;;
     paired) hq_sha=1e6484ec11e5b2591cf79c40f80e4a1004f99e46

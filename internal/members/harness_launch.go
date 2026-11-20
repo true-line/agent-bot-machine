@@ -254,24 +254,8 @@ func CheckDarwinHarnessLaunch(s Saved, purpose, owner string, uid int) error {
 }
 
 func checkDarwinHarnessLaunch(s Saved, purpose, owner string, uid int, h Host) error {
-	r := s.HarnessLaunch
-	if r == nil || HarnessPurpose(r.Action) != purpose || r.HQUID != uid || !ValidApproval(s.PlanID, s.PlanDigest) {
-		return errors.New("saved plan is not for this harness launch action and HQ identity")
-	}
-	raw, err := s.CanonicalForReview()
-	if err != nil {
+	if _, err := savedHarnessPlan(s, purpose, owner, uid, h); err != nil {
 		return err
-	}
-	if fmt.Sprintf("%x", sha256.Sum256(raw)) != s.PlanDigest {
-		return errors.New("saved harness plan differs from the signed digest")
-	}
-	p, err := Build(Input{Platform: PlatformDarwin, HQAccount: s.Plan.HQAccount, Dir: s.Plan.Dir, Members: s.Plan.Members, Invoker: owner, HarnessLaunch: r}, h)
-	if err != nil {
-		return err
-	}
-	current, err := p.Canonical()
-	if err != nil || !bytes.Equal(raw, current) {
-		return errors.New("harness launch plan changed")
 	}
 	if purpose == HarnessInstall {
 		// Planning reports an identical installed policy as no work and refuses
@@ -285,6 +269,29 @@ func checkDarwinHarnessLaunch(s Saved, purpose, owner string, uid int, h Host) e
 		}
 	}
 	return nil
+}
+
+func savedHarnessPlan(s Saved, purpose, owner string, uid int, h Host) (Plan, error) {
+	r := s.HarnessLaunch
+	if r == nil || HarnessPurpose(r.Action) != purpose || r.HQUID != uid || !ValidApproval(s.PlanID, s.PlanDigest) {
+		return Plan{}, errors.New("saved plan is not for this harness launch action and HQ identity")
+	}
+	raw, err := s.CanonicalForReview()
+	if err != nil {
+		return Plan{}, err
+	}
+	if fmt.Sprintf("%x", sha256.Sum256(raw)) != s.PlanDigest {
+		return Plan{}, errors.New("saved harness plan differs from the signed digest")
+	}
+	p, err := Build(Input{Platform: PlatformDarwin, HQAccount: s.Plan.HQAccount, Dir: s.Plan.Dir, Members: s.Plan.Members, Invoker: owner, HarnessLaunch: r}, h)
+	if err != nil {
+		return Plan{}, err
+	}
+	current, err := p.Canonical()
+	if err != nil || !bytes.Equal(raw, current) {
+		return Plan{}, errors.New("harness launch plan changed")
+	}
+	return p, nil
 }
 
 // CanonicalForReview returns the bytes served by the paired read-only route.
