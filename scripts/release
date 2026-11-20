@@ -352,8 +352,9 @@ if want_core_sha and sha_m.group(1) != want_core_sha:
 # that appeared during keg creation. Homebrew also rechecks on post-install.
 guarded_install = "  def install\n    check_standalone_signing"
 guarded_keg = "    prefix.mkpath\n    check_standalone_signing\n"
-guarded_post = "  def post_install\n    check_standalone_signing\n"
-for required in ("  def check_standalone_signing\n", guarded_install, guarded_keg, guarded_post):
+guarded_post = "    def post_install\n      check_standalone_signing\n"
+guarded_steps = '    post_install_steps do\n      run "/usr/bin/ruby", args: STANDALONE_CHECK_ARGS\n      set_permissions "bin/agent-bot-keyd", "0700", base: :prefix, recursive: false'
+for required in ("  def check_standalone_signing\n", guarded_install, guarded_keg, guarded_post, guarded_steps):
     if required not in text:
         sys.exit(1)
 

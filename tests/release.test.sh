@@ -189,7 +189,7 @@ for leftover in \
         fail "expected prepare to strip leftover '$leftover' from Formula/managed-machine.rb"
     fi
 done
-if grep -qE '^[[:space:]]*else$' "$FIXTURE/Formula/managed-machine.rb"; then
+if sed -n '/^  def install$/,/^  end$/p' "$FIXTURE/Formula/managed-machine.rb" | grep -qE '^[[:space:]]*else$'; then
     fail "expected prepare to collapse dual-branch else block in Formula/managed-machine.rb"
 fi
 python3 - "$FIXTURE/Formula/managed-machine.rb" <<'PY'
@@ -496,17 +496,22 @@ git -C "$FIXTURE" push --quiet origin main
 
 SAVED_911_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
 # A previously prepared pin with a missing declaration check cannot be tagged.
-for guard in install keg post_install; do
+for guard in install keg post_install post_install_steps; do
     git -C "$FIXTURE" reset --quiet --hard "$SAVED_911_SHA"
     python3 - "$FIXTURE/Formula/managed-machine.rb" "$guard" <<'PYGUARD'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
-prior = {"install": "  def install", "keg": "    prefix.mkpath", "post_install": "  def post_install"}[sys.argv[2]]
+anchor, call = {
+    "install": ("  def install", "    check_standalone_signing"),
+    "keg": ("    prefix.mkpath", "    check_standalone_signing"),
+    "post_install": ("    def post_install", "      check_standalone_signing"),
+    "post_install_steps": ("    post_install_steps do", '      run "/usr/bin/ruby", args: STANDALONE_CHECK_ARGS'),
+}[sys.argv[2]]
 text = path.read_text()
-checked = prior + "\n    check_standalone_signing\n"
+checked = anchor + "\n" + call + "\n"
 assert text.count(checked) == 1
-path.write_text(text.replace(checked, prior + "\n", 1))
+path.write_text(text.replace(checked, anchor + "\n", 1))
 PYGUARD
     git -C "$FIXTURE" commit --quiet -am "Fixture omits the $guard declaration check"
     git -C "$FIXTURE" push --quiet --force origin main

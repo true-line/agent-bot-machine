@@ -27,16 +27,20 @@ class ManagedMachine < Formula
     sha256 "e98ea0d764b13e9b30c714bb9b299fff80ec1f07cbcd30e4037f3bdb795a2b6e"
   end
 
-  def check_standalone_signing
-    dir = "/Library/Application Support/ai.true-line.agent-bot-hq/standalone"
+  STANDALONE_MARKERS = "/Library/Application Support/ai.true-line.agent-bot-hq/standalone"
+  STANDALONE_CHECK_ARGS = ["--disable-gems", "-e", <<~'RUBY', STANDALONE_MARKERS].freeze
     %w[declaration-pending-v1 declaration-v1].each do |name|
       begin
-        File.lstat(File.join(dir, name))
+        File.lstat(File.join(ARGV.fetch(0), name))
       rescue Errno::ENOENT
         next
       end
-      odie "The administrator must finish or retire the standalone HQ signing declaration before installing Machine"
+      abort "The administrator must finish or retire the standalone HQ signing declaration before installing Machine"
     end
+  RUBY
+
+  def check_standalone_signing
+    system "/usr/bin/ruby", *STANDALONE_CHECK_ARGS
   end
 
   def install
@@ -88,9 +92,19 @@ class ManagedMachine < Formula
     end
   end
 
-  def post_install
-    check_standalone_signing
-    chmod 0700, bin / "agent-bot-keyd"
+  if respond_to?(:post_install_steps) &&
+     Homebrew::InstallSteps::DSL.method_defined?(:run) &&
+     Homebrew::InstallSteps::DSL.method_defined?(:set_permissions) &&
+     Homebrew::InstallSteps::DSL.instance_method(:set_permissions).parameters.include?([:key, :recursive])
+    post_install_steps do
+      run "/usr/bin/ruby", args: STANDALONE_CHECK_ARGS
+      set_permissions "bin/agent-bot-keyd", "0700", base: :prefix, recursive: false
+    end
+  else
+    def post_install
+      check_standalone_signing
+      chmod 0700, bin / "agent-bot-keyd"
+    end
   end
 
   test do
