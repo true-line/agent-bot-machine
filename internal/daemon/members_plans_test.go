@@ -151,22 +151,8 @@ func TestMembersPlansReadOnly(t *testing.T) {
 	}
 	write(file, data)
 	canonical, _ := saved.Plan.Canonical()
-	// Verify the normal signed frame, including its exact canonical plan bytes.
-	hq, key := keyPair(t)
-	machine, machineKey := keyPair(t)
-	g := Gate{Pairing: Pairing{Live: hq, AgentDaemon: hq, AgentDaemonBound: true, AgentDaemonUID: 777, OwnerPresenceRequired: true}}
-	client, server := net.Pipe()
-	defer client.Close()
-	go handleConn(server, &g, machineKey, func(net.Conn) (int, error) { return 777, nil }, Hooks{MembersPlans: func(op, id string) ([]byte, error) { return readMembersPlans(home, op, id) }})
-	q := Request{Verb: membersPlansVerb, Option: "get", PlanID: id, Nonce: "read-only", Timestamp: time.Now().Unix()}
-	if _, err := client.Write(append(signed(t, key, q), '\n')); err != nil {
-		t.Fatal(err)
-	}
-	var response Response
-	if err := json.NewDecoder(client).Decode(&response); err != nil {
-		t.Fatal(err)
-	}
-	if !response.OK || response.RequestNonce != q.Nonce || !VerifyResponse(machine, response) || bytes.Contains(response.Body, []byte(saved.CreatedAt)) {
+	response := signedMembersPlan(t, home, id)
+	if !response.OK || bytes.Contains(response.Body, []byte(saved.CreatedAt)) {
 		t.Fatal("invalid signed response or leaked saved metadata")
 	}
 	var body struct {
@@ -302,5 +288,111 @@ func TestMembersPlansLimitsDirectoryScan(t *testing.T) {
 	}
 	if raw, err := readMembersPlans(home, "list", ""); err == nil || len(raw) != 0 {
 		t.Fatal("returned a partial listing from an oversized directory")
+	}
+}
+
+// Fetch from the saved-plan store through the normal signed paired channel.
+func signedMembersPlan(t *testing.T, home, id string) Response {
+	t.Helper()
+	hq, key := keyPair(t)
+	machine, machineKey := keyPair(t)
+	g := Gate{Pairing: Pairing{Live: hq, AgentDaemon: hq, AgentDaemonBound: true, AgentDaemonUID: 777, OwnerPresenceRequired: true}}
+	client, server := net.Pipe()
+	defer client.Close()
+	go handleConn(server, &g, machineKey, func(net.Conn) (int, error) { return 777, nil }, Hooks{MembersPlans: func(op, id string) ([]byte, error) { return readMembersPlans(home, op, id) }})
+	q := Request{Verb: membersPlansVerb, Option: "get", PlanID: id, Nonce: "read-only", Timestamp: time.Now().Unix()}
+	if _, err := client.Write(append(signed(t, key, q), '\n')); err != nil {
+		t.Fatal(err)
+	}
+	var response Response
+	if err := json.NewDecoder(client).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.RequestNonce != q.Nonce || !VerifyResponse(machine, response) {
+		t.Fatal("unverified read-only response")
+	}
+	return response
+}
+
+func TestPairedReadsExactHarnessPlans(t *testing.T) {
+	testPlanRole(t, "777")
+	home := t.TempDir()
+	state, err := statedir.Path(runtime.GOOS, func(key string) string {
+		if key == "HOME" {
+			return home
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(state, "members", "plans")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range []struct{ action, digest string }{
+		{"install", "0b8ecd3ce5241a20da07502c396b36d65e60cf8e6c3312733ca31d84df9f0d09"},
+		{"retire", "e790b19de136ebf7f843c27c3520515738ed3cff36ad08fc02179a827edf1f19"},
+	} {
+		t.Run(fixture.action, func(t *testing.T) {
+			// Canonical bytes from the independent native Darwin grant renderer.
+			canonical, err := os.ReadFile(filepath.Join("..", "members", "testdata", "harness-launch-"+fixture.action+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := members.Saved{PlanID: approvePlanID, PlanDigest: fixture.digest, HarnessLaunch: new(members.HarnessPolicyRecord)}
+			if err := json.Unmarshal(canonical, &s.Plan); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(s.Plan.Steps[0].Content), s.HarnessLaunch); err != nil {
+				t.Fatal(err)
+			}
+			fetch := func() Response {
+				t.Helper()
+				raw, err := json.Marshal(s)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(filepath.Join(dir, s.PlanID+".json"), raw, 0600); err != nil {
+					t.Fatal(err)
+				}
+				return signedMembersPlan(t, home, s.PlanID)
+			}
+			reply := fetch()
+			var body struct {
+				Canonical string `json:"plan_canonical"`
+				Digest    string `json:"plan_digest"`
+				ID        string `json:"plan_id"`
+			}
+			if !reply.OK || json.Unmarshal(reply.Body, &body) != nil || body.ID != s.PlanID || body.Digest != fixture.digest || body.Canonical != string(canonical) {
+				t.Fatal("signed review differs from the saved plan")
+			}
+			if fixture.action == "retire" {
+				installDigest := s.HarnessLaunch.InstalledDigest
+				other := strings.Repeat("f", 64)
+				s.HarnessLaunch.InstalledDigest = other
+				original := s.Plan.Steps[0].Content
+				s.Plan.Steps[0].Content = strings.Replace(original, installDigest, other, 1)
+				s.PlanDigest, err = s.Plan.Digest()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if reply := fetch(); reply.OK || len(reply.Body) != 0 {
+					t.Fatal("retirement named an installation with different canonical bytes")
+				}
+				s.HarnessLaunch.InstalledDigest = installDigest
+				s.Plan.Steps[0].Content = original
+				s.PlanDigest = fixture.digest
+			}
+			s.HarnessLaunch.Adapters[0].Args = []string{"--different"}
+			reply = fetch()
+			if reply.OK || len(reply.Body) != 0 {
+				t.Fatal("inconsistent request returned a plan")
+			}
+			s.HarnessLaunch = nil
+			if reply := fetch(); reply.OK || len(reply.Body) != 0 {
+				t.Fatal("harness launch files without their saved request returned a plan")
+			}
+		})
 	}
 }

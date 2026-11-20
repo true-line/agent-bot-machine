@@ -145,6 +145,10 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return failure(diag.MembersPlanFailed, "the saved plan %s cannot be read", planID)
 	}
 
+	if saved.HarnessLaunch != nil {
+		return failure(diag.MembersNotApproved, "applying a harness launch plan requires a Machine release supporting the paired owner approval")
+	}
+
 	// The approval agent-machine recorded.
 	if deps.DaemonState == nil {
 		return failure(diag.MembersNotApproved, "agent-machine's state directory is not known")

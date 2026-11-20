@@ -99,11 +99,12 @@ func failure(id, format string, args ...any) cli.Result {
 // Saved is the plan file apply reads: the request, so the plan can be built
 // again from the host, and the digest the owner is asked to approve.
 type Saved struct {
-	HQService  *HQService `json:"hq_service,omitempty"`
-	PlanID     string     `json:"plan_id"`
-	PlanDigest string     `json:"plan_digest"`
-	CreatedAt  string     `json:"created_at"`
-	Plan       Plan       `json:"plan"`
+	HarnessLaunch *HarnessPolicyRecord `json:"harness_launch,omitempty"`
+	HQService     *HQService           `json:"hq_service,omitempty"`
+	PlanID        string               `json:"plan_id"`
+	PlanDigest    string               `json:"plan_digest"`
+	CreatedAt     string               `json:"created_at"`
+	Plan          Plan                 `json:"plan"`
 }
 
 // HQ adapter IDs identify harness credentials (PDR-0053). Several adapters

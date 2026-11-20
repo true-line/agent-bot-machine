@@ -270,3 +270,37 @@ func TestDarwinSharedConfigPreservesAccountOnlyDigest(t *testing.T) {
 		}
 	}
 }
+
+func TestReadOnlyHarnessPlanCannotApply(t *testing.T) {
+	for _, action := range []string{"install", "retire"} {
+		t.Run(action, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata", "harness-launch-"+action+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := Saved{PlanID: applyID, HarnessLaunch: new(HarnessPolicyRecord)}
+			if err := json.Unmarshal(data, &s.Plan); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(s.Plan.Steps[0].Content), s.HarnessLaunch); err != nil {
+				t.Fatal(err)
+			}
+			s.PlanDigest, err = s.Plan.Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := newWorld(emptyHost())
+			w.h.files[filepath.Join("/home/owner", "Library", "Application Support", "managed-machine", "members", "plans", applyID+".json")] = string(raw)
+			w.approved(t, applyID, s.Plan)
+			res := Command(w.deps).Run(on(target.DarwinARM64), []string{"apply", applyID})
+			wantRefused(t, w, res, diag.MembersNotApproved)
+			if len(w.r.receipts) != 0 {
+				t.Fatal("refused apply created a receipt")
+			}
+		})
+	}
+}

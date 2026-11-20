@@ -402,7 +402,15 @@ made to generate one), and `approve-members` itself (Go tests in
 On split accounts Machine serves saved IDs and canonical plan bytes to the
 enrolled HQ service account through the signed [`members-plans` read
 operation](machine-daemon.md#closed-verb-set). Fetching a plan leaves its
-approval and apply state untouched. The protected approval step for an
+approval and apply state untouched.
+
+For a saved macOS harness launch grant, Machine also checks that the recorded
+adapter mapping renders the exact file contents returned for review. This
+version can review a saved installation or retirement. Creating and applying
+those plans requires a Machine release with the typed harness grant and its
+matching launcher.
+
+The protected approval step for an
 already paired HQ is tracked in [Machine #539](https://github.com/true-line/agent-bot-machine/issues/539).
 
 **Local owner approval is built.** agent-bot-identity's
