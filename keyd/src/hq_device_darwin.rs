@@ -269,10 +269,9 @@ pub(crate) fn cli_result(
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            let message = if init && error == CREATE_INTERACTION_DENIED {
-                CREATE_INTERACTION_DENIED
-            } else {
-                UNAVAILABLE
+            let message = match (init, error) {
+                (true, CREATE_INTERACTION_DENIED | hq_device::READ_INTERACTION_DENIED) => error,
+                _ => UNAVAILABLE,
             };
             let _ = writeln!(stderr, "agent-bot-keyd: {message}");
             std::process::ExitCode::FAILURE
@@ -331,6 +330,24 @@ mod tests {
         for (op, n) in [(0, -1), (0, -9), (1, -2), (2, -2)] {
             assert_eq!(report(true, op, n), generic);
             assert_eq!(report(false, op, n), generic);
+        }
+    }
+
+    #[test]
+    fn only_admin_init_reports_a_keychain_lookup_denial() {
+        for (init, expected) in [
+            (true, hq_device::READ_INTERACTION_DENIED),
+            (false, UNAVAILABLE),
+        ] {
+            let mut out = Vec::new();
+            assert_eq!(
+                cli_result(init, Err(hq_device::READ_INTERACTION_DENIED), &mut out),
+                std::process::ExitCode::FAILURE
+            );
+            assert_eq!(
+                String::from_utf8(out).unwrap(),
+                format!("agent-bot-keyd: {expected}\n")
+            );
         }
     }
 

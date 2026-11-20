@@ -374,3 +374,39 @@ fn revoke_during_native_work_withholds_result_and_pending_proof() {
     assert!(run(&items, &provider, &p, request(&p, "identity", 101), 101).is_err());
     assert_eq!(provider.signed.borrow().len(), 1);
 }
+
+#[test]
+fn admin_lookup_denial_stops_before_creation_and_peers_receive_only_unavailable() {
+    use crate::store::StoreError;
+    struct ReadError(i32);
+    impl Items for ReadError {
+        fn read(&self, _: &str, _: &str) -> Result<Option<Vec<u8>>, StoreError> {
+            Err(StoreError::KeychainRead(self.0))
+        }
+        fn write(&self, _: &str, _: &str, _: &[u8]) -> Result<(), String> {
+            panic!("unexpected write")
+        }
+        fn insert(&self, _: &str, _: &str, _: &[u8]) -> Result<bool, String> {
+            panic!("unexpected insert")
+        }
+        fn remove(&self, _: &str, _: &str) -> Result<bool, String> {
+            panic!("unexpected removal")
+        }
+    }
+    let native = Fake::default();
+    let p = pair();
+    let items = ReadError(-25308);
+    assert_eq!(
+        initialize(&items, &native, p.clone()),
+        Err("macOS denied user interaction while reading existing device custody from Keychain")
+    );
+    assert_eq!(
+        initialize(&ReadError(-1), &native, p.clone()),
+        Err(UNAVAILABLE)
+    );
+    assert_eq!(
+        run(&items, &native, &p, request(&p, "identity", 100), 100),
+        Err(UNAVAILABLE)
+    );
+    assert_eq!(native.created.get(), 0);
+}

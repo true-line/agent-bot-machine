@@ -259,9 +259,9 @@ UID, owner pin and enrollment epoch. An existing incompatible binding requires
 a separate transition. Status or a request from HQ cannot provision or rotate
 a key. The release ships the helper beside Machine at mode 0700. Machine
 requires its Developer ID signature and release identifier before delegation.
-If macOS refuses user interaction during Secure Enclave device key creation,
-the explicit admin initialization command reports that reason and exits
-unsuccessfully. Requests from HQ receive the usual custody-unavailable refusal.
+If macOS denies user interaction while reading existing device custody from
+Keychain or creating the Secure Enclave device key, the admin initialization
+command identifies which operation was refused and exits unsuccessfully. Requests from HQ receive the usual custody-unavailable refusal.
 
 An authenticated `hq-device` request selects one of these operations. Each
 one binds the original request nonce and the kernel-authenticated HQ UID.

@@ -10,13 +10,15 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 pub(crate) const UNAVAILABLE: &str = "device custody unavailable";
+pub(crate) const READ_INTERACTION_DENIED: &str =
+    "macOS denied user interaction while reading existing device custody from Keychain";
 const ORIGIN: &str = "https://agents.true-line.ai";
 const SERVICE: &str = "agent-bot.keyd.device.v1";
 const ITEM: &str = "managed-device";
 const WINDOW: u64 = 30;
 const MAX_RECENT: usize = 256;
 
-use crate::store::Items;
+use crate::store::{keychain_read_interaction_denied, Items};
 
 pub(crate) trait Enclave {
     fn check_live(&self) -> Result<(), &'static str>;
@@ -346,7 +348,13 @@ pub(crate) fn initialize(
 ) -> Result<(), &'static str> {
     if items
         .read(SERVICE, ITEM)
-        .map_err(|_| UNAVAILABLE)?
+        .map_err(|err| {
+            if keychain_read_interaction_denied(&err) {
+                READ_INTERACTION_DENIED
+            } else {
+                UNAVAILABLE
+            }
+        })?
         .is_some()
     {
         return Err(UNAVAILABLE);
