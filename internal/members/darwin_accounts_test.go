@@ -123,3 +123,18 @@ func TestParsePsEnv(t *testing.T) {
 		t.Fatalf("a bare word became a variable: %v", env)
 	}
 }
+
+func TestProtectedDarwinIDReservedByPrimaryUser(t *testing.T) {
+	old := runOutput
+	t.Cleanup(func() { runOutput = old })
+	runOutput = func(_ string, args ...string) (string, error) {
+		if strings.Join(args, " ") == "/Search -search /Users PrimaryGroupID 302" {
+			return "existing-user 302", nil
+		}
+		return "", nil
+	}
+	used, err := protectedDarwinIDUsed("302")
+	if err != nil || !used {
+		t.Fatal("would share proposed private group", used, err)
+	}
+}
