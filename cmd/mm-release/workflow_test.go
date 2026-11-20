@@ -472,8 +472,8 @@ func TestSignWorkflowContract(t *testing.T) {
 	}
 }
 
-// Exercise the actual preflight shell and jq predicates using recorded API
-// response shapes. The fixture accepts only the intended repository endpoints.
+// Exercise manual signing approval against its two expected API endpoints.
+// tests/version-cut.test.sh checks automatic signing against real Git history.
 func TestSignPreflight(t *testing.T) {
 	for _, dependency := range []string{"bash", "jq"} {
 		if _, err := exec.LookPath(dependency); err != nil {
@@ -496,27 +496,19 @@ func TestSignPreflight(t *testing.T) {
 	for _, step := range doc.Jobs["request"].Steps {
 		steps[step.If] = step.Run
 	}
-	const push = "github.event_name == 'push'"
 	const dispatch = "github.event_name == 'workflow_dispatch'"
 	const receipt = "approved deployment"
 	steps[receipt] = doc.Jobs["manual-approval"].Steps[0].Run
 	const fixture = `api_fixture() {
 	case "${!#}" in
-		'repos/org/project/commits/merged/pulls?per_page=100') echo "$PRS" ;;
-		'repos/org/project/pulls/7/files?per_page=100') echo "$FILES" ;;
-		'repos/org/project/pulls/7/reviews?per_page=100') echo "$REVIEWS" ;;
 		'repos/org/project/environments/release-manual') echo "$ENVIRONMENT" ;;
 		'repos/org/project/actions/runs/15/approvals') echo "$APPROVALS" ;;
 		*) return 22 ;;
 	esac
 }
 `
-	const pulls = `PRS=[[{"merged_at":"now","base":{"ref":"main","repo":{"full_name":"org/project"}},"merge_commit_sha":"merged","number":7,"user":{"login":"trueline-chores-dumb[bot]"},"head":{"sha":"head","ref":"release/v0.12.4","repo":{"full_name":"org/project"}}}]]`
-	const reviews = `REVIEWS=[[{"id":1,"user":{"id":42},"state":"APPROVED","commit_id":"head"}]]`
 	defaults := []string{
-		"GITHUB_REPOSITORY=org/project", "GITHUB_SHA=merged", "GITHUB_REF_PROTECTED=true", "GITHUB_RUN_ID=15",
-		pulls, reviews,
-		`FILES=[[{"filename":"VERSION","status":"modified"}]]`,
+		"GITHUB_REPOSITORY=org/project", "GITHUB_RUN_ID=15",
 		`ENVIRONMENT={"protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":42}}]}]}`,
 		`APPROVALS=[{"state":"approved","environments":[{"name":"release-manual"}]}]`,
 	}
@@ -524,14 +516,6 @@ func TestSignPreflight(t *testing.T) {
 		name, step, override string
 		pass                 bool
 	}{
-		{"reviewed push", push, "", true},
-		{"unprotected push", push, "GITHUB_REF_PROTECTED=false", false},
-		{"direct push", push, "PRS=[[]]", false},
-		{"other merge", push, strings.Replace(pulls, `"merge_commit_sha":"merged"`, `"merge_commit_sha":"elsewhere"`, 1), false},
-		{"different PR base", push, strings.Replace(pulls, `"ref":"main"`, `"ref":"other"`, 1), false},
-		{"unrelated PR", push, "FILES=[[]]", false},
-		{"stale approval", push, strings.Replace(reviews, `"commit_id":"head"`, `"commit_id":"old"`, 1), false},
-		{"changes requested later", push, `REVIEWS=[[{"id":1,"user":{"id":42},"state":"APPROVED","commit_id":"head"},{"id":2,"user":{"id":42},"state":"CHANGES_REQUESTED","commit_id":"head"}]]`, false},
 		{"configured manual gate", dispatch, "", true},
 		{"unconfigured environment", dispatch, "ENVIRONMENT={}", false},
 		{"empty reviewer list", dispatch, `ENVIRONMENT={"protection_rules":[{"type":"required_reviewers","reviewers":[]}]}`, false},
