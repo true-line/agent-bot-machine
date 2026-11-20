@@ -235,3 +235,9 @@ During migration, configure the manual gate and verify its required reviewer bef
 1. Merge a change to main and inspect the generated version PR.
 2. Merge the reviewed version PR. Confirm Sign and both CI workflows ran on its merge SHA.
 3. Confirm the tag points to that SHA and the public release has the five archives, checksums, five platform reports and the verified Homebrew formula.
+
+The published support matrix includes a Darwin table with the SHA-256 of the
+original native gate receipt, its pre-sign archive and executable, and the
+signed download and executable. The publisher checks the gate against the
+tagged revision and deterministic build before recording the signed hashes.
+Use the signed archive row to verify a download.

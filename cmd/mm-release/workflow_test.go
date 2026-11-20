@@ -309,6 +309,9 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		}
 		if strings.Contains(step.Run, wantSignedVerify) {
 			sawSignedVerify = true
+			if !strings.Contains(step.Run, `-darwin-gate release-gate-darwin-arm64.json -source-revision "$GITHUB_SHA" >> support-matrix.md`) {
+				t.Errorf("signed distribution verification must link the native gate to the published download in the support matrix")
+			}
 		}
 		if strings.Contains(step.Run, "generate-notes") {
 			t.Fatal("public release notes must come from validated release data")
