@@ -129,15 +129,15 @@ Both sockets live in `<state>/keyd/` (0700). `<state>` is agent-bot's state
 directory: `$XDG_STATE_HOME/agent-bot` or `~/.local/state/agent-bot`. Both
 sockets are 0600, and keyd checks each peer's user ID.
 
-| socket | speaks | for |
-| --- | --- | --- |
-| `keyd.sock` | MCP (newline-delimited JSON-RPC) | `credential`, `git_credential` |
-| `owner.sock` | JSON-RPC | `owner/status`, `owner/import`, `owner/remove`, `owner/pin`, `owner/presence`, `owner/pins-attest`, `owner/pins-status`, `owner/app-status`, `owner/app-import`, `owner/app-import-new`, `owner/app-remove` |
-
 On the MCP channel, `initialize` supports revisions `2025-03-26` and
 `2025-06-18`. It returns the requested revision when supported and advertises
 `2025-06-18` otherwise. Omitting the revision also selects `2025-06-18`.
 The separate `serverInfo.version` field identifies the helper build.
+
+| socket | speaks | for |
+| --- | --- | --- |
+| `keyd.sock` | MCP (newline-delimited JSON-RPC) | `credential`, `git_credential` |
+| `owner.sock` | JSON-RPC | `owner/status`, `owner/import`, `owner/remove`, `owner/pin`, `owner/presence`, `owner/pins-attest`, `owner/pins-status`, `owner/app-status`, `owner/app-import`, `owner/app-import-new`, `owner/app-remove` |
 
 Each call leaves a receipt in `keyd/audit.jsonl` (0600). Receipts never hold a
 secret.
