@@ -64,6 +64,8 @@ Bare `managed-machine status [--json|--human]` is served by the portable Go core
 
 ## Uninstall on macOS
 
+Before removal, run `managed-machine uninstall --help` as an ordinary user and look for a line containing only `managed-machine uninstall`. If Machine installed a dedicated HQ service, also check that `managed-machine members --help` lists `members uninstall-hq --list`. The v0.12.4 release prints general help and exits successfully even when the requested uninstall command is unavailable. To use the receipt-based removal procedure below, upgrade to a release that lists the required commands and retain the existing receipts through that upgrade.
+
 Open a login Terminal as the administrator who owns Homebrew. If Machine installed a dedicated HQ service, use its matching applied plan ID to remove that service first. The preview shows what will be removed. The list and preview work with HQ offline.
 
 ```sh
