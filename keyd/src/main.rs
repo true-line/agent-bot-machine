@@ -152,8 +152,13 @@ fn main() -> ExitCode {
         Some("hq-device" | "hq-device-init")
     ) {
         #[cfg(target_os = "macos")]
-        if args.len() == 1 && hq_device_darwin::command(args[0] == "hq-device-init").is_ok() {
-            return ExitCode::SUCCESS;
+        if args.len() == 1 {
+            let init = args[0] == "hq-device-init";
+            return hq_device_darwin::cli_result(
+                init,
+                hq_device_darwin::command(init),
+                &mut std::io::stderr().lock(),
+            );
         }
         eprintln!("agent-bot-keyd: device custody unavailable");
         return ExitCode::FAILURE;

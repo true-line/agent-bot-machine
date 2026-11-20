@@ -30,6 +30,19 @@ extern "C" {
     fn keyd_device_valid_point(point: *const u8, count: isize) -> i32;
 }
 
+const CREATE_INTERACTION_DENIED: &str =
+    "macOS denied user interaction during Secure Enclave device key creation";
+
+fn enclave_output_size(op: i32, size: isize, capacity: usize) -> Result<usize, &'static str> {
+    if op == 0 && size == -2 {
+        return Err(CREATE_INTERACTION_DENIED);
+    }
+    if size <= 0 || size as usize > capacity {
+        return Err(UNAVAILABLE);
+    }
+    Ok(size as usize)
+}
+
 struct Native<'a> {
     dir: &'a File,
     pair: &'a Pair,
@@ -50,11 +63,9 @@ impl Native<'_> {
                 out.len() as isize,
             )
         };
-        if !(1..=out.len() as isize).contains(&n) {
-            return Err(UNAVAILABLE);
-        }
+        let size = enclave_output_size(op, n, out.len())?;
         self.check_live()?;
-        out.truncate(n as usize);
+        out.truncate(size);
         Ok(out)
     }
 }
@@ -249,6 +260,26 @@ fn read_pair(dir: &File, uid: u32) -> Result<Pair, &'static str> {
     })
 }
 
+// The peer command can create an ephemeral key, but it never gets native diagnostics.
+pub(crate) fn cli_result(
+    init: bool,
+    result: Result<(), &'static str>,
+    stderr: &mut impl Write,
+) -> std::process::ExitCode {
+    match result {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            let message = if init && error == CREATE_INTERACTION_DENIED {
+                CREATE_INTERACTION_DENIED
+            } else {
+                UNAVAILABLE
+            };
+            let _ = writeln!(stderr, "agent-bot-keyd: {message}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
 pub(crate) fn command(init: bool) -> Result<(), &'static str> {
     let (dir, _pair_lock, pair) = trusted_state()?;
     let native = Native {
@@ -281,6 +312,27 @@ mod tests {
         fs,
         os::unix::fs::{symlink, PermissionsExt},
     };
+
+    #[test]
+    fn only_explicit_initialization_reports_denied_interaction_at_creation() {
+        let report = |init, op, n| {
+            let mut stderr = Vec::new();
+            let result = enclave_output_size(op, n, 8192).map(|_| ());
+            assert_eq!(
+                cli_result(init, result, &mut stderr),
+                std::process::ExitCode::FAILURE
+            );
+            String::from_utf8(stderr).unwrap()
+        };
+        assert_eq!(report(true, 0, -2),
+            "agent-bot-keyd: macOS denied user interaction during Secure Enclave device key creation\n");
+        let generic = "agent-bot-keyd: device custody unavailable\n";
+        assert_eq!(report(false, 0, -2), generic);
+        for (op, n) in [(0, -1), (0, -9), (1, -2), (2, -2)] {
+            assert_eq!(report(true, op, n), generic);
+            assert_eq!(report(false, op, n), generic);
+        }
+    }
 
     #[test]
     fn reads_only_a_locked_admin_pair_and_honors_revocation() {

@@ -45,6 +45,10 @@ public func keydDeviceEnclave(
         guard !result.isEmpty, result.count <= cap else { return -1 }
         result.copyBytes(to: output, count: result.count)
         return result.count
+    } catch let error as NSError where op == 0 && error.domain == NSOSStatusErrorDomain
+            && error.code == Int(errSecInteractionNotAllowed) {
+        // A fixed bridge result for key creation. Never forward native error text.
+        return -2
     } catch {
         return -1
     }

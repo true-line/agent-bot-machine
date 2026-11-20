@@ -6,6 +6,7 @@ use std::cell::{Cell, RefCell};
 #[derive(Default)]
 struct Fake {
     created: Cell<u8>,
+    create_error: Option<&'static str>,
     revoked: Cell<bool>,
     revoke_after_sign: Cell<bool>,
     signed: RefCell<Vec<Vec<u8>>>,
@@ -18,6 +19,9 @@ impl Enclave for Fake {
         Ok(())
     }
     fn create(&self) -> Result<Vec<u8>, &'static str> {
+        if let Some(error) = self.create_error {
+            return Err(error);
+        }
         self.created.set(self.created.get() + 1);
         Ok(vec![self.created.get()])
     }
@@ -71,6 +75,20 @@ fn request_with_nonce(p: &Pair, op: &str, nonce: &str, now: u64) -> Request {
     serde_json::from_value(json!({"machine_pub":p.machine_pub,"hq_pub":p.hq_pub,"hq_uid":p.hq_uid,"hq_epoch":p.hq_epoch,
             "req_nonce":nonce,"timestamp":now,"option":op,"signature":STANDARD.encode(sig.to_bytes())})).unwrap()
 }
+#[test]
+fn initialization_preserves_creation_failure_and_leaves_custody_absent() {
+    let items = Memory::default();
+    let provider = Fake {
+        create_error: Some("creation refused"),
+        ..Default::default()
+    };
+    assert_eq!(
+        initialize(&items, &provider, pair()),
+        Err("creation refused")
+    );
+    assert!(items.read(SERVICE, ITEM).unwrap().is_none());
+}
+
 #[test]
 fn public_identity_and_enrollment_are_typed_and_offline() {
     let (items, native, p) = (Memory::default(), Fake::default(), pair());
