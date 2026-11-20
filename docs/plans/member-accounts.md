@@ -499,7 +499,8 @@ dependencies. The supported macOS service runs natively on Apple Silicon.
 When staging an official Node distribution, choose the approved version's
 `darwin-arm64` tar and verify its archive checksum. Use the SHA-256 of the
 extracted `bin/node` executable for `node_sha256`. A universal executable
-must include an arm64 slice. The planner checks every slice for Apple system
+must include an arm64 slice. Each architecture directory entry must match its
+image’s CPU type and subtype. The planner checks every slice for Apple system
 library dependencies. Owner-writable Homebrew runtimes are unsuitable.
 No build tools or downloads run during installation.
 

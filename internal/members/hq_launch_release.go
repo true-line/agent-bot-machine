@@ -241,8 +241,9 @@ func checkDarwinNode(file *os.File) error {
 	fat, err := macho.NewFatFile(file)
 	switch {
 	case err == nil:
-		for _, arch := range fat.Arches {
-			slices = append(slices, arch.File)
+		slices, err = universalNodeSlices(fat)
+		if err != nil {
+			return err
 		}
 	case errors.Is(err, macho.ErrNotFat):
 		thin, err := macho.NewFile(file)
@@ -267,6 +268,19 @@ func checkDarwinNode(file *os.File) error {
 		return refuse(RefusedPath, "Node must include an arm64 executable slice for the Apple Silicon HQ service")
 	}
 	return nil
+}
+
+// Darwin selects a universal executable's slice by its directory entry.
+// debug/macho parses the directory and the image headers independently.
+func universalNodeSlices(fat *macho.FatFile) ([]*macho.File, error) {
+	slices := make([]*macho.File, 0, len(fat.Arches))
+	for _, arch := range fat.Arches {
+		if arch.FatArchHeader.Cpu != arch.File.Cpu || arch.FatArchHeader.SubCpu != arch.File.SubCpu {
+			return nil, refuse(RefusedPath, "Node architecture directory does not match its executable slice")
+		}
+		slices = append(slices, arch.File)
+	}
+	return slices, nil
 }
 
 func checkNodeSlice(m *macho.File) error {
