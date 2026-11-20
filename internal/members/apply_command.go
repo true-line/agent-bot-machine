@@ -145,7 +145,7 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return failure(diag.MembersPlanFailed, "the saved plan %s cannot be read", planID)
 	}
 
-	if saved.HarnessLaunch != nil {
+	if saved.isHarnessLaunchPlan() {
 		return failure(diag.MembersNotApproved, "applying a harness launch plan requires a Machine release supporting the paired owner approval")
 	}
 

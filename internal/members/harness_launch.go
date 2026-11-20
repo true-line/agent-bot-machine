@@ -232,6 +232,20 @@ func harnessInput(raw []byte) ([]HarnessAdapter, error) {
 	return out, nil
 }
 
+// A saved harness plan may contain its typed request, its fixed file steps,
+// or both. All of these forms are review-only.
+func (s Saved) isHarnessLaunchPlan() bool {
+	if s.HarnessLaunch != nil {
+		return true
+	}
+	for _, step := range s.Plan.Steps {
+		if step.Target == HarnessPolicy || step.Target == HarnessRule {
+			return true
+		}
+	}
+	return false
+}
+
 // CanonicalForReview returns the bytes served by the paired read-only route.
 // A saved launch request and its rendered file steps must describe one grant.
 // Reading a review does not authorize installation or retirement.
@@ -241,10 +255,8 @@ func (s Saved) CanonicalForReview() ([]byte, error) {
 		return nil, err
 	}
 	if s.HarnessLaunch == nil {
-		for _, step := range s.Plan.Steps {
-			if step.Target == HarnessPolicy || step.Target == HarnessRule {
-				return nil, errors.New("saved harness launch files require their exact request")
-			}
+		if s.isHarnessLaunchPlan() {
+			return nil, errors.New("saved harness launch files require their exact request")
 		}
 		return raw, nil
 	}

@@ -271,6 +271,27 @@ func TestDarwinSharedConfigPreservesAccountOnlyDigest(t *testing.T) {
 	}
 }
 
+func TestIncompleteHarnessPlanRefusedBeforeApprovalLookup(t *testing.T) {
+	for _, targetPath := range []string{HarnessPolicy, HarnessRule} {
+		w := newWorld(emptyHost())
+		s := Saved{PlanID: applyID, Plan: Plan{Steps: []Step{{Kind: KindFile, Target: targetPath}}}}
+		raw, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.h.files[filepath.Join("/home/owner", "Library", "Application Support", "managed-machine", "members", "plans", applyID+".json")] = string(raw)
+		w.deps.DaemonState = func(string, string) (string, string, error) {
+			t.Fatal("read-only launch plan reached the approval store")
+			return "", "", nil
+		}
+		result := Command(w.deps).Run(on(target.DarwinARM64), []string{"apply", applyID})
+		wantRefused(t, w, result, diag.MembersNotApproved)
+		if len(w.r.receipts) != 0 {
+			t.Fatal("read-only launch plan acquired a root receipt")
+		}
+	}
+}
+
 func TestReadOnlyHarnessPlanCannotApply(t *testing.T) {
 	for _, action := range []string{"install", "retire"} {
 		t.Run(action, func(t *testing.T) {
