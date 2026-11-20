@@ -11,6 +11,58 @@ import (
 	"github.com/qwts/managed-machine/internal/diag"
 )
 
+func TestDarwinServiceRemovalCoordinatesWithInstall(t *testing.T) {
+	for _, verb := range []string{"stop", "uninstall"} {
+		t.Run(verb, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv(channelEnv, filepath.Join(home, "channel"))
+			if err := os.Mkdir(filepath.Join(home, "Library"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			deps := owner(home)
+			for _, name := range []string{"managed-machine", "agent-bot-keyd"} {
+				if err := os.WriteFile(filepath.Join(home, name), []byte("fixture"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			deps.Executable = func() (string, error) { return filepath.Join(home, "managed-machine"), nil }
+			deps.Caller = func() (Caller, error) {
+				return Caller{Username: "admin", UID: os.Getuid(), Home: home, RegisteredHome: home}, nil
+			}
+			deps.LockLifecycle = testMacPackageLock
+			stops := 0
+			deps.Deactivate = func(string) error { stops++; return nil }
+			overlapped := false
+			deps.Activate = func(path string) error {
+				if filepath.Base(path) != darwinServiceLabel+".plist" {
+					return nil
+				}
+				overlapped = true
+				// Both plists exist, and the ongoing install still owns its lifecycle lock.
+				result := run(deps, cli.Context{}, []string{verb})
+				if result.Diagnostic == nil || !strings.Contains(result.Diagnostic.Message, "lifecycle is busy") || stops != 0 {
+					t.Errorf("overlapping %s: diagnostic %v, stopped %d jobs", verb, result.Diagnostic, stops)
+				}
+				return nil
+			}
+			if result := run(deps, cli.Context{}, []string{"install"}); result.Diagnostic != nil {
+				t.Fatal(result.Diagnostic.Message)
+			}
+			if !overlapped {
+				t.Fatal("did not reach Machine activation")
+			}
+			for _, label := range []string{darwinServiceLabel, darwinKeydServiceLabel} {
+				if _, err := os.Stat(filepath.Join(home, "Library", "LaunchAgents", label+".plist")); err != nil {
+					t.Error(err)
+				}
+			}
+			if result := run(deps, cli.Context{}, []string{verb}); result.Diagnostic != nil || stops != 2 {
+				t.Fatalf("retry %s: diagnostic %v, stopped %d jobs", verb, result.Diagnostic, stops)
+			}
+		})
+	}
+}
+
 func TestDarwinStopAndUninstallCheckBothDomains(t *testing.T) {
 	const unloaded = "exit 0"
 	const absent = "echo 'Boot-out failed: 3: No such process' >&2; exit 3"
