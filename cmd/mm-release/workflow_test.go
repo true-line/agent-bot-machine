@@ -20,6 +20,10 @@ type workflowDoc struct {
 }
 
 type workflowJob struct {
+	Concurrency struct {
+		Group  string `yaml:"group"`
+		Cancel bool   `yaml:"cancel-in-progress"`
+	} `yaml:"concurrency"`
 	Name        string            `yaml:"name"`
 	Uses        string            `yaml:"uses"`
 	Needs       any               `yaml:"needs"`
@@ -341,6 +345,119 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	}
 	if !sawPublishedDraft {
 		t.Errorf("publish job missing exact %q invocation", wantPublish)
+	}
+}
+
+// Exercise the real draft checks with disposable CLI responses. GitHub's
+// pending-tag lookup can succeed when the REST published-tag route returns 404.
+func TestPendingReleaseDraftLookup(t *testing.T) {
+	for _, tool := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s unavailable", tool)
+		}
+	}
+	root, err := findRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc workflowDoc
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	job := doc.Jobs["publish"]
+	if job.Concurrency.Group != "release-publish-${{ inputs.tag || github.ref_name }}" || job.Concurrency.Cancel {
+		t.Fatal("manual and pushed publishes must serialize by release tag")
+	}
+	steps := map[string]string{}
+	for _, item := range job.Steps {
+		steps[item.Name] = item.Run
+	}
+	const lookup = "Identify the signed draft"
+	const publish = "Publish the signed draft"
+	for _, name := range []string{lookup, publish} {
+		if steps[name] == "" {
+			t.Fatalf("missing step %s", name)
+		}
+	}
+	const gh = `#!/bin/bash
+set -eu
+case "$*" in
+	'release view v1.2.3 --repo org/project --json databaseId --jq .databaseId')
+		test "$LOOKUP" != missing || exit 1
+		echo "$LOOKUP" ;;
+	'api repos/org/project/commits/v1.2.3 --jq .sha') echo "$TAG_SHA" ;;
+	'api repos/org/project/releases/37')
+		if [[ -e uploaded ]]; then touch rechecked; echo '{"draft":false}'
+		else echo "$RECORD"; fi ;;
+	'release upload v1.2.3 '*) touch uploaded ;;
+	*) exit 1 ;;
+esac
+`
+	const draft = `{"id":37,"draft":true,"tag_name":"v1.2.3","target_commitish":"reviewed-source"}`
+	for _, tc := range []struct {
+		name, step, lookup, record, tagSHA string
+		valid, upload                      bool
+	}{
+		{"pending draft", lookup, "37", draft, "reviewed-source", true, false},
+		{"no draft found", lookup, "missing", draft, "reviewed-source", false, false},
+		{"invalid release ID", lookup, "0", draft, "reviewed-source", false, false},
+		{"different release", lookup, "37", strings.Replace(draft, "37", "38", 1), "reviewed-source", false, false},
+		{"already published", lookup, "37", strings.Replace(draft, "true", "false", 1), "reviewed-source", false, false},
+		{"different tag", lookup, "37", strings.Replace(draft, "1.2.3", "1.2.4", 1), "reviewed-source", false, false},
+		{"different source", lookup, "37", strings.Replace(draft, "reviewed-source", "other-source", 1), "reviewed-source", false, false},
+		{"published before upload", publish, "37", strings.Replace(draft, "true", "false", 1), "reviewed-source", false, false},
+		{"replaced before upload", publish, "38", draft, "reviewed-source", false, false},
+		{"tag moved before upload", publish, "37", draft, "other-source", false, false},
+		{"published after upload", publish, "37", draft, "reviewed-source", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, "scripts"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			guard, err := os.ReadFile(filepath.Join(root, "scripts", "verify-release-draft"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, body := range map[string]string{
+				"scripts/verify-release-draft": string(guard), "VERSION": "1.2.3\n", "gh": gh, "git": "#!/bin/bash\ntest \"$*\" = 'rev-parse HEAD' && echo reviewed-source\n",
+			} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			envFile := filepath.Join(dir, "github-env")
+			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", steps[tc.step])
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"GITHUB_ENV="+envFile, "GITHUB_REPOSITORY=org/project", "RELEASE_ID=37", "RUNNER_TEMP="+dir,
+				"LOOKUP="+tc.lookup, "RECORD="+tc.record, "TAG_SHA="+tc.tagSHA)
+			output, err := cmd.CombinedOutput()
+			if (err == nil) != tc.valid {
+				t.Fatalf("success = %t, want %t: %s", err == nil, tc.valid, output)
+			}
+			_, err = os.Stat(filepath.Join(dir, "uploaded"))
+			if (err == nil) != tc.upload {
+				t.Fatalf("metadata upload = %t, want %t", err == nil, tc.upload)
+			}
+			if tc.upload {
+				if _, err := os.Stat(filepath.Join(dir, "rechecked")); err != nil {
+					t.Fatal("published draft was not rechecked after upload")
+				}
+			}
+			body, err := os.ReadFile(envFile)
+			if tc.valid {
+				if err != nil || string(body) != "RELEASE_ID=37\n" {
+					t.Fatalf("unexpected workflow output %q: %v", body, err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("refused step exported %q (%v)", body, err)
+			}
+		})
 	}
 }
 

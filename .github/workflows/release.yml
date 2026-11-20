@@ -20,10 +20,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
 env:
   GOTOOLCHAIN: local
   CGO_ENABLED: '0'
@@ -35,6 +31,9 @@ jobs:
 
   publish:
     name: publish
+    concurrency:
+      group: release-publish-${{ inputs.tag || github.ref_name }}
+      cancel-in-progress: false
     needs: gates
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish)
     runs-on: macos-15
@@ -86,17 +85,20 @@ jobs:
           fi
           git tag --points-at HEAD | grep -qxF "$TAG"
           go run ./cmd/mm-release verify -dist dist
+      - name: Identify the signed draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(cat VERSION)"
+          release_id="$(bash scripts/verify-release-draft "$TAG")"
+          echo "RELEASE_ID=$release_id" >> "$GITHUB_ENV"
       - name: Download the signed draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$(cat VERSION)"
-          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" |
-            jq -er --arg tag "$TAG" --arg sha "$(git rev-parse HEAD)" 'select(.draft and .tag_name == $tag and .target_commitish == $sha) | .id')"
-          [[ "$release_id" =~ ^[0-9]+$ ]]
-          echo "RELEASE_ID=$release_id" >> "$GITHUB_ENV"
           gh release download "$TAG" --dir signed --pattern 'managed-machine_*' --pattern SHA256SUMS
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
             --jq '[.[][] | {name,id,state,digest}]' |
             python3 scripts/verify-public-draft.py downloaded "${TAG#v}" "$RUNNER_TEMP/public-assets.json"
       - name: Render the Homebrew pin from the verified signed archive
@@ -114,10 +116,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$(cat VERSION)"
+          check_draft() {
+            bash scripts/verify-release-draft "$TAG" "$RELEASE_ID" >/dev/null
+          }
+          check_draft
           gh release upload "$TAG" support-matrix.md release-gate-*.json Formula/managed-machine.rb --clobber
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)" = "$(git rev-parse HEAD)"
-          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" |
-            jq -e --arg tag "$TAG" --arg sha "$(git rev-parse HEAD)" '.draft and .tag_name == $tag and .target_commitish == $sha' >/dev/null
+          check_draft
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
             --jq '[.[][] | {name,id,state,digest}]' |
             python3 scripts/verify-public-draft.py publish "${TAG#v}" "$RUNNER_TEMP/public-assets.json" > "$RUNNER_TEMP/public-release-notes.md"
