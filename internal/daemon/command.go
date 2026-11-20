@@ -235,7 +235,7 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		}
 		return cli.Result{Records: []*output.Record{rec}}
 	case "install", "start":
-		return ensureService(deps, ctx, goos, root, userName, verb == "install", debug)
+		return ensureService(deps, ctx, caller, goos, root, userName, verb == "install", debug)
 	case "stop":
 		path, err := unitPath(goos, root)
 		if err != nil {
@@ -370,7 +370,7 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	}
 }
 
-func ensureService(deps Deps, ctx cli.Context, goos, root, userName string, install, debug bool) cli.Result {
+func ensureService(deps Deps, ctx cli.Context, caller Caller, goos, root, userName string, install, debug bool) cli.Result {
 	if err := checkChannelIdentity(root); err != nil {
 		return serviceFailed(err)
 	}
@@ -427,6 +427,11 @@ func ensureService(deps Deps, ctx cli.Context, goos, root, userName string, inst
 	if deps.WaitHealthy != nil {
 		if err := deps.WaitHealthy(); err != nil {
 			return serviceFailed(err)
+		}
+		if keydUnit != "" {
+			if err := waitBundledKeyd(caller, healthyWait); err != nil {
+				return serviceFailed(fmt.Errorf("Machine is listening, but bundled keyd is not ready in the Homebrew administrator's login: %w; check its LaunchAgent and retry managed-machine daemon start", err))
+			}
 		}
 		state = "running"
 	}

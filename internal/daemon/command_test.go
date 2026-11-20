@@ -1,15 +1,20 @@
 package daemon
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/diag"
@@ -446,5 +451,97 @@ func TestPairEnrollAgentDaemonReportsTheBinding(t *testing.T) {
 	res = run(deps, cli.Context{}, append(args, "--user", "ghost"))
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {
 		t.Fatalf("unknown --user: %#v", res.Diagnostic)
+	}
+}
+
+// Drive normal install and start against disposable services; launchd dispatch
+// is the only simulated service lifecycle operation.
+func TestBundledDarwinKeydReadiness(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Darwin LaunchAgent and Unix peer credentials")
+	}
+	home, err := os.MkdirTemp("/private/tmp", "mmkr.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
+	t.Setenv(channelEnv, filepath.Join(home, "channel"))
+	if err := os.MkdirAll(filepath.Dir(ChannelSocket()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	machine, err := net.Listen("unix", ChannelSocket())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer machine.Close()
+	keydDir := filepath.Join(home, ".local", "state", "agent-bot", "keyd")
+	if err := os.MkdirAll(keydDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(home, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "agent-bot-keyd"), []byte("fixture"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", other)
+	caller := Caller{UID: os.Getuid(), Username: "fixture", PrefixOwner: "fixture", Home: home, RegisteredHome: home, DarwinAdmin: true}
+	deps := owner(home)
+	deps.Caller = func() (Caller, error) { return caller, nil }
+	deps.Executable = func() (string, error) { return filepath.Join(bin, "managed-machine"), nil }
+	deps.Activate = func(string) error { return nil }
+	deps.WaitHealthy = func() error { return WaitListening(ChannelSocket(), time.Second) }
+	path := filepath.Join(keydDir, "keyd.sock")
+	if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res := run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic == nil || !strings.Contains(res.Diagnostic.Message, "Machine is listening, but bundled keyd is not ready") {
+		t.Fatalf("missing partial-start diagnostic: %#v", res.Diagnostic)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "keep" {
+		t.Fatal("changed the existing endpoint")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	sock, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sock.Close()
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	checked := make(chan error, 1)
+	go func() {
+		c, err := sock.Accept()
+		if err != nil {
+			checked <- err
+			return
+		}
+		defer c.Close()
+		c.SetDeadline(time.Now().Add(2 * time.Second))
+		line, err := bufio.NewReader(c).ReadString('\n')
+		if err == nil && !strings.Contains(line, `"method":"initialize"`) {
+			err = errors.New("unexpected request")
+		}
+		if err == nil {
+			_, err = fmt.Fprintln(c, `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","serverInfo":{"name":"agent-bot-keyd","version":"0.2.1"}}}`)
+		}
+		checked <- err
+	}()
+	res = run(deps, cli.Context{}, []string{"start"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	state, _ := res.Records[0].Get("state")
+	if state != "running" {
+		t.Fatalf("state %v", state)
+	}
+	if err := <-checked; err != nil {
+		t.Fatal(err)
 	}
 }
