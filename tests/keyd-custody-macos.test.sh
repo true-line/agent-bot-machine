@@ -5,12 +5,12 @@ set -euo pipefail
 [[ "${MM_KEYD_CUSTODY_TEST:-}" == 1 ]] || exit 0
 [[ "$(uname -s)" == Darwin && "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]
 root="$(cd "$(dirname "$0")/.." && pwd)"
-(cd "$root/keyd" && cargo build --release --locked)
 temp="$(mktemp -d /private/tmp/mm-custody.XXXXXXXX)"
 trap 'rm -rf "$temp"' EXIT
 chmod 0755 "$temp"
 helper="$temp/agent-bot-keyd"
-install -m 0700 "$root/keyd/target/release/agent-bot-keyd" "$helper"
+# Exercise the signing build with an ambient Cargo target override.
+CARGO_TARGET_DIR="$temp/alternate-target" "$root/scripts/build-darwin-keyd" "$helper"
 owner="$(stat -f %Su /opt/homebrew)"
 sudo -n chown "$owner" "$helper"
 sudo -n -u "$owner" "$helper" --version | grep -E '^agent-bot-keyd [0-9]+\.[0-9]+\.[0-9]+$'
