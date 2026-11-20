@@ -2,7 +2,7 @@ package daemon
 
 import "github.com/qwts/managed-machine/internal/members"
 
-func currentRecoveryPlan(home, owner, id, digest string, uid int) (string, error) {
+func currentPairedServicePlan(verb, home, owner, id, digest string, uid int) (string, error) {
 	dir, err := openMembersPlans(home)
 	if err != nil {
 		return "", err
@@ -16,7 +16,15 @@ func currentRecoveryPlan(home, owner, id, digest string, uid int) (string, error
 	if err != nil || saved.PlanDigest != digest {
 		return "", errRecoveryPlan
 	}
-	if err := members.CheckDarwinHQRecovery(saved, owner, uid); err != nil {
+	switch verb {
+	case harnessInstallVerb, harnessRetireVerb:
+		err = members.CheckDarwinHarnessLaunch(saved, verb, owner, uid)
+	case recoveryVerb:
+		err = members.CheckDarwinHQRecovery(saved, owner, uid)
+	default:
+		return "", errRecoveryPlan
+	}
+	if err != nil {
 		return "", err
 	}
 	return string(canonical), nil

@@ -5,12 +5,22 @@ package members
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+type unreadableHarnessPolicy struct{ *brokerHost }
+
+func (h unreadableHarnessPolicy) Lstat(path string) (Entry, bool, error) {
+	if path == HarnessPolicy {
+		return Entry{}, false, os.ErrPermission
+	}
+	return h.brokerHost.Lstat(path)
+}
 
 func TestDarwinHarnessPlanCommandBindsInstalledRolesAndCurrentBuild(t *testing.T) {
 	h, in := brokerFixture()
@@ -80,6 +90,28 @@ func TestDarwinHarnessPlanCommandBindsInstalledRolesAndCurrentBuild(t *testing.T
 	canonical, err := s.CanonicalForReview()
 	if err != nil || fmt.Sprintf("%x", sha256.Sum256(canonical)) != s.PlanDigest {
 		t.Fatal("paired read cannot reproduce plan digest", err)
+	}
+	if err := checkDarwinHarnessLaunch(s, HarnessInstall, in.Invoker, r.HQUID, h); err != nil {
+		t.Fatal("current plan refused", err)
+	}
+	if err := checkDarwinHarnessLaunch(s, HarnessRetire, in.Invoker, r.HQUID, h); err == nil {
+		t.Fatal("accepted wrong purpose")
+	}
+	if err := checkDarwinHarnessLaunch(s, HarnessInstall, in.Invoker, r.HQUID+1, h); err == nil {
+		t.Fatal("accepted a different paired UID")
+	}
+	changed := s
+	changed.PlanDigest = strings.Repeat("0", 64)
+	if err := checkDarwinHarnessLaunch(changed, HarnessInstall, in.Invoker, r.HQUID, h); err == nil {
+		t.Fatal("accepted a different saved digest")
+	}
+	h.entries[HarnessPolicy] = Entry{Regular: true, Owner: "root", Group: "wheel", Mode: 0644}
+	if err := checkDarwinHarnessLaunch(s, HarnessInstall, in.Invoker, r.HQUID, h); err == nil {
+		t.Fatal("issued consent after the install target became occupied")
+	}
+	delete(h.entries, HarnessPolicy)
+	if err := checkDarwinHarnessLaunch(s, HarnessInstall, in.Invoker, r.HQUID, unreadableHarnessPolicy{h}); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("unreadable install target: %v", err)
 	}
 	prior := installedHarness{s.PlanID, s.PlanDigest, *r}
 	retire, err := retirementRequest(prior, s.PlanID)

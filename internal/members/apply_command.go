@@ -146,7 +146,7 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 
 	if saved.isHarnessLaunchPlan() {
-		return failure(diag.MembersNotApproved, "applying a harness launch plan requires a Machine release supporting the paired owner approval")
+		return failure(diag.MembersNotApproved, "this build verifies paired owner approval but cannot install or retire a harness launch rule")
 	}
 
 	// The approval agent-machine recorded.
@@ -277,6 +277,9 @@ func loadApproval(h Host, daemonDir, account, planID, platform string, now time.
 	var a Approval
 	if err := json.Unmarshal([]byte(raw), &a); err != nil || a.PlanID != planID || !ValidApproval(a.PlanID, a.PlanDigest) {
 		return Approval{}, "the approval cannot be read"
+	}
+	if a.Purpose != "" || a.MachineFingerprint != "" || a.PairCommitment != "" {
+		return Approval{}, "a paired harness launch approval cannot authorize this operation"
 	}
 	expires, err := time.Parse(approvalTime, a.ExpiresAt)
 	if err != nil {

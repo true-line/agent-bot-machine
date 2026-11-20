@@ -2,6 +2,7 @@ package members
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -244,6 +245,46 @@ func (s Saved) isHarnessLaunchPlan() bool {
 		}
 	}
 	return false
+}
+
+// CheckDarwinHarnessLaunch rechecks the exact grant, registered role and
+// installed artifacts when issuing a challenge and when accepting the proof.
+func CheckDarwinHarnessLaunch(s Saved, purpose, owner string, uid int) error {
+	return checkDarwinHarnessLaunch(s, purpose, owner, uid, OSHost{})
+}
+
+func checkDarwinHarnessLaunch(s Saved, purpose, owner string, uid int, h Host) error {
+	r := s.HarnessLaunch
+	if r == nil || HarnessPurpose(r.Action) != purpose || r.HQUID != uid || !ValidApproval(s.PlanID, s.PlanDigest) {
+		return errors.New("saved plan is not for this harness launch action and HQ identity")
+	}
+	raw, err := s.CanonicalForReview()
+	if err != nil {
+		return err
+	}
+	if fmt.Sprintf("%x", sha256.Sum256(raw)) != s.PlanDigest {
+		return errors.New("saved harness plan differs from the signed digest")
+	}
+	p, err := Build(Input{Platform: PlatformDarwin, HQAccount: s.Plan.HQAccount, Dir: s.Plan.Dir, Members: s.Plan.Members, Invoker: owner, HarnessLaunch: r}, h)
+	if err != nil {
+		return err
+	}
+	current, err := p.Canonical()
+	if err != nil || !bytes.Equal(raw, current) {
+		return errors.New("harness launch plan changed")
+	}
+	if purpose == HarnessInstall {
+		// Planning reports an identical installed policy as no work and refuses
+		// a different one. Neither can use this pending install challenge.
+		_, present, err := h.Lstat(HarnessPolicy)
+		if err != nil {
+			return err
+		}
+		if present {
+			return errors.New("a harness launch policy already occupies the install target")
+		}
+	}
+	return nil
 }
 
 // CanonicalForReview returns the bytes served by the paired read-only route.

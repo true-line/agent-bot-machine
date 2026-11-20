@@ -165,7 +165,7 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	}
 	g.seen[req.Nonce] = struct{}{}
 	if !knownVerb(req.Verb) {
-		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, members-plans, hq-service-recovery, hq-device, approve-members, bootstrap"
+		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, members-plans, hq-service-recovery, harness-launch-install, harness-launch-retire, hq-device, approve-members, bootstrap"
 	}
 	if id, msg := catalogFields(req, raw); id != "" {
 		return req, id, msg
@@ -187,19 +187,19 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 		}
 		g.Pairing = pairing
 	}
-	if req.Verb == recoveryVerb && (!g.Pairing.OwnerPresenceRequired || runtime.GOOS != "darwin") {
-		return req, diag.DaemonPeerRefused, "service recovery requires the protected macOS pairing"
+	if pairedServiceVerb(req.Verb) && (!g.Pairing.OwnerPresenceRequired || runtime.GOOS != "darwin") {
+		return req, diag.DaemonPeerRefused, "paired owner handoff requires the protected macOS pairing"
 	}
 	if req.Verb == deviceVerb && !devicePairAllows(g.Pairing, peerUID, ed25519.PublicKey(pub)) {
 		return req, diag.DaemonPeerRefused, "HQ device custody requires the approved HQ pairing"
 	}
-	if req.Verb == membersPlansVerb || req.Verb == recoveryVerb {
+	if req.Verb == membersPlansVerb || pairedServiceVerb(req.Verb) {
 		p := g.Pairing
 		if !p.AgentDaemonBound || p.AgentDaemonUID != peerUID || !p.AgentDaemon.Equal(ed25519.PublicKey(pub)) || !dedicatedMembersPlanPeer(peerUID) {
 			return req, diag.DaemonPeerRefused, "this command requires the enrolled HQ service account"
 		}
 	}
-	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" && req.Verb != membersPlansVerb && req.Verb != recoveryVerb && req.Verb != deviceVerb {
+	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" && req.Verb != membersPlansVerb && !pairedServiceVerb(req.Verb) && req.Verb != deviceVerb {
 		return req, diag.DaemonPeerRefused, "this command requires its own owner presence proof"
 	}
 	if req.Verb == "bootstrap" {
@@ -255,7 +255,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, deviceVerb, approveMembersVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, harnessInstallVerb, harnessRetireVerb, deviceVerb, approveMembersVerb, "bootstrap":
 		return true
 	default:
 		return false
@@ -307,9 +307,9 @@ const approveMembersVerb = "approve-members"
 // or null value, and refuses everything but plan_id and plan_digest on
 // approve-members. Both identifiers must have their fixed forms.
 func membersFields(req Request, raw []byte) (string, string) {
-	if req.Verb == recoveryVerb {
+	if pairedServiceVerb(req.Verb) {
 		if !validRecoveryRequest(req, raw) {
-			return diag.DaemonUndeclared, "invalid hq-service-recovery request"
+			return diag.DaemonUndeclared, "invalid paired owner handoff request"
 		}
 		return "", ""
 	}
