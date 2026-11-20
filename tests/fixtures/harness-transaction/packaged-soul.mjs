@@ -37,6 +37,7 @@ export async function offerAndCheck(owner, hq, soul) {
   assert.equal(reply.ok, true, 'owner task offer refused');
   const receipt = reply.result;
   assert.equal(receipt.status, 'offered');
+  assert.equal(receipt.profile, 'managed-cooperative');
   assert.equal(receipt.outcome, 'committed');
   assert.equal(receipt.by, 'owner');
   assert.equal(receipt.operation_id, operationId);
@@ -46,6 +47,7 @@ export async function offerAndCheck(owner, hq, soul) {
   assert.equal(read.result.task.status, 'offered');
   const stored = one(results(hq.core, 'task.offer').filter(r => r.operation_id === operationId), 'one committed offer');
   assert.equal(stored.receipt_id, receipt.receipt_id);
+  assert.equal(stored.profile, receipt.profile);
   return receipt.task_id;
 }
 
@@ -76,7 +78,7 @@ async function run() {
   const [code, souls, state, policyFile] = process.argv.slice(2);
   const fixed = json(policyFile);
   const provenance = json(join(code, 'governance/interim-release.json'));
-  assert.equal(provenance.hq_commit, '989eb225aefe9b7b8846a66614ab492eb91f7605');
+  assert.equal(provenance.hq_commit, '1d3761e77e6b77a451347839a04dd4cea7a47904');
   const { createHQ } = await load(code, 'hq/hq.mjs');
   const { connectSocket } = await load(code, 'hq/socket.mjs');
   const { readPins, productionPluginsDir } = await load(code, 'hq/plugins.mjs');
