@@ -27,26 +27,6 @@ The installer downloads the public package from [true-line/agent-bot-machine](ht
 
 All platforms use the [public Machine releases](https://github.com/true-line/agent-bot-machine/releases). To use an existing policy checkout with the portable core, point `MANAGED_MACHINE_POLICY_DIR` at its directory.
 
-## Uninstall on macOS
-
-Open a login Terminal as the administrator who owns Homebrew. If Machine installed a dedicated HQ service, use its matching applied plan ID to remove that service first. The preview shows what will be removed. The list and preview work with HQ offline.
-
-```sh
-sudo managed-machine members uninstall-hq --list
-sudo managed-machine members uninstall-hq PLAN_ID --dry-run
-sudo managed-machine members uninstall-hq PLAN_ID
-```
-
-For a Machine-only install, start here. Run this command as the Homebrew owner without `sudo`.
-
-```sh
-managed-machine uninstall
-```
-
-Machine unloads its two user services, removes their LaunchAgents and stale sockets, and invokes Homebrew to remove the formula and its command links. The dedicated HQ account and its home, the administrator’s keys, pairing and revocation history, and install receipts are retained. A retired standalone-signing authorization stays retired across uninstall and reinstall. Archives and Node runtimes staged separately by an operator remain at their original locations. Applications and accounts previously provisioned with Machine have their own lifecycles.
-
-If you started HQ directly with `hq run`, press Control-C in its Terminal to let it shut down. For an HQ process registered by another supervisor, stop and disable that registration through the same supervisor. You can then remove the separately staged HQ program. Keep its data directory if you intend to reinstall. A Node runtime shared with another installation should stay in place.
-
 ## Usage
 
 Portable core commands (all five targets):
@@ -81,6 +61,26 @@ Legacy commands (macOS only; Homebrew install — delegated to `libexec/legacy/b
 Bare `managed-machine status [--json|--human]` is served by the portable Go core (exit 0; reporting `software`, `config`, and `flavor`, with `--section fleet` available under `--user`), and `managed-machine skill path [--json|--human]` is a core command on all five targets (reporting `MM_SKILL_BUNDLE_MISSING`, exit 1, on archive installs where the skill bundle is not present). On macOS, `[legacy] status --section bootstrap|update [--json]` remains a read-only legacy route printing the last recorded `bootstrap.manifest` and `update.manifest` outcomes. The 17 legacy `status` sections removed in `v0.11.0` and `fleet list` fail on all five targets with `MM_LEGACY_ROUTE_REMOVED` (exit 2) naming each route's replacement or `no replacement`: `status --section managed-machine` -> `managed-machine version`; `status --section ssh` -> `managed-machine ssh status`; `status --section agent-accounts` -> `managed-machine account doctor`; `status --section catalog` -> `managed-machine setup --list and managed-machine software --available`; `fleet list` -> `managed-machine fleet --keys`; and `status --section machine|local-bin|zsh-functions|pins|toolchain|homebrew|gh|nvm|node|hostname|rustup|rustc|cargo` -> `no replacement`.
 
 ---
+
+## Uninstall on macOS
+
+Open a login Terminal as the administrator who owns Homebrew. If Machine installed a dedicated HQ service, use its matching applied plan ID to remove that service first. The preview shows what will be removed. The list and preview work with HQ offline.
+
+```sh
+sudo managed-machine members uninstall-hq --list
+sudo managed-machine members uninstall-hq PLAN_ID --dry-run
+sudo managed-machine members uninstall-hq PLAN_ID
+```
+
+For a Machine-only install, start here. Run this command as the Homebrew owner without `sudo`.
+
+```sh
+managed-machine uninstall
+```
+
+Machine unloads its two user services, removes their LaunchAgents and stale sockets, and invokes Homebrew to remove the formula and its command links. The dedicated HQ account and its home, the administrator’s keys, pairing and revocation history, and install receipts are retained. A retired standalone-signing authorization stays retired across uninstall and reinstall. Archives and Node runtimes staged separately by an operator remain at their original locations. Applications and accounts previously provisioned with Machine have their own lifecycles.
+
+If you started HQ directly in a Terminal, press Control-C in its Terminal to let it shut down. For an HQ process registered by another supervisor, stop and disable that registration through the same supervisor. You can then remove the separately staged HQ program. Keep its data directory if you intend to reinstall. A Node runtime shared with another installation should stay in place.
 
 ## Setup scripts
 

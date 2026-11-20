@@ -192,16 +192,16 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	} else if err != nil {
 		caller = Caller{}
 	}
-	root, err := deps.root()
-	if err != nil {
-		return serviceFailed(err)
-	}
 	if goos == "darwin" && (verb == "install" || verb == "start") && deps.LockLifecycle != nil {
 		lock, err := deps.LockLifecycle(caller.RegisteredHome, caller.UID)
 		if err != nil {
 			return serviceFailed(err)
 		}
 		defer lock.Close()
+	}
+	root, err := deps.root()
+	if err != nil {
+		return serviceFailed(err)
 	}
 	switch verb {
 	case "status":
