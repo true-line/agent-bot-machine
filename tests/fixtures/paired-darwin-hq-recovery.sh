@@ -11,7 +11,7 @@ checkout_review_source() {
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 git -C "$subjects/$name" \
         -c credential.helper= fetch -q --depth=1 --no-tags "https://github.com/true-line/$repo.git" "$sha"
     git -C "$subjects/$name" checkout -q --detach FETCH_HEAD
-    [[ "$(git -C "$subjects/$name" rev-parse HEAD)" == "$sha" ]]
+    [[ "$(git -C "$subjects/$name" rev-parse HEAD)" == "$sha" ]] || exit 1
 }
 checkout_review_source conformance soul-conformance e41baba741bab974fee19acb09b5edb446a3d1f0
 suite="$subjects/conformance/suites/paired-hq-recovery"
@@ -95,7 +95,7 @@ start_fixture_machine --require-identity "$machine_pin"
 paired_status --daemon-key "$machine_key"
 
 if [[ "${MM_HQ_UPGRADE_TEST:-}" == paired ]]; then
-    [[ "${MM_KEYD_CUSTODY_TEST:-}" == 1 && "${MM_HQ_PREDECESSOR:-}" == paired && -z "${MM_HQ_DEVICE_ARCHIVE:-}" ]]
+    [[ "${MM_KEYD_CUSTODY_TEST:-}" == 1 && "${MM_HQ_PREDECESSOR:-}" == paired && -z "${MM_HQ_DEVICE_ARCHIVE:-}" ]] || exit 1
     stop_fixture_machine
     "$provider_dir/agent-bot-keyd" hq-device-init
     upgrade_test_daemon=true

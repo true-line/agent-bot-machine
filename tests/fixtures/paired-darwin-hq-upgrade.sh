@@ -12,7 +12,7 @@ next_dir="$stage/upgrade-public"
 # The old and new service records share precisely the original, verified Node.
 install_upgrade_tree() {
     local tar_input="$1" target="$2" output="$3" sha="$4"
-    [[ "$(shasum -a 256 "$tar_input" | awk '{print $1}')" == "$sha" ]]
+    [[ "$(shasum -a 256 "$tar_input" | awk '{print $1}')" == "$sha" ]] || exit 1
     sudo install -d -o root -g wheel -m 0755 "$target"
     sudo install -o root -g wheel -m 0644 "$tar_input" "$target/approved.tar"
     sudo tar --no-same-owner -xpf "$target/approved.tar" -C "$target"
@@ -53,9 +53,9 @@ job_pid() {
 }
 require_release() {
     local src="$1" expected="$2" job
-    [[ "$(id -u "$role")" == "$role_uid" && "$(sudo stat -f '%d:%i:%u:%g:%Lp' "$role_home")" == "$home_id" ]]
+    [[ "$(id -u "$role")" == "$role_uid" && "$(sudo stat -f '%d:%i:%u:%g:%Lp' "$role_home")" == "$home_id" ]] || exit 1
     job="$(job_pid)"
-    [[ "$job" =~ ^[1-9][0-9]*$ && "$(ps -o uid= -p "$job" | tr -d ' ')" == "$role_uid" ]]
+    [[ "$job" =~ ^[1-9][0-9]*$ && "$(ps -o uid= -p "$job" | tr -d ' ')" == "$role_uid" ]] || exit 1
     grep -Fq "<string>$src/hq/main.mjs</string>" "$plist"
     paired_status
     (cd / && "$stage/node" "$src/hq/main.mjs" status --owner-control --json) |
@@ -67,7 +67,7 @@ require_release() {
 # Its original inode is returned before the test proceeds to any real switch.
 check_private_predecessor_receipt() {
     local previous="$RECEIPTS/$repair_id.json" inode hash before pid_before
-    [[ "$(sudo stat -f '%u' "$previous")" == 0 ]]
+    [[ "$(sudo stat -f '%u' "$previous")" == 0 ]] || exit 1
     sudo jq -e --arg id "$repair_id" --arg digest "$repair_digest" --arg owner "$ME" --arg role "$role" '
         .plan_id==$id and .plan_digest==$digest and .owner==$owner and .hq_account==$role and .dir=="none"
         and .members==[] and .result=="applied" and .changes==1 and (.finished_at|type=="string" and length>0)
@@ -100,7 +100,7 @@ check_private_predecessor_receipt() {
             fail 'upgrade failed for a reason other than the missing predecessor receipt'
     )
     [[ "$(sudo stat -f '%d:%i' "$previous")" == "$inode" && "$(job_pid)" == "$pid_before" &&
-       "$(stat -f '%d:%i' "$plist")" == "$before" && "$(shasum -a 256 "$plist" | awk '{print $1}')" == "$hash" ]]
+       "$(stat -f '%d:%i' "$plist")" == "$before" && "$(shasum -a 256 "$plist" | awk '{print $1}')" == "$hash" ]] || exit 1
     paired_status
     ok 'ordinary upgrade review accepted a private receipt; root refused its absence before changing the job'
 }
@@ -159,8 +159,8 @@ upgrade_case() (
             fail 'legacy software service unexpectedly upgraded'
         fi
         grep -Fq 'requires a separate custody migration' "$signer/legacy-upgrade.log"
-        [[ "$(job_pid)" == "$before" && "$(stat -f '%d:%i' "$plist")" == "$prior_inode" ]]
-        [[ "$(shasum -a 256 "$plist" | awk '{print $1}')" == "$prior_sha" ]]
+        [[ "$(job_pid)" == "$before" && "$(stat -f '%d:%i' "$plist")" == "$prior_inode" ]] || exit 1
+        [[ "$(shasum -a 256 "$plist" | awk '{print $1}')" == "$prior_sha" ]] || exit 1
         paired_status
         ok 'service-only upgrade refused the existing software signer before stopping the system job'
         return
@@ -210,7 +210,7 @@ JS
     fi
     phase="verify failed receipt and original release"
     sudo jq -e --arg id "$upgrade_id" --arg digest "$upgrade_digest" '.result=="failed" and .plan_id==$id and .plan_digest==$digest' "$RECEIPTS/$upgrade_id.json" >/dev/null
-    [[ "$(stat -f '%d:%i' "$plist")" == "$prior_inode" && "$(shasum -a 256 "$plist" | awk '{print $1}')" == "$prior_sha" ]]
+    [[ "$(stat -f '%d:%i' "$plist")" == "$prior_inode" && "$(shasum -a 256 "$plist" | awk '{print $1}')" == "$prior_sha" ]] || exit 1
     require_release "$stage/hq" "$baseline"
     ok 'fault candidate rolled back to the original plist and signer'
     phase="approve and apply public candidate"
@@ -221,7 +221,7 @@ JS
     phase="repeat completed upgrade"
     active="$(job_pid)"
     (cd "$signer" && sudo "$MM" members apply "$upgrade_id") | jq -e '.applied==true' >/dev/null
-    [[ "$(job_pid)" == "$active" ]]
+    [[ "$(job_pid)" == "$active" ]] || exit 1
     ok 'real system service rollback restored its plist and hardware signer; public candidate upgraded once and preserved its paired role'
 )
 upgrade_case

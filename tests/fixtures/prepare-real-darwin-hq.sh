@@ -18,13 +18,17 @@ case "$release" in
         hq_tar_sha=9b228d8b9dbe57471b2e4007e8aef08026f3c21ef54c1d863585d6b9ac620a29 ;;
     *) echo 'unknown HQ test release' >&2; exit 2 ;;
 esac
+if [[ $# == 3 ]]; then
+    [[ "$release" == upgrade && "$3" == /* && -f "$3" && ! -L "$3" ]] || {
+        echo 'only the upgrade fixture accepts an existing regular Node executable' >&2; exit 2
+    }
+fi
 node_dist=node-v24.19.0-darwin-arm64
 node_tar_sha=8294b7aa9b03997481c06babf1e8b270c859358f27da57a11509afe537ac381d
 node_sha=27db838bb204ef7c21df2931f5656e4c8fb32e6e947f363a402b49714d32b5b1
 cd "$fixture"
 mkdir bin
 if [[ $# == 3 ]]; then
-    [[ "$2" == upgrade && "$3" == /* && -f "$3" && ! -L "$3" ]]
     cp "$3" bin/node
 else
     curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -35,14 +39,14 @@ fi
 printf '%s  bin/node\n' "$node_sha" | shasum -a 256 --check
 chmod 0755 bin/node
 export PATH="$fixture/bin:$PATH"
-[[ "$(node --version)" == v24.19.0 && "$(node -p 'process.arch')" == arm64 ]]
+[[ "$(node --version)" == v24.19.0 && "$(node -p 'process.arch')" == arm64 ]] || exit 1
 
 # Both HQ and its own pinned soul-contracts dependency are public.
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
 git -c init.defaultBranch=main init -q source
 git -C source -c credential.helper= fetch -q --depth=1 --no-tags https://github.com/true-line/agent-bot-hq.git "$hq_sha"
 git -C source checkout -q --detach FETCH_HEAD
-[[ "$(git -C source rev-parse HEAD)" == "$hq_sha" ]]
+[[ "$(git -C source rev-parse HEAD)" == "$hq_sha" ]] || exit 1
 (cd source && bash scripts/ci-build-darwin-artifact.sh "$hq_sha" "$fixture/approved.tar")
 printf '%s  approved.tar\n' "$hq_tar_sha" | shasum -a 256 --check
 printf '%s  node\n%s  approved.tar\n' "$node_sha" "$hq_tar_sha" > installed.sha256
