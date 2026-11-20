@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"syscall"
 )
 
@@ -153,7 +154,9 @@ func inspectHarnessLaunch(p HarnessPolicyRecord) error {
 	return nil
 }
 
-func readInstalledHarness() (*os.File, installedHarness, error) {
+func readInstalledHarness() (*os.File, installedHarness, error) { return lockInstalledHarness(false) }
+
+func lockInstalledHarness(exclusive bool) (*os.File, installedHarness, error) {
 	var grant installedHarness
 	h := OSHost{}
 	fail := func(err error) (*os.File, installedHarness, error) { return nil, installedHarness{}, err }
@@ -168,7 +171,11 @@ func readInstalledHarness() (*os.File, installedHarness, error) {
 		return fail(e)
 	}
 	reject := func(err error) (*os.File, installedHarness, error) { f.Close(); return fail(err) }
-	if e = syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); e != nil {
+	mode := syscall.LOCK_SH
+	if exclusive {
+		mode = syscall.LOCK_EX
+	}
+	if e = syscall.Flock(int(f.Fd()), mode|syscall.LOCK_NB); e != nil {
 		return reject(errors.New("harness launch policy is busy; retry after its current operation finishes"))
 	}
 	st, e := f.Stat()
@@ -215,4 +222,23 @@ func matchingInstalledHarness(digest string, host Host) (string, error) {
 		return "", fmt.Errorf("retire installed harness rule %s before proposing a replacement", grant.ID)
 	}
 	return grant.ID, nil
+}
+
+func verifyHarnessRoles(p HarnessPolicyRecord) error {
+	h := OSHost{}
+	accounts, e := p.accounts()
+	if e != nil {
+		return e
+	}
+	roles, e := Build(Input{Platform: PlatformDarwin, HQAccount: DarwinHQAccount, Dir: DarwinBrokerDir, Members: accounts}, h)
+	if e != nil || roles.Changes() != 0 {
+		return errors.New("dedicated harness roles or broker directories changed")
+	}
+	for _, a := range append(slices.Clone(p.Adapters), HarnessAdapter{Account: DarwinHQAccount, UID: p.HQUID}) {
+		r, ok, e := h.Account(a.Account)
+		if e != nil || !ok || r.UID != a.UID || r.GID != a.UID {
+			return errors.New("dedicated role identity changed")
+		}
+	}
+	return nil
 }
