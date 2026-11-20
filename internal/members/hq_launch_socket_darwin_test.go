@@ -431,3 +431,52 @@ func TestUpgradeWaitsOnlyForRecordedBootout(t *testing.T) {
 		})
 	}
 }
+
+// launchd can unregister the label and remove the public endpoint before the
+// recorded process exits. Only the final PID exit permits the next start.
+func TestHQUpgradeWaitsForRecordedProcessWithoutEndpoint(t *testing.T) {
+	child := exec.Command("/bin/cat")
+	input, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		input.Close()
+		if child.ProcessState == nil {
+			child.Wait()
+		}
+	})
+	dir := t.TempDir()
+	st, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "owner.sock")
+	stop := &stoppingHQ{Parent: upgradeNode(st), PID: strconv.Itoa(child.Process.Pid)}
+	remove := func(*os.File, os.FileInfo, string) error {
+		t.Fatal("removed an unobserved socket")
+		return nil
+	}
+	for _, inode := range []uint64{0, 12345} {
+		stop.Socket.Inode = inode
+		if err := clearRecordedEndpoint(path, stop, remove); !errors.Is(err, unix.EBUSY) {
+			t.Fatalf("socket inode %d, expected draining prior process: %v", inode, err)
+		}
+	}
+	if err := input.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearRecordedEndpoint(path, stop, remove); err != nil {
+		t.Fatalf("recorded process exited and endpoint is absent: %v", err)
+	}
+	stop.PID = ""
+	if err := clearRecordedEndpoint(path, stop, remove); err == nil || errors.Is(err, unix.EBUSY) {
+		t.Fatalf("expected refusal for unknown PID: %v", err)
+	}
+}

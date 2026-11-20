@@ -319,6 +319,29 @@ func TestApplyRunsAnApprovedPlanOnce(t *testing.T) {
 	}
 }
 
+type unavailableFinalReceipt struct{ Root }
+
+func (unavailableFinalReceipt) Finish(string, []byte) error {
+	return errors.New("receipt storage unavailable")
+}
+
+func TestApplyRequiresFinalReceipt(t *testing.T) {
+	w := newWorld(bare())
+	p := w.planned(t, applyID)
+	w.approved(t, applyID, p)
+	w.deps.Root = func() Root { return unavailableFinalReceipt{w.r} }
+
+	result := w.apply(applyID)
+	if result.Diagnostic == nil || result.Diagnostic.ID != diag.MembersApplyFailed || len(result.Records) != 0 {
+		t.Fatalf("expected a final receipt failure, got %+v", result)
+	}
+	if len(w.r.log) == 0 || w.r.receipts[applyID].Result != "started" {
+		t.Fatalf("expected completed host changes with a pending receipt: %v, %+v", w.r.log, w.r.receipts)
+	}
+	w.r.log = nil
+	wantRefused(t, w, w.apply(applyID), diag.MembersNotApproved)
+}
+
 func TestApplyRefusesTheWrongCaller(t *testing.T) {
 	cases := []struct {
 		name string
@@ -382,6 +405,9 @@ func TestApplyNeedsAMatchingUnexpiredApproval(t *testing.T) {
 			e := w.h.entries[ApprovalsDir(machineDir)]
 			e.Mode = 0o777
 			w.h.entries[ApprovalsDir(machineDir)] = e
+		}, diag.MembersNotApproved},
+		{"harness consent cannot authorize generic apply", func(w *world) {
+			w.h.files[approval] = strings.Replace(w.h.files[approval], `"plan_id":`, `"purpose":"harness-launch-install","plan_id":`, 1)
 		}, diag.MembersNotApproved},
 		{"approval for another digest", func(w *world) {
 			w.h.files[approval] = strings.Replace(w.h.files[approval], `"plan_digest":"`, `"plan_digest":"0000`, 1)

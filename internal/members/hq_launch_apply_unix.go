@@ -141,11 +141,20 @@ func activateLaunchDaemon(step Step) error {
 		if _, err := os.Lstat(filepath.Join(receiptsDir(), upgradeJournalName)); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("an interrupted HQ release transition needs reconciliation")
 		}
-		return activateReviewedLaunch(step, nil)
+		return activateReviewedLaunch(step, nil, nil)
 	})
 }
 
-func activateReviewedLaunch(step Step, stopStarted func(*os.File, os.FileInfo) error) (err error) {
+// Only the launchctl submission runs inside the optional upgrade pairing guard.
+// First installation has its separate reviewed plan and no prior pairing.
+func submitHQBootstrap(guard func(func() error) error, submit func() error) error {
+	if guard == nil {
+		return submit()
+	}
+	return guard(submit)
+}
+
+func activateReviewedLaunch(step Step, guardBootstrap func(func() error) error, stopStarted func(*os.File, os.FileInfo) error) (err error) {
 	if step.Target != launchLabel {
 		return errors.New("expected Darwin LaunchDaemon step")
 	}
@@ -282,7 +291,7 @@ func activateReviewedLaunch(step Step, stopStarted func(*os.File, os.FileInfo) e
 		}
 	}()
 	if !loaded {
-		if err = runProgram(launchctl, "bootstrap", "system", launchPlist); err != nil {
+		if err = submitHQBootstrap(guardBootstrap, func() error { return runProgram(launchctl, "bootstrap", "system", launchPlist) }); err != nil {
 			return err
 		}
 		started = true

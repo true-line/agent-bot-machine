@@ -114,6 +114,10 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return failure(diag.MembersPlanFailed, "the saved plan %s cannot be read", planID)
 	}
 
+	if saved.isHarnessLaunchPlan() {
+		return failure(diag.MembersNotApproved, "this build verifies paired owner approval but cannot install or retire a harness launch rule")
+	}
+
 	// The approval agent-machine recorded.
 	if deps.DaemonState == nil {
 		return failure(diag.MembersNotApproved, "agent-machine's state directory is not known")
@@ -144,6 +148,9 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: %s", planID, why)
 	}
 
+	if saved.UpgradeFrom == nil && (approval.Purpose != "" || approval.MachineFingerprint != "" || approval.PairCommitment != "") {
+		return failure(diag.MembersNotApproved, "a paired purpose-specific approval cannot authorize this operation")
+	}
 	if saved.UpgradeFrom != nil && (approval.Purpose != UpgradePurpose || !digestPattern.MatchString(approval.MachineFingerprint)) {
 		return failure(diag.MembersNotApproved, "upgrade requires the paired HQ service upgrade owner approval")
 	}
