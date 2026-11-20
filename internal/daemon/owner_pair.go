@@ -172,8 +172,14 @@ func pinPairOwner(dir, pub string, existing *ownerPairState) error {
 		}
 		return nil
 	}
+	// Legacy enrollment records its selected UID before it stages the peer.
+	// A surviving binding counts as history even when staging was interrupted.
+	evidence := []string{agentDaemonUIDPath(dir)}
 	for _, suffix := range pairingSuffixes {
-		_, err := os.Lstat(filepath.Join(dir, "peers", "agent-daemon"+suffix))
+		evidence = append(evidence, filepath.Join(dir, "peers", "agent-daemon"+suffix))
+	}
+	for _, path := range evidence {
+		_, err := os.Lstat(path)
 		if err == nil {
 			return errors.New("an existing HQ enrollment requires a separate transition; the owner pin has not changed")
 		}

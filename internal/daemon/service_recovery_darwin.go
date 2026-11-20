@@ -20,6 +20,8 @@ func currentPairedServicePlan(verb, home, owner, id, digest string, uid int) (st
 		return "", errRecoveryPlan
 	}
 	switch verb {
+	case harnessInstallVerb, harnessRetireVerb:
+		err = members.CheckDarwinHarnessLaunch(saved, verb, owner, uid)
 	case upgradeVerb:
 		err = members.CheckDarwinHQUpgrade(saved, owner, uid)
 	case recoveryVerb:

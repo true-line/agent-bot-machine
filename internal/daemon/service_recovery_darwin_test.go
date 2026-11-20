@@ -378,3 +378,142 @@ func TestHQServiceUpgradeChecksCurrentPairBeforeCutover(t *testing.T) {
 		t.Fatal("revoked HQ accepted")
 	}
 }
+
+// An upgrade can finish preflight while an administrator revokes the role.
+// The actual launch submission must pass the live guard after preflight.
+func TestHQUpgradeRevocationDuringBootstrapPreflight(t *testing.T) {
+	f := newRecoveryFixture(t)
+	state, err := readOwnerPairState(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockOwnerPairing(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = unlock(); err != nil {
+		t.Fatal(err)
+	}
+	commitment := pairCommitment(state)
+	if err := CheckHQUpgradePair(f.dir, account.Username, commitment, nil); err != nil {
+		t.Fatal(err)
+	}
+	ready := make(chan struct{})
+	result := make(chan error, 1)
+	launched := false
+	go func() {
+		<-ready
+		result <- CheckHQUpgradePair(f.dir, account.Username, commitment, func() error { launched = true; return nil })
+	}()
+	err = revokeHQ(f.dir)
+	close(ready)
+	admission := <-result
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admission == nil || launched {
+		t.Fatal("submitted launch after revocation completed")
+	}
+}
+
+func TestHarnessLaunchOwnerProofCannotAuthorizeAnotherAction(t *testing.T) {
+	for _, verb := range []string{harnessInstallVerb, harnessRetireVerb} {
+		t.Run(verb, func(t *testing.T) {
+			f := newRecoveryFixture(t)
+			canonical, err := os.ReadFile(filepath.Join("..", "members", "testdata", verb+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sum := sha256.Sum256(canonical)
+			digest := hex.EncodeToString(sum[:])
+			var plan members.Plan
+			if err = json.Unmarshal(canonical, &plan); err != nil {
+				t.Fatal(err)
+			}
+			var policy members.HarnessPolicyRecord
+			if err = json.Unmarshal([]byte(plan.Steps[0].Content), &policy); err != nil {
+				t.Fatal(err)
+			}
+			pair, err := readOwnerPairState(f.dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pair.UID = policy.HQUID
+			if err = pair.save(f.dir); err != nil {
+				t.Fatal(err)
+			}
+			testPlanRole(t, fmt.Sprint(policy.HQUID))
+			f.check = func(id, got string, uid int) (string, error) {
+				if uid != policy.HQUID || id != approvePlanID || got != digest {
+					return "", errRecoveryPlan
+				}
+				return string(canonical), nil
+			}
+			send := func(op string, c recoveryChallenge, signature string) Response {
+				req := f.request(op, c, signature)
+				req.Verb, req.PlanDigest = verb, digest
+				return f.run(t, policy.HQUID, req, f.client)
+			}
+			wrongUID := f.request("challenge", recoveryChallenge{}, "")
+			wrongUID.Verb, wrongUID.PlanDigest = verb, digest
+			if f.run(t, policy.HQUID+1, wrongUID, f.client).OK {
+				t.Fatal("another UID used the dedicated pairing")
+			}
+			issued := send("challenge", recoveryChallenge{}, "")
+			var c recoveryChallenge
+			if !issued.OK || json.Unmarshal(issued.Body, &c) != nil || c.Action != verb {
+				t.Fatal("challenge failed", issued.Diagnostic)
+			}
+			var handoff struct {
+				Canonical string `json:"plan_canonical"`
+			}
+			if json.Unmarshal(issued.Body, &handoff) != nil || handoff.Canonical != string(canonical) || c.Digest != digest {
+				t.Fatal("handoff did not bind the exact published canonical bytes")
+			}
+			for _, old := range []string{recoveryVerb, "hq-service-upgrade", "first-hq-provision", harnessInstallVerb, harnessRetireVerb} {
+				if old == verb {
+					continue
+				}
+				other := c
+				other.Action = old
+				if send("approve", c, f.proof(t, other)).OK {
+					t.Fatalf("accepted %s proof as %s", old, verb)
+				}
+			}
+			otherVerb := harnessRetireVerb
+			if verb == harnessRetireVerb {
+				otherVerb = harnessInstallVerb
+			}
+			cancelOther := f.request("cancel", c, "")
+			cancelOther.Verb, cancelOther.PlanDigest = otherVerb, digest
+			if f.run(t, policy.HQUID, cancelOther, f.client).OK {
+				t.Fatal("another action cancelled the pending approval")
+			}
+			if !send("approve", c, f.proof(t, c)).OK {
+				t.Fatal("matching purpose refused")
+			}
+			raw, e := os.ReadFile(members.ApprovalPath(f.dir, approvePlanID))
+			var a members.Approval
+			if e != nil || json.Unmarshal(raw, &a) != nil || a.Purpose != verb || a.PairCommitment != pairCommitment(pair) || a.PlanDigest != digest || a.MachineFingerprint != fmt.Sprintf("%x", sha256.Sum256(f.machine)) {
+				t.Fatal("typed approval not bound to pairing", e)
+			}
+			if send("approve", c, f.proof(t, c)).OK {
+				t.Fatal("replayed owner signature")
+			}
+			reissued := send("challenge", recoveryChallenge{}, "")
+			if !reissued.OK || json.Unmarshal(reissued.Body, &c) != nil {
+				t.Fatal("second challenge failed")
+			}
+			if err := revokeHQ(f.dir); err != nil {
+				t.Fatal(err)
+			}
+			if send("approve", c, f.proof(t, c)).OK {
+				t.Fatal("accepted a proof after administrative revocation")
+			}
+		})
+	}
+}
