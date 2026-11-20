@@ -54,9 +54,13 @@ exact sudoers rule. For an existing installation, run
 to review removal of the recorded rule.
 
 This build saves the plan in the administrator's members plan store.
-The paired HQ can retrieve the saved canonical bytes for review. Root apply
-continues to refuse this operation. Regenerate the plan with the apply-capable
-release before seeking fresh owner approval. Replacing the Machine executable
+The enrolled dedicated HQ can export the Machine-signed challenge and return
+a fresh owner proof with `machine harness-launch-install` or
+`machine harness-launch-retire`. Machine rechecks the authenticated role, pairing,
+canonical plan and host artifacts before recording approval. The approval binds
+the purpose, Machine fingerprint, pairing and exact plan digest. Root apply
+continues to refuse both operations. Regenerate the plan with the apply-capable
+release and obtain a fresh approval for its digest. Replacing the Machine executable
 changes the proposed installation digest.
 
 ## Target

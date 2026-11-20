@@ -148,7 +148,7 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 
 	if saved.isHarnessLaunchPlan() {
-		return failure(diag.MembersNotApproved, "applying a harness launch plan requires a Machine release supporting the paired owner approval")
+		return failure(diag.MembersNotApproved, "this build verifies paired owner approval but cannot install or retire a harness launch rule")
 	}
 
 	// The approval agent-machine recorded.
@@ -181,6 +181,9 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: %s", planID, why)
 	}
 
+	if saved.UpgradeFrom == nil && (approval.Purpose != "" || approval.MachineFingerprint != "" || approval.PairCommitment != "") {
+		return failure(diag.MembersNotApproved, "a paired purpose-specific approval cannot authorize this operation")
+	}
 	if saved.UpgradeFrom != nil && (approval.Purpose != UpgradePurpose || !digestPattern.MatchString(approval.MachineFingerprint)) {
 		return failure(diag.MembersNotApproved, "upgrade requires the paired HQ service upgrade owner approval")
 	}
