@@ -27,8 +27,7 @@ endpoints_absent() {
     for endpoint in "${endpoints[@]}"; do absent "$endpoint" || return 1; done
 }
 services_absent() { endpoints_absent && units absent; }
-signed_and_listening() {
-    "$mm" daemon status --json | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("channel") != "signed")' || return 1
+endpoints_listening() {
     python3 - "${endpoints[@]}" <<'PY'
 import socket, sys
 for path in sys.argv[1:]:
@@ -36,6 +35,15 @@ for path in sys.argv[1:]:
         client.settimeout(1)
         client.connect(path)
 PY
+}
+signed_and_listening() {
+    "$mm" daemon status --json | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("channel") != "signed")' &&
+        endpoints_listening
+}
+terminal_revoked() {
+    local marker="$private/peers/terminal.revoked"
+    [[ -f "$marker" && ! -L "$marker" ]] && cmp "$work/revoked" "$marker" &&
+        absent "$private/client.key" && cmp "$work/terminal.pub" "$private/peers/terminal.pub"
 }
 wait_for() {
     local i
@@ -52,6 +60,11 @@ verify_package() {
         cmp "$unpack/RELEASE_COMMIT" "$keg/libexec/RELEASE_COMMIT"
 }
 verify_package >/dev/null 2>&1 || fail 'installed package identity'
+reinstall_package() {
+    (umask 022; "$brew" install --formula "$formula") || fail 'reinstalling the same formula'
+    verify_package >/dev/null 2>&1 || fail 'reinstalled package identity'
+    "$mm" daemon start >/dev/null
+}
 units before
 endpoints_absent && absent "$private" && absent "$keyd" && absent "$channel/daemon.pub" || fail 'expected an unused runner'
 "$mm" daemon install --debug >/dev/null
@@ -73,13 +86,24 @@ done
 if grep -Fxq "$formula" "$work/formulae"; then fail 'Homebrew still lists the removed formula'; fi
 cmp "$work/daemon.pub" "$channel/daemon.pub"
 cmp "$work/terminal.pub" "$private/peers/terminal.pub"
-(umask 022; "$brew" install --formula "$formula")
-verify_package >/dev/null 2>&1 || fail 'reinstalled package identity'
-"$mm" daemon start >/dev/null
+reinstall_package
 wait_for signed_and_listening
 units active
 cmp "$work/daemon.pub" "$channel/daemon.pub"
 cmp "$work/terminal.pub" "$private/peers/terminal.pub"
+"$mm" daemon unpair --client terminal >/dev/null
+printf 'revoked\n' > "$work/revoked"
+terminal_revoked || fail 'terminal unpair did not retain its revocation'
 "$mm" uninstall
 wait_for services_absent
-echo 'PASS: signed terminal service, both launch agents and three sockets removed; identical package and pairing verified after reinstall'
+terminal_revoked || fail 'uninstall lost the revoked terminal record'
+reinstall_package
+wait_for endpoints_listening
+units active
+cmp "$work/daemon.pub" "$channel/daemon.pub"
+"$mm" daemon status --json | python3 -c 'import json,sys; s=json.load(sys.stdin); sys.exit(s.get("state") != "running" or "channel" in s)' ||
+    fail 'expected a running daemon with no signed terminal status after reinstall'
+terminal_revoked || fail 'reinstall or status restored the revoked terminal'
+"$mm" uninstall
+wait_for services_absent
+echo 'PASS: verified removal of both LaunchAgents and three sockets, active pairing across reinstall, and continued revocation across a second reinstall'
