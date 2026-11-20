@@ -6,10 +6,10 @@ use std::cell::{Cell, RefCell};
 #[derive(Default)]
 struct Fake {
     created: Cell<u8>,
-    create_error: Option<&'static str>,
     revoked: Cell<bool>,
     revoke_after_sign: Cell<bool>,
     signed: RefCell<Vec<Vec<u8>>>,
+    create_error: Option<&'static str>,
 }
 impl Enclave for Fake {
     fn check_live(&self) -> Result<(), &'static str> {
