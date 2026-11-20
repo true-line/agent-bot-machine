@@ -94,6 +94,7 @@ const (
 type Input struct {
 	upgradeObservation *upgradeObservation
 	UpgradeFrom        *priorServicePlan
+	HarnessLaunch      *HarnessPolicyRecord
 	HQService          *HQService
 	HQAccount          string
 	Dir                string
@@ -266,8 +267,11 @@ func Build(in Input, h Host) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	if in.UpgradeFrom != nil && (in.Platform != PlatformDarwin || in.HQService == nil || in.HQAccount != DarwinHQAccount || len(in.Members) != 0) {
+	if in.UpgradeFrom != nil && (in.HarnessLaunch != nil || in.Platform != PlatformDarwin || in.HQService == nil || in.HQAccount != DarwinHQAccount || len(in.Members) != 0) {
 		return Plan{}, refuse(RefusedList, "upgrade requires a dedicated macOS service-only plan")
+	}
+	if in.HarnessLaunch != nil {
+		return buildHarnessLaunch(in, h)
 	}
 	p := Plan{Version: PlanVersion, HQAccount: in.HQAccount, Dir: in.Dir, Members: in.Members, Steps: []Step{}}
 	if p.Members == nil {
