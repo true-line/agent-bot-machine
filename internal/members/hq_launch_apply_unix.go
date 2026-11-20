@@ -297,24 +297,46 @@ func verifyHQProcessUID(pid string) error {
 	return nil
 }
 
-// Bootstrap can return before launchd publishes its public socket. Once a
-// node exists, the owner client verifies its metadata and authenticates it.
+// Bootstrap can return before launchd binds the endpoint and sets its mode.
+// Once visible, only the same socket can finish publication.
 func waitForLaunchSocket(path string, expectedUID uint32, limit time.Duration) (os.FileInfo, error) {
+	const invalid = "owner-control socket has unexpected type, owner or mode"
 	deadline := time.Now().Add(limit)
+	var pending os.FileInfo
 	for {
 		info, err := os.Lstat(path)
 		switch {
 		case err == nil:
-			stat, ok := info.Sys().(*syscall.Stat_t)
-			if !ok || info.Mode() != os.ModeSocket|0666 || stat.Uid != expectedUID {
-				return nil, errors.New("owner-control socket has unexpected type, owner or mode")
+			if info.Mode().Type() != os.ModeSocket {
+				return nil, errors.New(invalid + ": wrong file type")
 			}
-			return info, nil
+			stat, ok := info.Sys().(*syscall.Stat_t)
+			if !ok || stat.Uid != expectedUID {
+				return nil, errors.New(invalid + ": wrong owner")
+			}
+			if pending != nil && !os.SameFile(pending, info) {
+				return nil, errors.New("owner-control socket was replaced during publication")
+			}
+			mode := info.Mode()
+			if mode == os.ModeSocket|0666 {
+				return info, nil
+			}
+			// Darwin binds under umask 0077 before applying SockPathMode.
+			// Wait only for that private initial mode on the original inode.
+			if mode != os.ModeSocket|0700 {
+				return nil, fmt.Errorf("%s: mode %04o, expected 0666", invalid, stat.Mode&07777)
+			}
+			pending = info
 		case !errors.Is(err, syscall.ENOENT):
 			return nil, errors.New("cannot inspect the launchd owner-control endpoint")
+		case pending != nil:
+			return nil, errors.New("owner-control socket disappeared during publication")
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
+			if pending != nil {
+				return nil, fmt.Errorf("%s: mode %04o, expected 0666", invalid, pending.Mode().Perm())
+			}
 			return nil, errors.New("launchd did not publish the owner-control socket before the deadline")
 		}
 		time.Sleep(min(25*time.Millisecond, remaining))
