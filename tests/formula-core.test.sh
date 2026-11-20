@@ -62,6 +62,12 @@ git -C "$REPO" push --quiet -u origin main
 FORMULA="$REPO/Formula/managed-machine.rb"
 [[ -f "$FORMULA" ]] || fail "prepared Formula/managed-machine.rb is missing"
 
+# A version pin changes release metadata only. The tagged source supplies the
+# complete installation policy, including the checks around keg creation.
+diff -u <(sed -n '/^  STANDALONE_MARKERS = /,$p' "$ROOT/Formula/managed-machine.rb") \
+        <(sed -n '/^  STANDALONE_MARKERS = /,$p' "$FORMULA") ||
+    fail "release preparation changed the standalone signing guard or formula behavior"
+
 if command -v ruby >/dev/null 2>&1; then
     ruby -c "$FORMULA" >/dev/null
 fi
@@ -345,6 +351,14 @@ class Formula
     end
   end
 
+  # The formula's fixed marker directory is outside the test keg. Run the
+  # identical Ruby check against the test prefix and preserve failure status.
+  def system(program, *args)
+    expected = self.class.const_get(:STANDALONE_CHECK_ARGS)
+    raise "unexpected formula command" unless program == "/usr/bin/ruby" && args == expected
+    raise "standalone guard refused" unless Kernel.system(RbConfig.ruby, *args[0...-1], (@prefix/"standalone").to_s)
+  end
+
   attr_reader :libexec, :bin, :buildpath, :prefix
 
   def initialize(prefix_dir, build_dir, core_bin, ver, with_helper: true)
@@ -399,14 +413,16 @@ class Formula
   end
 end
 
-# Homebrew gained the steps DSL, set_permissions, and its recursive keyword
-# in separate releases. The original stub below exercises the pre-DSL path.
-[:absent, :recursive_only, :non_recursive].each do |capability|
+# Exercise Homebrew capabilities introduced separately across supported versions.
+[:absent, :recursive_only, :no_run, :complete].each do |capability|
   steps = []
   dsl = Class.new
+  if capability != :no_run
+    dsl.define_method(:run) { |cmd, args:| steps << [cmd, args] }
+  end
   if capability == :recursive_only
     dsl.define_method(:set_permissions) { |path, mode, base:| raise "recursive-only DSL used" }
-  elsif capability == :non_recursive
+  elsif [:no_run, :complete].include?(capability)
     dsl.define_method(:set_permissions) { |path, mode, base:, recursive: true| steps << [path, mode, base, recursive] }
   end
   base = Class.new(Formula)
@@ -418,9 +434,10 @@ end
   namespace.module_eval(formula_src, formula_path)
   recipe = namespace.const_get(:ManagedMachine, false)
   legacy = recipe.instance_methods(false).include?(:post_install)
-  if capability == :non_recursive
+  if capability == :complete
     raise "deprecated callback registered" if legacy
-    raise "unexpected permission steps: #{steps.inspect}" unless steps == [["bin/agent-bot-keyd", "0700", :prefix, false]]
+    expected = [["/usr/bin/ruby", recipe.const_get(:STANDALONE_CHECK_ARGS)], ["bin/agent-bot-keyd", "0700", :prefix, false]]
+    raise "unexpected post-install steps" unless steps == expected
   else
     raise "missing legacy callback" unless legacy && steps.empty?
   end
