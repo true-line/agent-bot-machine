@@ -199,22 +199,16 @@ func (p *keydUnitPlan) write() error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".machine-keyd-*")
+	tmp, info, err := stageUnit(p.path, []byte(p.body))
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
-	info, statErr := tmp.Stat()
-	_, writeErr := tmp.WriteString(p.body)
-	closeErr := tmp.Close()
-	if err := errors.Join(statErr, writeErr, closeErr); err != nil {
-		return err
-	}
+	defer os.Remove(tmp)
 	if p.original == nil {
 		// Another installer may have claimed the label after preflight.
-		err = os.Link(tmp.Name(), p.path)
+		err = os.Link(tmp, p.path)
 	} else if err = p.verify(p.original, string(p.previous)); err == nil {
-		err = os.Rename(tmp.Name(), p.path)
+		err = os.Rename(tmp, p.path)
 	}
 	if err == nil {
 		p.published = info
@@ -363,15 +357,35 @@ func Install(goos, root, executable, username string) (string, error) {
 	if readErr == nil && string(existing) == body {
 		return path, nil
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := replaceUnit(path, []byte(body)); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+// stageUnit writes a private file beside its destination. On success the caller
+// owns the temporary name and must remove it after publication or failure.
+func stageUnit(path string, body []byte) (string, os.FileInfo, error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".machine-unit-*")
+	if err != nil {
+		return "", nil, err
+	}
+	info, statErr := tmp.Stat()
+	_, writeErr := tmp.Write(body)
+	if err := errors.Join(statErr, writeErr, tmp.Close()); err != nil {
+		_ = os.Remove(tmp.Name())
+		return "", nil, err
+	}
+	return tmp.Name(), info, nil
+}
+
+func replaceUnit(path string, body []byte) error {
+	tmp, _, err := stageUnit(path, body)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	return os.Rename(tmp, path)
 }
 
 // readUnit returns the unit file as it is before install, or nil when it is
@@ -394,15 +408,7 @@ func restoreUnit(path string, previous []byte) error {
 		}
 		return nil
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, previous, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return replaceUnit(path, previous)
 }
 
 // Uninstall removes the unit. A missing unit is success.

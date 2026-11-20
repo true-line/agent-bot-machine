@@ -648,3 +648,51 @@ func TestDarwinInstallPreservesIndependentKeyd(t *testing.T) {
 		})
 	}
 }
+
+func TestDarwinDaemonInstallPreservesTemporarySibling(t *testing.T) {
+	for _, phase := range []string{"install", "rollback"} {
+		t.Run(phase, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv(channelEnv, filepath.Join(home, "channel"))
+			original := filepath.Join(home, "previous-machine")
+			path, err := Install("darwin", home, original, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			next := filepath.Join(home, "next-machine")
+			deps := owner(home)
+			deps.Executable = func() (string, error) { return next, nil }
+			sibling := path + ".tmp"
+			const note = "existing temporary file"
+			writeSibling := func() {
+				t.Helper()
+				if err := os.WriteFile(sibling, []byte(note), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wantExecutable := next
+			if phase == "install" {
+				writeSibling()
+			} else {
+				wantExecutable = original
+				deps.Activate = func(string) error {
+					writeSibling()
+					return errors.New("fixture activation refused")
+				}
+			}
+			res := run(deps, cli.Context{}, []string{"install"})
+			if phase == "install" && res.Diagnostic != nil {
+				t.Fatal(res.Diagnostic.Message)
+			}
+			if phase == "rollback" && (res.Diagnostic == nil || !strings.Contains(res.Diagnostic.Message, "fixture activation refused")) {
+				t.Fatal("expected the activation refusal")
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != darwinAgent(home, wantExecutable) {
+				t.Fatal("unexpected Machine registration", err)
+			}
+			if got, err := os.ReadFile(sibling); err != nil || string(got) != note {
+				t.Fatal("temporary sibling was lost or changed", err)
+			}
+		})
+	}
+}
