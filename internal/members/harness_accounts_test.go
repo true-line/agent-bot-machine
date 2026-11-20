@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -84,7 +85,7 @@ func (r *provisionRoot) CreateReviewedBrokerDirectory(p, owner, group string, mo
 }
 
 func TestHarnessAccountProtectedApply(t *testing.T) {
-	for _, scenario := range []string{"success", "partial", "pair revoked before apply", "pair revoked after claim", "legacy proof", "launch proof", "tampered IDs", "scope expands", "existing account has login", "occupied home", "HQ repair", "changed ACL", "no-op replay", "expired during preflight", "home drift", "directory ID drift"} {
+	for _, scenario := range []string{"success", "partial", "pair revoked before apply", "pair revoked after claim", "pair revoked between mutations", "legacy proof", "launch proof", "tampered IDs", "scope expands", "existing account has login", "occupied home", "HQ repair", "changed ACL", "no-op replay", "expired during preflight", "home drift", "directory ID drift"} {
 		t.Run(scenario, func(t *testing.T) {
 			h, in := provisionFixture()
 			host := provisionHost{h}
@@ -130,6 +131,30 @@ func TestHarnessAccountProtectedApply(t *testing.T) {
 					return run()
 				}
 				return nil
+			}
+			if scenario == "pair revoked between mutations" {
+				// Apply holds a shared pairing lock for its callback. Revocation
+				// needs the exclusive lock before changing the pairing state.
+				var lock sync.RWMutex
+				revoked := false
+				check := w.deps.CheckUpgradePair
+				w.deps.CheckUpgradePair = func(dir, account, commitment string, run func() error) error {
+					lock.RLock()
+					if revoked {
+						lock.RUnlock()
+						return errors.New("retired pairing")
+					}
+					err := check(dir, account, commitment, run)
+					lock.RUnlock()
+					if len(r.log) == 1 {
+						if !lock.TryLock() {
+							t.Fatal("completed mutation retained an outer pairing lock")
+						}
+						revoked = true
+						lock.Unlock()
+					}
+					return err
+				}
 			}
 			store := func(id string) Saved {
 				t.Helper()
@@ -204,6 +229,15 @@ func TestHarnessAccountProtectedApply(t *testing.T) {
 				}
 				if got := apply(retry); got.Diagnostic != nil {
 					t.Fatal(got.Diagnostic)
+				}
+			case "pair revoked between mutations":
+				receipt := r.receipts[applyID]
+				if res.Diagnostic == nil || receipt.Result != "failed" || receipt.FailedAt != "account _spec" || receipt.FinishedAt == "" ||
+					len(r.log) != 1 || h.entries[darwinHarnessHome("_lead")].Mode != 0700 {
+					t.Fatal(res.Diagnostic, receipt, r.log)
+				}
+				if _, ok := h.accounts["_spec"]; ok {
+					t.Fatal("created a harness account after revocation")
 				}
 			case "directory ID drift":
 				if res.Diagnostic == nil || r.receipts[applyID].Result != "failed" {

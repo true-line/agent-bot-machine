@@ -22,48 +22,54 @@ func runHarnessAccountApply(s Saved, a Approval, platform, owner string, h Host,
 	if deps.Root != nil {
 		r = deps.Root()
 	}
-	var claimed bool
+	refused := func(err error) cli.Result {
+		return failure(diag.MembersNotApproved, "harness account apply refused: %v", err)
+	}
+	if err := paired(a, nil); err != nil {
+		return refused(err)
+	}
+	if err := checkDarwinHarnessAccounts(s, owner, p.Steps[0].UID, h); err != nil {
+		return refused(err)
+	}
+	if err := Precheck(p, r); err != nil {
+		return refused(err)
+	}
+
+	// Revocation takes the exclusive pairing lock. Claim and mutate in
+	// separate shared lock intervals so a completed revocation stops the next step.
+	receipt := Receipt{PlanID: s.PlanID, PlanDigest: s.PlanDigest, Owner: owner, HQAccount: p.HQAccount, Dir: p.Dir, Members: p.Members, Changes: p.Changes(), Result: "started"}
 	err := paired(a, func() error {
-		if err := checkDarwinHarnessAccounts(s, owner, p.Steps[0].UID, h); err != nil {
-			return err
-		}
-		if err := Precheck(p, r); err != nil {
-			return err
-		}
-		if err := paired(a, nil); err != nil {
-			return err
-		}
 		expires, err := time.Parse(approvalTime, a.ExpiresAt)
 		now := deps.Time().UTC()
 		if err != nil || !now.Before(expires) {
 			return errors.New("harness owner approval expired before the receipt was claimed")
 		}
-		receipt := Receipt{PlanID: s.PlanID, PlanDigest: s.PlanDigest, Owner: owner, HQAccount: p.HQAccount, Dir: p.Dir, Members: p.Members, Changes: p.Changes(), StartedAt: now.Format(approvalTime), Result: "started"}
-		claimed, err = r.Claim(s.PlanID, encodeReceipt(receipt))
+		receipt.StartedAt = now.Format(approvalTime)
+		claimed, err := r.Claim(s.PlanID, encodeReceipt(receipt))
 		if err != nil {
 			return err
 		}
 		if !claimed {
 			return errors.New("this approval was already used; replan any remaining work")
 		}
-		finish := func(at string, err error) error {
-			receipt.Result = "applied"
-			if err != nil {
-				receipt.Result = "failed"
-				receipt.FailedAt = at
-			}
-			receipt.FinishedAt = deps.Time().UTC().Format(approvalTime)
-			return errors.Join(err, r.Finish(s.PlanID, encodeReceipt(receipt)))
+		return nil
+	})
+	if err != nil {
+		return refused(err)
+	}
+
+	failedAt := "verification"
+	for _, step := range p.Steps {
+		if step.Action == ActionNone {
+			continue
 		}
-		for _, step := range p.Steps {
-			if step.Action == ActionNone {
-				continue
-			}
-			err := paired(a, func() error { return applyReviewedHarnessStep(p, step, h, r) })
-			if err != nil {
-				return finish(step.Kind+" "+step.Target, err)
-			}
+		err = paired(a, func() error { return applyReviewedHarnessStep(p, step, h, r) })
+		if err != nil {
+			failedAt = step.Kind + " " + step.Target
+			break
 		}
+	}
+	if err == nil {
 		err = paired(a, func() error {
 			after, err := Build(Input{HarnessAccounts: true, Platform: platform, HQAccount: p.HQAccount, Members: p.Members, Dir: p.Dir, Invoker: owner}, h)
 			if err != nil {
@@ -79,13 +85,14 @@ func runHarnessAccountApply(s Saved, a Approval, platform, owner string, h Host,
 			}
 			return Precheck(after, r)
 		})
-		return finish("verification", err)
-	})
+	}
+	receipt.Result = "applied"
 	if err != nil {
-		if claimed {
-			return failure(diag.MembersApplyFailed, "harness provisioning stopped; replan remaining work: %v", err)
-		}
-		return failure(diag.MembersNotApproved, "harness account apply refused: %v", err)
+		receipt.Result, receipt.FailedAt = "failed", failedAt
+	}
+	receipt.FinishedAt = deps.Time().UTC().Format(approvalTime)
+	if err = errors.Join(err, r.Finish(s.PlanID, encodeReceipt(receipt))); err != nil {
+		return failure(diag.MembersApplyFailed, "harness provisioning stopped; replan remaining work: %v", err)
 	}
 	return cli.Result{Records: []*output.Record{output.New().Set("plan_id", s.PlanID).Set("plan_digest", s.PlanDigest).Set("changes", p.Changes()).Set("applied", true).Set("receipt", ReceiptPath(s.PlanID))}}
 }
