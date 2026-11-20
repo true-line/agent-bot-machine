@@ -212,6 +212,9 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test -count=1 ./...
+      - name: Exercise the Darwin harness process egress profile
+        if: matrix.os == 'darwin'
+        run: python3 -I tests/fixtures/darwin-harness-egress.py
       - name: Check custody helper access across macOS accounts
         if: matrix.os == 'darwin'
         env:
