@@ -48,7 +48,10 @@ jobs:
       fail-fast: false
       matrix:
         # Release/SIP dispatch retains its original public-archive gates.
-        predecessor: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["release"]' || '["legacy","paired"]') }}
+        predecessor: ${{ fromJSON((github.event_name == 'workflow_dispatch' || inputs.device_release_version != '') && '["release"]' || '["legacy","paired"]') }}
+    env:
+      MM_HQ_UPGRADE_TEST: ${{ matrix.predecessor != 'release' && matrix.predecessor || '' }}
+      MM_HQ_PREDECESSOR: ${{ matrix.predecessor == 'paired' && 'paired' || matrix.predecessor == 'release' && inputs.device_release_version != '' && '--paired-device' || 'original' }}
     runs-on: xcode-27
     timeout-minutes: 30
     steps:
@@ -76,8 +79,6 @@ jobs:
       - name: Install the real HQ archive with a signed first-HQ approval
         shell: bash
         env:
-          MM_HQ_UPGRADE_TEST: ${{ matrix.predecessor != 'release' && matrix.predecessor || '' }}
-          MM_HQ_PREDECESSOR: ${{ matrix.predecessor == 'paired' && 'paired' || 'original' }}
           MM_HQ_REQUIRE_SIP: ${{ inputs.require_sip || 'false' }}
           MM_MEMBERS_REAL_ACCOUNTS: '1'
           MM_MEMBERS_RUNNER: ${{ runner.environment }}

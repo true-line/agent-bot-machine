@@ -6,8 +6,12 @@ set -euo pipefail
 fixture="$(cd "$1" && pwd -P)"
 hq_sha=d52f01f517773565b673ec9735f670922e58dc91
 hq_tar_sha=43e99d8d83d2c8623f0b4eb2adbb9bdce1e833e16256b135549de0670e270e14
-case "${2:-original}" in
+release="${2:-original}"
+if [[ $# == 1 && -n "${MM_HQ_DEVICE_ARCHIVE:-}" ]]; then release=--paired-device; fi
+case "$release" in
     original) ;;
+    --paired-device) hq_sha=beee0040231bd59e112e8eb178128c34acc58871
+        hq_tar_sha=d71d3c2c52017b47e91d59ce5f35e397f49a58e8c8fde9b0bfaff6d6e148e362 ;;
     paired) hq_sha=1e6484ec11e5b2591cf79c40f80e4a1004f99e46
         hq_tar_sha=64f63c48b09b2678ae8dc72585ad030ab458d8f0c1b6a19108282af92f6ad526 ;;
     upgrade) hq_sha=3887da3725222335ed1d4e77c6113a42d9a0ee50
