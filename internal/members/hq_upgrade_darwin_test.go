@@ -409,3 +409,45 @@ func TestHQUpgradeRevokedBeforeLaunchPreservesUnfinishedReceipt(t *testing.T) {
 		t.Fatalf("expected candidate and rollback launch guards; got %v", attempts)
 	}
 }
+
+func TestUpgradeCommitsAppliedReceiptUnderCurrentPair(t *testing.T) {
+	started := Receipt{PlanID: "plan-20261110T040000Z-abcd", Result: "started"}
+	approval := Approval{PlanID: started.PlanID, Purpose: UpgradePurpose}
+	revoked := errors.New("pair revoked after the status probe")
+	for _, live := range []bool{false, true} {
+		path := filepath.Join(t.TempDir(), "receipt.json")
+		if err := os.WriteFile(path, encodeReceipt(started), 0600); err != nil {
+			t.Fatal(err)
+		}
+		read := func() Receipt {
+			t.Helper()
+			b, err := os.ReadFile(path)
+			var r Receipt
+			if err != nil || json.Unmarshal(b, &r) != nil {
+				t.Fatal("cannot read test receipt", err)
+			}
+			return r
+		}
+		guarded := false
+		j := upgradeJournal{Approval: approval, pair: func(a Approval, publish func() error) error {
+			if a != approval || publish == nil || read().Result != "started" {
+				t.Fatal("expected receipt publication inside the current approval guard")
+			}
+			guarded = true
+			if !live {
+				return revoked
+			}
+			if err := publish(); err != nil {
+				return err
+			}
+			if r := read(); r.Result != "applied" || r.Upgrade == nil || r.Upgrade.Approval != approval {
+				t.Fatal("applied receipt was not committed while the guard was held")
+			}
+			return nil
+		}}
+		err := j.commitReceipt(path, started, true)
+		if !guarded || (live && err != nil) || (!live && (!errors.Is(err, revoked) || read().Result != "started")) {
+			t.Fatalf("live=%t: guarded=%t, result=%s, err=%v", live, guarded, read().Result, err)
+		}
+	}
+}
