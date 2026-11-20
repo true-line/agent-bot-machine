@@ -369,34 +369,30 @@ func ensureService(deps Deps, ctx cli.Context, caller Caller, goos, root, userNa
 	if err != nil {
 		return serviceFailed(err)
 	}
-	var before []unitBackup
-	for _, locate := range []func(string, string) (string, error){unitPath, keydUnitPath} {
-		upath, err := locate(goos, root)
-		if err != nil {
-			continue
-		}
-		previous, err := readUnit(upath)
-		if err != nil {
-			return serviceFailed(err)
-		}
-		if goos == "darwin" && filepath.Base(upath) == darwinKeydServiceLabel+".plist" && previous != nil {
-			if err := checkRegisteredKeyd(previous, exec, filepath.Join(root, ".local", "state", "agent-bot")); err != nil {
-				return serviceFailed(err)
-			}
-		}
-		before = append(before, unitBackup{path: upath, previous: previous})
+	machinePath, err := unitPath(goos, root)
+	if err != nil {
+		return serviceFailed(err)
+	}
+	previous, err := readUnit(machinePath)
+	if err != nil {
+		return serviceFailed(err)
+	}
+	before := unitBackup{path: machinePath, previous: previous}
+	keydPlan, err := planKeydUnit(goos, root, exec, filepath.Join(root, ".local", "state", "agent-bot"))
+	if err != nil {
+		return serviceFailed(err)
 	}
 	path, err := Install(goos, root, exec, "")
 	if err != nil {
 		return serviceFailed(err)
 	}
-	keydUnit, err := InstallKeyd(goos, root, exec, filepath.Join(root, ".local", "state", "agent-bot"))
-	if err != nil {
-		return serviceFailed(err)
+	if err := keydPlan.write(); err != nil {
+		return undoInstall(deps, before, keydPlan, err)
 	}
+	keydUnit := keydPlan.path
 	if keydUnit != "" && deps.Activate != nil {
 		if err := deps.Activate(keydUnit); err != nil {
-			return undoInstall(deps, before, err)
+			return undoInstall(deps, before, keydPlan, err)
 		}
 	}
 	if install {
@@ -416,7 +412,7 @@ func ensureService(deps Deps, ctx cli.Context, caller Caller, goos, root, userNa
 	}
 	if deps.Activate != nil {
 		if err := deps.Activate(path); err != nil {
-			return undoInstall(deps, before, err)
+			return undoInstall(deps, before, keydPlan, err)
 		}
 	}
 	state := "installed"
@@ -448,11 +444,9 @@ type unitBackup struct {
 // undoInstall puts every unit file back after the service manager refused
 // one, then has the manager reread them, so status never reports a unit
 // that is not loaded. The result always carries the activation error.
-func undoInstall(deps Deps, before []unitBackup, cause error) cli.Result {
-	for _, b := range before {
-		if err := restoreUnit(b.path, b.previous); err != nil {
-			return serviceFailed(fmt.Errorf("%v; restoring %s: %v", cause, b.path, err))
-		}
+func undoInstall(deps Deps, machine unitBackup, keyd keydUnitPlan, cause error) cli.Result {
+	if err := errors.Join(keyd.rollback(), restoreUnit(machine.path, machine.previous)); err != nil {
+		return serviceFailed(fmt.Errorf("%v; restoring units: %w", cause, err))
 	}
 	if deps.Reload != nil {
 		if err := deps.Reload(); err != nil {

@@ -594,3 +594,57 @@ func TestBundledDarwinKeydReadiness(t *testing.T) {
 	}
 
 }
+
+func TestDarwinInstallPreservesIndependentKeyd(t *testing.T) {
+	for _, verb := range []string{"install", "start"} {
+		t.Run(verb, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv(channelEnv, filepath.Join(home, "channel"))
+			deps := owner(home)
+			deps.Executable = func() (string, error) { return filepath.Join(home, "managed-machine"), nil }
+			keyd, _ := keydUnitPath("darwin", home)
+			if err := os.MkdirAll(filepath.Dir(keyd), 0700); err != nil {
+				t.Fatal(err)
+			}
+			// Another supervisor owns the same launchd label. Its program and
+			// formatting may differ from the unit installed by Machine.
+			foreign := []byte("<plist><dict><key>Label</key><string>" + darwinKeydServiceLabel + "</string><key>ProgramArguments</key><array><string>/fixture/identity/keyd</string></array></dict></plist>")
+			if err := os.WriteFile(keyd, foreign, 0600); err != nil {
+				t.Fatal(err)
+			}
+			prior, err := os.Stat(keyd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sibling := filepath.Join(home, "agent-bot-keyd")
+			if err := os.WriteFile(sibling, []byte("fixture"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			var calls []string
+			deps.Activate = func(p string) error { calls = append(calls, p); return errors.New("fixture activation failure") }
+			machine, _ := unitPath("darwin", home)
+			res := run(deps, cli.Context{}, []string{verb})
+			if res.Diagnostic == nil || len(calls) != 0 {
+				t.Fatalf("bundled operation touched a foreign job: calls %v, result %+v", calls, res.Diagnostic)
+			}
+			if _, err := os.Stat(machine); !os.IsNotExist(err) {
+				t.Fatalf("Machine unit changed before refusal: %v", err)
+			}
+			if err := os.Remove(sibling); err != nil {
+				t.Fatal(err)
+			}
+			res = run(deps, cli.Context{}, []string{verb})
+			if res.Diagnostic == nil || len(calls) != 1 || calls[0] != machine {
+				t.Fatalf("manual operation did not isolate Machine activation: %v", calls)
+			}
+			current, err := os.Stat(keyd)
+			if err != nil || !os.SameFile(prior, current) {
+				t.Fatal("rollback replaced the independent keyd unit", err)
+			}
+			data, err := os.ReadFile(keyd)
+			if err != nil || !bytes.Equal(data, foreign) {
+				t.Fatal("independent keyd registration changed", err)
+			}
+		})
+	}
+}
