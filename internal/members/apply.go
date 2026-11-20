@@ -102,7 +102,7 @@ func Precheck(p Plan, r Root) error {
 			return refuse(RefusedAccount, "%s account %s has a password or an empty one; a dedicated account is locked", what, s.Target)
 		}
 	}
-	if p.Dir == DarwinDir {
+	if p.Dir == DarwinDir || p.Dir == DarwinBrokerDir {
 		// A macOS plan installs no launch rule.
 		return nil
 	}

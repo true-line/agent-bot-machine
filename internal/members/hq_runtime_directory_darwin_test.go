@@ -109,3 +109,26 @@ func TestDarwinRuntimeDirectoryCreationAndRollback(t *testing.T) {
 		})
 	}
 }
+
+func TestDarwinBrokerDirectoryPublishesExactGroupModeOnce(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "fixture")
+	dir, err := createProtectedDirectory(p, os.Getuid(), os.Getgid(), os.ModeSetgid|0750)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dir.Close()
+	st, err := dir.Stat()
+	if err != nil || st.Mode().Perm() != 0750 || st.Mode()&os.ModeSetgid == 0 {
+		t.Fatal(st, err)
+	}
+	if err = os.WriteFile(filepath.Join(p, "retain"), []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = createProtectedDirectory(p, os.Getuid(), os.Getgid(), 0755); !errors.Is(err, os.ErrExist) {
+		t.Fatal("existing directory changed", err)
+	}
+	current, err := os.Lstat(p)
+	if err != nil || !os.SameFile(st, current) {
+		t.Fatal("lost original directory", err)
+	}
+}
