@@ -60,13 +60,30 @@ verify_package() {
         cmp "$unpack/RELEASE_COMMIT" "$keg/libexec/RELEASE_COMMIT"
 }
 verify_package >/dev/null 2>&1 || fail 'installed package identity'
-reinstall_package() {
+verify_package_absent() {
+    local file
+    for file in "$prefix/Cellar/managed-machine/$version" "$prefix/opt/managed-machine" "$mm" "$prefix/bin/agent-machine" "$prefix/bin/agent-bot-keyd"; do
+        absent "$file" || fail 'package files remain after uninstall'
+    done
+    "$brew" list --formula --full-name > "$work/formulae"
+    if grep -Fxq "$formula" "$work/formulae"; then fail 'Homebrew still lists the removed formula'; fi
+}
+install_package() {
     (umask 022; "$brew" install --formula "$formula") || fail 'reinstalling the same formula'
     verify_package >/dev/null 2>&1 || fail 'reinstalled package identity'
-    "$mm" daemon start >/dev/null
 }
+unused_state() {
+    endpoints_absent && absent "$private" && absent "$keyd" && absent "$channel/daemon.pub"
+}
+
 units before
-endpoints_absent && absent "$private" && absent "$keyd" && absent "$channel/daemon.pub" || fail 'expected an unused runner'
+unused_state || fail 'expected an unused runner'
+"$mm" uninstall
+verify_package_absent
+unused_state || fail 'removing an unused installation created service or pairing state'
+install_package
+unused_state || fail 'reinstalling an unused package created service or pairing state'
+echo 'PASS: an unused Homebrew installation was removed and reinstalled before daemon setup'
 "$mm" daemon install --debug >/dev/null
 "$mm" daemon pair >/dev/null
 wait_for signed_and_listening
@@ -79,14 +96,11 @@ for file in "$channel/daemon.pub" "$private/peers/terminal.pub"; do
 done
 "$mm" uninstall
 wait_for services_absent
-for file in "$prefix/Cellar/managed-machine/$version" "$prefix/opt/managed-machine" "$mm" "$prefix/bin/agent-machine" "$prefix/bin/agent-bot-keyd"; do
-    absent "$file" || fail 'package files remain after uninstall'
-done
-"$brew" list --formula --full-name > "$work/formulae"
-if grep -Fxq "$formula" "$work/formulae"; then fail 'Homebrew still lists the removed formula'; fi
+verify_package_absent
 cmp "$work/daemon.pub" "$channel/daemon.pub"
 cmp "$work/terminal.pub" "$private/peers/terminal.pub"
-reinstall_package
+install_package
+"$mm" daemon start >/dev/null
 wait_for signed_and_listening
 units active
 cmp "$work/daemon.pub" "$channel/daemon.pub"
@@ -97,7 +111,8 @@ terminal_revoked || fail 'terminal unpair did not retain its revocation'
 "$mm" uninstall
 wait_for services_absent
 terminal_revoked || fail 'uninstall lost the revoked terminal record'
-reinstall_package
+install_package
+"$mm" daemon start >/dev/null
 wait_for endpoints_listening
 units active
 cmp "$work/daemon.pub" "$channel/daemon.pub"
