@@ -45,6 +45,28 @@ export async function exerciseNativeChannel(stage, machine, hq, epoch, expectedT
   };
   let server, outstanding;
   try {
+    if (process.env.MM_NATIVE_WHOAMI_TEST === '1') {
+      server = await start();
+      const { startWhoami } = await import('./hosted-whoami.mjs');
+      const session = startWhoami({ stage, socket, epoch, expectedThumb, issuerDir: join(stage, 'issuer') });
+      session.checkOnline();
+      await stop(server);
+      server = undefined;
+      session.checkOffline();
+      server = await start();
+      session.checkOnline();
+      const revoke = spawnSync(join(stage, 'managed-machine'), ['daemon', 'revoke-hq'], {
+        cwd: '/', stdio: 'ignore', timeout: 5000,
+      });
+      requireCheck(revoke.status === 0);
+      session.checkRevoked();
+      await stop(server);
+      server = undefined;
+      server = await start();
+      session.checkRevoked();
+      console.log('PASS dedicated role verified native session self-lookup, outage, restart and signed revocation');
+      return;
+    }
     check('outage');
     server=await start();
     requireCheck(check('identity')===expectedThumb && check('prove')===expectedThumb);
