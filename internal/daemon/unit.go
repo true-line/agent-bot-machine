@@ -70,7 +70,19 @@ func keydUnitPath(goos, root string) (string, error) {
 	return filepath.Join(root, "Library", "LaunchAgents", darwinKeydServiceLabel+".plist"), nil
 }
 
+// keyd must start for the prefix owner in either a GUI login or an SSH login.
+const keydSessionTypes = `	<key>LimitLoadToSessionType</key>
+	<array>
+		<string>Aqua</string>
+		<string>Background</string>
+	</array>
+`
+
 func keydAgent(stateDir, bin string) string {
+	return renderKeydAgent(stateDir, bin, keydSessionTypes)
+}
+
+func renderKeydAgent(stateDir, bin, sessions string) string {
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -84,13 +96,13 @@ func keydAgent(stateDir, bin string) string {
 		<string>--state-dir</string>
 		<string>%s</string>
 	</array>
-	<key>RunAtLoad</key>
+%s	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
 </dict>
 </plist>
-`, darwinKeydServiceLabel, xmlEscape(bin), xmlEscape(stateDir))
+`, darwinKeydServiceLabel, xmlEscape(bin), xmlEscape(stateDir), sessions)
 }
 
 func UninstallKeyd(goos, root string) error {
@@ -108,11 +120,20 @@ func UninstallKeyd(goos, root string) error {
 // template without opening or executing the path in the previous plist.
 func machineKeydRegistration(previous []byte, stateDir string) bool {
 	var plist struct {
-		Args []string `xml:"dict>array>string"`
+		Arrays []struct {
+			Values []string `xml:"string"`
+		} `xml:"dict>array"`
 	}
-	return xml.Unmarshal(previous, &plist) == nil && len(plist.Args) == 4 &&
-		filepath.IsAbs(plist.Args[0]) && filepath.Base(plist.Args[0]) == "agent-bot-keyd" &&
-		string(previous) == keydAgent(stateDir, plist.Args[0])
+	if xml.Unmarshal(previous, &plist) != nil || len(plist.Arrays) == 0 || len(plist.Arrays[0].Values) != 4 {
+		return false
+	}
+	bin := plist.Arrays[0].Values[0]
+	if !filepath.IsAbs(bin) || filepath.Base(bin) != "agent-bot-keyd" {
+		return false
+	}
+	body := string(previous)
+	// Releases before background login support wrote no session types.
+	return body == keydAgent(stateDir, bin) || body == renderKeydAgent(stateDir, bin, "")
 }
 
 type keydUnitPlan struct {
