@@ -1029,10 +1029,44 @@ pub mod keychain {
     /// something agent-bot pinned. Everything under `PIN_SERVICE` — the daemon
     /// grant key, the presence seed and the owner's statement pins — is what
     /// agent-bot trusts, so an item keyd does not control is not a value keyd
-    /// may hand back. Keying on the service keeps a pin account added later
-    /// refused by default rather than trusted by default.
+    /// may hand back. The managed device record also anchors an existing
+    /// identity and its enrollment, and must survive an unverifiable ACL intact.
     fn recreatable(service: &str) -> bool {
-        service != PIN_SERVICE
+        service != PIN_SERVICE && service != crate::hq_device::SERVICE
+    }
+
+    fn read_existing(
+        service: &str,
+        account: &str,
+        trusted: bool,
+        password: impl AsRef<[u8]>,
+        repair: impl FnOnce(&[u8]) -> Result<(), String>,
+    ) -> Result<Vec<u8>, StoreError> {
+        if !trusted && !recreatable(service) {
+            return Err(StoreError::Untrusted {
+                account: account.to_owned(),
+            });
+        }
+        let value = password.as_ref().to_vec();
+        drop(password);
+        if !trusted {
+            repair(&value)?;
+        }
+        Ok(value)
+    }
+
+    // Only explicit initialization may insert device custody. Subsequent
+    // updates require a still-present item with verified access and keep its ACL.
+    fn update_device_item<T>(
+        item: Option<T>,
+        trusted: impl FnOnce(&T) -> bool,
+        update: impl FnOnce(&T) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let item = item.ok_or("existing device custody is missing")?;
+        if !trusted(&item) {
+            return Err("existing device custody could not be verified".into());
+        }
+        update(&item)
     }
 
     /// The login keychain, or (tests) a keychain file of its own.
@@ -1094,26 +1128,30 @@ pub mod keychain {
             let Some((password, item)) = self.find(&keychain, service, account)? else {
                 return Ok(None);
             };
-            if access_is_keyd_only(&item) {
-                return Ok(Some(password.to_vec()));
-            }
-            // An item from before the access list was locked, or one another
-            // process planted. Either way keyd did not make it.
-            if !recreatable(service) {
-                return Err(StoreError::Untrusted {
-                    account: account.to_owned(),
-                });
-            }
-            let value = password.to_vec();
-            drop(password);
-            replace(&keychain, service, account, item, &value)?;
-            Ok(Some(value))
+            read_existing(
+                service,
+                account,
+                access_is_keyd_only(&item),
+                password,
+                |value| replace(&keychain, service, account, item, value),
+            )
+            .map(Some)
         }
 
         fn write(&self, service: &str, account: &str, value: &[u8]) -> Result<(), String> {
             no_prompts()?;
             let keychain = self.open()?;
-            if let Some((_, item)) = self.find(&keychain, service, account)? {
+            let found = self
+                .find(&keychain, service, account)?
+                .map(|(_, item)| item);
+            if service == crate::hq_device::SERVICE {
+                return update_device_item(found, access_is_keyd_only, |item| {
+                    modify(item, value).map_err(|status| {
+                        format!("the keychain item could not be written ({status})")
+                    })
+                });
+            }
+            if let Some(item) = found {
                 return replace(&keychain, service, account, item, value);
             }
             match create(&keychain, service, account, value)? {
@@ -1256,6 +1294,53 @@ pub mod keychain {
                 "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>Partitions</key><array>{inner}</array></dict></plist>"
             );
             plist.bytes().map(|b| format!("{b:02x}")).collect()
+        }
+
+        #[test]
+        fn device_custody_reads_never_repair_the_record() {
+            use super::read_existing;
+            let bytes = b"disposable enrolled record";
+            for trusted in [true, false] {
+                let result = read_existing(
+                    crate::hq_device::SERVICE,
+                    "managed-device",
+                    trusted,
+                    bytes,
+                    |_| panic!("device read triggered record replacement"),
+                );
+                if trusted {
+                    assert_eq!(result.unwrap(), bytes);
+                } else {
+                    assert!(result.unwrap_err().is_untrusted());
+                }
+            }
+            let mut repaired = false;
+            let value = read_existing(crate::store::APP_SERVICE, "fixture", false, bytes, |v| {
+                repaired = true;
+                assert_eq!(v, bytes);
+                Ok(())
+            })
+            .unwrap();
+            assert!(repaired);
+            assert_eq!(value, bytes);
+        }
+
+        #[test]
+        fn device_custody_updates_require_the_existing_trusted_item() {
+            use super::update_device_item;
+            for existing in [None, Some(false), Some(true)] {
+                let mut writes = 0;
+                let result = update_device_item(
+                    existing,
+                    |trusted| *trusted,
+                    |_| {
+                        writes += 1;
+                        Ok(())
+                    },
+                );
+                assert_eq!(result.is_ok(), existing == Some(true));
+                assert_eq!(writes, usize::from(result.is_ok()));
+            }
         }
 
         #[test]

@@ -67,3 +67,8 @@ code-signature subject and refuses unknown layouts. An unsigned legacy subject
 is confined to its original path and recorded executable hash. A signed upgrade can validate the
 record after the old executable is removed.
 [Apple's ACL subject encoding](https://github.com/apple-oss-distributions/Security/blob/db15acbe6a7f257a859ad9a3bb86097bfe0679d9/OSX/libsecurity_cdsa_utilities/lib/acl_codesigning.cpp#L54-L72)
+
+Managed device status leaves the custody record and its access list intact.
+If the existing access list cannot be verified, keyd refuses the operation.
+Device updates require an existing trusted record. Only explicit administrator
+initialization can insert a new record.
