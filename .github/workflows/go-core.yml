@@ -30,6 +30,7 @@ on:
       - 'install-core.ps1'
       - '.github/workflows/go-core.yml'
       - '.github/workflows/sign.yml'
+      - '.github/workflows/release.yml'
       - '.github/workflows/prepare-release.yml'
       - '.github/workflows/version-cut.yml'
       - 'legacy/**'
@@ -80,7 +81,7 @@ jobs:
           fi
           changed="$(git diff --name-only HEAD^1 HEAD)"
           echo "changed files:"; echo "$changed"
-          re='^(cmd/|internal/|keyd/|Formula/|legacy/|scripts/|tests/)|^(go\.mod|go\.sum|install\.sh|install-core\.(sh|ps1)|VERSION|LICENSE|\.github/workflows/(go-core|sign|prepare-release|version-cut)\.yml)$'
+          re='^(cmd/|internal/|keyd/|Formula/|legacy/|scripts/|tests/)|^(go\.mod|go\.sum|install\.sh|install-core\.(sh|ps1)|VERSION|LICENSE|\.github/workflows/(go-core|sign|prepare-release|release|version-cut)\.yml)$'
           if printf '%s\n' "$changed" | grep -Eq "$re"; then go=true; else go=false; fi
           echo "go=$go" >> "$GITHUB_OUTPUT"; echo "go=$go"
 

@@ -10,13 +10,15 @@ tap_homebrew_device_release() (
     done
     # The surrounding temporary Keychain fixture uses 077. Install the public
     # formula with normal Homebrew permissions, leaving the parent umask intact.
-    umask 022
-    "$brew" tap "$tap" https://github.com/true-line/agent-bot-machine.git
     if [[ -n "${MM_HQ_TAP_REVISION:-}" ]]; then
         [[ "$MM_HQ_TAP_REVISION" =~ ^[0-9a-f]{40}$ && "${HOMEBREW_NO_AUTO_UPDATE:-}" == 1 ]] || exit 1
-        git -C "$tapdir" fetch --quiet --no-tags --depth=1 origin "$MM_HQ_TAP_REVISION"
-        git -C "$tapdir" checkout --quiet --detach "$MM_HQ_TAP_REVISION"
-        [[ "$(git -C "$tapdir" rev-parse HEAD)" == "$MM_HQ_TAP_REVISION" ]]
+    fi
+    umask 022
+    "$brew" tap "$tap" https://github.com/true-line/agent-bot-machine.git || exit 1
+    if [[ -n "${MM_HQ_TAP_REVISION:-}" ]]; then
+        git -C "$tapdir" fetch --quiet --no-tags --depth=1 origin "$MM_HQ_TAP_REVISION" || exit 1
+        git -C "$tapdir" checkout --quiet --detach "$MM_HQ_TAP_REVISION" || exit 1
+        [[ "$(git -C "$tapdir" rev-parse HEAD)" == "$MM_HQ_TAP_REVISION" ]] || exit 1
     fi
 )
 
@@ -63,17 +65,31 @@ with tarfile.open(sys.argv[1],"r:gz") as archive:
 PY
 }
 
+download_device_release_asset() {
+    curl -qfsSL --proto '=https' --proto-redir '=https' --retry 3 \
+        "https://github.com/true-line/agent-bot-machine/releases/download/v$1/$2" -o "$3"
+}
+
+use_published_device_formula() (
+    set -euo pipefail
+    local version="$1" expected="$2" download="$3" recipe="$4"
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$expected" =~ ^[0-9a-f]{64}$ ]] || exit 1
+    download_device_release_asset "$version" managed-machine.rb "$download" || exit 1
+    [[ "$(shasum -a 256 "$download" | awk '{print $1}')" == "$expected" ]] || {
+        echo 'The published Homebrew formula differs from the verified release recipe' >&2; exit 1
+    }
+    cp "$download" "$recipe"
+)
+
 fetch_public_device_archive() (
     set -euo pipefail
-    local version="$1" work="$2" expected="$3" asset url digest
+    local version="$1" work="$2" expected="$3" asset digest
     [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$expected" =~ ^[0-9a-f]{64}$ ]] || exit 1
     asset="managed-machine_${version}_darwin_arm64.tar.gz"
-    url="https://github.com/true-line/agent-bot-machine/releases/download/v$version"
-    local download=(curl -qfsSL --proto '=https' --proto-redir '=https' --retry 3)
-    "${download[@]}" "$url/SHA256SUMS" -o "$work/SHA256SUMS"
+    download_device_release_asset "$version" SHA256SUMS "$work/SHA256SUMS"
     digest="$(awk -v asset="$asset" 'NF == 2 && $2 == asset {print $1}' "$work/SHA256SUMS")"
     [[ "$digest" == "$expected" ]] || { echo 'Published checksum disagrees with the selected release' >&2; exit 1; }
-    "${download[@]}" "$url/$asset" -o "$work/$asset"
+    download_device_release_asset "$version" "$asset" "$work/$asset"
     [[ "$(shasum -a 256 "$work/$asset" | awk '{print $1}')" == "$expected" ]] ||
         { echo 'Downloaded archive differs from its published checksum' >&2; exit 1; }
 )

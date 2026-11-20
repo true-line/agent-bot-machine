@@ -2,13 +2,24 @@ name: Qualify the published Homebrew device release
 on:
   push:
     branches: [main]
-    paths: [Formula/managed-machine.rb]
+    paths:
+      - Formula/managed-machine.rb
+      - .github/workflows/homebrew-device-release.yml
+      - .github/workflows/darwin-hq-install.yml
+      - tests/fixtures/homebrew-device-pin.py
+      - tests/fixtures/install-homebrew-darwin-hq-device.sh
+      - tests/fixtures/stage-darwin-hq-device.sh
+      - tests/fixtures/public-homebrew-darwin-hq-device.sh
+      - tests/homebrew-device-pin.test.py
   pull_request:
     paths:
       - Formula/managed-machine.rb
       - .github/workflows/homebrew-device-release.yml
       - .github/workflows/darwin-hq-install.yml
       - tests/fixtures/homebrew-device-pin.py
+      - tests/fixtures/install-homebrew-darwin-hq-device.sh
+      - tests/fixtures/stage-darwin-hq-device.sh
+      - tests/fixtures/public-homebrew-darwin-hq-device.sh
       - tests/homebrew-device-pin.test.py
 permissions:
   contents: read

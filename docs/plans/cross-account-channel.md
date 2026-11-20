@@ -292,6 +292,12 @@ On pull requests, the macOS 15 runner installs the current public Homebrew
 formula and checks the linked Machine and keyd executables against the
 published release checksum, Developer ID requirements and installed modes.
 
+After publication, a fresh macOS 15 runner downloads the release's attached
+formula, checksum list and Darwin archive from their public URLs. It checks
+the formula and archive against the verified publish job's digests, installs
+and reinstalls the formula in a disposable tap, verifies the installed source
+commit after each installation, and runs its package tests.
+
 When the signed Darwin archive pin changes on protected `main`, CI installs
 the public tap at that push's exact Git commit. It verifies the release
 checksums and compares both active keg executables to the published archive.

@@ -8,29 +8,36 @@ verify_device_release_signature() {
 }
 
 verify_homebrew_device_install() {
-    local prefix="$1" version="$2" unpack="$3" name mode identifier
+    local prefix="$1" version="$2" unpack="$3" source_commit="${4:-}" name mode identifier
+    if [[ -n "$source_commit" ]]; then
+        local receipt="$prefix/Cellar/managed-machine/$version/libexec/RELEASE_COMMIT"
+        [[ "$source_commit" =~ ^[0-9a-f]{40}$ && -f "$receipt" && ! -L "$receipt" ]] &&
+            cmp -s "$receipt" <(printf '%s\n' "$source_commit") || return 1
+    fi
     for name in managed-machine agent-bot-keyd; do
         if [[ "$name" == managed-machine ]]; then mode=0555; identifier=ai.true-line.agent-bot-machine
         else mode=0700; identifier=ai.true-line.agent-bot-keyd; fi
         verify_homebrew_device_binary "$prefix" "$version" "$name" "$mode" "$unpack/$name" || return 1
         verify_device_release_signature "$prefix/Cellar/managed-machine/$version/bin/$name" "$identifier" || return 1
     done
-    [[ "$("$prefix/bin/managed-machine" --version)" == "$version" ]]
+    local installed_version
+    installed_version="$("$prefix/bin/managed-machine" --version)" || return 1
+    [[ "$installed_version" == "$version" ]] || return 1
 }
 
 # Exercise both formula installations before any service uses the keg.
 qualify_homebrew_device_release() (
     set -euo pipefail
-    local brew="$1" prefix="$2" version="$3" digest="$4" unpack="$5"
+    local brew="$1" prefix="$2" version="$3" digest="$4" unpack="$5" source_commit="${6:-}"
     local formula=true-line/agent-bot-machine/managed-machine
     umask 022
     install_homebrew_device_release "$brew" "$version" "$digest"
-    verify_homebrew_device_install "$prefix" "$version" "$unpack" >/dev/null 2>&1 || {
+    verify_homebrew_device_install "$prefix" "$version" "$unpack" "$source_commit" >/dev/null 2>&1 || {
         echo 'FAIL: installed Homebrew release verification' >&2; exit 1;
     }
     "$brew" test "$formula" >/dev/null 2>&1 || { echo 'FAIL: installed Homebrew formula test' >&2; exit 1; }
     "$brew" reinstall --formula "$formula" >/dev/null 2>&1 || { echo 'FAIL: Homebrew formula reinstall' >&2; exit 1; }
-    verify_homebrew_device_install "$prefix" "$version" "$unpack" >/dev/null 2>&1 || {
+    verify_homebrew_device_install "$prefix" "$version" "$unpack" "$source_commit" >/dev/null 2>&1 || {
         echo 'FAIL: reinstalled Homebrew release verification' >&2; exit 1;
     }
     "$brew" test "$formula" >/dev/null 2>&1 || { echo 'FAIL: reinstalled Homebrew formula test' >&2; exit 1; }

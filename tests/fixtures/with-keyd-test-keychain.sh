@@ -4,14 +4,15 @@
 set -euo pipefail
 [[ "$#" -gt 0 && "${MM_KEYD_CUSTODY_TEST:-}" == 1 && "${GITHUB_ACTIONS:-}" == true &&
    "${RUNNER_ENVIRONMENT:-}" == github-hosted && "$(uname -sm)" == 'Darwin arm64' &&
-   "$(id -u)" != 0 && "$(id -u)" == "$(stat -f %u /opt/homebrew)" ]]
+   "$(id -u)" != 0 && "$(id -u)" == "$(stat -f %u /opt/homebrew)" ]] || exit 1
 umask 077
 stage="$(mktemp -d /private/tmp/mm-native-keychain.XXXXXXXX)"
 db="$stage/fixture.keychain-db"
+trap 'rmdir "$stage"' EXIT
 previous="$(/usr/bin/security default-keychain -d user)"
 previous="${previous#*\"}"
 previous="${previous%\"*}"
-[[ "$previous" == /* && "$previous" != "$db" && -f "$previous" ]]
+[[ "$previous" == /* && "$previous" != "$db" && -f "$previous" ]] || exit 1
 cleanup() {
   /usr/bin/security default-keychain -d user -s "$previous" >/dev/null 2>&1
   if [[ -f "$db" ]]; then /usr/bin/security delete-keychain "$db" >/dev/null 2>&1; fi
@@ -22,5 +23,5 @@ trap cleanup EXIT
 /usr/bin/security unlock-keychain -p '' "$db" >/dev/null 2>&1
 /usr/bin/security default-keychain -d user -s "$db" >/dev/null 2>&1
 current="$(/usr/bin/security default-keychain -d user)"
-[[ "${current#*\"}" == "$db\"" ]]
+[[ "${current#*\"}" == "$db\"" ]] || exit 1
 "$@"

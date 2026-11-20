@@ -3,7 +3,8 @@
 set -euo pipefail
 
 [[ "${MM_KEYD_CUSTODY_TEST:-}" == 1 ]] || exit 0
-[[ "$(uname -s)" == Darwin && "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]
+[[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
+   "$(uname -sm)" == 'Darwin arm64' && "$(id -u)" != 0 && "$(id -u)" == "$(stat -f %u /opt/homebrew)" ]] || exit 1
 root="$(cd "$(dirname "$0")/.." && pwd)"
 (cd "$root/keyd" && cargo build --release --locked)
 temp="$(mktemp -d /private/tmp/mm-custody.XXXXXXXX)"
@@ -31,15 +32,15 @@ refused() {
     else
         rc=$?
     fi
-    [[ "$rc" == 1 && ! -s "$temp/denied-out" ]]
-    [[ "$(cat "$temp/denied-err")" == 'agent-bot-keyd: custody requires the nonroot administrator who owns the Homebrew prefix' ]]
+    [[ "$rc" == 1 && ! -s "$temp/denied-out" ]] || exit 1
+    [[ "$(cat "$temp/denied-err")" == 'agent-bot-keyd: custody requires the nonroot administrator who owns the Homebrew prefix' ]] || exit 1
 }
 refused nobody --version
 refused nobody serve --state-dir "$temp/state"
 refused nobody presence-key --keychain "$temp/absent.keychain-db"
 refused nobody mcp --state-dir "$temp/state"
 refused root --version
-[[ ! -e "$temp/state" && ! -e "$temp/absent.keychain-db" ]]
+[[ ! -e "$temp/state" && ! -e "$temp/absent.keychain-db" ]] || exit 1
 
 refused nobody hq-device-init
 refused nobody hq-device
@@ -53,7 +54,7 @@ if ! /usr/bin/xcrun swift -e 'import CryptoKit; import Darwin; exit(SecureEnclav
     exit 1
 fi
 echo 'Hosted Secure Enclave available'
-[[ "$(id -u)" == "$(stat -f %u /opt/homebrew)" ]]
+bash "$root/tests/keyd-custody-cleanup.test.sh"
 role=_agent-bot-hq
 role_home=/private/var/agent-bot-hq
 channel=/opt/homebrew/var/agent-machine
@@ -72,13 +73,7 @@ done
 : "${role_uid:?no free macOS service UID/GID}"
 mkdir -m 0755 "$channel"
 made_group=false; made_role=false; made_home=false
-cleanup_role() {
-    "$made_role" && sudo -n dscl . -delete "/Users/$role"
-    "$made_group" && sudo -n dscl . -delete "/Groups/$role"
-    "$made_home" && sudo -n rm -rf "$role_home"
-    rmdir "$channel"
-    rm -rf "$temp"
-}
+source "$root/tests/fixtures/cleanup-darwin-custody.sh"
 trap cleanup_role EXIT
 sudo -n dscl . -create "/Groups/$role"
 made_group=true
@@ -93,7 +88,7 @@ made_home=true
 sudo -n chown "$role_uid:$role_uid" "$role_home"
 sudo -n dscl . -create "/Users/$role" NFSHomeDirectory "$role_home"
 sudo -n dscl . -create "/Users/$role" IsHidden 1
-[[ "$(id -u "$role")" == "$role_uid" && "$(id -g "$role")" == "$role_uid" ]]
+[[ "$(id -u "$role")" == "$role_uid" && "$(id -g "$role")" == "$role_uid" ]] || exit 1
 refused "$role" hq-device-init
 refused "$role" hq-device
 sudo -n chmod 0700 "$helper"
