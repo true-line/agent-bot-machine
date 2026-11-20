@@ -16,7 +16,10 @@ func (OSHost) ReadFile(string) (string, bool, error) { return "", false, errUnsu
 func (OSHost) List(string) ([]string, error)         { return nil, errUnsupported }
 
 // OSRoot has no Windows form either.
-type OSRoot struct{}
+type OSRoot struct {
+	upgradeApproval  Approval
+	checkUpgradePair upgradePairGuard
+}
 
 func (OSRoot) PasswordField(string) (string, bool, error)     { return "", false, errUnsupported }
 func (OSRoot) ReadSudoers() (string, bool, error)             { return "", false, errUnsupported }
