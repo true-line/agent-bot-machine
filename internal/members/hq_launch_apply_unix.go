@@ -88,7 +88,40 @@ func approvedLaunchPID(out []byte, s HQService, owner string) (string, bool) {
 	return pid, source == launchPlist && program == want[0] && slices.Equal(args, want)
 }
 
-func activateLaunchDaemon(step Step) (err error) {
+func withLaunchLock(mode int, run func() error) error {
+	// Different approved plans can race for the same service. Hold this
+	// receipt-directory lock through bootstrap, verification and rollback.
+	lock, err := os.OpenFile(filepath.Join(receiptsDir(), ".hq-launchd.lock"), os.O_CREATE|os.O_RDONLY|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), mode); err != nil {
+		return err
+	}
+
+	return run()
+}
+
+func activateLaunchDaemon(step Step) error {
+	return withLaunchLock(syscall.LOCK_EX, func() error {
+		if _, err := os.Lstat(filepath.Join(receiptsDir(), upgradeJournalName)); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("an interrupted HQ release transition needs reconciliation")
+		}
+		return activateReviewedLaunch(step, nil, nil)
+	})
+}
+
+// Only the launchctl submission runs inside the optional upgrade pairing guard.
+// First installation has its separate reviewed plan and no prior pairing.
+func submitHQBootstrap(guard func(func() error) error, submit func() error) error {
+	if guard == nil {
+		return submit()
+	}
+	return guard(submit)
+}
+
+func activateReviewedLaunch(step Step, guardBootstrap func(func() error) error, stopStarted func(*os.File, os.FileInfo) error) (err error) {
 	if step.Target != launchLabel {
 		return errors.New("expected Darwin LaunchDaemon step")
 	}
@@ -109,16 +142,6 @@ func activateLaunchDaemon(step Step) (err error) {
 	}
 	if u.Uid != strconv.Itoa(rec.OwnerUID) {
 		return errors.New("approved owner's UID changed")
-	}
-	// Different approved plans can race for the same service. Hold this
-	// receipt-directory lock through bootstrap, verification and rollback.
-	lock, err := os.OpenFile(filepath.Join(receiptsDir(), ".hq-launchd.lock"), os.O_CREATE|os.O_RDONLY|syscall.O_NOFOLLOW, 0600)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		return err
 	}
 	loaded, _, err := loadedLaunchDaemon(rec.Service, step.Owner)
 	if err != nil {
@@ -203,6 +226,12 @@ func activateLaunchDaemon(step Step) (err error) {
 		if err == nil {
 			return
 		}
+		if started && stopStarted != nil {
+			// An upgrade must durably identify its newly published endpoint before
+			// bootout so a later apply can finish the same guarded cleanup.
+			err = errors.Join(err, stopStarted(socketParent, published))
+			return
+		}
 		if started {
 			ours, pid, inspectErr := loadedLaunchDaemon(rec.Service, step.Owner)
 			if inspectErr != nil || !ours {
@@ -229,7 +258,7 @@ func activateLaunchDaemon(step Step) (err error) {
 		}
 	}()
 	if !loaded {
-		if err = runProgram(launchctl, "bootstrap", "system", launchPlist); err != nil {
+		if err = submitHQBootstrap(guardBootstrap, func() error { return runProgram(launchctl, "bootstrap", "system", launchPlist) }); err != nil {
 			return err
 		}
 		started = true
@@ -253,6 +282,10 @@ func activateLaunchDaemon(step Step) (err error) {
 	if !loaded || parseErr != nil || n <= 0 {
 		return errors.New("HQ has no live launchd process")
 	}
+	return verifyHQProcessUID(pid)
+}
+
+func verifyHQProcessUID(pid string) error {
 	role, err := user.Lookup(DarwinHQAccount)
 	if err != nil {
 		return err

@@ -30,6 +30,26 @@ sudo chmod 0755 "$stage"
 if [[ -n "${MM_HQ_DEVICE_ARCHIVE:-}" ]]; then
     source "$ROOT/tests/fixtures/stage-darwin-hq-device.sh"
 fi
+if [[ "${MM_HQ_UPGRADE_TEST:-}" == paired ]]; then
+    [[ "$real_hq" == true && "${MM_KEYD_CUSTODY_TEST:-}" == 1 && -z "${MM_HQ_DEVICE_ARCHIVE:-}" ]] || exit 1
+    provider_dir="$stage/upgrade-provider"
+    sudo install -d -o root -g wheel -m 0755 "$provider_dir"
+    # Add two fixture files to the disposable build. No tracked product source
+    # is replaced. A single executable both creates and reads its self-only
+    # Machine Keychain item from first pairing through the upgrade.
+    module="$(cd "$ROOT" && go list -m)"
+    jq -jRs --arg module "$module" 'split("MODULE_PATH") | if length == 2 then join($module) else error("expected one module placeholder") end' \
+        "$ROOT/tests/fixtures/paired-darwin-hq-upgrade-main.go.txt" > "$WORK/hosted-upgrade-main.go"
+    jq -n --arg root "$ROOT" --arg main "$WORK/hosted-upgrade-main.go" '{Replace:{
+        ($root+"/cmd/managed-machine/hosted_upgrade_fixture_darwin.go"):$main,
+        ($root+"/internal/daemon/hosted_upgrade_fixture_darwin.go"):($root+"/tests/fixtures/paired-darwin-hq-upgrade-daemon.go.txt")
+    }}' > "$WORK/upgrade-overlay.json"
+    (cd "$ROOT" && go build -overlay "$WORK/upgrade-overlay.json" -o "$WORK/native-upgrade-test" ./cmd/managed-machine)
+    "$ROOT/scripts/build-darwin-keyd" "$WORK/native-upgrade-keyd"
+    sudo install -o "$ME" -g "$(id -gn)" -m 0700 "$WORK/native-upgrade-keyd" "$provider_dir/agent-bot-keyd"
+    sudo install -o "$ME" -g "$(id -gn)" -m 0700 "$WORK/native-upgrade-test" "$provider_dir/managed-machine"
+    MM="$provider_dir/managed-machine"
+fi
 prepare_native_hq_fixture() {
     local fixture="$1"
     shift
@@ -69,7 +89,7 @@ fixture="$WORK/launch-fixture"
 record="$WORK/hq-service.json"
 if "$real_hq"; then
     mkdir "$fixture"
-    bash "$ROOT/tests/fixtures/prepare-real-darwin-hq.sh" "$fixture"
+    bash "$ROOT/tests/fixtures/prepare-real-darwin-hq.sh" "$fixture" "${MM_HQ_PREDECESSOR:-original}"
     install_hq_fixture "$fixture" "$fixture/bin/node" "$stage" "$record" "$fixture/installed.sha256"
     case "$(jq -er '.owner_control_capability // "v1-unmarked"' "$stage/hq/governance/interim-release.json")" in
         v1-unmarked) ;;
@@ -159,9 +179,9 @@ for count in 1 2; do
     fi
     if [[ "$count" == 1 ]]; then
         uid="$(id -u "$role")"
-        [[ "$uid" -ge 300 && "$uid" -le 399 && "$(id -g "$role")" == "$uid" ]]
-        [[ "$(attr "$role" NFSHomeDirectory)" == /var/agent-bot-hq ]]
-        [[ "$(sudo stat -f '%Su %Sg %Lp' /var/agent-bot-hq)" == "$role $role 700" ]]
+        [[ "$uid" -ge 300 && "$uid" -le 399 && "$(id -g "$role")" == "$uid" ]] || exit 1
+        [[ "$(attr "$role" NFSHomeDirectory)" == /var/agent-bot-hq ]] || exit 1
+        [[ "$(sudo stat -f '%Su %Sg %Lp' /var/agent-bot-hq)" == "$role $role 700" ]] || exit 1
         refused MM_MEMBERS_NOT_APPROVED sudo "$MM" members apply "$id"
         refused MM_DAEMON_CALLER_REFUSED "$MM" daemon first-hq export "$id"
     fi
@@ -179,10 +199,10 @@ for count in 1 2; do
                 fail 'separate account did not reach the peer-checked listener'
         fi
     fi
-    [[ "$(sudo stat -f '%Su %Sg %Lp' "$plist")" == 'root wheel 644' ]]
-    [[ "$(sudo stat -f '%Su %Lp' /var/agent-bot-hq/.agent-bot-hq)" == "$role 700" ]]
+    [[ "$(sudo stat -f '%Su %Sg %Lp' "$plist")" == 'root wheel 644' ]] || exit 1
+    [[ "$(sudo stat -f '%Su %Lp' /var/agent-bot-hq/.agent-bot-hq)" == "$role 700" ]] || exit 1
     newpid="$(sudo launchctl print "system/$label" | awk '$1 == "pid" && $2 == "=" {print $3}')"
-    [[ "$newpid" =~ ^[0-9]+$ ]]
+    [[ "$newpid" =~ ^[0-9]+$ ]] || exit 1
     if "$real_hq"; then [[ "$(ps -o uid= -p "$newpid" | tr -d ' ')" == "$(id -u "$role")" ]] || fail 'HQ PID has the wrong account'; fi
     if [[ "$count" == 2 ]]; then [[ "$pid" == "$newpid" ]] || fail 'reapply restarted HQ'; fi
     pid="$newpid"

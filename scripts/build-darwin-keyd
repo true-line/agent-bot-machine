@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Stage the exact helper built for the Darwin arm64 release.
+set -euo pipefail
+
+[[ $# == 1 ]] || { echo "usage: scripts/build-darwin-keyd <destination>" >&2; exit 2; }
+root="$(cd "$(dirname "$0")/.." && pwd)"
+target="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/build-keyd.XXXXXXXX")"
+trap 'rm -rf "$target"' EXIT
+(cd "$root/keyd" && /usr/bin/python3 - "$root" "$target" <<'PY'
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+root, target = sys.argv[1:]
+home = Path.home()
+# Rust embeds dependency paths in panic locations, even in release builds.
+# Use Cargo's argument separator so checkouts and caches may contain spaces.
+sep = "\x1f"
+flags = os.environ.get("RUSTFLAGS", "").split()
+if "CARGO_ENCODED_RUSTFLAGS" in os.environ:
+    encoded = os.environ["CARGO_ENCODED_RUSTFLAGS"]
+    flags = encoded.split(sep) if encoded else []
+paths = {}
+for source, name in [(home, "home"), (os.environ.get("CARGO_HOME") or home / ".cargo", "cargo"),
+                     (root, "source"), (target, "target")]:
+    for prefix in (os.path.abspath(source), os.path.realpath(source)):
+        if prefix != os.sep:
+            paths[prefix] = "build-inputs/" + name
+# rustc uses the last matching prefix. Prefer the most specific mapping.
+for prefix in sorted(paths, key=len):
+    flags.append("--remap-path-prefix=" + prefix + "=" + paths[prefix])
+os.environ["CARGO_ENCODED_RUSTFLAGS"] = sep.join(flags)
+subprocess.run(["cargo", "build", "--release", "--locked", "--target", "aarch64-apple-darwin",
+                "--target-dir", target], check=True)
+binary = (Path(target) / "aarch64-apple-darwin/release/agent-bot-keyd").read_bytes()
+if any(os.fsencode(prefix + os.sep) in binary for prefix in paths):
+    sys.exit("Refusing to stage keyd with a local build path")
+PY
+)
+install -m 0700 "$target/aarch64-apple-darwin/release/agent-bot-keyd" "$1"

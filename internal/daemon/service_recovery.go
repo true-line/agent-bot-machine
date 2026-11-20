@@ -19,6 +19,9 @@ import (
 )
 
 const recoveryVerb = "hq-service-recovery"
+const upgradeVerb = "hq-service-upgrade"
+
+func pairedServiceVerb(verb string) bool { return verb == recoveryVerb || verb == upgradeVerb }
 
 // This record never contains plan contents. UID is a local pairing property.
 type recoveryChallenge struct {
@@ -35,7 +38,7 @@ type recoveryChallenge struct {
 
 func (c recoveryChallenge) valid() bool {
 	_, err := ownerKey(c.Owner)
-	return err == nil && c.Action == recoveryVerb && exactKey(c.Machine) && exactKey(c.HQ) && members.ValidApproval(c.ID, c.Digest) && exactKey(c.Nonce) && c.Expires > 0 && c.UID > 0
+	return err == nil && pairedServiceVerb(c.Action) && exactKey(c.Machine) && exactKey(c.HQ) && members.ValidApproval(c.ID, c.Digest) && exactKey(c.Nonce) && c.Expires > 0 && c.UID > 0
 }
 
 func (c recoveryChallenge) message() []byte {
@@ -84,7 +87,7 @@ type recoveryPlanCheck func(id, digest string, uid int) (string, error)
 
 func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now func() time.Time, check recoveryPlanCheck) Response {
 	deny := func() Response {
-		return refused(diag.DaemonPeerRefused, "service recovery challenge, pairing, plan or owner proof is invalid")
+		return refused(diag.DaemonPeerRefused, "service challenge, pairing, plan or owner proof is invalid")
 	}
 	unlock, err := lockOwnerPairing(dir)
 	if err != nil {
@@ -101,7 +104,7 @@ func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now fu
 		return deny()
 	}
 	c := p.Recovery
-	if req.Option != "challenge" && (c == nil || c.ID != req.PlanID || c.Digest != req.PlanDigest || c.Nonce != req.ChallengeNonce) {
+	if !pairedServiceVerb(req.Verb) || (req.Option != "challenge" && (c == nil || c.Action != req.Verb || c.ID != req.PlanID || c.Digest != req.PlanDigest || c.Nonce != req.ChallengeNonce)) {
 		return deny()
 	}
 	if req.Option == "cancel" {
@@ -129,7 +132,7 @@ func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now fu
 	}
 	canonical, err := check(req.PlanID, req.PlanDigest, req.peerUID)
 	if err != nil {
-		return refused(diag.DaemonPlanFailed, "saved plan is not a current, eligible HQ service recovery")
+		return refused(diag.DaemonPlanFailed, "saved plan is not eligible for the requested HQ service operation")
 	}
 	// Revocation by legacy admin tooling and Machine key replacement do not
 	// take the pairing lock. Recheck after the potentially slow artifact scan.
@@ -143,7 +146,7 @@ func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now fu
 		if _, err := rand.Read(nonce[:]); err != nil {
 			return deny()
 		}
-		c = &recoveryChallenge{recoveryVerb, p.Machine, p.HQ, p.Owner, req.PlanID, req.PlanDigest, hex.EncodeToString(nonce[:]), t.Unix() + ownerChallengeTTL, p.UID}
+		c = &recoveryChallenge{req.Verb, p.Machine, p.HQ, p.Owner, req.PlanID, req.PlanDigest, hex.EncodeToString(nonce[:]), t.Unix() + ownerChallengeTTL, p.UID}
 		body, err := json.Marshal(map[string]any{"action": c.Action, "machine_key": c.Machine, "hq_key": c.HQ, "owner_key": c.Owner, "plan_id": c.ID, "plan_digest": c.Digest, "nonce": c.Nonce, "expires_at": c.Expires, "plan_canonical": canonical})
 		if err != nil || len(body) > maxMessage-1024 {
 			return deny()
@@ -162,12 +165,26 @@ func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now fu
 	if err := p.save(dir); err != nil {
 		return deny()
 	}
-	a, err := members.RecordApproval(dir, req.PlanID, req.PlanDigest, t)
+	var a members.Approval
+	if req.Verb == upgradeVerb {
+		fp := sha256.Sum256(machine)
+		a, err = members.RecordUpgradeApproval(dir, req.PlanID, req.PlanDigest, hex.EncodeToString(fp[:]), pairCommitment(p), t)
+	} else {
+		a, err = members.RecordApproval(dir, req.PlanID, req.PlanDigest, t)
+	}
 	if err != nil {
 		return refused(diag.DaemonPlanFailed, "recovery approval could not be recorded")
 	}
+	a.MachineFingerprint = ""
+	a.PairCommitment = ""
+	a.Purpose = "" // The public acknowledgment retains the established four-field shape.
 	body, _ := json.Marshal(a)
 	return Response{OK: true, State: "approved", Body: body}
 }
 
-var errRecoveryPlan = errors.New("saved plan is not a current, eligible HQ service recovery")
+var errRecoveryPlan = errors.New("saved plan is not eligible for the requested HQ service operation")
+
+func pairCommitment(p *ownerPairState) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{"hq-service-upgrade/pair/v1", p.Owner, p.Machine, p.HQ, strconv.Itoa(p.UID), p.HQEpoch, ""}, "\n")))
+	return hex.EncodeToString(sum[:])
+}

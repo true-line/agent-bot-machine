@@ -6,6 +6,9 @@ on:
       - 'cmd/managed-machine/**'
       - 'internal/daemon/**'
       - 'internal/members/**'
+      - 'keyd/**'
+      - 'scripts/build-darwin-keyd'
+      - 'tests/fixtures/with-keyd-test-keychain.sh'
       - 'tests/members-apply-macos.test.sh'
       - 'tests/fixtures/*darwin-hq*'
       - 'tests/fixtures/hq-launchd-install.sh'
@@ -17,6 +20,9 @@ on:
       - 'cmd/managed-machine/**'
       - 'internal/daemon/**'
       - 'internal/members/**'
+      - 'keyd/**'
+      - 'scripts/build-darwin-keyd'
+      - 'tests/fixtures/with-keyd-test-keychain.sh'
       - 'tests/members-apply-macos.test.sh'
       - 'tests/fixtures/*darwin-hq*'
       - 'tests/fixtures/hq-launchd-install.sh'
@@ -37,9 +43,17 @@ permissions:
   contents: read
 jobs:
   install:
-    name: Machine installs the pinned HQ release on macOS 27
+    name: ${{ matrix.predecessor == 'paired' && 'Running paired HQ upgrades and rolls back on macOS 27' || 'Machine installs the pinned HQ release on macOS 27' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Release/SIP dispatch retains its original public-archive gates.
+        predecessor: ${{ fromJSON((github.event_name == 'workflow_dispatch' || inputs.device_release_version != '') && '["release"]' || '["legacy","paired"]') }}
+    env:
+      MM_HQ_UPGRADE_TEST: ${{ matrix.predecessor != 'release' && matrix.predecessor || '' }}
+      MM_HQ_PREDECESSOR: ${{ matrix.predecessor == 'paired' && 'paired' || matrix.predecessor == 'release' && inputs.device_release_version != '' && '--paired-device' || 'original' }}
     runs-on: xcode-27
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -73,7 +87,7 @@ jobs:
           GOTOOLCHAIN: local
         run: |
           command -v gtar >/dev/null || brew install gnu-tar
-          if [[ -n "${MM_HQ_DEVICE_ARCHIVE:-}" ]]; then
+          if [[ -n "${MM_HQ_DEVICE_ARCHIVE:-}" || "$MM_HQ_UPGRADE_TEST" == paired ]]; then
             MM_KEYD_CUSTODY_TEST=1 bash tests/fixtures/with-keyd-test-keychain.sh bash tests/members-apply-macos.test.sh --real-hq
           else
             bash tests/members-apply-macos.test.sh --real-hq

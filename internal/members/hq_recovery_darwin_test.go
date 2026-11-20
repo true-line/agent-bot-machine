@@ -29,69 +29,7 @@ func testDarwinHQRecoveryPlan(t *testing.T, version string) {
 	const uid = 331
 	h.accounts[DarwinHQAccount] = Account{Name: DarwinHQAccount, UID: uid, GID: uid, Group: DarwinHQAccount, PrimaryUsers: []string{DarwinHQAccount}, Groups: []string{DarwinHQAccount}, DarwinRole: darwinHQRoleName, Home: HQHome(PlatformDarwin, DarwinHQAccount), Shell: DarwinNoLoginShell}
 	h.entries[HQHome(PlatformDarwin, DarwinHQAccount)] = Entry{Dir: true, Owner: DarwinHQAccount, Group: DarwinHQAccount, Mode: 0700}
-	release := filepath.Join(base, "hq")
-	for _, dir := range []string{release, filepath.Dir(launchPlist)} {
-		for p := dir; ; p = filepath.Dir(p) {
-			h.entries[p] = Entry{Dir: true, Owner: "root", Group: "wheel", Mode: 0755}
-			if p == "/" {
-				break
-			}
-		}
-	}
-	h.entries[filepath.Dir(launchRuntimeDir)] = Entry{Dir: true, Owner: "root", Group: "admin", Mode: 0755}
-	meta := `{"target_platform":"darwin"}`
-	if version == launchControlV2 {
-		meta = `{"target_platform":"darwin","owner_control_capability":"darwin-owner-control/v2"}`
-	}
-	var archive bytes.Buffer
-	tw := tar.NewWriter(&archive)
-	for _, entry := range []struct{ name, content string }{
-		{"hq/", ""}, {"hq/governance/", ""}, {"hq/governance/interim-release.json", meta},
-		{"hq/helpers/", ""}, {"hq/helpers/darwin-owner.rb", "# fixture\n"},
-		{"hq/hq/", ""}, {"hq/hq/main.mjs", "// fixture\n"},
-	} {
-		path := filepath.Join(base, entry.name)
-		dir := strings.HasSuffix(entry.name, "/")
-		header := &tar.Header{Name: entry.name, Mode: 0644, Typeflag: tar.TypeReg, Size: int64(len(entry.content)), Format: tar.FormatUSTAR}
-		if dir {
-			header.Mode = 0755
-			header.Typeflag = tar.TypeDir
-			if err := os.MkdirAll(path, 0755); err != nil {
-				t.Fatal(err)
-			}
-		} else if err := os.WriteFile(path, []byte(entry.content), 0644); err != nil {
-			t.Fatal(err)
-		}
-		h.entries[path] = Entry{Dir: dir, Regular: !dir, Owner: "root", Group: "wheel", Mode: uint32(header.Mode)}
-		if err := tw.WriteHeader(header); err != nil {
-			t.Fatal(err)
-		}
-		if len(entry.content) > 0 {
-			if _, err := tw.Write([]byte(entry.content)); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	// A synthetic thin Mach-O header with no load commands. It is parsed only.
-	node := make([]byte, 32)
-	binary.LittleEndian.PutUint32(node[0:4], 0xfeedfacf)
-	binary.LittleEndian.PutUint32(node[4:8], 0x0100000c)
-	binary.LittleEndian.PutUint32(node[12:16], 2)
-	s := &HQService{ReleaseDir: release, Node: filepath.Join(base, "node"), Archive: filepath.Join(base, "hq.tar"),
-		ArtifactSHA256: fmt.Sprintf("%x", sha256.Sum256(archive.Bytes())), NodeSHA256: fmt.Sprintf("%x", sha256.Sum256(node))}
-	for _, file := range []struct {
-		path string
-		data []byte
-		mode os.FileMode
-	}{{s.Node, node, 0755}, {s.Archive, archive.Bytes(), 0644}} {
-		if err := os.WriteFile(file.path, file.data, file.mode); err != nil {
-			t.Fatal(err)
-		}
-		h.entries[file.path] = Entry{Regular: true, Owner: "root", Group: "wheel", Mode: uint32(file.mode)}
-	}
+	s := makeTestHQRelease(t, h, base, version, filepath.Join(base, "node"), "// fixture\n")
 	p, err := Build(Input{HQAccount: DarwinHQAccount, HQService: s, Platform: PlatformDarwin, Invoker: admin}, h)
 	if err != nil {
 		t.Fatal(err)
@@ -159,4 +97,73 @@ func testDarwinHQRecoveryPlan(t *testing.T, version string) {
 	if err := checkDarwinHQRecovery(saved, admin, uid, h, down); err == nil {
 		t.Fatal("changed retained runtime was accepted")
 	}
+}
+
+func makeTestHQRelease(t *testing.T, h *fakeHost, base, version, nodePath, main string) *HQService {
+	t.Helper()
+	release := filepath.Join(base, "hq")
+	for _, dir := range []string{release, filepath.Dir(launchPlist)} {
+		for p := dir; ; p = filepath.Dir(p) {
+			h.entries[p] = Entry{Dir: true, Owner: "root", Group: "wheel", Mode: 0755}
+			if p == "/" {
+				break
+			}
+		}
+	}
+	h.entries[filepath.Dir(launchRuntimeDir)] = Entry{Dir: true, Owner: "root", Group: "admin", Mode: 0755}
+	meta := `{"target_platform":"darwin"}`
+	if version == launchControlV2 {
+		meta = `{"target_platform":"darwin","owner_control_capability":"darwin-owner-control/v2"}`
+	}
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	for _, entry := range []struct{ name, content string }{
+		{"hq/", ""}, {"hq/governance/", ""}, {"hq/governance/interim-release.json", meta},
+		{"hq/helpers/", ""}, {"hq/helpers/darwin-owner.rb", "# fixture\n"},
+		{"hq/hq/", ""}, {"hq/hq/main.mjs", main},
+	} {
+		path := filepath.Join(base, entry.name)
+		dir := strings.HasSuffix(entry.name, "/")
+		header := &tar.Header{Name: entry.name, Mode: 0644, Typeflag: tar.TypeReg, Size: int64(len(entry.content)), Format: tar.FormatUSTAR}
+		if dir {
+			header.Mode = 0755
+			header.Typeflag = tar.TypeDir
+			if err := os.MkdirAll(path, 0755); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(path, []byte(entry.content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		h.entries[path] = Entry{Dir: dir, Regular: !dir, Owner: "root", Group: "wheel", Mode: uint32(header.Mode)}
+		if err := tw.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if len(entry.content) > 0 {
+			if _, err := tw.Write([]byte(entry.content)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// A synthetic thin Mach-O header with no load commands. It is parsed only.
+	node := make([]byte, 32)
+	binary.LittleEndian.PutUint32(node[0:4], 0xfeedfacf)
+	binary.LittleEndian.PutUint32(node[4:8], 0x0100000c)
+	binary.LittleEndian.PutUint32(node[12:16], 2)
+	s := &HQService{ReleaseDir: release, Node: nodePath, Archive: filepath.Join(base, "hq.tar"),
+		ArtifactSHA256: fmt.Sprintf("%x", sha256.Sum256(archive.Bytes())), NodeSHA256: fmt.Sprintf("%x", sha256.Sum256(node))}
+	for _, file := range []struct {
+		path string
+		data []byte
+		mode os.FileMode
+	}{{s.Node, node, 0755}, {s.Archive, archive.Bytes(), 0644}} {
+		if err := os.WriteFile(file.path, file.data, file.mode); err != nil {
+			t.Fatal(err)
+		}
+		h.entries[file.path] = Entry{Regular: true, Owner: "root", Group: "wheel", Mode: uint32(file.mode)}
+	}
+
+	return s
 }

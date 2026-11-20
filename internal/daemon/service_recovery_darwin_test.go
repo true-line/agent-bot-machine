@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -300,5 +301,121 @@ func TestHQServiceRecoveryProofFieldsAndConcurrentConsumption(t *testing.T) {
 	wg.Wait()
 	if approved[0] == approved[1] {
 		t.Fatalf("wanted one winner, got %v", approved)
+	}
+}
+
+func TestHQServiceUpgradeBindsPriorPurposeAndMachine(t *testing.T) {
+	f := newRecoveryFixture(t)
+	send := func(verb, option string, c recoveryChallenge, proof string) Response {
+		req := f.request(option, c, proof)
+		req.Verb = verb
+		return f.run(t, 331, req, f.client)
+	}
+	res := send(upgradeVerb, "challenge", recoveryChallenge{}, "")
+	var c recoveryChallenge
+	if !res.OK || res.State != "challenged" || json.Unmarshal(res.Body, &c) != nil || c.Action != upgradeVerb {
+		t.Fatal("expected signed upgrade challenge", res)
+	}
+	proof := f.proof(t, c)
+	if send(recoveryVerb, "cancel", c, "").OK || send(recoveryVerb, "approve", c, proof).OK {
+		t.Fatal("recovery purpose consumed upgrade challenge")
+	}
+	recovery := c
+	recovery.Action = recoveryVerb
+	if send(upgradeVerb, "approve", c, f.proof(t, recovery)).OK {
+		t.Fatal("recovery proof approved upgrade")
+	}
+	if r := send(upgradeVerb, "approve", c, proof); !r.OK || r.State != "approved" {
+		t.Fatal("valid upgrade refused", r)
+	}
+	if send(upgradeVerb, "approve", c, proof).OK {
+		t.Fatal("upgrade approval replayed")
+	}
+	raw, e := os.ReadFile(members.ApprovalPath(f.dir, c.ID))
+	var a members.Approval
+	fp := sha256.Sum256(f.machine)
+	if e != nil || json.Unmarshal(raw, &a) != nil || a.Purpose != members.UpgradePurpose || a.MachineFingerprint != hex.EncodeToString(fp[:]) {
+		t.Fatal("missing upgrade-only approval and paired Machine", e)
+	}
+}
+
+func TestHQServiceUpgradeChecksCurrentPairBeforeCutover(t *testing.T) {
+	f := newRecoveryFixture(t)
+	state, err := readOwnerPairState(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	who, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, e := lockOwnerPairing(f.dir)
+	if e != nil {
+		t.Fatal(e)
+	}
+	unlock()
+	commitment := pairCommitment(state)
+	if err := CheckHQUpgradePair(f.dir, who.Username, commitment, nil); err != nil {
+		t.Fatal(err)
+	}
+	did := false
+	if err := CheckHQUpgradePair(f.dir, who.Username, commitment, func() error { did = true; return nil }); err != nil || !did {
+		t.Fatal("approved pair could not publish reviewed change", err)
+	}
+	state.HQEpoch = fmt.Sprintf("%064x", 11)
+	if err := state.save(f.dir); err != nil {
+		t.Fatal(err)
+	}
+	did = false
+	if err := CheckHQUpgradePair(f.dir, who.Username, commitment, func() error { did = true; return nil }); err == nil || did {
+		t.Fatal("previous epoch published reviewed change")
+	}
+	commitment = pairCommitment(state)
+	if err := os.WriteFile(filepath.Join(f.dir, "peers", "agent-daemon.revoked"), []byte("revoked\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckHQUpgradePair(f.dir, who.Username, commitment, nil); err == nil {
+		t.Fatal("revoked HQ accepted")
+	}
+}
+
+// An upgrade can finish preflight while an administrator revokes the role.
+// The actual launch submission must pass the live guard after preflight.
+func TestHQUpgradeRevocationDuringBootstrapPreflight(t *testing.T) {
+	f := newRecoveryFixture(t)
+	state, err := readOwnerPairState(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockOwnerPairing(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = unlock(); err != nil {
+		t.Fatal(err)
+	}
+	commitment := pairCommitment(state)
+	if err := CheckHQUpgradePair(f.dir, account.Username, commitment, nil); err != nil {
+		t.Fatal(err)
+	}
+	ready := make(chan struct{})
+	result := make(chan error, 1)
+	launched := false
+	go func() {
+		<-ready
+		result <- CheckHQUpgradePair(f.dir, account.Username, commitment, func() error { launched = true; return nil })
+	}()
+	err = revokeHQ(f.dir)
+	close(ready)
+	admission := <-result
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admission == nil || launched {
+		t.Fatal("submitted launch after revocation completed")
 	}
 }
