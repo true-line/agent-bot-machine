@@ -149,6 +149,7 @@ func TestPrivateStateDirPermissionsAndNoUserAccess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix permissions only")
 	}
+	t.Setenv(channelEnv, filepath.Join(t.TempDir(), "channel"))
 	base, err := os.MkdirTemp("/tmp", "mm-priv")
 	if err != nil {
 		t.Fatal(err)
