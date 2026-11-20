@@ -35,6 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Verify the reviewed Machine request
         if: github.event_name == 'push'
@@ -44,15 +45,14 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF_PROTECTED" == true ]] || { echo "Signing requires a protected main branch" >&2; exit 1; }
-          pr="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls?per_page=100" |
-            jq -er --arg repo "$GITHUB_REPOSITORY" --arg sha "$GITHUB_SHA" '
-              [.[][] | select(.merged_at != null and .base.ref == "main" and
-                .base.repo.full_name == $repo and .head.repo.full_name == $repo and
-                .user.login == "trueline-chores-dumb[bot]" and (.head.ref | startswith("release/v")) and .merge_commit_sha == $sha)] | select(length == 1) | .[0]')"
-          number="$(jq -er .number <<<"$pr")"
-          head="$(jq -er .head.sha <<<"$pr")"
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$number/files?per_page=100" |
-            jq -e 'any(.[][]; .filename == "VERSION" and (.status == "added" or .status == "modified"))' >/dev/null
+          tag="$(python3 scripts/version-cut.py candidate "$GITHUB_SHA")"
+          test -n "$tag"
+          pr_info="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls?per_page=100" |
+            jq -ce 'add' | python3 scripts/version-cut.py pr "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$tag")"
+          read -r number head <<<"$pr_info"
+          git fetch --quiet --no-tags origin "refs/pull/$number/head"
+          test "$(git rev-parse FETCH_HEAD)" = "$head"
+          python3 scripts/version-cut.py lineage "$GITHUB_SHA" "$tag" "$(git rev-parse "$GITHUB_SHA^1")" "$head"
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$number/reviews?per_page=100" |
             jq -e --arg head "$head" '
               [.[][] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")] |

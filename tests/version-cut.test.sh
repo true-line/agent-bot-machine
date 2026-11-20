@@ -58,6 +58,53 @@ for bad in "${pull/chores-dumb/nonrelease}" "${pull/$cut/$pr}" "${pull/release\/
     refuses select_pr <<<"$bad"
 done
 
+# Exercise the actual Sign request before the macOS signing job. Only gh is a
+# fixture: the exact PR ref, checkout history and release-only diff are real.
+(
+    workflow="$(dirname "$script")/../.github/workflows/sign.yml"
+    ruby -ryaml -e 'steps = YAML.load_file(ARGV.fetch(0)).fetch("jobs").fetch("request").fetch("steps")
+      print steps.find { |step| step["name"] == "Verify the reviewed Machine request" }.fetch("run")' \
+        "$workflow" > "$tmp/sign-request.sh"
+    mkdir scripts
+    cp "$script" scripts/version-cut.py
+    export GITHUB_REPOSITORY="$repo" GITHUB_REF_PROTECTED=true
+    export SIGN_PULL="$pull" SIGN_HEAD="$pr"
+    gh() {
+        case "${*: -1}" in
+            */pulls\?*) jq -cn --argjson pull "$SIGN_PULL" '[$pull]' ;;
+            */files\?*) git diff --name-only "$GITHUB_SHA^1" "$GITHUB_SHA" |
+                jq -Rn '[[inputs | {filename:.,status:"modified"}]]' ;;
+            */reviews\?*) jq -cn --arg head "$SIGN_HEAD" '[[{id:1,user:{id:1},state:"APPROVED",commit_id:$head}]]' ;;
+            *) return 1 ;;
+        esac
+    }
+    export -f gh
+    git push -q origin "$pr:refs/pull/21/head"
+    bash "$tmp/sign-request.sh"
+
+    SIGN_PULL="${pull/release\/v0.12.0/release\/v0.11.5}"
+    refuses_request() {
+        if bash "$tmp/sign-request.sh" > "$tmp/refusal" 2>&1; then
+            echo "Sign accepted an ineligible release request" >&2; exit 1
+        fi
+        grep -Fq "$1" "$tmp/refusal" || exit 1
+    }
+    refuses_request 'expected the merged Machine release PR at the exact cut SHA'
+
+    git switch -q --detach "$pr"
+    echo 'A separate source change' >product-source
+    git add product-source && git commit -qm 'Release with unrelated changes'
+    SIGN_HEAD="$(git rev-parse HEAD)"
+    git push -q origin "$SIGN_HEAD:refs/pull/21/head"
+    git switch -q --detach "$base"
+    git merge -q --no-ff --no-edit "$SIGN_HEAD"
+    GITHUB_SHA="$(git rev-parse HEAD)"
+    SIGN_PULL="$(jq -c --arg cut "$GITHUB_SHA" --arg head "$SIGN_HEAD" \
+        '.[0].merge_commit_sha=$cut | .[0].head.sha=$head' <<<"$pull")"
+    refuses_request 'a version PR may only bump VERSION and its skill metadata'
+)
+git switch -q main
+
 # Another main commit with unchanged release intent cannot redirect the tag.
 echo docs >notes
 git add notes && git commit -qm docs
