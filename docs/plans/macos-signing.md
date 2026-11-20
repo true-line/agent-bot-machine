@@ -66,14 +66,19 @@ Secure Enclave key. Machine verifies its proof in the Homebrew prefix owner's
 admin account. The Machine daemon continues to use its dedicated keychain for
 its own Ed25519 identity. [D4 and the cross-account channel](cross-account-channel.md#s5--agent-bot-is-the-control-plane-other-repos-p7p8)
 
-New owner proofs require a separately verified, unbundled provider in the
-signed-in owner's session. The provider must expose the public key for the
-independent pin and require fresh local authorization before signing the
-purpose-specific challenge with the owner's nonexportable P-256 key. For
-a plan, it must bind consent to the machine, plan ID, canonical digest and
-reviewed steps. Machine receives only the public proof. Until a provider
-meets this contract, new approvals are unavailable. Existing pairings
-continue to use their saved pins.
+For first enrollment on a fresh Mac, use the signed command-line owner
+helper under qualification in [Identity #1469](https://github.com/true-line/agent-bot-identity/pull/1469).
+The prefix administrator independently verifies and pins the owner's public
+key. Each new proof requires fresh consent for the exact purpose. For a
+plan, the owner reviews the Machine identity, plan ID, canonical digest and
+steps before signing. Machine receives the public proof.
+
+Customer qualification requires an actual proof from the distributed
+package that Machine verifies against the pinned owner key. A private pilot
+can continue using the test provider matching its existing pin. A customer
+release may include an owner-presence app only when all apps ship together
+as one Product. Installing a different provider grants no authority to
+replace an existing owner key. [Owner packaging decision](https://github.com/true-line/agent-bot-platform/pull/94)
 
 On a fresh Mac, the prefix administrator first runs `managed-machine members
 plan`. When its `hq-account` step calls for creating `_agent-bot-hq`, complete

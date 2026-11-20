@@ -306,9 +306,11 @@ generic signing or credential fallback is provided.
 
 ### First HQ provisioning on macOS
 
-The administrator can prepare a plan and the owner can review it now.
-Approval and apply on a fresh Mac await an authorized unbundled provider
-for the owner's exact Machine proof.
+The administrator prepares a plan. The owner reviews it and returns a
+fresh, purpose-specific proof. For customer qualification on a fresh Mac,
+exercise this transfer with the signed first-enrollment CLI and have Machine
+verify the proof against the independently pinned owner key.
+[Owner proof and packaging](macos-signing.md#owner-approval-for-a-new-hq-pairing)
 
 Before the dedicated `_agent-bot-hq` role exists, the Homebrew prefix
 administrator runs `managed-machine members plan` in their own login. The
