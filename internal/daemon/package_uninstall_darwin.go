@@ -627,26 +627,30 @@ func (leaf packageLeaf) removePlist() error {
 func (observe packageObservers) waitForStop(uid int, pids []int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		draining := false
+		pending := ""
 		for _, label := range []string{darwinServiceLabel, darwinKeydServiceLabel} {
 			for _, domain := range []string{"gui", "user"} {
 				_, loaded, err := observe.job(uid, domain, label)
 				if err != nil {
 					return err
 				}
-				draining = draining || loaded
+				if loaded && pending == "" {
+					pending = label + " remains registered in the " + domain + " launchd domain"
+				}
 			}
 		}
 		// Signal zero observes the original process. A reused PID also keeps removal pending.
 		for _, pid := range pids {
 			switch err := unix.Kill(pid, 0); {
 			case err == nil:
-				draining = true
+				if pending == "" {
+					pending = "a process from the original Machine or keyd registration has not exited"
+				}
 			case !errors.Is(err, unix.ESRCH):
 				return errors.New("cannot establish that the original Machine service process exited")
 			}
 		}
-		if !draining {
+		if pending == "" {
 			// On retry, launchd may no longer report a PID. Check the same
 			// fixed owner and executables even if there are no socket files.
 			quiet, err := packageProcessesStopped(uid, observe.processes)
@@ -656,9 +660,10 @@ func (observe packageObservers) waitForStop(uid int, pids []int, timeout time.Du
 			if quiet {
 				return nil
 			}
+			pending = "another Machine or keyd process is running under the package owner"
 		}
 		if !time.Now().Before(deadline) {
-			return errors.New("Machine or keyd is still registered or running; wait for shutdown or stop the foreground service and retry uninstall")
+			return fmt.Errorf("%s; wait for shutdown or stop the foreground service and retry uninstall", pending)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

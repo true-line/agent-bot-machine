@@ -308,16 +308,16 @@ func TestPackageStopWaitsForDeregistrationAndOriginalProcesses(t *testing.T) {
 	}
 	observe = absentPackageServices()
 	observe.job = func(int, string, string) ([]byte, bool, error) { return nil, true, nil }
-	if err := observe.waitForStop(uid, nil, 0); err == nil {
-		t.Fatal("accepted a continuing registration")
+	if err := observe.waitForStop(uid, nil, 0); err == nil || !strings.Contains(err.Error(), darwinServiceLabel+" remains registered in the gui launchd domain") {
+		t.Fatalf("continuing registration: %v", err)
 	}
 	observe = absentPackageServices()
-	if err := observe.waitForStop(uid, []int{os.Getpid()}, 0); err == nil {
-		t.Fatal("declared a recorded living PID stopped")
+	if err := observe.waitForStop(uid, []int{os.Getpid()}, 0); err == nil || !strings.Contains(err.Error(), "original Machine or keyd registration has not exited") {
+		t.Fatalf("recorded living PID: %v", err)
 	}
 	observe.processes = func(int) ([]byte, error) { return []byte(fmt.Sprintf("%d\n%d\n", os.Getpid(), os.Getpid()+1)), nil }
-	if err := observe.waitForStop(uid, nil, 0); err == nil {
-		t.Fatal("retry ignored a process without a registered job")
+	if err := observe.waitForStop(uid, nil, 0); err == nil || !strings.Contains(err.Error(), "another Machine or keyd process is running") {
+		t.Fatalf("process without a registered job: %v", err)
 	}
 	observe.processes = func(int) ([]byte, error) { return nil, errors.New("unavailable") }
 	if err := observe.waitForStop(uid, nil, 0); err == nil {
