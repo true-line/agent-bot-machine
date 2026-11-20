@@ -79,6 +79,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Verify paired harness plan and owner proof
+        env:
+          GOTOOLCHAIN: local
+        run: go test -count=1 -race ./internal/daemon ./internal/members -run '^(TestHarnessLaunchOwnerProofCannotAuthorizeAnotherAction|TestDarwinHarnessPlanCommandBindsInstalledRolesAndCurrentBuild|TestApplyNeedsAMatchingUnexpiredApproval|TestUpgradeApplyDispatchKeepsDistinctPairedPurposes)$'
       - name: Fetch the reviewed signed Machine release for optional hardware qualification
         if: inputs.device_release_version != '' || inputs.device_archive_sha256 != '' || inputs.device_homebrew_install
         shell: bash
@@ -125,6 +129,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Verify paired harness plan and owner proof
+        env:
+          GOTOOLCHAIN: local
+        run: go test -count=1 -race ./internal/daemon ./internal/members -run '^(TestHarnessLaunchOwnerProofCannotAuthorizeAnotherAction|TestDarwinHarnessPlanCommandBindsInstalledRolesAndCurrentBuild|TestApplyNeedsAMatchingUnexpiredApproval|TestUpgradeApplyDispatchKeepsDistinctPairedPurposes)$'
       - name: Test release qualification guards on stock Bash
         run: /bin/bash tests/fixtures/test-darwin-hq-release-guards.sh
       - name: Check socket preservation when guarded removal is unavailable
