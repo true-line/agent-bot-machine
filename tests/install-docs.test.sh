@@ -6,7 +6,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"
 TEST_DIR="$(cd "$TEST_DIR" && pwd -P)"
 trap 'rm -rf "$TEST_DIR"' EXIT
-mkdir "$TEST_DIR/bin"
+mkdir "$TEST_DIR/bin" "$TEST_DIR/Library"
+export FIXTURE_LIBRARY="$TEST_DIR/Library"
 export LOG="$TEST_DIR/brew.log"
 export PATH="$TEST_DIR/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PREFIX="$TEST_DIR/homebrew"
@@ -21,7 +22,7 @@ export GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_EMAIL=fixture@exam
 /usr/bin/git -C "$UPSTREAM" commit -q --allow-empty -m first
 mkdir -p "$PREFIX/bin"
 # Redirect Apple's fixed paths into this fixture on both macOS and Linux.
-sed -e "s|/opt/homebrew|$PREFIX|g" -e "s|/usr/bin/osascript|$TEST_DIR/bin/osascript|g" -e "s|/usr/bin/git|$TEST_DIR/bin/git|g" -e "s|/usr/bin/stat|$TEST_DIR/bin/stat|g" "$ROOT/install.sh" > "$TEST_DIR/install.sh"
+sed -e "s|\"/Library/Application Support|\"$FIXTURE_LIBRARY/Application Support|g" -e "s|/opt/homebrew|$PREFIX|g" -e "s|/usr/bin/osascript|$TEST_DIR/bin/osascript|g" -e "s|/usr/bin/git|$TEST_DIR/bin/git|g" -e "s|/usr/bin/stat|$TEST_DIR/bin/stat|g" "$ROOT/install.sh" > "$TEST_DIR/install.sh"
 
 cat > "$TEST_DIR/bin/uname" <<'STUB'
 #!/bin/sh
@@ -113,6 +114,13 @@ cat > "$TEST_DIR/bin/osascript" <<'STUB'
 set -eu
 : > "$SCRIPT_FILE"
 while [ "$1" = '-e' ]; do printf '%s\n' "$2" >> "$SCRIPT_FILE"; shift 2; done
+if grep -Fq 'Permanently retire standalone HQ signing' "$SCRIPT_FILE"; then
+    test -f "$FIXTURE_LIBRARY/Application Support/ai.true-line.agent-bot-hq/standalone/declaration-v1"
+    [ "${RETIRE_RESPONSE:-deny}" = approve ] || exit 57
+    rm "$FIXTURE_LIBRARY/Application Support/ai.true-line.agent-bot-hq/standalone/declaration-v1"
+    touch "$FIXTURE_LIBRARY/Application Support/ai.true-line.agent-bot-hq/standalone/machine-retired-v1"
+    exit 0
+fi
 if [ -x /usr/bin/osacompile ] && [ ! -e "$SCRIPT_FILE.scpt" ]; then
     /usr/bin/osacompile -o "$SCRIPT_FILE.scpt" "$SCRIPT_FILE"
 fi
@@ -134,7 +142,13 @@ tap true-line/agent-bot-machine https://github.com/true-line/agent-bot-machine.g
 install true-line/agent-bot-machine/managed-machine
 EXPECTED
 
-bash "$TEST_DIR/install.sh"
+marker="$FIXTURE_LIBRARY/Application Support/ai.true-line.agent-bot-hq/standalone"
+mkdir -p "$marker"
+touch "$marker/declaration-v1"
+if bash "$TEST_DIR/install.sh"; then echo "Installer ignored cancelled retirement" >&2; exit 1; fi
+[[ -e "$marker/declaration-v1" && ! -e "$PREFIX/installed" && ! -e "$LOG" ]]
+RETIRE_RESPONSE=approve bash "$TEST_DIR/install.sh"
+[[ -e "$marker/machine-retired-v1" && ! -e "$marker/declaration-v1" ]]
 cmp "$LOG" "$TEST_DIR/expected"
 [[ ! -e "$AUTH_LOG" ]]
 # The other account must refresh only public main, and only upgrade Machine.

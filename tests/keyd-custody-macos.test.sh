@@ -109,9 +109,12 @@ refused "$role" hq-device-init
 refused "$role" hq-device
 sudo -n chmod 0700 "$helper"
 
-# The prefix owner negotiates on the release binary's actual same-UID MCP
-# socket. The handshake requires no enrollment, keys or credential operations.
-python3 - "$helper" "$temp" <<'PY'
+# Stage the same-UID MCP probe. The native controller runs it after it owns
+# the registered Machine state, which keyd serve also records on first use.
+(
+    umask 077
+    cat > "$temp/mcp-handshake.py"
+) <<'PY'
 import json
 from pathlib import Path
 import socket
