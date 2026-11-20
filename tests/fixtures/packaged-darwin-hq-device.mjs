@@ -95,7 +95,18 @@ try {
   for await (const phase of lines) {
     assert.equal(phase, phases.shift());
     if (phase === 'prove') firstJti = await signedGrant();
-    if (phase === 'outage') await refused(/could not connect to the paired Machine/);
+    if (phase === 'outage') {
+      const offline = /could not connect to the paired Machine/;
+      await refused(offline);
+      // Restart while Machine is still stopped to exercise initial provider selection.
+      const requests = issuer.state.requests.length;
+      await stop();
+      const signer = await start();
+      assert.equal(signer.available, false);
+      assert.match(signer.reason, offline);
+      await refused(offline);
+      assert.equal(issuer.state.requests.length, requests);
+    }
     if (phase === 'recovered') assert.notEqual(await signedGrant(), firstJti);
     if (phase === 'revoked') {
       await refused(/MM_DAEMON_PEER_REFUSED/);
