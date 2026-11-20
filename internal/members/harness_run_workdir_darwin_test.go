@@ -53,7 +53,7 @@ func TestHarnessNativeStateDefaultsArePrivateAndStable(t *testing.T) {
 	grant := installedHarness{Digest: strings.Repeat("d", 64), Policy: policy}
 	req := harnessRunInput{PlanDigest: grant.Digest, AdapterID: "adapter-one", LaunchID: "ln_01c4eabcfedcba00000000ff",
 		SoulID: "agent_01234567-0123-4567-0123-456789abcdef", Role: "agent", MemberToken: strings.Repeat("b", 48)}
-	keys := []string{"HOME", "XDG_CONFIG_HOME", "XDG_CONFIG_DIRS", "XDG_DATA_HOME", "XDG_DATA_DIRS", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP"}
+	keys := []string{"HOME", "XDG_CONFIG_HOME", "XDG_CONFIG_DIRS", "XDG_DATA_HOME", "XDG_DATA_DIRS", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP", "CLAUDE_CODE_TMPDIR"}
 	run := func(member, expected string) map[string]string {
 		t.Helper()
 		req.MemberID = member
@@ -96,7 +96,8 @@ func TestHarnessNativeStateDefaultsArePrivateAndStable(t *testing.T) {
 		}
 		// Observe the actual child defaults through an inert system utility.
 		probe := exec.Command("/bin/sh", "-c", `set -eu
-for dir in "$HOME" "$XDG_CACHE_HOME" "$TMPDIR"; do
+test "$CLAUDE_CODE_TMPDIR" = "$TMPDIR"
+for dir in "$HOME" "$XDG_CACHE_HOME" "$CLAUDE_CODE_TMPDIR"; do
   if [ "$1" = fresh ]; then test ! -e "$dir/marker"; printf %s "$2" > "$dir/marker"
   else test "$(cat "$dir/marker")" = "$2"; fi
 done`, "fixture", expected, member)

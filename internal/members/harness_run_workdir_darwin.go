@@ -107,7 +107,8 @@ func harnessStateEnv(work *os.File, home, memberID string, uid int) ([]string, e
 		{"state", []string{"XDG_STATE_HOME"}},
 		{"cache", []string{"XDG_CACHE_HOME"}},
 		{"run", []string{"XDG_RUNTIME_DIR"}},
-		{"tmp", []string{"TMPDIR", "TMP", "TEMP"}},
+		// Claude Code uses its own temporary-directory setting during ACP session/new.
+		{"tmp", []string{"TMPDIR", "TMP", "TEMP", "CLAUDE_CODE_TMPDIR"}},
 	} {
 		dir, err := createHarnessDir(state, item.dir, uid)
 		if err != nil {
