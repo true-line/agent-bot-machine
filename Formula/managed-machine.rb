@@ -71,8 +71,17 @@ class ManagedMachine < Formula
     end
   end
 
-  def post_install
-    chmod 0700, bin / "agent-bot-keyd"
+  # Older Homebrew has either no permissions step or only a recursive one.
+  if respond_to?(:post_install_steps) &&
+     Homebrew::InstallSteps::DSL.method_defined?(:set_permissions) &&
+     Homebrew::InstallSteps::DSL.instance_method(:set_permissions).parameters.include?([:key, :recursive])
+    post_install_steps do
+      set_permissions "bin/agent-bot-keyd", "0700", base: :prefix, recursive: false
+    end
+  else
+    def post_install
+      chmod 0700, bin / "agent-bot-keyd"
+    end
   end
 
   test do
