@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -236,33 +237,23 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		return cli.Result{Records: []*output.Record{rec}}
 	case "install", "start":
 		return ensureService(deps, ctx, caller, goos, root, userName, verb == "install", debug)
-	case "stop":
+	case "stop", "uninstall":
 		path, err := unitPath(goos, root)
 		if err != nil {
 			return serviceFailed(err)
 		}
 		if deps.Deactivate != nil {
-			if err := deps.Deactivate(path); err != nil {
-				return serviceFailed(err)
+			err = deps.Deactivate(path)
+			if kpath, pathErr := keydUnitPath(goos, root); pathErr == nil {
+				err = errors.Join(err, deps.Deactivate(kpath))
 			}
-			if kpath, err := keydUnitPath(goos, root); err == nil {
-				if err := deps.Deactivate(kpath); err != nil {
-					return serviceFailed(err)
-				}
-			}
-		}
-		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "installed").Set("path", path)
-		return cli.Result{Records: []*output.Record{rec}}
-	case "uninstall":
-		if path, err := unitPath(goos, root); err == nil && deps.Deactivate != nil {
-			if err := deps.Deactivate(path); err != nil {
+			if err != nil {
 				return serviceFailed(err)
 			}
 		}
-		if kpath, err := keydUnitPath(goos, root); err == nil && deps.Deactivate != nil {
-			if err := deps.Deactivate(kpath); err != nil {
-				return serviceFailed(err)
-			}
+		if verb == "stop" {
+			rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "installed").Set("path", path)
+			return cli.Result{Records: []*output.Record{rec}}
 		}
 		if err := Uninstall(goos, root); err != nil {
 			return serviceFailed(err)
