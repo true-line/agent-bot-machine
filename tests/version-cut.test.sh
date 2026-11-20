@@ -61,6 +61,8 @@ done
 # Exercise the actual Sign request before the macOS signing job. Only gh is a
 # fixture: the exact PR ref, checkout history and release-only diff are real.
 (
+    git clone -q --no-local "$tmp/work" "$tmp/sign-work"
+    cd "$tmp/sign-work"
     workflow="$(dirname "$script")/../.github/workflows/sign.yml"
     ruby -ryaml -e 'steps = YAML.load_file(ARGV.fetch(0)).fetch("jobs").fetch("request").fetch("steps")
       print steps.find { |step| step["name"] == "Verify the reviewed Machine request" }.fetch("run")' \
@@ -103,7 +105,6 @@ done
         '.[0].merge_commit_sha=$cut | .[0].head.sha=$head' <<<"$pull")"
     refuses_request 'a version PR may only bump VERSION and its skill metadata'
 )
-git switch -q main
 
 # Another main commit with unchanged release intent cannot redirect the tag.
 echo docs >notes
@@ -167,5 +168,8 @@ STUB
 chmod +x "$tmp/bin/go"
 export CHECK_VERIFIER_CWD="$tmp/verifier-cwd"
 refuses env PATH="$tmp/bin:$PATH" "$root/scripts/release" render v0.12.0 "$tmp/unsigned" "$tmp/signed"
-[[ "$(cat "$CHECK_VERIFIER_CWD")" == "$root" ]]
+[[ -f "$CHECK_VERIFIER_CWD" && "$(cat "$CHECK_VERIFIER_CWD")" == "$root" ]] || {
+    echo 'Renderer did not run the verifier in the trusted checkout' >&2
+    exit 1
+}
 echo 'version-cut tests passed'
