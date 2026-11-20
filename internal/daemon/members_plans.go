@@ -22,7 +22,7 @@ func decodeSavedMembersPlan(id string, raw []byte) (members.Saved, []byte, error
 	if dec.Decode(&saved) != nil || dec.Decode(new(any)) != io.EOF || saved.PlanID != id || !members.ValidApproval(id, saved.PlanDigest) {
 		return members.Saved{}, nil, errMembersPlans
 	}
-	canonical, err := saved.Plan.Canonical()
+	canonical, err := saved.CanonicalForReview()
 	sum := sha256.Sum256(canonical)
 	if err != nil || hex.EncodeToString(sum[:]) != saved.PlanDigest {
 		return members.Saved{}, nil, errMembersPlans
