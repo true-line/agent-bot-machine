@@ -237,23 +237,36 @@ func checkDarwinACLs(paths []string) error {
 // Pinning the Node executable cannot authorize private loadable libraries.
 // Inspect every slice; use only the OS loader and sealed system libraries.
 func checkDarwinNode(file *os.File) error {
+	var slices []*macho.File
 	fat, err := macho.NewFatFile(file)
-	if err == nil {
+	switch {
+	case err == nil:
 		for _, arch := range fat.Arches {
-			if err := checkNodeSlice(arch.File); err != nil {
-				return err
-			}
+			slices = append(slices, arch.File)
 		}
-		return nil
-	}
-	if !errors.Is(err, macho.ErrNotFat) {
+	case errors.Is(err, macho.ErrNotFat):
+		thin, err := macho.NewFile(file)
+		if err != nil {
+			return err
+		}
+		slices = []*macho.File{thin}
+	default:
 		return fmt.Errorf("read Node Mach-O: %w", err)
 	}
-	m, err := macho.NewFile(file)
-	if err != nil {
-		return err
+
+	hasARM64 := false
+	for _, slice := range slices {
+		if err := checkNodeSlice(slice); err != nil {
+			return err
+		}
+		if slice.Cpu == macho.CpuArm64 {
+			hasARM64 = true
+		}
 	}
-	return checkNodeSlice(m)
+	if !hasARM64 {
+		return refuse(RefusedPath, "Node must include an arm64 executable slice for the Apple Silicon HQ service")
+	}
+	return nil
 }
 
 func checkNodeSlice(m *macho.File) error {
