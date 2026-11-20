@@ -143,6 +143,7 @@ func TestDaemonUsage(t *testing.T) {
 }
 
 func TestDaemonPairAndUnpair(t *testing.T) {
+	t.Setenv(channelEnv, t.TempDir())
 	root := t.TempDir()
 	debugOn(t, stateDir(root))
 	res := run(owner(root), cli.Context{}, []string{"pair"})
@@ -194,7 +195,6 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 			t.Fatalf("expected user %s to be refused, got %#v", verb, res.Diagnostic)
 		}
 	}
-	t.Setenv("AGENT_MACHINE_CHANNEL", filepath.Join(userRoot, "channel"))
 	res = run(userDeps, cli.Context{}, []string{"pair"})
 	if res.Diagnostic != nil {
 		t.Fatal(res.Diagnostic.Message)
