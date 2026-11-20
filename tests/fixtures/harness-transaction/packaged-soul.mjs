@@ -73,14 +73,13 @@ async function run() {
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
   assert.equal(process.env.RUNNER_ENVIRONMENT, 'github-hosted');
   assert.equal(userInfo().username, '_agent-bot-hq');
-  const [code, broker, souls, state, policyFile] = process.argv.slice(2);
+  const [code, souls, state, policyFile] = process.argv.slice(2);
   const fixed = json(policyFile);
-  assert.equal(json(join(code, 'governance/interim-release.json')).hq_commit, 'ba2ea7dea085a0955cd08e2d54d06aef15cfa6c1');
-  const provenance = json(join(broker, 'governance/interim-release.json'));
-  assert.equal(provenance.hq_commit, '72d160d37e78e016d65c46dc424e0f192f50c3ce');
+  const provenance = json(join(code, 'governance/interim-release.json'));
+  assert.equal(provenance.hq_commit, '989eb225aefe9b7b8846a66614ab492eb91f7605');
   const { createHQ } = await load(code, 'hq/hq.mjs');
   const { connectSocket } = await load(code, 'hq/socket.mjs');
-  const { readPins } = await load(code, 'hq/plugins.mjs');
+  const { readPins, productionPluginsDir } = await load(code, 'hq/plugins.mjs');
   const { schemas } = await load(code, 'tests/hq-harness.mjs');
   const { startSoul } = await load(souls, 'lib/entry-point.mjs');
   const home = join(state, 'hq');
@@ -89,10 +88,12 @@ async function run() {
   const accounts = Object.values(fixed.mappings);
   const uids = accounts.map(account => Number(execFileSync('/usr/bin/id', ['-u', account], { encoding: 'utf8' }).trim()));
   assert.equal(new Set([process.getuid(), ...uids]).size, 3);
+  const pins = readPins(join(code, 'governance/plugins.json'));
+  const pluginsDir = productionPluginsDir({}, join(code, 'hq/interim-core.mjs'), pins);
   const hq = createHQ({ home, schemas, config: {
     harnesses: { dir: '/Library/Application Support/ai.true-line.agent-bot-hq/ipc', accounts: fixed.mappings },
     acceptedDefinitions: Object.fromEntries(definitions.map(s => [s.soulId, [s.digest]])),
-  }, pins: readPins(join(broker, 'governance/plugins.json')), pluginsDir: join(broker, 'vendor/plugins'),
+  }, pins, pluginsDir,
   signer: { deviceStatus: async () => 'enrolled' }, launch: {
     qualifiedDarwinAdapter: a => Object.hasOwn(fixed.mappings, a.adapter_id) && fixed.mappings[a.adapter_id] === a.account &&
       uids[accounts.indexOf(a.account)] === a.uid && a.executable === fixed.executable && a.sha256 === fixed.sha256 &&
