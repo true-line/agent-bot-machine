@@ -39,7 +39,16 @@ func openMembersPlans(home string) (*os.File, error) {
 		return nil, err
 	}
 	rel, err := filepath.Rel(home, filepath.Join(state, "members", "plans"))
-	if err != nil || !filepath.IsLocal(rel) {
+	if err != nil {
+		return nil, err
+	}
+	return openOwnerSubdir(home, rel)
+}
+
+// openOwnerSubdir pins each component beneath the registered service home.
+// Every directory must belong to the service UID and exclude foreign writers.
+func openOwnerSubdir(home, rel string) (*os.File, error) {
+	if !filepath.IsAbs(home) || !filepath.IsLocal(rel) {
 		return nil, errMembersPlans
 	}
 	flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_DIRECTORY
@@ -47,7 +56,7 @@ func openMembersPlans(home string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !trustedPlansDir(fd) {
+	if !trustedOwnerDir(fd) {
 		unix.Close(fd)
 		return nil, errMembersPlans
 	}
@@ -58,15 +67,15 @@ func openMembersPlans(home string) (*os.File, error) {
 			return nil, err
 		}
 		fd = next
-		if !trustedPlansDir(fd) {
+		if !trustedOwnerDir(fd) {
 			unix.Close(fd)
 			return nil, errMembersPlans
 		}
 	}
-	return os.NewFile(uintptr(fd), "members/plans"), nil
+	return os.NewFile(uintptr(fd), filepath.Join(home, rel)), nil
 }
 
-func trustedPlansDir(fd int) bool {
+func trustedOwnerDir(fd int) bool {
 	var stat unix.Stat_t
 	return unix.Fstat(fd, &stat) == nil && int(stat.Uid) == os.Geteuid() && stat.Mode&0o022 == 0 && safeMembersPlanACL(fd, true)
 }
