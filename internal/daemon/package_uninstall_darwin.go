@@ -185,7 +185,7 @@ func removeStoppedPackageSocket(original packageLeaf, uid int, unlinkStopped fun
 		return errors.New("cannot verify that the Machine or keyd endpoint is stale")
 	}
 	var again unix.Stat_t
-	if err := unix.Fstatat(fd, filepath.Base(path), &again, unix.AT_SYMLINK_NOFOLLOW); err != nil || !samePackageSocket(leaf, again) {
+	if err := unix.Fstatat(fd, filepath.Base(path), &again, unix.AT_SYMLINK_NOFOLLOW); err != nil || !samePackageNode(leaf, again) {
 		return errors.New("preserving a changed Machine endpoint")
 	}
 	if err := unlinkStopped(fd, path, uid, leaf); err != nil && !errors.Is(err, unix.ENOENT) {
@@ -220,7 +220,7 @@ func unlinkQuiescentSocket(fd int, path string, uid int, original unix.Stat_t, p
 	if err := unix.Fstatat(fd, name, &before, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return err
 	}
-	if !samePackageSocket(original, before) || before.Mode&unix.S_IFMT != unix.S_IFSOCK || int(before.Uid) != uid || before.Nlink != 1 {
+	if !samePackageNode(original, before) || before.Mode&unix.S_IFMT != unix.S_IFSOCK || int(before.Uid) != uid || before.Nlink != 1 {
 		return errors.New("preserving changed socket")
 	}
 	pids, err := processes(uid)
@@ -232,19 +232,39 @@ func unlinkQuiescentSocket(fd int, path string, uid int, original unix.Stat_t, p
 			return errors.New("another Machine or keyd process still exists; wait for it to stop and retry")
 		}
 	}
+	if err := verifyPackageSocketParent(fd, path, uid); err != nil {
+		return err
+	}
 	if err := unusedMachineSocket(path); err != nil {
+		return err
+	}
+	if err := verifyPackageSocketParent(fd, path, uid); err != nil {
 		return err
 	}
 	if err := unix.Fstatat(fd, name, &after, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return err
 	}
-	if !samePackageSocket(before, after) {
+	if !samePackageNode(before, after) {
 		return errors.New("preserving changed socket")
 	}
 	return unix.Unlinkat(fd, name, 0)
 }
 
-func samePackageSocket(a, b unix.Stat_t) bool {
+// A pathname probe and an fd-relative unlink must still address the same
+// protected directory. In particular, a moved parent retains its old FD.
+func verifyPackageSocketParent(fd int, path string, uid int) error {
+	parent := filepath.Dir(path)
+	physical, err := filepath.EvalSymlinks(parent)
+	var held, named unix.Stat_t
+	if err != nil || physical != parent || unix.Fstat(fd, &held) != nil || unix.Lstat(parent, &named) != nil ||
+		named.Mode&unix.S_IFMT != unix.S_IFDIR || int(held.Uid) != uid || held.Mode&0022 != 0 ||
+		!samePackageNode(held, named) || !safeMembersPlanACL(fd, true) {
+		return errors.New("preserving a Machine endpoint whose protected directory changed")
+	}
+	return nil
+}
+
+func samePackageNode(a, b unix.Stat_t) bool {
 	return a.Dev == b.Dev && a.Ino == b.Ino && a.Gen == b.Gen && a.Btim == b.Btim && a.Mode == b.Mode && a.Nlink == b.Nlink && a.Uid == b.Uid && a.Gid == b.Gid
 }
 

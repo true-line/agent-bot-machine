@@ -409,3 +409,58 @@ func TestPackageStopPreservesChangesDuringUnload(t *testing.T) {
 		})
 	}
 }
+
+func TestDarwin15PackageSocketParentReplacedAfterProbe(t *testing.T) {
+	base, err := os.MkdirTemp("/private/tmp", "pkg-parent.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(base) })
+	dir := filepath.Join(base, "runtime")
+	path := filepath.Join(dir, "owner.sock")
+	newSocket := func() os.FileInfo {
+		t.Helper()
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		l, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.SetUnlinkOnClose(false)
+		if err := l.Close(); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+	original := newSocket()
+	var replacement os.FileInfo
+	probe := unusedMachineSocket
+	t.Cleanup(func() { unusedMachineSocket = probe })
+	unusedMachineSocket = func(path string) error {
+		if err := probe(path); err != nil {
+			return err
+		}
+		if err := os.Rename(dir, dir+".old"); err != nil {
+			t.Fatal(err)
+		}
+		replacement = newSocket()
+		return nil
+	}
+	err = removeStoppedPackageSocket(packageLeaf{path: path, info: original}, os.Getuid(), func(fd int, path string, uid int, recorded unix.Stat_t) error {
+		return unlinkQuiescentSocket(fd, path, uid, recorded, func(int) ([]byte, error) { return nil, nil })
+	})
+	if err == nil || replacement == nil {
+		t.Fatalf("replaced directory removal: %v", err)
+	}
+	for p, want := range map[string]os.FileInfo{path: replacement, filepath.Join(dir+".old", "owner.sock"): original} {
+		info, e := os.Lstat(p)
+		if e != nil || !os.SameFile(info, want) {
+			t.Fatalf("lost socket: %v", e)
+		}
+	}
+}
