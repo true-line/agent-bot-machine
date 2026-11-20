@@ -113,6 +113,7 @@ func TestDarwinHQUpgradeRequiresActivePredecessor(t *testing.T) {
 }
 
 type testUpgradeHost struct {
+	bootstrapGuard                                               func(func() error) error
 	activePlist, installedPlist, stagedPlist, phaseName, outcome string
 	wrongStatus                                                  string
 	starts, stops                                                int
@@ -176,9 +177,11 @@ func (m *testUpgradeHost) start(r launchRecord) error {
 	if m.unknownEndpoint || m.activePlist != "" || m.installedPlist != r.Plist {
 		return errors.New("unverified activation")
 	}
-	m.activePlist = r.Plist
-	m.starts++
-	return nil
+	return submitHQBootstrap(m.bootstrapGuard, func() error {
+		m.activePlist = r.Plist
+		m.starts++
+		return nil
+	})
 }
 func (m *testUpgradeHost) verify(r launchRecord) error {
 	if m.activePlist != r.Plist || m.installedPlist != r.Plist || m.wrongStatus == r.Plist {
@@ -356,5 +359,95 @@ func TestHQUpgradePlansWithoutRootReceiptAndApplyChecksIt(t *testing.T) {
 				t.Fatalf("privileged receipt verification: %v", err)
 			}
 		})
+	}
+}
+
+func TestHQBootstrapGuardCoversOnlySubmission(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		paired, revoked bool
+	}{{"first install", false, false}, {"paired candidate", true, false}, {"revoked candidate", true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			held, launched := false, false
+			var guard func(func() error) error
+			if tc.paired {
+				guard = func(run func() error) error {
+					if tc.revoked {
+						return errors.New("revoked")
+					}
+					held = true
+					defer func() { held = false }()
+					return run()
+				}
+			}
+			err := submitHQBootstrap(guard, func() error {
+				if held != tc.paired {
+					t.Fatal("wrong launch lock scope")
+				}
+				launched = true
+				return nil
+			})
+			if (err != nil) != tc.revoked || launched == tc.revoked || held {
+				t.Fatalf("submission: err=%v launched=%v lock held at readiness=%v", err, launched, held)
+			}
+		})
+	}
+}
+
+func TestHQUpgradeRevokedBeforeLaunchPreservesUnfinishedReceipt(t *testing.T) {
+	rec := launchUpgrade{Previous: launchRecord{Plist: "old"}, Next: launchRecord{Plist: "new"}}
+	host := &testUpgradeHost{activePlist: "old", installedPlist: "old", stagedPlist: "new"}
+	var attempts []string
+	host.bootstrapGuard = func(func() error) error {
+		attempts = append(attempts, host.installedPlist)
+		return errors.New("pair revoked during preflight")
+	}
+	if err := performUpgrade(host, rec); err == nil || host.starts != 0 || host.activePlist != "" || host.outcome != "" {
+		t.Fatalf("revoked upgrade: %v, host=%+v", err, host)
+	}
+	if len(attempts) != 2 || attempts[0] != "new" || attempts[1] != "old" {
+		t.Fatalf("expected candidate and rollback launch guards; got %v", attempts)
+	}
+}
+
+func TestUpgradeCommitsAppliedReceiptUnderCurrentPair(t *testing.T) {
+	started := Receipt{PlanID: "plan-20261110T040000Z-abcd", Result: "started"}
+	approval := Approval{PlanID: started.PlanID, Purpose: UpgradePurpose}
+	revoked := errors.New("pair revoked after the status probe")
+	for _, live := range []bool{false, true} {
+		path := filepath.Join(t.TempDir(), "receipt.json")
+		if err := os.WriteFile(path, encodeReceipt(started), 0600); err != nil {
+			t.Fatal(err)
+		}
+		read := func() Receipt {
+			t.Helper()
+			b, err := os.ReadFile(path)
+			var r Receipt
+			if err != nil || json.Unmarshal(b, &r) != nil {
+				t.Fatal("cannot read test receipt", err)
+			}
+			return r
+		}
+		guarded := false
+		j := upgradeJournal{Approval: approval, pair: func(a Approval, publish func() error) error {
+			if a != approval || publish == nil || read().Result != "started" {
+				t.Fatal("expected receipt publication inside the current approval guard")
+			}
+			guarded = true
+			if !live {
+				return revoked
+			}
+			if err := publish(); err != nil {
+				return err
+			}
+			if r := read(); r.Result != "applied" || r.Upgrade == nil || r.Upgrade.Approval != approval {
+				t.Fatal("applied receipt was not committed while the guard was held")
+			}
+			return nil
+		}}
+		err := j.commitReceipt(path, started, true)
+		if !guarded || (live && err != nil) || (!live && (!errors.Is(err, revoked) || read().Result != "started")) {
+			t.Fatalf("live=%t: guarded=%t, result=%s, err=%v", live, guarded, read().Result, err)
+		}
 	}
 }

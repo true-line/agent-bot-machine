@@ -221,13 +221,13 @@ func upgradeUnderLock(step Step, approval Approval, pair upgradePairGuard) (err 
 	journalOwned = true
 	return performUpgrade(&j, rec)
 }
-func startReviewedRecord(r launchRecord, owner string, stopStarted func(*os.File, os.FileInfo) error) error {
+func startReviewedRecord(r launchRecord, owner string, guardBootstrap func(func() error) error, stopStarted func(*os.File, os.FileInfo) error) error {
 	r.RuntimeDir = &launchDirectory{launchRuntimeDir, ActionNone, "root", "wheel", "0755"}
 	raw, e := json.Marshal(r)
 	if e != nil {
 		return e
 	}
-	return activateReviewedLaunch(Step{Kind: KindService, Target: launchLabel, Action: ActionWrite, Owner: owner, Content: string(raw)}, stopStarted)
+	return activateReviewedLaunch(Step{Kind: KindService, Target: launchLabel, Action: ActionWrite, Owner: owner, Content: string(raw)}, guardBootstrap, stopStarted)
 }
 func validateUpgradeRoleCapability(r launchRecord) error {
 	b, err := hqProgramOutput("/usr/bin/sudo", "-n", "-H", "-u", DarwinHQAccount, "--", r.Service.Node, filepath.Join(r.Service.ReleaseDir, "hq/main.mjs"), "check-owner-control")

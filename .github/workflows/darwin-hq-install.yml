@@ -11,6 +11,7 @@ on:
       - 'tests/fixtures/with-keyd-test-keychain.sh'
       - 'tests/members-apply-macos.test.sh'
       - 'tests/fixtures/*darwin-hq*'
+      - 'tests/fixtures/darwin-harness-egress.py'
       - 'tests/fixtures/hq-launchd-install.sh'
       - 'tests/fixtures/hq-launchd-runtime.c'
   push:
@@ -25,6 +26,7 @@ on:
       - 'tests/fixtures/with-keyd-test-keychain.sh'
       - 'tests/members-apply-macos.test.sh'
       - 'tests/fixtures/*darwin-hq*'
+      - 'tests/fixtures/darwin-harness-egress.py'
       - 'tests/fixtures/hq-launchd-install.sh'
       - 'tests/fixtures/hq-launchd-runtime.c'
   workflow_dispatch:
@@ -86,6 +88,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Verify paired harness plan and owner proof
+        if: matrix.predecessor != 'legacy'
+        env:
+          GOTOOLCHAIN: local
+        run: go test -count=1 -race ./internal/daemon ./internal/members -run '^(TestHarnessLaunchOwnerProofCannotAuthorizeAnotherAction|TestDarwinHarnessPlanCommandBindsInstalledRolesAndCurrentBuild|TestApplyNeedsAMatchingUnexpiredApproval)$'
       - name: Fetch the reviewed signed Machine release for optional hardware qualification
         if: inputs.device_release_version != '' || inputs.device_archive_sha256 != ''
         shell: bash
@@ -128,6 +135,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Verify paired harness plan and owner proof
+        env:
+          GOTOOLCHAIN: local
+        run: go test -count=1 -race ./internal/daemon ./internal/members -run '^(TestHarnessLaunchOwnerProofCannotAuthorizeAnotherAction|TestDarwinHarnessPlanCommandBindsInstalledRolesAndCurrentBuild|TestApplyNeedsAMatchingUnexpiredApproval)$'
       - name: Check socket preservation when guarded removal is unavailable
         shell: bash
         env:

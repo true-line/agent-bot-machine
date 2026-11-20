@@ -231,6 +231,9 @@ func ids(owner, group string) (int, int, error) {
 // EnsureDir implements Root. The mode is set after the owner, because
 // changing the owner clears the setgid bit.
 func (OSRoot) EnsureDir(p, owner, group string, mode uint32) error {
+	if runtime.GOOS == "darwin" {
+		return createDarwinBrokerDirectory(p, owner, group, mode)
+	}
 	uid, gid, err := ids(owner, group)
 	if err != nil {
 		return err
