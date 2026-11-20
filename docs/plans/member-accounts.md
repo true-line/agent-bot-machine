@@ -40,6 +40,25 @@ The same plan creates the HQ account when it does not exist. That is S6 in
 [cross-account-channel.md](cross-account-channel.md), issue
 [#475](https://github.com/true-line/agent-bot-machine/issues/475).
 
+## Review a macOS harness launch rule
+
+After the dedicated HQ account, harness accounts and broker directories exist,
+run `managed-machine members plan --harness-launch-install <adapters.json>`.
+The input has one `adapters` array. Each entry has `adapter_id`, `account`,
+`executable` (an absolute path), `sha256` (lowercase hex) and `args` (an array
+of strings). Machine resolves the local role UIDs, checks the protected native
+executable and binds the reviewed plan to its own executable bytes and the
+embedded Darwin sandbox. The plan includes the fixed launch policy and the
+exact sudoers rule. For an existing installation, run
+`managed-machine members plan --harness-launch-retire <installed-plan-id>`
+to review removal of the recorded rule.
+
+This build saves the plan in the administrator's members plan store.
+The paired HQ can retrieve the saved canonical bytes for review. Root apply
+continues to refuse this operation. Regenerate the plan with the apply-capable
+release before seeking fresh owner approval. Replacing the Machine executable
+changes the proposed installation digest.
+
 ## Target
 
 On macOS, `members plan` without an account list retains the HQ-only plan.
@@ -406,9 +425,9 @@ approval and apply state untouched.
 
 For a saved macOS harness launch grant, Machine also checks that the recorded
 adapter mapping renders the exact file contents returned for review. This
-version can review a saved installation or retirement. Creating and applying
-those plans requires a Machine release with the typed harness grant and its
-matching launcher.
+version can create and review a saved installation or retirement plan. Applying
+it requires the typed owner approval, matching launcher and qualified adapter
+release tracked in [Machine #585](https://github.com/true-line/agent-bot-machine/issues/585).
 
 The protected approval step for an
 already paired HQ is tracked in [Machine #539](https://github.com/true-line/agent-bot-machine/issues/539).

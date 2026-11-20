@@ -92,10 +92,11 @@ const (
 
 // Input is what the owner asked for.
 type Input struct {
-	HQService *HQService
-	HQAccount string
-	Dir       string
-	Members   []string
+	HarnessLaunch *HarnessPolicyRecord
+	HQService     *HQService
+	HQAccount     string
+	Dir           string
+	Members       []string
 	// Invoker is the account running the plan. It can never be a member.
 	Invoker string
 	// Platform is PlatformDarwin on macOS and empty on Linux. It is not part
@@ -263,6 +264,9 @@ func Build(in Input, h Host) (Plan, error) {
 	in, err := Normalize(in)
 	if err != nil {
 		return Plan{}, err
+	}
+	if in.HarnessLaunch != nil {
+		return buildHarnessLaunch(in, h)
 	}
 	p := Plan{Version: PlanVersion, HQAccount: in.HQAccount, Dir: in.Dir, Members: in.Members, Steps: []Step{}}
 	if p.Members == nil {

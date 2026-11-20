@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -43,6 +45,12 @@ type HarnessPolicyRecord struct {
 	Adapters        []HarnessAdapter `json:"adapters"`
 	InstalledID     string           `json:"installed_plan_id"`
 	InstalledDigest string           `json:"installed_plan_digest"`
+}
+
+type installedHarness struct {
+	ID     string              `json:"plan_id"`
+	Digest string              `json:"plan_digest"`
+	Policy HarnessPolicyRecord `json:"policy"`
 }
 
 func harnessJSON(value any) (string, error) {
@@ -158,6 +166,70 @@ func (r HarnessPolicyRecord) render(accounts []string) (Plan, error) {
 		return Plan{}, errors.New("harness launch plan exceeds the signed review limit")
 	}
 	return p, nil
+}
+
+func buildHarnessLaunch(in Input, h Host) (Plan, error) {
+	r := in.HarnessLaunch
+	if in.Platform != PlatformDarwin || in.HQService != nil || in.HQAccount != DarwinHQAccount || in.Dir != DarwinBrokerDir {
+		return Plan{}, errors.New("harness launch requires its own dedicated Darwin plan")
+	}
+	p, err := r.plan()
+	if err != nil {
+		return Plan{}, err
+	}
+	if !slices.Equal(p.Members, in.Members) {
+		return Plan{}, errors.New("reviewed harness accounts differ from the plan")
+	}
+	in.HarnessLaunch = nil
+	roles, err := Build(in, h)
+	if err != nil {
+		return Plan{}, err
+	}
+	if roles.Changes() != 0 {
+		return Plan{}, errors.New("provision and verify the dedicated roles and broker directories before reviewing a launch grant")
+	}
+	for _, a := range append(slices.Clone(r.Adapters), HarnessAdapter{Account: DarwinHQAccount, UID: r.HQUID}) {
+		role, ok, e := h.Account(a.Account)
+		if e != nil {
+			return Plan{}, e
+		}
+		if !ok || role.UID != a.UID || role.GID != a.UID {
+			return Plan{}, errors.New("reviewed harness or HQ role changed")
+		}
+	}
+	if err := inspectHarnessLaunch(*r); err != nil {
+		return Plan{}, err
+	}
+	return p, nil
+}
+
+func harnessInput(raw []byte) ([]HarnessAdapter, error) {
+	if len(raw) > 32768 || !utf8.Valid(raw) {
+		return nil, errors.New("invalid bounded harness adapter list")
+	}
+	var in struct {
+		Adapters []struct {
+			ID         string   `json:"adapter_id"`
+			Account    string   `json:"account"`
+			Executable string   `json:"executable"`
+			SHA256     string   `json:"sha256"`
+			Args       []string `json:"args"`
+		} `json:"adapters"`
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&in); err != nil {
+		return nil, err
+	}
+	if err := d.Decode(&struct{}{}); err != io.EOF {
+		return nil, errors.New("trailing harness launch input")
+	}
+	out := make([]HarnessAdapter, 0, len(in.Adapters))
+	for _, a := range in.Adapters {
+		out = append(out, HarnessAdapter{ID: a.ID, Account: a.Account, Executable: a.Executable, SHA256: a.SHA256, Args: a.Args})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
 // CanonicalForReview returns the bytes served by the paired read-only route.

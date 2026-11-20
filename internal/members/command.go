@@ -39,6 +39,8 @@ func Command(deps Deps) cli.Command {
 
 const usage = `Usage: managed-machine members plan [--hq-account <account>] (--hq-config <path> | --members <a,b,...>) [--dir <path>]
        managed-machine members plan [--hq-service <record.json>]  (macOS dedicated HQ only)
+       managed-machine members plan --harness-launch-install <adapters.json>
+       managed-machine members plan --harness-launch-retire <installed-plan-id>
        sudo managed-machine members apply <plan-id>
 
 Plan the account HQ runs in, one OS account per harness credential, the broker
@@ -66,12 +68,17 @@ A macOS Machine with an owner pin supports two transfers for local owner review:
   machine hq-service-recovery export <plan-id> --socket <machine-socket>
   and submits the returned owner proof through the same paired HQ CLI.
 Both transfers require a dedicated HQ-only plan without harness accounts.
+A Darwin harness launch plan records exact adapter, Machine and sandbox digests
+for review. This release supports planning and inspection only. Regenerate the
+plan with the release that will apply it before requesting owner approval.
 The prefix administrator then runs apply with sudo in their own terminal within
 ten minutes. apply builds the plan again from the host and runs only when
 its digest is the approved one. It takes a plan id and nothing else; no
 option skips the approval. An agent account or session is refused.
 
 Options
+--harness-launch-install <file>  Review a dedicated Darwin adapter mapping and launch rule
+--harness-launch-retire <plan-id>  Review retirement of that exact installed rule
 -h, --help              Show this usage and read nothing
 --hq-account <account>  The account HQ runs in (default ` + DefaultHQAccount + `, or
                         ` + DarwinHQAccount + ` on macOS). It is
@@ -171,14 +178,18 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return cli.Result{Diagnostic: command.UsageErr("members takes one action: plan or apply")}
 	}
 	var hqAccount, hqConfigPath, list, dir, serviceRecord string
+	var installFile, retireID string
+	var launchFlags int
 	var hasList, hasDir bool
 	if d := command.Parse(args[1:], command.Spec{
 		Values: map[string]command.Flag{
-			"--hq-service": {Value: &serviceRecord},
-			"--hq-account": {Value: &hqAccount},
-			"--hq-config":  {Value: &hqConfigPath},
-			"--members":    {Value: &list, Set: &hasList, Optional: true},
-			"--dir":        {Value: &dir, Set: &hasDir},
+			"--harness-launch-install": {Value: &installFile, Count: &launchFlags},
+			"--harness-launch-retire":  {Value: &retireID, Count: &launchFlags},
+			"--hq-service":             {Value: &serviceRecord},
+			"--hq-account":             {Value: &hqAccount},
+			"--hq-config":              {Value: &hqConfigPath},
+			"--members":                {Value: &list, Set: &hasList, Optional: true},
+			"--dir":                    {Value: &dir, Set: &hasDir},
 		},
 	}); d != nil {
 		return cli.Result{Diagnostic: d}
@@ -193,6 +204,11 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 	if hqAccount == "" {
 		hqAccount = DefaultHQAccountFor(platform)
+	}
+	if launchFlags != 0 {
+		if launchFlags != 1 || (installFile == "" && retireID == "") || platform != PlatformDarwin || hasList || hasDir || hqConfigPath != "" || serviceRecord != "" || hqAccount != DarwinHQAccount {
+			return failure(diag.MembersListInvalid, "harness launch requires one dedicated Darwin install or retirement request")
+		}
 	}
 	switch {
 	case platform == PlatformDarwin && hasDir && (!hasList || dir != DarwinBrokerDir):
@@ -231,7 +247,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 	if name, err := deps.ResolveUsername(usernameOS(platform)); err == nil {
 		in.Invoker = name
-	} else if platform == PlatformDarwin && len(in.Members) > 0 {
+	} else if platform == PlatformDarwin && (len(in.Members) > 0 || installFile != "" || retireID != "") {
 		return failure(diag.MembersAccountRefused, "cannot identify the owner planning Darwin harness accounts: %v", err)
 	}
 
@@ -253,6 +269,18 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if deps.Host != nil {
 		h = deps.Host()
 	}
+	if installFile != "" || retireID != "" {
+		var err error
+		in.HarnessLaunch, err = planHarnessRequest(installFile, retireID, h)
+		if err != nil {
+			return failure(diag.MembersPlanFailed, "%v", err)
+		}
+		in.Dir = DarwinBrokerDir
+		in.Members, err = in.HarnessLaunch.accounts()
+		if err != nil {
+			return failure(diag.MembersListInvalid, "%v", err)
+		}
+	}
 	plan, err := Build(in, h)
 	if err != nil {
 		var r *Refusal
@@ -266,6 +294,15 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if err != nil {
 		return failure(diag.MembersPlanFailed, "cannot digest the plan: %v", err)
 	}
+	if in.HarnessLaunch != nil && in.HarnessLaunch.Action == "install" {
+		installed, e := matchingInstalledHarness(digest, h)
+		if e != nil {
+			return failure(diag.MembersPlanFailed, "%v", e)
+		}
+		if installed != "" {
+			return cli.Result{Records: []*output.Record{output.New().Set("installed_plan_id", installed).Set("plan_digest", digest).Set("changes", 0).Set("advice", "The reviewed policy is already recorded. Use the original root receipt to verify installation.")}}
+		}
+	}
 	now := deps.Time()
 	planID, err := deps.PlanID(now)
 	if err != nil {
@@ -275,7 +312,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if err != nil {
 		return failure(diag.MembersPlanFailed, "cannot locate the state directory: %v", err)
 	}
-	saved := Saved{HQService: in.HQService, PlanID: planID, PlanDigest: digest, CreatedAt: now.UTC().Format("2006-01-02T15:04:05Z"), Plan: plan}
+	saved := Saved{HarnessLaunch: in.HarnessLaunch, HQService: in.HQService, PlanID: planID, PlanDigest: digest, CreatedAt: now.UTC().Format("2006-01-02T15:04:05Z"), Plan: plan}
 	if err := save(filepath.Join(state, "members", "plans"), saved); err != nil {
 		return failure(diag.MembersPlanFailed, "cannot save the plan: %v", err)
 	}
@@ -290,6 +327,9 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		Set("applied", false).
 		Set("hq_account_dedicated", plan.SharedHQAdvice() == "").
 		SetOptional("advice", plan.SharedHQAdvice())}
+	if in.HarnessLaunch != nil {
+		records[0].Set("advice", "This build supports review only. Regenerate this build-specific plan with the release that will apply it before requesting owner approval.")
+	}
 	for _, s := range plan.Steps {
 		if platform == PlatformDarwin && s.Kind == KindHQAccount && s.Target == DarwinHQAccount && s.Action == ActionCreate {
 			advice := "The prefix administrator can send this saved plan to the owner approval app with managed-machine daemon first-hq export " + planID
