@@ -306,6 +306,10 @@ generic signing or credential fallback is provided.
 
 ### First HQ provisioning on macOS
 
+The administrator can prepare a plan and the owner can review it now.
+Approval and apply on a fresh Mac await an authorized unbundled provider
+for the owner's exact Machine proof.
+
 Before the dedicated `_agent-bot-hq` role exists, the Homebrew prefix
 administrator runs `managed-machine members plan` in their own login. The
 plan can include the existing `--hq-service` option for a verified HQ release.
