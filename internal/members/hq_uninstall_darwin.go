@@ -512,6 +512,10 @@ func uninstallRecord(owner, state, id string, uid uint64) (launchRecord, string,
 	if err != nil {
 		return launchRecord{}, "", "", err
 	}
+	return reviewedUninstallRecord(p, owner, id, uid, OSHost{}, checkDarwinACLs)
+}
+
+func reviewedUninstallRecord(p Plan, owner, id string, uid uint64, h Host, checkACL func([]string) error) (launchRecord, string, string, error) {
 	digest, err := p.Digest()
 	if err != nil {
 		return launchRecord{}, "", "", err
@@ -532,7 +536,7 @@ func uninstallRecord(owner, state, id string, uid uint64) (launchRecord, string,
 	}
 	// No program or file from the retained release is executed. The original
 	// root receipt authenticates its canonical plan, including argv and plist.
-	if err := receiptForUpgrade(OSHost{}, id, digest, owner, checkDarwinACLs); err != nil {
+	if err := receiptForUpgrade(h, id, digest, owner, checkACL); err != nil {
 		return launchRecord{}, "", "", err
 	}
 	return rec, cap, digest, nil

@@ -1,8 +1,13 @@
 package members
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"debug/macho"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -468,6 +473,33 @@ func TestUninstallV0124ServiceReceipt(t *testing.T) {
 			t.Fatalf("release receipt %s: %v", result, err)
 		}
 	}
+	t.Run("receipt-pinned Intel-only Node on Apple Silicon", func(t *testing.T) {
+		// Model a historical install directly. The current installer must not
+		// be used to manufacture a plan for an Intel-only runtime.
+		var image bytes.Buffer
+		header := [...]uint32{macho.Magic64, uint32(macho.CpuAmd64), 3, uint32(macho.TypeExec), 0, 0, 0, 0}
+		if err := binary.Write(&image, binary.LittleEndian, header); err != nil {
+			t.Fatal(err)
+		}
+		node := filepath.Join(t.TempDir(), "node")
+		if err := os.WriteFile(node, image.Bytes(), 0755); err != nil {
+			t.Fatal(err)
+		}
+		nodeDigest := fmt.Sprintf("%x", sha256.Sum256(image.Bytes()))
+		// The saved service record and its reviewed plist both name these bytes.
+		p.Steps[1].Content = strings.NewReplacer(record.Service.Node, node,
+			record.Service.NodeSHA256, nodeDigest).Replace(p.Steps[1].Content)
+		reviewedDigest, err := p.Digest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		host.files[path] = strings.Replace(string(receipt), digest, reviewedDigest, 1)
+		got, capability, actualDigest, err := reviewedUninstallRecord(p, "operator", id, 501, host, func([]string) error { return nil })
+		if err != nil || capability != launchControlV1 || actualDigest != reviewedDigest ||
+			got.Service.Node != node || got.Service.NodeSHA256 != nodeDigest {
+			t.Fatal("receipt-verified Intel-only runtime must remain removable", err)
+		}
+	})
 }
 
 func TestUninstallV0124ResourceLock(t *testing.T) {
