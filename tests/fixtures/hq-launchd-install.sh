@@ -9,7 +9,7 @@ layout_v2=false
 ! exists "$role" && [[ ! -e "$plist" && ! -L "$plist" && ! -e "$socket" && ! -L "$socket" ]] || fail 'existing HQ installation'
 ! sudo launchctl print "system/$label" >/dev/null 2>&1 || fail 'existing HQ job'
 real_hq=false
-if [[ "${1:-}" == --real-hq ]]; then real_hq=true; fi
+case "${1:-}" in --real-hq|--real-hq-uninstall) real_hq=true ;; esac
 if "$real_hq"; then
     stage="$(sudo mktemp -d /Library/hq-install-ci.XXXXXXXX)"
 else
@@ -157,6 +157,8 @@ for count in 1 2; do
     id="$(jq -r .plan_id <<<"$row")"
     digest="$(jq -r .plan_digest <<<"$row")"
     if [[ "$count" == 1 ]]; then
+        install_id="$id"
+        install_digest="$digest"
         first_hq_approve "$id" "$digest"
     else
         [[ "$(jq -r .changes <<<"$row")" == 0 ]] || fail 'unexpected reapply change'
@@ -209,6 +211,26 @@ for count in 1 2; do
 done
 if "$real_hq"; then
     ok 'signed first-HQ install served cooperative status; the refused repeat apply preserved its PID'
+    if [[ "$1" == --real-hq-uninstall ]]; then
+        home_identity="$(sudo stat -f '%d:%i:%u:%g:%Lp' /var/agent-bot-hq)"
+        sudo "$MM" members uninstall-hq --list | jq -e --arg id "$install_id" '.matching_plan_ids == [$id]' >/dev/null
+        sudo "$MM" members uninstall-hq "$install_id" --dry-run | jq -e '.result == "would-uninstall"' >/dev/null
+        [[ "$(sudo launchctl print "system/$label" | awk '$1 == "pid" && $2 == "=" {print $3}')" == "$pid" ]] || fail 'preview changed HQ PID'
+        sudo "$MM" members uninstall-hq "$install_id" | jq -e '.result == "uninstalled"' >/dev/null
+        if sudo launchctl print "system/$label" >/dev/null 2>&1; then
+            fail 'HQ is still registered after uninstall'
+        else
+            [[ "$?" == 113 ]] || fail 'launchd did not confirm HQ absence'
+        fi
+        [[ ! -e "$plist" && ! -L "$plist" && ! -e "$socket" && ! -L "$socket" ]] || fail 'HQ plist or endpoint survived uninstall'
+        [[ "$(id -u "$role")" == "$uid" && "$(sudo stat -f '%d:%i:%u:%g:%Lp' /var/agent-bot-hq)" == "$home_identity" &&
+           -d "$stage/hq" && -x "$stage/node" ]] || fail 'uninstall changed retained account or release data'
+        if "$layout_v2"; then [[ -d "$runtime_dir" && ! -L "$runtime_dir" ]] || fail 'uninstall removed the reviewed runtime directory'; fi
+        sudo jq -e --arg id "$install_id" --arg digest "$install_digest" '.plan_id == $id and .plan_digest == $digest and .result == "applied"' "$RECEIPTS/$install_id.json" >/dev/null
+        sudo "$MM" members uninstall-hq "$install_id" | jq -e '.result == "already-uninstalled"' >/dev/null
+        ok 'receipt-bound uninstall removed the dedicated system HQ job, plist and socket; retained its role, home, release and applied receipt'
+        return 0
+    fi
     # Run in a subshell to own the foreground Machine child independently of launchd cleanup.
     (source "$ROOT/tests/fixtures/paired-darwin-hq-recovery.sh")
 else
