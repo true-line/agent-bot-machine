@@ -31,13 +31,13 @@ jobs:
 
   publish:
     name: publish
-    concurrency:
-      group: release-publish-${{ inputs.tag || github.ref_name }}
-      cancel-in-progress: false
     needs: gates
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish)
     runs-on: macos-15
     timeout-minutes: 15
+    concurrency:
+      group: release-publish-${{ inputs.tag || github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: write
     defaults:
