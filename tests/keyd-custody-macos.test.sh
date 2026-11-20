@@ -9,8 +9,7 @@ temp="$(mktemp -d /private/tmp/mm-custody.XXXXXXXX)"
 trap 'rm -rf "$temp"' EXIT
 chmod 0755 "$temp"
 helper="$temp/agent-bot-keyd"
-# Exercise the signing build with an ambient Cargo target override.
-CARGO_TARGET_DIR="$temp/alternate-target" "$root/scripts/build-darwin-keyd" "$helper"
+bash "$root/tests/keyd-release-paths.test.sh" "$helper"
 owner="$(stat -f %Su /opt/homebrew)"
 sudo -n chown "$owner" "$helper"
 sudo -n -u "$owner" "$helper" --version | grep -E '^agent-bot-keyd [0-9]+\.[0-9]+\.[0-9]+$'
