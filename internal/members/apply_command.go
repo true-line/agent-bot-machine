@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,43 +84,9 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return failure(diag.MembersUnsupported, "account provisioning supports Linux and macOS; this host is %s", host.Target)
 	}
 
-	// The caller: root, through sudo, from a human's own session.
-	environ := os.Environ
-	if deps.ProcessEnv != nil {
-		environ = deps.ProcessEnv
-	}
-	env := envMap(environ())
-	euid := os.Geteuid
-	if deps.Euid != nil {
-		euid = deps.Euid
-	}
-	again := "run: sudo managed-machine members apply " + planID
-	if euid() != 0 {
-		return failure(diag.MembersRootRequired, "apply changes accounts and /etc and needs root; %s", again)
-	}
-	sudoUID := env["SUDO_UID"]
-	if sudoUID == "" || sudoUID == "0" {
-		return failure(diag.MembersRootRequired, "apply is started with sudo from the owner's account, not from a root login; %s", again)
-	}
-	lookup := lookupUID
-	if deps.LookupUID != nil {
-		lookup = deps.LookupUID
-	}
-	owner, home, err := lookup(sudoUID)
-	if err != nil || owner == "" || home == "" {
-		return failure(diag.MembersRootRequired, "the account that ran sudo (uid %s) could not be found", sudoUID)
-	}
-	if agentenv.Account(owner) || agentenv.Account(env["AGENT_BOT_ACCOUNT"]) {
-		return failure(diag.MembersCallerRefused, "an agent account cannot apply member accounts")
-	}
-	ancestors := AncestorEnvs
-	if deps.Ancestors != nil {
-		ancestors = deps.Ancestors
-	}
-	for _, e := range append([]map[string]string{env}, ancestors()...) {
-		if marker := agentenv.Marker(e); marker != "" {
-			return failure(diag.MembersCallerRefused, "an agent session cannot apply member accounts (%s); the owner runs it in their own terminal", marker)
-		}
+	owner, home, dg := membersSudoOwner(deps, "apply "+planID)
+	if dg != nil {
+		return cli.Result{Diagnostic: dg}
 	}
 
 	var h Host = OSHost{}
@@ -348,4 +315,107 @@ func readPriorServicePlan(state, id string) (*priorServicePlan, error) {
 		return nil, errors.New("cannot read the prior saved members plan")
 	}
 	return &priorServicePlan{ID: id, Plan: saved.Plan}, nil
+}
+
+func membersSudoOwner(deps Deps, action string) (string, string, *diag.Diagnostic) {
+	// The caller: root, through sudo, from a human's own session.
+	environ := os.Environ
+	if deps.ProcessEnv != nil {
+		environ = deps.ProcessEnv
+	}
+	env := envMap(environ())
+	euid := os.Geteuid
+	if deps.Euid != nil {
+		euid = deps.Euid
+	}
+	again := "run: sudo managed-machine members " + action
+	if euid() != 0 {
+		return "", "", failure(diag.MembersRootRequired, "this operation needs root; %s", again).Diagnostic
+	}
+	sudoUID := env["SUDO_UID"]
+	if sudoUID == "" || sudoUID == "0" {
+		return "", "", failure(diag.MembersRootRequired, "this operation is started with sudo from the owner's account, not from a root login; %s", again).Diagnostic
+	}
+	lookup := lookupUID
+	if deps.LookupUID != nil {
+		lookup = deps.LookupUID
+	}
+	owner, home, err := lookup(sudoUID)
+	if err != nil || owner == "" || home == "" {
+		return "", "", failure(diag.MembersRootRequired, "the account that ran sudo (uid %s) could not be found", sudoUID).Diagnostic
+	}
+	if agentenv.Account(owner) || agentenv.Account(env["AGENT_BOT_ACCOUNT"]) {
+		return "", "", failure(diag.MembersCallerRefused, "an agent account cannot change managed service or member resources").Diagnostic
+	}
+	ancestors := AncestorEnvs
+	if deps.Ancestors != nil {
+		ancestors = deps.Ancestors
+	}
+	for _, e := range append([]map[string]string{env}, ancestors()...) {
+		if marker := agentenv.Marker(e); marker != "" {
+			return "", "", failure(diag.MembersCallerRefused, "an agent session cannot change managed service or member resources (%s); the owner runs it in their own terminal", marker).Diagnostic
+		}
+	}
+	return owner, home, nil
+}
+
+// Uninstall is an explicit local administrator decision. It is deliberately
+// absent from the daemon protocol and can run when HQ or Machine is stopped.
+func runUninstallHQ(deps Deps, ctx cli.Context, args []string) cli.Result {
+	list := len(args) == 1 && args[0] == "--list"
+	preview := len(args) == 2 && args[1] == "--dry-run"
+	if (len(args) != 1 && !preview) || (!list && !plan.ValidID(args[0])) {
+		return cli.Result{Diagnostic: command.UsageErr("members uninstall-hq takes the completed HQ service plan ID and optionally --dry-run")}
+	}
+	host, dg := command.DetectHost(ctx)
+	if dg != nil {
+		return cli.Result{Diagnostic: dg}
+	}
+	platform, ok := platformOf(string(host.Target))
+	if !ok || platform != PlatformDarwin {
+		return failure(diag.MembersUnsupported, "HQ service uninstall requires macOS")
+	}
+	owner, home, dg := membersSudoOwner(deps, "uninstall-hq "+args[0])
+	if dg != nil {
+		return cli.Result{Diagnostic: dg}
+	}
+	state, err := statedir.Path(usernameOS(platform), func(k string) string {
+		if k == "HOME" {
+			return home
+		}
+		return ""
+	})
+	if err != nil {
+		return failure(diag.MembersPlanFailed, "cannot locate the original administrator's saved plan")
+	}
+	if list {
+		ids, resume, e := listHQUninstallPlans(owner, state)
+		if e != nil {
+			return failure(diag.MembersPlanFailed, "checking HQ install receipts: %v", e)
+		}
+		record := output.New().Set("service", launchLabel).Set("matching_plan_ids", ids)
+		if resume != "" {
+			record.Set("resume_plan_id", resume)
+		}
+		return cli.Result{Records: []*output.Record{record}}
+	}
+	result, err := uninstallDarwinHQ(owner, state, args[0], preview)
+	if err != nil {
+		return failure(diag.MembersApplyFailed, "HQ service uninstall: %v", err)
+	}
+	return cli.Result{Records: []*output.Record{output.New().Set("plan_id", args[0]).Set("result", result).Set("service", launchLabel).Set("retained", []string{"dedicated HQ account and home", "pairing and keys", "externally staged releases and Node", "HQ runtime directory and standalone retirement records", "plans and audit receipts"})}}
+}
+
+func validUninstallID(id string) bool { return plan.ValidID(id) }
+
+func lockHQPackage(owner string) (*os.File, error) {
+	u, err := user.Lookup(owner)
+	if err != nil {
+		return nil, err
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil || uid <= 0 {
+		return nil, errors.New("invalid HQ administrator UID")
+	}
+	return statedir.LockMacPackage(u.HomeDir, uid)
 }

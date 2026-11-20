@@ -405,7 +405,7 @@ func resumeServiceUpgrade(saved Saved, owner string, pair upgradePairGuard) (boo
 	if _, e := os.Lstat(path); errors.Is(e, os.ErrNotExist) {
 		return completedUpgrade(saved, owner, pair)
 	}
-	e := withLaunchLock(syscall.LOCK_EX|syscall.LOCK_NB, func() error {
+	e := withLaunchLock(owner, syscall.LOCK_EX|syscall.LOCK_NB, func() error {
 		data, e := readProtectedUpgradeFile(path)
 		if e != nil {
 			return e
@@ -464,7 +464,7 @@ func completedUpgrade(saved Saved, owner string, pair upgradePairGuard) (bool, e
 	if r.Upgrade == nil {
 		return true, errors.New("members approval already consumed")
 	}
-	return true, withLaunchLock(syscall.LOCK_EX|syscall.LOCK_NB, func() error {
+	return true, withLaunchLock(owner, syscall.LOCK_EX|syscall.LOCK_NB, func() error {
 		if _, e := os.Lstat(filepath.Join(receiptsDir(), upgradeJournalName)); !errors.Is(e, os.ErrNotExist) {
 			return errors.New("another HQ transition is in progress")
 		}

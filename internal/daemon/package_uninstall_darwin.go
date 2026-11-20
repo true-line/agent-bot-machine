@@ -1,0 +1,358 @@
+package daemon
+
+import (
+	"bytes"
+	"encoding/json"
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"golang.org/x/sys/unix"
+)
+
+func uninstallMacPackage(deps Deps) error {
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	return removeMacPackage(deps, executable, []string{"/opt/homebrew", "/usr/local"}, noSystemHQ, readMachineUserJob)
+}
+
+func removeMacPackage(deps Deps, executable string, prefixes []string, checkHQ func() error, readJob func(int, string, string) ([]byte, bool, error)) error {
+	caller, err := deps.caller()
+	if err != nil {
+		return err
+	}
+	if why := caller.Refuse(); why != "" {
+		return errors.New(why)
+	}
+	if !caller.DarwinAdmin {
+		return errors.New("run uninstall as the macOS Homebrew prefix administrator")
+	}
+	prefix, err := activeMachinePackage(executable, prefixes)
+	if err != nil {
+		return err
+	}
+	owner, err := PrefixOwner(prefix)
+	if err != nil || (owner != caller.Username && owner != strconv.Itoa(caller.UID)) {
+		return errors.New("uninstall requires the owner of the active Homebrew prefix")
+	}
+	if os.Getenv(channelEnv) != "" && filepath.Clean(os.Getenv(channelEnv)) != filepath.Join(prefix, "var", "agent-machine") {
+		return errors.New("unset AGENT_MACHINE_CHANNEL before removing the installed Machine")
+	}
+	if deps.LockLifecycle == nil {
+		return errors.New("missing macOS package lifecycle coordination")
+	}
+	lock, err := deps.LockLifecycle(caller.RegisteredHome, caller.UID)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := checkHQ(); err != nil {
+		return err
+	}
+	if err := verifyHomebrewRemovalPrefix(prefix, caller.RegisteredHome); err != nil {
+		return err
+	}
+	if err := verifyPackageServices(prefix, caller, readJob); err != nil {
+		return err
+	}
+	if err := uninstallUserServices(deps); err != nil {
+		return err
+	}
+	endpoints := []string{filepath.Join(prefix, "var", "agent-machine", "daemon.sock")}
+	private := filepath.Join(caller.RegisteredHome, ".local", "state", "agent-bot", "keyd")
+	endpoints = append(endpoints, filepath.Join(private, "keyd.sock"), filepath.Join(private, "owner.sock"))
+	for _, endpoint := range endpoints {
+		if err := removeStoppedPackageSocket(endpoint, caller.UID, legacyMacSocketUnlink); err != nil {
+			return err
+		}
+	}
+	if err := checkHQ(); err != nil {
+		return err
+	}
+	if err := uninstallHomebrewFormula(prefix, caller.RegisteredHome); err != nil {
+		return err
+	}
+	for _, path := range []string{"bin/managed-machine", "bin/agent-machine", "bin/agent-bot-keyd", "opt/managed-machine"} {
+		if _, err := os.Lstat(filepath.Join(prefix, path)); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("Homebrew did not remove the Machine package links")
+		}
+	}
+	kegs, err := os.ReadDir(filepath.Join(prefix, "Cellar", "managed-machine"))
+	if !errors.Is(err, os.ErrNotExist) && (err != nil || len(kegs) != 0) {
+		return errors.New("Homebrew retained Machine kegs; inspect them before removing anything else")
+	}
+	return nil
+}
+
+func activeMachinePackage(executable string, prefixes []string) (string, error) {
+	var selected string
+	for _, prefix := range prefixes {
+		opt := filepath.Join(prefix, "opt", "managed-machine")
+		if _, err := os.Lstat(opt); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return "", err
+		}
+		keg, err := filepath.EvalSymlinks(opt)
+		if err != nil || filepath.Dir(keg) != filepath.Join(prefix, "Cellar", "managed-machine") {
+			return "", errors.New("cannot verify the active Homebrew Machine keg")
+		}
+		entries, err := os.ReadDir(filepath.Dir(keg))
+		if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(keg) {
+			return "", errors.New("the Machine Cellar contains more than the active keg or cannot be inspected; reconcile old versions with Homebrew and retry")
+		}
+		for _, name := range []string{"managed-machine", "agent-machine", "agent-bot-keyd"} {
+			link, err := os.Stat(filepath.Join(prefix, "bin", name))
+			targetPath := filepath.Join(keg, "bin", name)
+			if name == "agent-machine" {
+				alias, err := os.Readlink(targetPath)
+				if err != nil || alias != "managed-machine" {
+					return "", errors.New("cannot verify the Machine command alias")
+				}
+				targetPath = filepath.Join(keg, "bin", "managed-machine")
+			}
+			target, targetErr := os.Lstat(targetPath)
+			if err != nil || targetErr != nil || !target.Mode().IsRegular() || !os.SameFile(link, target) {
+				return "", errors.New("cannot verify the active Homebrew Machine package links")
+			}
+		}
+		running, err := os.Stat(executable)
+		core, coreErr := os.Lstat(filepath.Join(keg, "bin", "managed-machine"))
+		if err != nil || coreErr != nil || !core.Mode().IsRegular() || !os.SameFile(running, core) || selected != "" {
+			return "", errors.New("run uninstall with the active Homebrew Machine executable; a staged, custom or second installation must be reconciled separately")
+		}
+		receipt := filepath.Join(keg, "INSTALL_RECEIPT.json")
+		info, err := os.Lstat(receipt)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+			return "", errors.New("cannot verify the Machine Homebrew receipt")
+		}
+		f, err := os.Open(receipt)
+		if err != nil {
+			return "", err
+		}
+		var tab struct{ Source struct{ Tap string } }
+		dec := json.NewDecoder(io.LimitReader(f, 1<<20))
+		err = dec.Decode(&tab)
+		extra := dec.Decode(new(any))
+		f.Close()
+		if err != nil || extra != io.EOF || tab.Source.Tap != machineTap {
+			return "", errors.New("Homebrew receipt does not identify the Machine tap")
+		}
+		selected = prefix
+	}
+	if selected == "" {
+		return "", errors.New("no verified Homebrew installation; for a manually installed binary, uninstall its user services first and remove only the reviewed binary from its original install prefix")
+	}
+	return selected, nil
+}
+
+// Only stale Unix socket leaves may be removed. Normal uninstallation never
+// removes the public Machine pin, keyd directory, audit history or Keychain items.
+func removeStoppedPackageSocket(path string, uid int, unlinkStopped func(int, string, int) error) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	parent := filepath.Dir(path)
+	real, err := filepath.EvalSymlinks(parent)
+	if err != nil || real != parent {
+		return errors.New("preserving a socket in an unverified Machine directory")
+	}
+	fd, err := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	var dir, leaf unix.Stat_t
+	if unix.Fstat(fd, &dir) != nil || int(dir.Uid) != uid || dir.Mode&0022 != 0 || !safeMembersPlanACL(fd, true) {
+		return errors.New("preserving a socket in a directory with unverified ownership or permissions")
+	}
+	if unix.Fstatat(fd, filepath.Base(path), &leaf, unix.AT_SYMLINK_NOFOLLOW) != nil || leaf.Mode&unix.S_IFMT != unix.S_IFSOCK || int(leaf.Uid) != uid || leaf.Nlink != 1 || leaf.Ino != info.Sys().(*syscall.Stat_t).Ino {
+		return errors.New("preserving a changed or foreign Machine endpoint")
+	}
+	conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+	if err == nil {
+		conn.Close()
+		return errors.New("preserving a live Machine or keyd endpoint; stop the owning service and retry")
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		return errors.New("cannot verify that the Machine or keyd endpoint is stale")
+	}
+	var again unix.Stat_t
+	if err := unix.Fstatat(fd, filepath.Base(path), &again, unix.AT_SYMLINK_NOFOLLOW); err != nil || again.Dev != leaf.Dev || again.Ino != leaf.Ino || again.Gen != leaf.Gen || again.Mode != leaf.Mode || again.Uid != leaf.Uid {
+		return errors.New("preserving a changed Machine endpoint")
+	}
+	if err := unlinkStopped(fd, path, uid); err != nil && !errors.Is(err, unix.ENOENT) {
+		return fmt.Errorf("could not safely unlink the stopped %s endpoint: %w", filepath.Base(path), err)
+	}
+	return nil
+}
+
+func legacyMacSocketUnlink(fd int, path string, uid int) error {
+	name := filepath.Base(path)
+	const atNoDeleteBusy = 0x4000
+	err := unix.Unlinkat(fd, name, atNoDeleteBusy)
+	if !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOTSUP) {
+		return err
+	}
+	release, err := unix.Sysctl("kern.osrelease")
+	major, _, _ := strings.Cut(release, ".")
+	version, parseErr := strconv.Atoi(major)
+	if err != nil || parseErr != nil || version != 24 {
+		return errors.New("guarded socket removal is unavailable")
+	}
+	// Darwin 24 has no AT_NODELETEBUSY. The caller holds the administrator
+	// lifecycle lock, has unloaded both jobs, checked the parent ACL/owner and
+	// confirmed ECONNREFUSED. Also require no remaining same-owner Machine/keyd
+	// process (including a foreground daemon) before removing this stale node.
+	return unlinkQuiescentSocket(fd, path, uid, darwinCustodyPIDs)
+}
+
+func unlinkQuiescentSocket(fd int, path string, uid int, processes func(int) ([]byte, error)) error {
+	name := filepath.Base(path)
+	var before, after unix.Stat_t
+	if err := unix.Fstatat(fd, name, &before, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if before.Mode&unix.S_IFMT != unix.S_IFSOCK || int(before.Uid) != uid || before.Nlink != 1 {
+		return errors.New("preserving changed socket")
+	}
+	pids, err := processes(uid)
+	if err != nil {
+		return errors.New("could not establish that Machine and keyd have stopped")
+	}
+	for _, pid := range strings.Fields(string(pids)) {
+		if pid != strconv.Itoa(os.Getpid()) {
+			return errors.New("another Machine or keyd process still exists; wait for it to stop and retry")
+		}
+	}
+	if err := unusedMachineSocket(path); err != nil {
+		return err
+	}
+	if err := unix.Fstatat(fd, name, &after, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if before.Dev != after.Dev || before.Ino != after.Ino || before.Gen != after.Gen || before.Btim != after.Btim || before.Mode != after.Mode || before.Nlink != after.Nlink || before.Uid != after.Uid || before.Gid != after.Gid {
+		return errors.New("preserving changed socket")
+	}
+	return unix.Unlinkat(fd, name, 0)
+}
+
+var homebrewKegVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+([_-][A-Za-z0-9._-]+)?$`)
+
+func isPackageProgram(prefix, program string, keyd bool) bool {
+	if filepath.Clean(program) != program {
+		return false
+	}
+	name := filepath.Base(program)
+	if keyd && name != "agent-bot-keyd" || !keyd && name != "managed-machine" && name != "agent-machine" {
+		return false
+	}
+	dir := filepath.Dir(program)
+	if dir == filepath.Join(prefix, "bin") || dir == filepath.Join(prefix, "opt", "managed-machine", "bin") {
+		return true
+	}
+	version := filepath.Dir(dir)
+	return filepath.Base(dir) == "bin" && filepath.Dir(version) == filepath.Join(prefix, "Cellar", "managed-machine") && homebrewKegVersion.MatchString(filepath.Base(version))
+}
+
+func verifyPackageServices(prefix string, caller Caller, readJob func(int, string, string) ([]byte, bool, error)) error {
+	agents := filepath.Join(caller.RegisteredHome, "Library", "LaunchAgents")
+	if info, err := os.Lstat(agents); err == nil {
+		if !info.IsDir() || int(info.Sys().(*syscall.Stat_t).Uid) != caller.UID || info.Mode().Perm()&0022 != 0 {
+			return errors.New("preserving an unverified LaunchAgents directory")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	state := filepath.Join(caller.RegisteredHome, ".local", "state", "agent-bot")
+	for _, label := range []string{darwinServiceLabel, darwinKeydServiceLabel} {
+		keyd := label == darwinKeydServiceLabel
+		path := filepath.Join(agents, label+".plist")
+		info, err := os.Lstat(path)
+		if err == nil {
+			if !info.Mode().IsRegular() || info.Size() > 64<<10 || int(info.Sys().(*syscall.Stat_t).Uid) != caller.UID || info.Mode().Perm()&0022 != 0 {
+				return errors.New("preserving an unverified Machine LaunchAgent file")
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			var plist struct {
+				Arrays []struct {
+					Args []string `xml:"string"`
+				} `xml:"dict>array"`
+			}
+			if xml.Unmarshal(data, &plist) != nil || len(plist.Arrays) == 0 || len(plist.Arrays[0].Args) == 0 {
+				return errors.New("preserving an unrecognized Machine LaunchAgent")
+			}
+			program := plist.Arrays[0].Args[0]
+			want := darwinAgent(caller.RegisteredHome, program)
+			if keyd {
+				want = keydAgent(state, program)
+			}
+			if !isPackageProgram(prefix, program, keyd) || !bytes.Equal(data, []byte(want)) {
+				return errors.New("preserving a customized or unrelated Machine LaunchAgent")
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		for _, domain := range []string{"gui", "user"} {
+			job, loaded, err := readJob(caller.UID, domain, label)
+			if err != nil {
+				return err
+			}
+			if !loaded {
+				continue
+			}
+			var source, program string
+			var args []string
+			inArgs := false
+			for _, raw := range strings.Split(string(job), "\n") {
+				line := strings.TrimSpace(raw)
+				if inArgs {
+					if line == "}" {
+						inArgs = false
+					} else {
+						args = append(args, line)
+					}
+					continue
+				}
+				switch {
+				case line == "arguments = {":
+					inArgs = true
+				case strings.HasPrefix(line, "path = ") && source == "":
+					source = strings.TrimPrefix(line, "path = ")
+				case strings.HasPrefix(line, "program = ") && program == "":
+					program = strings.TrimPrefix(line, "program = ")
+				}
+			}
+			if source != path || !isPackageProgram(prefix, program, keyd) || len(args) == 0 || !isPackageProgram(prefix, args[0], keyd) {
+				return errors.New("preserving an unverified loaded Machine service")
+			}
+			want := []string{"daemon", "run"}
+			if keyd {
+				want = []string{"serve", "--state-dir", state}
+			}
+			if !slices.Equal(args[1:], want) {
+				return errors.New("preserving a loaded Machine service with unrelated arguments")
+			}
+		}
+	}
+	return nil
+}

@@ -213,6 +213,41 @@ receipt permits a read-only verification when the previous terminal result
 was lost. Retain the old release, its saved plan and the shared Node binary
 through completion.
 
+### Removing the receipt-managed macOS HQ service
+
+Use the administrator account that installed the dedicated HQ service. These
+local commands work with Machine stopped and with HQ offline. List the completed
+root receipts whose retained canonical plan matches the installed plist.
+
+```sh
+sudo managed-machine members uninstall-hq --list
+sudo managed-machine members uninstall-hq PLAN_ID --dry-run
+sudo managed-machine members uninstall-hq PLAN_ID
+```
+
+After an upgrade use the completed upgrade's plan ID. Several reapplications
+of identical service bytes may match. Compare the displayed IDs with the
+administrator's saved plans and the original completed root receipts before
+choosing one. An outstanding removal reports `resume_plan_id` even after the
+service plist is gone. Repeat removal with that ID. Missing plans, invalid receipts, and plans for an older plist
+are excluded from discovery. Preserve both the saved plan and its root
+receipt until removal finishes. This explicit local invocation is the
+administrator's new decision to unload the service.
+
+The command removes the fixed system launchd job, its verified plist and any
+endpoint observed for the identified job. On macOS versions without guarded
+socket unlink, launchd may remove the socket itself. If a socket remains,
+Machine reports it and preserves the journal for a later retry. A running or
+unidentified replacement, or an occupied endpoint without job provenance,
+requires administrator reconciliation. Repeat the same command to resume an
+interrupted removal or confirm a completed one.
+
+The dedicated account and its home, HQ data, pairing, Keychain custody,
+externally staged release archives, extracted HQ and Node binaries, and audit
+receipts remain. Machine retains the runtime directory even when empty.
+Standalone declarations and irreversible retirement records can use that
+directory. Remove the HQ service before removing the Machine package.
+
 ### How root is obtained
 
 The owner runs `sudo managed-machine members apply <plan-id>` in their own

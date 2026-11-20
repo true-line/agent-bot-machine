@@ -88,10 +88,26 @@ func approvedLaunchPID(out []byte, s HQService, owner string) (string, bool) {
 	return pid, source == launchPlist && program == want[0] && slices.Equal(args, want)
 }
 
-func withLaunchLock(mode int, run func() error) error {
+const uninstallJournalName = ".hq-service-uninstall.json"
+
+func withLaunchLock(owner string, mode int, run func() error) error {
+	outer, err := lockHQPackage(owner)
+	if err != nil {
+		return err
+	}
+	defer outer.Close()
+	return withHQResourceLock(mode, os.O_CREATE, func() error {
+		if _, err := os.Lstat(filepath.Join(receiptsDir(), uninstallJournalName)); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("an interrupted HQ uninstall requires reconciliation with members uninstall-hq")
+		}
+		return run()
+	})
+}
+
+func withHQResourceLock(mode, flags int, run func() error) error {
 	// Different approved plans can race for the same service. Hold this
 	// receipt-directory lock through bootstrap, verification and rollback.
-	lock, err := os.OpenFile(filepath.Join(receiptsDir(), ".hq-launchd.lock"), os.O_CREATE|os.O_RDONLY|syscall.O_NOFOLLOW, 0600)
+	lock, err := os.OpenFile(filepath.Join(receiptsDir(), ".hq-launchd.lock"), flags|os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
 	if err != nil {
 		return err
 	}
@@ -104,7 +120,7 @@ func withLaunchLock(mode int, run func() error) error {
 }
 
 func activateLaunchDaemon(step Step) error {
-	return withLaunchLock(syscall.LOCK_EX, func() error {
+	return withLaunchLock(step.Owner, syscall.LOCK_EX, func() error {
 		if _, err := os.Lstat(filepath.Join(receiptsDir(), upgradeJournalName)); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("an interrupted HQ release transition needs reconciliation")
 		}

@@ -62,6 +62,26 @@ func brewPrefix(target string) string {
 
 func main() {
 	getenv := cli.BridgeDarwinEnv(runtime.GOOS, os.Getenv)
+	daemonDeps := daemon.Deps{
+		GOOS: runtime.GOOS,
+		Caller: func() (daemon.Caller, error) {
+			return currentCaller(os.Environ())
+		},
+		Root:          os.UserHomeDir,
+		LockLifecycle: statedir.LockMacPackage,
+		Activate: func(path string) error {
+			return daemon.ActivateUserService(runtime.GOOS, path)
+		},
+		Deactivate: func(path string) error {
+			return daemon.DeactivateUserService(runtime.GOOS, path)
+		},
+		Reload: func() error {
+			return daemon.ReloadUserService(runtime.GOOS)
+		},
+		WaitHealthy: func() error {
+			return daemon.WaitListening(daemon.ChannelSocket(), 0)
+		},
+	}
 	app := &cli.App{
 		Name:       "managed-machine",
 		Version:    version,
@@ -133,25 +153,8 @@ func main() {
 				},
 				ApplyDeps: members.ApplyDeps{DaemonState: membersDaemonState, CheckUpgradePair: daemon.CheckHQUpgradePair},
 			}),
-			daemon.Command(daemon.Deps{
-				GOOS: runtime.GOOS,
-				Caller: func() (daemon.Caller, error) {
-					return currentCaller(os.Environ())
-				},
-				Root: os.UserHomeDir,
-				Activate: func(path string) error {
-					return daemon.ActivateUserService(runtime.GOOS, path)
-				},
-				Deactivate: func(path string) error {
-					return daemon.DeactivateUserService(runtime.GOOS, path)
-				},
-				Reload: func() error {
-					return daemon.ReloadUserService(runtime.GOOS)
-				},
-				WaitHealthy: func() error {
-					return daemon.WaitListening(daemon.ChannelSocket(), 0)
-				},
-			}),
+			daemon.Command(daemonDeps),
+			daemon.UninstallCommand(daemonDeps),
 		},
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,

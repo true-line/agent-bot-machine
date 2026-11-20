@@ -456,3 +456,20 @@ func (s recordingStep) Verify(context.Context) (execute.Evidence, error) {
 	s.provider.verified = append(s.provider.verified, s.id)
 	return execute.Evidence{}, nil
 }
+
+// Package uninstallation uses fixed, typed Homebrew and read-only process
+// operations. The daemon's RPC surface exposes none of them.
+var noSystemHQ = brew.NoManagedHQ
+var darwinCustodyPIDs = brew.MachineCustodyPIDs
+var unusedMachineSocket = brew.UnusedMachineSocket
+var readMachineUserJob = brew.ReadMachineUserJob
+var removeHQFirst = brew.ErrRemoveHQFirst
+
+const machineTap = brew.MachineTap
+
+func verifyHomebrewRemovalPrefix(prefix, home string) error {
+	return brew.VerifyMachineRemovalPrefix(prefix, minimalEnv(home, nil))
+}
+func uninstallHomebrewFormula(prefix, home string) error {
+	return brew.UninstallMachineFormula(prefix, minimalEnv(home, nil))
+}

@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 
@@ -18,14 +20,15 @@ import (
 // Deps is the testable surface of daemon install, uninstall, run, and status.
 type Deps struct {
 	command.Deps
-	MembersHost members.Host // nil reads the running host for first-HQ plans
-	GOOS        string
-	Executable  func() (string, error)
-	Caller      func() (Caller, error)
-	Root        func() (string, error)
-	Activate    func(path string) error
-	Deactivate  func(path string) error
-	WaitHealthy func() error
+	MembersHost   members.Host // nil reads the running host for first-HQ plans
+	GOOS          string
+	Executable    func() (string, error)
+	Caller        func() (Caller, error)
+	Root          func() (string, error)
+	LockLifecycle func(string, int) (*os.File, error)
+	Activate      func(path string) error
+	Deactivate    func(path string) error
+	WaitHealthy   func() error
 	// Reload makes the service manager reread units after install puts a
 	// refused unit file back.
 	Reload func() error
@@ -192,6 +195,13 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	root, err := deps.root()
 	if err != nil {
 		return serviceFailed(err)
+	}
+	if goos == "darwin" && (verb == "install" || verb == "start") && deps.LockLifecycle != nil {
+		lock, err := deps.LockLifecycle(caller.RegisteredHome, caller.UID)
+		if err != nil {
+			return serviceFailed(err)
+		}
+		defer lock.Close()
 	}
 	switch verb {
 	case "status":
@@ -496,4 +506,32 @@ func (d Deps) executable(ctx cli.Context) (string, error) {
 		return ctx.Executable()
 	}
 	return "", fmt.Errorf("daemon executable is not configured")
+}
+
+// UninstallCommand is the local operator's package lifecycle, never a daemon RPC.
+func UninstallCommand(deps Deps) cli.Command {
+	return cli.Command{
+		Name: "uninstall", Summary: "Remove the active macOS Homebrew Machine, keyd, and their user services",
+		Usage: "managed-machine uninstall\nRun as the Homebrew prefix administrator after removing the managed HQ service. Pairing, keys, receipts and other applications are preserved.",
+		Run: func(ctx cli.Context, args []string) cli.Result {
+			if len(args) != 0 {
+				return cli.Result{Diagnostic: command.UsageErr("uninstall takes no arguments")}
+			}
+			if deps.GOOS != "darwin" {
+				return serviceFailed(errors.New("package uninstall is supported for macOS Homebrew installations"))
+			}
+			if err := uninstallMacPackage(deps); err != nil {
+				return serviceFailed(err)
+			}
+			return cli.Result{Records: []*output.Record{output.New().Set("package", "managed-machine").Set("state", "removed")}}
+		},
+	}
+}
+
+func uninstallUserServices(deps Deps) error {
+	res := run(deps, cli.Context{}, []string{"uninstall"})
+	if res.Diagnostic != nil {
+		return errors.New(res.Diagnostic.Message)
+	}
+	return nil
 }

@@ -73,3 +73,5 @@ func TestMembersPlansExtendedACL(t *testing.T) {
 		t.Fatal("accepted individually writable ancestor through ACL")
 	}
 }
+
+var testMacPackageLock = statedir.LockMacPackage

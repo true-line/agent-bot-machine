@@ -27,6 +27,24 @@ The installer downloads the public package from [true-line/agent-bot-machine](ht
 
 All platforms use the [public Machine releases](https://github.com/true-line/agent-bot-machine/releases). To use an existing policy checkout with the portable core, point `MANAGED_MACHINE_POLICY_DIR` at its directory.
 
+## Uninstall on macOS
+
+Open a login Terminal as the administrator who owns Homebrew. If Machine installed a dedicated HQ service, use its matching applied plan ID to remove that service first. The preview shows what will be removed. The list and preview work with HQ offline.
+
+```sh
+sudo managed-machine members uninstall-hq --list
+sudo managed-machine members uninstall-hq PLAN_ID --dry-run
+sudo managed-machine members uninstall-hq PLAN_ID
+```
+
+For a Machine-only install, start here. Run this command as the Homebrew owner without `sudo`.
+
+```sh
+managed-machine uninstall
+```
+
+Machine unloads its two user services, removes their LaunchAgents and stale sockets, and invokes Homebrew to remove the formula and its command links. The dedicated HQ account and its home, the administrator’s keys, pairing and revocation history, and install receipts are retained. A retired standalone-signing authorization stays retired across uninstall and reinstall. Archives and Node runtimes staged separately by an operator remain at their original locations. Applications and accounts previously provisioned with Machine have their own lifecycles.
+
 ## Usage
 
 Portable core commands (all five targets):
