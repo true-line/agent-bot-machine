@@ -79,12 +79,14 @@ Options
                         exist. Naming your own account works but is not
                         recommended: the plan says it is not dedicated
 --hq-config <path>      Read HQ's harnesses.accounts (adapter ID to account)
-                        and optional Linux harnesses.dir. Shared accounts are
+                        and optional harnesses.dir. Shared accounts are
                         provisioned once. Legacy members config is refused
 --hq-service <json>     Install the platform HQ service from a verified release record
 --members <a,b,...>     Name the harness accounts directly (compatibility flag)
 --dir <path>            The endpoint directory, with --members
-                        (default ` + DefaultDir + `)
+                        (Linux default ` + DefaultDir + `). On macOS, specify
+                        ` + DarwinBrokerDir + ` explicitly
+                        to provision broker directories under the existing HQ runtime.
 --json                  Return the records as one JSON document
 --human                 Render the records in a readable form
 `
@@ -192,8 +194,8 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		hqAccount = DefaultHQAccountFor(platform)
 	}
 	switch {
-	case platform == PlatformDarwin && hasDir:
-		return failure(diag.MembersUnsupported, "endpoint directory setup is Linux only")
+	case platform == PlatformDarwin && hasDir && (!hasList || dir != DarwinBrokerDir):
+		return failure(diag.MembersUnsupported, "Darwin --dir requires --members and %s", DarwinBrokerDir)
 	case platform == PlatformDarwin && hqConfigPath == "" && !hasList:
 	case (hqConfigPath != "") == hasList:
 		return cli.Result{Diagnostic: command.UsageErr("members plan needs exactly one of --hq-config and --members")}
@@ -214,8 +216,9 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		if in.Dir, in.Members, err = fromConfig(raw); err != nil {
 			return failure(diag.MembersListInvalid, "%s: %v", hqConfigPath, err)
 		}
-		if platform == PlatformDarwin {
-			// Only the credential accounts are provisioned on Darwin.
+		// Shared configs may name the Linux broker directory. Keep their
+		// original account-only plan on macOS unless the Darwin path is selected.
+		if platform == PlatformDarwin && in.Dir != DarwinBrokerDir {
 			in.Dir = DarwinDir
 		}
 	} else {
@@ -308,7 +311,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 }
 
 // platformOf maps a host target to Input.Platform. Linux plans everything;
-// macOS plans the HQ account alone.
+// macOS plans the requested role accounts, broker directories and optional HQ service.
 func platformOf(target string) (string, bool) {
 	switch {
 	case strings.HasPrefix(target, "linux/"):
