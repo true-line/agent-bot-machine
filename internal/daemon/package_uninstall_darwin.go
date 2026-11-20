@@ -194,7 +194,7 @@ func removeStoppedPackageSocket(original packageLeaf, uid int, unlinkStopped fun
 	return nil
 }
 
-func legacyMacSocketUnlink(fd int, path string, uid int, original unix.Stat_t) error {
+func (observe packageObservers) legacyMacSocketUnlink(fd int, path string, uid int, original unix.Stat_t) error {
 	name := filepath.Base(path)
 	const atNoDeleteBusy = 0x4000
 	err := unix.Unlinkat(fd, name, atNoDeleteBusy)
@@ -211,7 +211,7 @@ func legacyMacSocketUnlink(fd int, path string, uid int, original unix.Stat_t) e
 	// lifecycle lock, has unloaded both jobs, checked the parent ACL/owner and
 	// confirmed ECONNREFUSED. Also require no remaining same-owner Machine/keyd
 	// process (including a foreground daemon) before removing this stale node.
-	return unlinkQuiescentSocket(fd, path, uid, original, darwinCustodyPIDs)
+	return unlinkQuiescentSocket(fd, path, uid, original, observe.processes)
 }
 
 func unlinkQuiescentSocket(fd int, path string, uid int, original unix.Stat_t, processes func(int) ([]byte, error)) error {
@@ -595,7 +595,7 @@ func stopPackageServices(deps Deps, prefix string, caller Caller, observe packag
 		if !leaf.unchanged(current) {
 			return errors.New("preserving a Machine service file that changed during unload")
 		}
-		if err := removeStoppedPackageSocket(leaf, caller.UID, legacyMacSocketUnlink); err != nil {
+		if err := removeStoppedPackageSocket(leaf, caller.UID, observe.legacyMacSocketUnlink); err != nil {
 			return err
 		}
 	}
