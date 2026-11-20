@@ -67,7 +67,16 @@ jobs:
           path: evidence-attempts
           merge-multiple: false
       - name: Select the latest release receipt for each native target
-        run: python3 scripts/select-gate-evidence.py evidence-attempts release-evidence
+        run: |
+          python3 scripts/select-gate-evidence.py evidence-attempts release-evidence
+          if compgen -G 'release-gate-*.json' >/dev/null; then
+            echo 'Unexpected release receipts already exist in the publish directory' >&2
+            exit 1
+          fi
+          for target in darwin-arm64 linux-amd64 linux-arm64 windows-amd64 windows-arm64; do
+            mv "release-evidence/release-gate-$target.json" .
+          done
+          rmdir release-evidence
       - name: Download the support matrix
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -111,6 +120,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$(cat VERSION)"
-          gh release upload "$TAG" support-matrix.md release-evidence/release-gate-*.json Formula/managed-machine.rb --clobber
+          gh release upload "$TAG" support-matrix.md release-gate-*.json Formula/managed-machine.rb --clobber
           gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body >notes.md
           gh release edit "$TAG" --draft=false --verify-tag --title "$TAG" --notes-file notes.md
