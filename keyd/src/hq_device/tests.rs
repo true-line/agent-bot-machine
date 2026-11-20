@@ -6,11 +6,16 @@ use std::cell::{Cell, RefCell};
 #[derive(Default)]
 struct Fake {
     created: Cell<u8>,
+    clock: Cell<u64>,
+    time_after_sign: Cell<Option<u64>>,
     revoked: Cell<bool>,
     revoke_after_sign: Cell<bool>,
     signed: RefCell<Vec<Vec<u8>>>,
 }
 impl Enclave for Fake {
+    fn proof_time(&self) -> Result<u64, &'static str> {
+        Ok(self.clock.get())
+    }
     fn check_live(&self) -> Result<(), &'static str> {
         if self.revoked.get() {
             return Err(UNAVAILABLE);
@@ -31,6 +36,9 @@ impl Enclave for Fake {
     }
     fn sign(&self, r: &[u8], m: &[u8]) -> Result<[u8; 64], &'static str> {
         self.public(r)?;
+        if let Some(now) = self.time_after_sign.take() {
+            self.clock.set(now);
+        }
         self.signed.borrow_mut().push(m.to_vec());
         if self.revoke_after_sign.get() {
             self.revoked.set(true)
@@ -53,6 +61,15 @@ fn request(p: &Pair, op: &str, now: u64) -> Request {
 }
 
 fn request_with_nonce(p: &Pair, op: &str, nonce: &str, now: u64) -> Request {
+    request_for_session(p, op, nonce, now, None)
+}
+fn request_for_session(
+    p: &Pair,
+    op: &str,
+    nonce: &str,
+    now: u64,
+    session: Option<&str>,
+) -> Request {
     let msg = [
         "agent-bot-machine/keyd-hq-device/v1",
         &p.machine_pub,
@@ -66,10 +83,17 @@ fn request_with_nonce(p: &Pair, op: &str, nonce: &str, now: u64) -> Request {
         "",
     ]
     .join("\n");
-    let msg = format!("{msg}\nhq_epoch\n{}", p.hq_epoch);
+    let mut msg = format!("{msg}\nhq_epoch\n{}", p.hq_epoch);
+    if let Some(s) = session {
+        msg.push_str(&format!("\nsession\n{s}"));
+    }
     let sig = SigningKey::from_bytes(&[1; 32]).sign(msg.as_bytes());
-    serde_json::from_value(json!({"machine_pub":p.machine_pub,"hq_pub":p.hq_pub,"hq_uid":p.hq_uid,"hq_epoch":p.hq_epoch,
-            "req_nonce":nonce,"timestamp":now,"option":op,"signature":STANDARD.encode(sig.to_bytes())})).unwrap()
+    let mut wire = json!({"machine_pub":p.machine_pub,"hq_pub":p.hq_pub,"hq_uid":p.hq_uid,"hq_epoch":p.hq_epoch,
+            "req_nonce":nonce,"timestamp":now,"option":op,"signature":STANDARD.encode(sig.to_bytes())});
+    if let Some(s) = session {
+        wire["session"] = json!(s);
+    }
+    serde_json::from_value(wire).unwrap()
 }
 #[test]
 fn public_identity_and_enrollment_are_typed_and_offline() {
@@ -307,6 +331,18 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
     )
     .is_err());
     assert!(access_bind(&token_body, poll + 1, &SigningKey::from_bytes(&[8; 32])).is_err());
+    let (_, selector) = identity(&native.public(&[2]).unwrap()).unwrap();
+    let query = |s: &str, at: u64| {
+        let request = request_for_session(&p, "whoami", &nonce().unwrap(), at, Some(s));
+        request.verify(&p, at)?;
+        native.clock.set(at);
+        let saved = items.read(SERVICE, ITEM).unwrap().unwrap();
+        let record: Record = serde_json::from_slice(&saved).unwrap();
+        whoami_proof(&record, &request, &native, at)
+    };
+    let before = native.signed.borrow().len();
+    assert!(query(&selector, poll).is_err()); // Access assertion exists, signed token binding does not.
+    assert_eq!(native.signed.borrow().len(), before);
     let session = access_bind(&token_body, poll + 1, &issuer).unwrap();
     assert_eq!(session["expires_at"], poll + 900);
     assert_eq!(session.as_object().unwrap().len(), 2);
@@ -320,7 +356,36 @@ fn signed_poll_binds_pending_key_once_and_survives_restart() {
         &issuer
     )
     .is_err());
+    assert_eq!(session["session"], selector);
+    let valid = query(&selector, poll + 3).unwrap();
+    assert_eq!(valid.as_object().unwrap().len(), 2);
+    assert_eq!(valid["session"], selector);
+    let decode = |part: &str| serde_json::from_slice::<Value>(&URL.decode(part).unwrap()).unwrap();
+    let parts: Vec<_> = valid["proof"].as_str().unwrap().split('.').collect();
+    assert_eq!(parts.len(), 3);
+    assert_eq!(
+        decode(parts[0]),
+        json!({"alg":"ES256","typ":"dpop+jwt","jwk":claims["cnf"]["jwk"]})
+    );
+    let body = decode(parts[1]);
+    let jti = body["jti"].as_str().unwrap();
+    assert_eq!(URL.decode(jti).unwrap().len(), 16);
+    assert_eq!(
+        body,
+        json!({"htu":"https://agents.true-line.ai/api/daemon/whoami","htm":"GET","ath":URL.encode(Sha256::digest(b"synthetic-short-lived-token")),"jti":jti,"iat":poll+3})
+    );
+    let next = query(&selector, poll + 3).unwrap();
+    assert_ne!(
+        decode(next["proof"].as_str().unwrap().split('.').nth(1).unwrap())["jti"],
+        jti
+    );
+    native.time_after_sign.set(Some(poll + 900));
+    assert!(query(&selector, poll + 899).is_err()); // Expired during the native operation.
+    let count = native.signed.borrow().len();
+    assert!(query(&URL.encode([22; 32]), poll + 4).is_err());
+    assert!(query(&selector, poll + 900).is_err());
     assert!(access_bind(&token_body, poll + 901, &issuer).is_err());
+    assert_eq!(native.signed.borrow().len(), count);
     let saved = items.read(SERVICE, ITEM).unwrap().unwrap();
     assert!(!String::from_utf8(saved)
         .unwrap()

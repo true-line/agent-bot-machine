@@ -217,6 +217,11 @@ jobs:
         env:
           MM_KEYD_CUSTODY_TEST: '1'
         run: bash tests/keyd-custody-macos.test.sh
+      - name: Verify the fixed self-lookup using native admin custody and a disposable role
+        if: matrix.os == 'darwin'
+        env:
+          MM_KEYD_CUSTODY_TEST: '1'
+        run: bash tests/keyd-custody-macos.test.sh --whoami
       - name: Test standalone release notarization verdicts
         if: matrix.os == 'darwin'
         run: bash tests/verify-darwin-clis.test.sh
