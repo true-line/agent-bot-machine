@@ -272,6 +272,9 @@ the second Machine-signed delegation before operating on its matching key.
 | `bind-enrollment` | `bound` | Validate the identity service's signed approved poll receipt against the admin's pending proof and device thumbprint. |
 | `access-assertion` | `asserted` | Use the recorded device ID and a new admin-owned ephemeral key for the fixed OAuth token audience. |
 | `bind-access` | `access-bound` | Validate the server-signed token result for that assertion and return the administrative session thumbprint and deadline. |
+| `whoami` | `whoami-proved` | Return a fresh DPoP proof for the enrolled device’s fixed Identity self-lookup, using its bound, unexpired session. |
+
+For `whoami`, both signed request transcripts append the label `session` and its value immediately after the epoch. The value is the RFC 7638 session thumbprint returned by `bind-access`. Keyd sets the method to `GET`, the URI to `https://agents.true-line.ai/api/daemon/whoami`, and the token hash to the value from the verified token receipt. Keyd generates the issuance time and proof JTI. The Machine-signed response carries `hq_epoch`, `session` and `proof`. HQ carries the HTTPS request and verifies Identity’s response signature and returned device ID.
 
 The signed channel transcript appends the lines `hq_epoch`, then its value,
 after the normal ten fields for every operation except `identity`. A fresh

@@ -3,14 +3,31 @@
 set -euo pipefail
 
 [[ "${MM_KEYD_CUSTODY_TEST:-}" == 1 ]] || exit 0
-[[ "$(uname -s)" == Darwin && "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]
+[[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
+   "$(uname -sm)" == 'Darwin arm64' && "$(id -u)" != 0 && "$(id -u)" == "$(stat -f %u /opt/homebrew)" ]] || exit 1
 root="$(cd "$(dirname "$0")/.." && pwd)"
-(cd "$root/keyd" && cargo build --release --locked)
 temp="$(mktemp -d /private/tmp/mm-custody.XXXXXXXX)"
 trap 'rm -rf "$temp"' EXIT
 chmod 0755 "$temp"
 helper="$temp/agent-bot-keyd"
-install -m 0700 "$root/keyd/target/release/agent-bot-keyd" "$helper"
+case "${1:-enrollment}" in
+enrollment)
+    whoami_test=0
+    [[ "$#" == 0 ]] || exit 1
+    (cd "$root/keyd" && cargo build --release --locked)
+    install -m 0700 "$root/keyd/target/release/agent-bot-keyd" "$helper"
+    ;;
+--whoami)
+    whoami_test=1
+    [[ "$#" == 1 ]] || exit 1
+    mkdir -m 0700 "$temp/issuer"
+    node "$root/tests/fixtures/hosted-whoami.mjs" create-issuer "$temp/issuer"
+    bash "$root/tests/fixtures/build-native-whoami-keyd.sh" "$temp/whoami-build" "$temp/issuer/server-keys.json"
+    install -m 0700 "$temp/whoami-build/target/release/agent-bot-keyd" "$helper"
+    install -m 0644 "$root/tests/fixtures/hosted-whoami.mjs" "$temp/hosted-whoami.mjs"
+    ;;
+*) exit 1 ;;
+esac
 owner="$(stat -f %Su /opt/homebrew)"
 sudo -n chown "$owner" "$helper"
 sudo -n -u "$owner" "$helper" --version | grep -E '^agent-bot-keyd [0-9]+\.[0-9]+\.[0-9]+$'
@@ -81,4 +98,4 @@ sudo -n chmod 0700 "$helper"
 (cd "$root" && go test -c -o "$temp/machine-test" ./internal/daemon && go build -o "$temp/managed-machine" ./cmd/managed-machine)
 install -m 0755 "$(command -v node)" "$temp/node"
 install -m 0644 "$root/tests/fixtures/paired-darwin-hq-device.mjs" "$temp/role-check.mjs"
-bash "$root/tests/fixtures/with-keyd-test-keychain.sh" node "$root/tests/fixtures/keyd-device-native.mjs" "$helper" "$role_uid"
+MM_NATIVE_WHOAMI_TEST="$whoami_test" bash "$root/tests/fixtures/with-keyd-test-keychain.sh" node "$root/tests/fixtures/keyd-device-native.mjs" "$helper" "$role_uid"
