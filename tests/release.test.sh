@@ -210,6 +210,31 @@ grep -Fq 'release/v9.9.9' "$TEST_DIR/prepare.out"
 
 # Branch release/v9.9.9 is pushed to origin; origin/main and tags of this repo are unchanged.
 PREPARE_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
+# Render is the local path used by publish. Preserve the reviewed recipe and
+# refuse unexpected resources even when they follow the archive being pinned.
+render_tree="$TEST_DIR/render-target"
+git -C "$FIXTURE" worktree add --quiet --detach "$render_tree" "$PREPARE_SHA"
+(cd "$ROOT" && go run ./cmd/mm-release build -version 9.9.9 -out "$TEST_DIR/render-dist")
+render_pin() {
+    (cd "$render_tree" && bash "$ROOT/scripts/release" render v9.9.9 "$TEST_DIR/render-dist" "$FAKE_GH_STATE/releases/v9.9.9")
+}
+render_pin
+git -C "$render_tree" diff --exit-code
+python3 - "$render_tree/Formula/managed-machine.rb" <<'PYRESOURCE'
+from pathlib import Path
+import sys
+recipe = Path(sys.argv[1])
+text = recipe.read_text()
+marker = "  def check_standalone_signing\n"
+assert text.count(marker) == 1
+recipe.write_text(text.replace(marker, '  resource "unexpected" do\n    url "https://example.invalid/extra"\n  end\n\n' + marker))
+PYRESOURCE
+git -C "$render_tree" commit --quiet -am 'Fixture contains an additional resource'
+if render_pin >"$TEST_DIR/render-extra.out" 2>&1; then
+    fail "render discarded an unrecognized resource after core"
+fi
+grep -Fq 'expected only the core resource' "$TEST_DIR/render-extra.out"
+git -C "$render_tree" diff --exit-code
 [[ "$(git --git-dir="$REMOTE" rev-parse refs/heads/release/v9.9.9)" == "$PREPARE_SHA" ]]
 [[ "$(git --git-dir="$REMOTE" rev-parse refs/heads/main)" == "$ADVANCE_MAIN_SHA" ]]
 if git --git-dir="$REMOTE" rev-parse --verify --quiet refs/tags/v9.9.9 >/dev/null; then
@@ -470,6 +495,26 @@ git -C "$FIXTURE" merge --quiet --ff-only release/v9.9.11
 git -C "$FIXTURE" push --quiet origin main
 
 SAVED_911_SHA="$(git -C "$FIXTURE" rev-parse HEAD)"
+# A previously prepared pin with a missing declaration check cannot be tagged.
+for guard in install keg post_install; do
+    git -C "$FIXTURE" reset --quiet --hard "$SAVED_911_SHA"
+    python3 - "$FIXTURE/Formula/managed-machine.rb" "$guard" <<'PYGUARD'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+prior = {"install": "  def install", "keg": "    prefix.mkpath", "post_install": "  def post_install"}[sys.argv[2]]
+text = path.read_text()
+checked = prior + "\n    check_standalone_signing\n"
+assert text.count(checked) == 1
+path.write_text(text.replace(checked, prior + "\n", 1))
+PYGUARD
+    git -C "$FIXTURE" commit --quiet -am "Fixture omits the $guard declaration check"
+    git -C "$FIXTURE" push --quiet --force origin main
+    if run_release tag v9.9.11 >"$TEST_DIR/tag-unguarded.out" 2>&1; then
+        fail "tag accepted a formula missing its $guard declaration check"
+    fi
+    grep -Fq 'Formula/managed-machine.rb disagrees with v9.9.11' "$TEST_DIR/tag-unguarded.out"
+done
 for leftover_line in \
     '(libexec / "core").mkpath' \
     'assert_equal version.to_s, shell_output("#{libexec}/core/managed-machine --version").strip' \

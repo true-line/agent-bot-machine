@@ -62,6 +62,12 @@ git -C "$REPO" push --quiet -u origin main
 FORMULA="$REPO/Formula/managed-machine.rb"
 [[ -f "$FORMULA" ]] || fail "prepared Formula/managed-machine.rb is missing"
 
+# A version pin changes release metadata only. The tagged source supplies the
+# complete installation policy, including the checks around keg creation.
+diff -u <(sed -n '/^  def check_standalone_signing$/,$p' "$ROOT/Formula/managed-machine.rb") \
+        <(sed -n '/^  def check_standalone_signing$/,$p' "$FORMULA") ||
+    fail "release preparation changed the standalone signing guard or formula behavior"
+
 if command -v ruby >/dev/null 2>&1; then
     ruby -c "$FORMULA" >/dev/null
 fi
