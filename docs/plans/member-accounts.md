@@ -242,6 +242,14 @@ unidentified replacement, or an occupied endpoint without job provenance,
 requires administrator reconciliation. Repeat the same command to resume an
 interrupted removal or confirm a completed one.
 
+If a crash occurs after the job, process, socket and plist are gone, only
+the root audit record may still need its final directory sync and rename.
+Package removal can proceed once those public service resources are gone.
+The package operation preserves the saved plan and root journal. If the CLI
+was removed in that interval, reinstall a compatible Machine binary, run
+`members uninstall-hq --list` as above, and resume the displayed plan. This
+finishes the audit record without starting HQ or pairing again.
+
 The dedicated account and its home, HQ data, pairing, Keychain custody,
 externally staged release archives, extracted HQ and Node binaries, and audit
 receipts remain. Machine retains the runtime directory even when empty.

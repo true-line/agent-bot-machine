@@ -64,19 +64,8 @@ func removeMacPackage(deps Deps, executable string, prefixes []string, checkHQ f
 	if err := verifyHomebrewRemovalPrefix(prefix, caller.RegisteredHome); err != nil {
 		return err
 	}
-	if err := verifyPackageServices(prefix, caller, readJob); err != nil {
+	if err := stopPackageServices(deps, prefix, caller, readJob); err != nil {
 		return err
-	}
-	if err := uninstallUserServices(deps); err != nil {
-		return err
-	}
-	endpoints := []string{filepath.Join(prefix, "var", "agent-machine", "daemon.sock")}
-	private := filepath.Join(caller.RegisteredHome, ".local", "state", "agent-bot", "keyd")
-	endpoints = append(endpoints, filepath.Join(private, "keyd.sock"), filepath.Join(private, "owner.sock"))
-	for _, endpoint := range endpoints {
-		if err := removeStoppedPackageSocket(endpoint, caller.UID, legacyMacSocketUnlink); err != nil {
-			return err
-		}
 	}
 	if err := checkHQ(); err != nil {
 		return err
@@ -158,15 +147,17 @@ func activeMachinePackage(executable string, prefixes []string) (string, error) 
 	return selected, nil
 }
 
-// Only stale Unix socket leaves may be removed. Normal uninstallation never
-// removes the public Machine pin, keyd directory, audit history or Keychain items.
-func removeStoppedPackageSocket(path string, uid int, unlinkStopped func(int, string, int) error) error {
+func removeStoppedPackageSocket(original packageLeaf, uid int, unlinkStopped func(int, string, int, unix.Stat_t) error) error {
+	path := original.path
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if !original.unchanged(info) {
+		return errors.New("preserving a replaced Machine endpoint")
 	}
 	parent := filepath.Dir(path)
 	real, err := filepath.EvalSymlinks(parent)
@@ -194,16 +185,16 @@ func removeStoppedPackageSocket(path string, uid int, unlinkStopped func(int, st
 		return errors.New("cannot verify that the Machine or keyd endpoint is stale")
 	}
 	var again unix.Stat_t
-	if err := unix.Fstatat(fd, filepath.Base(path), &again, unix.AT_SYMLINK_NOFOLLOW); err != nil || again.Dev != leaf.Dev || again.Ino != leaf.Ino || again.Gen != leaf.Gen || again.Mode != leaf.Mode || again.Uid != leaf.Uid {
+	if err := unix.Fstatat(fd, filepath.Base(path), &again, unix.AT_SYMLINK_NOFOLLOW); err != nil || !samePackageSocket(leaf, again) {
 		return errors.New("preserving a changed Machine endpoint")
 	}
-	if err := unlinkStopped(fd, path, uid); err != nil && !errors.Is(err, unix.ENOENT) {
+	if err := unlinkStopped(fd, path, uid, leaf); err != nil && !errors.Is(err, unix.ENOENT) {
 		return fmt.Errorf("could not safely unlink the stopped %s endpoint: %w", filepath.Base(path), err)
 	}
 	return nil
 }
 
-func legacyMacSocketUnlink(fd int, path string, uid int) error {
+func legacyMacSocketUnlink(fd int, path string, uid int, original unix.Stat_t) error {
 	name := filepath.Base(path)
 	const atNoDeleteBusy = 0x4000
 	err := unix.Unlinkat(fd, name, atNoDeleteBusy)
@@ -220,16 +211,16 @@ func legacyMacSocketUnlink(fd int, path string, uid int) error {
 	// lifecycle lock, has unloaded both jobs, checked the parent ACL/owner and
 	// confirmed ECONNREFUSED. Also require no remaining same-owner Machine/keyd
 	// process (including a foreground daemon) before removing this stale node.
-	return unlinkQuiescentSocket(fd, path, uid, darwinCustodyPIDs)
+	return unlinkQuiescentSocket(fd, path, uid, original, darwinCustodyPIDs)
 }
 
-func unlinkQuiescentSocket(fd int, path string, uid int, processes func(int) ([]byte, error)) error {
+func unlinkQuiescentSocket(fd int, path string, uid int, original unix.Stat_t, processes func(int) ([]byte, error)) error {
 	name := filepath.Base(path)
 	var before, after unix.Stat_t
 	if err := unix.Fstatat(fd, name, &before, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return err
 	}
-	if before.Mode&unix.S_IFMT != unix.S_IFSOCK || int(before.Uid) != uid || before.Nlink != 1 {
+	if !samePackageSocket(original, before) || before.Mode&unix.S_IFMT != unix.S_IFSOCK || int(before.Uid) != uid || before.Nlink != 1 {
 		return errors.New("preserving changed socket")
 	}
 	pids, err := processes(uid)
@@ -247,10 +238,14 @@ func unlinkQuiescentSocket(fd int, path string, uid int, processes func(int) ([]
 	if err := unix.Fstatat(fd, name, &after, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return err
 	}
-	if before.Dev != after.Dev || before.Ino != after.Ino || before.Gen != after.Gen || before.Btim != after.Btim || before.Mode != after.Mode || before.Nlink != after.Nlink || before.Uid != after.Uid || before.Gid != after.Gid {
+	if !samePackageSocket(before, after) {
 		return errors.New("preserving changed socket")
 	}
 	return unix.Unlinkat(fd, name, 0)
+}
+
+func samePackageSocket(a, b unix.Stat_t) bool {
+	return a.Dev == b.Dev && a.Ino == b.Ino && a.Gen == b.Gen && a.Btim == b.Btim && a.Mode == b.Mode && a.Nlink == b.Nlink && a.Uid == b.Uid && a.Gid == b.Gid
 }
 
 var homebrewKegVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+([_-][A-Za-z0-9._-]+)?$`)
@@ -271,27 +266,29 @@ func isPackageProgram(prefix, program string, keyd bool) bool {
 	return filepath.Base(dir) == "bin" && filepath.Dir(version) == filepath.Join(prefix, "Cellar", "managed-machine") && homebrewKegVersion.MatchString(filepath.Base(version))
 }
 
-func verifyPackageServices(prefix string, caller Caller, readJob func(int, string, string) ([]byte, bool, error)) error {
+func inspectPackageServices(prefix string, caller Caller, readJob func(int, string, string) ([]byte, bool, error)) ([]packageLeaf, error) {
+	var plists []packageLeaf
 	agents := filepath.Join(caller.RegisteredHome, "Library", "LaunchAgents")
 	if info, err := os.Lstat(agents); err == nil {
 		if !info.IsDir() || int(info.Sys().(*syscall.Stat_t).Uid) != caller.UID || info.Mode().Perm()&0022 != 0 {
-			return errors.New("preserving an unverified LaunchAgents directory")
+			return nil, errors.New("preserving an unverified LaunchAgents directory")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+		return nil, err
 	}
 	state := filepath.Join(caller.RegisteredHome, ".local", "state", "agent-bot")
 	for _, label := range []string{darwinServiceLabel, darwinKeydServiceLabel} {
 		keyd := label == darwinKeydServiceLabel
 		path := filepath.Join(agents, label+".plist")
+		leaf := packageLeaf{path: path}
 		info, err := os.Lstat(path)
 		if err == nil {
-			if !info.Mode().IsRegular() || info.Size() > 64<<10 || int(info.Sys().(*syscall.Stat_t).Uid) != caller.UID || info.Mode().Perm()&0022 != 0 {
-				return errors.New("preserving an unverified Machine LaunchAgent file")
+			if !info.Mode().IsRegular() || info.Size() > 64<<10 || int(info.Sys().(*syscall.Stat_t).Uid) != caller.UID || info.Mode().Perm()&0022 != 0 || info.Sys().(*syscall.Stat_t).Nlink != 1 {
+				return nil, errors.New("preserving an unverified Machine LaunchAgent file")
 			}
 			data, err := os.ReadFile(path)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			var plist struct {
 				Arrays []struct {
@@ -299,7 +296,7 @@ func verifyPackageServices(prefix string, caller Caller, readJob func(int, strin
 				} `xml:"dict>array"`
 			}
 			if xml.Unmarshal(data, &plist) != nil || len(plist.Arrays) == 0 || len(plist.Arrays[0].Args) == 0 {
-				return errors.New("preserving an unrecognized Machine LaunchAgent")
+				return nil, errors.New("preserving an unrecognized Machine LaunchAgent")
 			}
 			program := plist.Arrays[0].Args[0]
 			want := darwinAgent(caller.RegisteredHome, program)
@@ -307,15 +304,17 @@ func verifyPackageServices(prefix string, caller Caller, readJob func(int, strin
 				want = keydAgent(state, program)
 			}
 			if !isPackageProgram(prefix, program, keyd) || !bytes.Equal(data, []byte(want)) {
-				return errors.New("preserving a customized or unrelated Machine LaunchAgent")
+				return nil, errors.New("preserving a customized or unrelated Machine LaunchAgent")
 			}
+			leaf.info, leaf.body = info, data
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
+			return nil, err
 		}
+		plists = append(plists, leaf)
 		for _, domain := range []string{"gui", "user"} {
 			job, loaded, err := readJob(caller.UID, domain, label)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if !loaded {
 				continue
@@ -343,16 +342,87 @@ func verifyPackageServices(prefix string, caller Caller, readJob func(int, strin
 				}
 			}
 			if source != path || !isPackageProgram(prefix, program, keyd) || len(args) == 0 || !isPackageProgram(prefix, args[0], keyd) {
-				return errors.New("preserving an unverified loaded Machine service")
+				return nil, errors.New("preserving an unverified loaded Machine service")
 			}
 			want := []string{"daemon", "run"}
 			if keyd {
 				want = []string{"serve", "--state-dir", state}
 			}
 			if !slices.Equal(args[1:], want) {
-				return errors.New("preserving a loaded Machine service with unrelated arguments")
+				return nil, errors.New("preserving a loaded Machine service with unrelated arguments")
 			}
 		}
 	}
+	return plists, nil
+}
+
+type packageLeaf struct {
+	path string
+	info os.FileInfo
+	body []byte
+}
+
+// Snapshot both unit files and all three endpoint identities before bootout.
+// launchd may unlink an endpoint itself. A replacement, including a new file
+// in a previously absent slot, never acquires the old file's removal authority.
+func stopPackageServices(deps Deps, prefix string, caller Caller, readJob func(int, string, string) ([]byte, bool, error)) error {
+	if deps.Deactivate == nil {
+		return errors.New("missing Machine service manager")
+	}
+	leaves, err := inspectPackageServices(prefix, caller, readJob)
+	if err != nil {
+		return err
+	}
+	private := filepath.Join(caller.RegisteredHome, ".local", "state", "agent-bot", "keyd")
+	for _, path := range []string{filepath.Join(prefix, "var", "agent-machine", "daemon.sock"), filepath.Join(private, "keyd.sock"), filepath.Join(private, "owner.sock")} {
+		leaf := packageLeaf{path: path}
+		info, err := os.Lstat(path)
+		if err == nil {
+			st := info.Sys().(*syscall.Stat_t)
+			if info.Mode()&os.ModeSocket == 0 || int(st.Uid) != caller.UID || st.Nlink != 1 {
+				return errors.New("preserving a foreign or unrelated Machine endpoint")
+			}
+			leaf.info = info
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		leaves = append(leaves, leaf)
+	}
+	for _, leaf := range leaves[:2] {
+		if err := deps.Deactivate(leaf.path); err != nil {
+			return err
+		}
+	}
+	for i, leaf := range leaves {
+		current, err := os.Lstat(leaf.path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !leaf.unchanged(current) {
+			return errors.New("preserving a Machine service file that changed during unload")
+		}
+		if i < 2 {
+			body, err := os.ReadFile(leaf.path)
+			if err != nil || !bytes.Equal(body, leaf.body) {
+				return errors.New("preserving a Machine LaunchAgent changed during unload")
+			}
+			if err := os.Remove(leaf.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		} else if err := removeStoppedPackageSocket(leaf, caller.UID, legacyMacSocketUnlink); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (l packageLeaf) unchanged(current os.FileInfo) bool {
+	if l.info == nil || !os.SameFile(l.info, current) || l.info.Mode() != current.Mode() {
+		return false
+	}
+	a, b := l.info.Sys().(*syscall.Stat_t), current.Sys().(*syscall.Stat_t)
+	return a.Uid == b.Uid && a.Gid == b.Gid && a.Nlink == b.Nlink && a.Birthtimespec == b.Birthtimespec && a.Gen == b.Gen
 }

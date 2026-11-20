@@ -45,6 +45,8 @@ managed-machine uninstall
 
 Machine unloads its two user services, removes their LaunchAgents and stale sockets, and invokes Homebrew to remove the formula and its command links. The dedicated HQ account and its home, the administrator’s keys, pairing and revocation history, and install receipts are retained. A retired standalone-signing authorization stays retired across uninstall and reinstall. Archives and Node runtimes staged separately by an operator remain at their original locations. Applications and accounts previously provisioned with Machine have their own lifecycles.
 
+If you started HQ directly with `hq run`, press Control-C in its Terminal to let it shut down. For an HQ process registered by another supervisor, stop and disable that registration through the same supervisor. You can then remove the separately staged HQ program. Keep its data directory if you intend to reinstall. A Node runtime shared with another installation should stay in place.
+
 ## Usage
 
 Portable core commands (all five targets):

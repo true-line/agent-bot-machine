@@ -525,6 +525,8 @@ func (a *App) writeHelp() {
 	b.WriteString("  managed-machine version [--json|--human]\n")
 	b.WriteString("  managed-machine --version    print the release version\n")
 	b.WriteString("  managed-machine --help       show this message (also -h, help, or no command)\n\n")
+	b.WriteString("macOS Homebrew removal:\n")
+	b.WriteString("  managed-machine uninstall    remove Machine and keyd after uninstalling any managed HQ service (see members uninstall-hq --help)\n\n")
 	b.WriteString("Legacy commands (macOS only; Homebrew install):\n")
 	statusAdded := false
 	for _, r := range legacy.Routes {

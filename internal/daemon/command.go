@@ -527,11 +527,3 @@ func UninstallCommand(deps Deps) cli.Command {
 		},
 	}
 }
-
-func uninstallUserServices(deps Deps) error {
-	res := run(deps, cli.Context{}, []string{"uninstall"})
-	if res.Diagnostic != nil {
-		return errors.New(res.Diagnostic.Message)
-	}
-	return nil
-}

@@ -254,3 +254,20 @@ func TestHQUninstallWaitsForOriginalProcessWithoutSocket(t *testing.T) {
 		t.Fatal(result, e)
 	}
 }
+
+func TestHQUninstallAuditTailAfterCLIReinstall(t *testing.T) {
+	previous := newUninstallFixture(t, true)
+	previous.h.syncPlistDir = func() error { return errors.New("interrupted after last public file was removed") }
+	if _, e := previous.run(false); e == nil || previous.job || previous.plist.Inode != 0 {
+		t.Fatal("incorrect interruption state", e)
+	}
+	// A fresh command has no process-local state from the old binary. After
+	// reinstallation it sees only retained audit files and absent resources.
+	fresh := newUninstallFixture(t, false)
+	fresh.dir = previous.dir
+	fresh.endpoint = previous.endpoint
+	fresh.plist = upgradeNodeIdentity{}
+	if result, e := fresh.run(false); e != nil || result != "uninstalled" || fresh.stops != 0 || fresh.unlinks != 0 {
+		t.Fatal(result, e)
+	}
+}

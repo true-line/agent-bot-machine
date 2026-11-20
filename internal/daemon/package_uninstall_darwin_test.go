@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestHomebrewPackageUninstall(t *testing.T) {
@@ -160,6 +162,17 @@ esac
 	}
 }
 
+func removeObservedTestSocket(path string, uid int, unlinkStopped func(int, string, int, unix.Stat_t) error) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return removeStoppedPackageSocket(packageLeaf{path: path, info: info}, uid, unlinkStopped)
+}
+
 func TestStoppedSocketNeedsExclusiveEvidence(t *testing.T) {
 	dir, err := os.MkdirTemp("/private/tmp", "abs.")
 	if err != nil {
@@ -169,32 +182,32 @@ func TestStoppedSocketNeedsExclusiveEvidence(t *testing.T) {
 	p := filepath.Join(dir, "owner.sock")
 	uid := os.Getuid()
 	calls := 0
-	quiescent := func(fd int, name string, uid int) error {
+	quiescent := func(fd int, name string, uid int, original unix.Stat_t) error {
 		calls++
-		return unlinkQuiescentSocket(fd, name, uid, func(int) ([]byte, error) { return []byte(strconv.Itoa(os.Getpid())), nil })
+		return unlinkQuiescentSocket(fd, name, uid, original, func(int) ([]byte, error) { return []byte(strconv.Itoa(os.Getpid())), nil })
 	}
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: p, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	listener.SetUnlinkOnClose(false)
-	if err := removeStoppedPackageSocket(p, uid, quiescent); err == nil || calls != 0 {
+	if err := removeObservedTestSocket(p, uid, quiescent); err == nil || calls != 0 {
 		t.Fatal("accepted live socket")
 	}
 	listener.Close()
-	other := func(fd int, name string, uid int) error {
-		return unlinkQuiescentSocket(fd, name, uid, func(int) ([]byte, error) { return []byte(fmt.Sprint(os.Getpid() + 1)), nil })
+	other := func(fd int, name string, uid int, original unix.Stat_t) error {
+		return unlinkQuiescentSocket(fd, name, uid, original, func(int) ([]byte, error) { return []byte(fmt.Sprint(os.Getpid() + 1)), nil })
 	}
-	if err := removeStoppedPackageSocket(p, uid, other); err == nil {
+	if err := removeObservedTestSocket(p, uid, other); err == nil {
 		t.Fatal("older macOS removed endpoint with another process")
 	}
-	if err := removeStoppedPackageSocket(p, uid, quiescent); err != nil {
+	if err := removeObservedTestSocket(p, uid, quiescent); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(p, []byte("foreign"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeStoppedPackageSocket(p, uid, quiescent); err == nil {
+	if err := removeObservedTestSocket(p, uid, quiescent); err == nil {
 		t.Fatal("accepted foreign file")
 	}
 	if err := os.Remove(p); err != nil {
@@ -203,7 +216,7 @@ func TestStoppedSocketNeedsExclusiveEvidence(t *testing.T) {
 	if err := os.Symlink("foreign", p); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeStoppedPackageSocket(p, uid, quiescent); err == nil {
+	if err := removeObservedTestSocket(p, uid, quiescent); err == nil {
 		t.Fatal("accepted symlink")
 	}
 }
@@ -244,16 +257,16 @@ func TestVerifyPackageServicesRequiresKnownFilesAndLiveJobs(t *testing.T) {
 				}
 				return nil, false, nil
 			}
-			if err := verifyPackageServices(prefix, caller, readJob); err != nil {
+			if _, err := inspectPackageServices(prefix, caller, readJob); err != nil {
 				t.Fatal(err)
 			}
 			program = "/tmp/unrelated-program"
-			if err := verifyPackageServices(prefix, caller, readJob); err == nil {
+			if _, err := inspectPackageServices(prefix, caller, readJob); err == nil {
 				t.Fatal("accepted unrelated loaded job")
 			}
 			program = tc.program
 			args = []string{"other-operation"}
-			if err := verifyPackageServices(prefix, caller, readJob); err == nil {
+			if _, err := inspectPackageServices(prefix, caller, readJob); err == nil {
 				t.Fatal("accepted unrelated loaded arguments")
 			}
 			args = tc.args
@@ -264,14 +277,14 @@ func TestVerifyPackageServicesRequiresKnownFilesAndLiveJobs(t *testing.T) {
 			if err := os.WriteFile(file, []byte(body), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err := verifyPackageServices(prefix, caller, readJob); err != nil {
+			if _, err := inspectPackageServices(prefix, caller, readJob); err != nil {
 				t.Fatal(err)
 			}
 			changed := strings.Replace(body, "</dict>", "<key>Other</key><true/></dict>", 1)
 			if err := os.WriteFile(file, []byte(changed), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err := verifyPackageServices(prefix, caller, readJob); err == nil {
+			if _, err := inspectPackageServices(prefix, caller, readJob); err == nil {
 				t.Fatal("accepted a lookalike service file")
 			}
 			got, err := os.ReadFile(file)
@@ -300,13 +313,96 @@ func TestDarwin15RetainsBoundNonListeningPackageSocket(t *testing.T) {
 	if err := syscall.Bind(fd, &syscall.SockaddrUnix{Name: path}); err != nil {
 		t.Fatal(err)
 	}
-	legacy := func(parent int, path string, uid int) error {
-		return unlinkQuiescentSocket(parent, path, uid, func(int) ([]byte, error) { return nil, nil })
+	legacy := func(parent int, path string, uid int, original unix.Stat_t) error {
+		return unlinkQuiescentSocket(parent, path, uid, original, func(int) ([]byte, error) { return nil, nil })
 	}
-	if err := removeStoppedPackageSocket(path, os.Getuid(), legacy); err == nil {
+	if err := removeObservedTestSocket(path, os.Getuid(), legacy); err == nil {
 		t.Fatal("removed bound socket")
 	}
 	if _, err := os.Lstat(path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPackageStopPreservesChangesDuringUnload(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		socket  bool
+		initial bool
+		replace bool
+	}{
+		{"new-plist", false, false, false},
+		{"replaced-plist-same-bytes", false, true, true},
+		{"rewritten-plist", false, true, false},
+		{"new-socket", true, false, false},
+		{"replaced-socket", true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, err := os.MkdirTemp("/private/tmp", "abp.")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(home) })
+			prefix := filepath.Join(home, "p")
+			path := filepath.Join(home, "Library", "LaunchAgents", darwinServiceLabel+".plist")
+			if tc.socket {
+				path = filepath.Join(prefix, "var", "agent-machine", "daemon.sock")
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			body := darwinAgent(home, filepath.Join(prefix, "bin", "managed-machine"))
+			create := func(body string) {
+				t.Helper()
+				if !tc.socket {
+					if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				s, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				s.SetUnlinkOnClose(false)
+				if err := s.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.initial {
+				create(body)
+			}
+			changed := false
+			deps := Deps{Deactivate: func(string) error {
+				if changed {
+					return nil
+				}
+				if tc.replace {
+					if err := os.Rename(path, path+".old"); err != nil {
+						t.Fatal(err)
+					}
+				} else if tc.initial {
+					body = "another job"
+				}
+				create(body)
+				changed = true
+				return nil
+			}}
+			caller := Caller{UID: os.Getuid(), RegisteredHome: home}
+			err = stopPackageServices(deps, prefix, caller, func(int, string, string) ([]byte, bool, error) { return nil, false, nil })
+			if !changed || err == nil || !strings.Contains(err.Error(), "changed during unload") {
+				t.Fatalf("expected a changed service refusal, got %v", err)
+			}
+			info, err := os.Lstat(path)
+			if err != nil || tc.socket && info.Mode()&os.ModeSocket == 0 {
+				t.Fatal("replacement removed")
+			}
+			if !tc.socket {
+				b, err := os.ReadFile(path)
+				if err != nil || string(b) != body {
+					t.Fatal("replacement modified")
+				}
+			}
+		})
 	}
 }
