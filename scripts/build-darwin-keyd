@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Stage the exact helper built for the Darwin arm64 release.
+set -euo pipefail
+
+[[ $# == 1 ]] || { echo "usage: scripts/build-darwin-keyd <destination>" >&2; exit 2; }
+root="$(cd "$(dirname "$0")/.." && pwd)"
+target="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/build-keyd.XXXXXXXX")"
+trap 'rm -rf "$target"' EXIT
+(cd "$root/keyd" && cargo build --release --locked --target aarch64-apple-darwin --target-dir "$target")
+install -m 0700 "$target/aarch64-apple-darwin/release/agent-bot-keyd" "$1"

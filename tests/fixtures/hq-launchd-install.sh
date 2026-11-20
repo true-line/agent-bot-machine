@@ -45,8 +45,8 @@ if [[ "${MM_HQ_UPGRADE_TEST:-}" == paired ]]; then
         ($root+"/internal/daemon/hosted_upgrade_fixture_darwin.go"):($root+"/tests/fixtures/paired-darwin-hq-upgrade-daemon.go.txt")
     }}' > "$WORK/upgrade-overlay.json"
     (cd "$ROOT" && go build -overlay "$WORK/upgrade-overlay.json" -o "$WORK/native-upgrade-test" ./cmd/managed-machine)
-    (cd "$ROOT/keyd" && cargo build --release --locked --bin agent-bot-keyd)
-    sudo install -o "$ME" -g "$(id -gn)" -m 0700 "$ROOT/keyd/target/release/agent-bot-keyd" "$provider_dir/agent-bot-keyd"
+    "$ROOT/scripts/build-darwin-keyd" "$WORK/native-upgrade-keyd"
+    sudo install -o "$ME" -g "$(id -gn)" -m 0700 "$WORK/native-upgrade-keyd" "$provider_dir/agent-bot-keyd"
     sudo install -o "$ME" -g "$(id -gn)" -m 0700 "$WORK/native-upgrade-test" "$provider_dir/managed-machine"
     MM="$provider_dir/managed-machine"
 fi
