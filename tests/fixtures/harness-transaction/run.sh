@@ -4,6 +4,20 @@
    "$MM" == "$WORK/fixture-machine" && "$layout_v2" == true ]] || exit 1
 root="$ROOT/tests/fixtures/harness-transaction"
 checkout_review_source accounts agent-bot-hq 72d160d37e78e016d65c46dc424e0f192f50c3ce
+# The active #200 service implements native launch. #199 supplies the paired
+# launch-rule CLI, using the same dedicated account and existing Machine pin.
+review_commit=d6bb9f9bf22640f502e3bc6b4c1e2aa94c696403
+review_tar_sha=6004d871eaa8c24af6442ff3dc380cdfd097fa1fda22ae97a4e9803f363ae6ba
+checkout_review_source handoff agent-bot-hq "$review_commit"
+(cd "$subjects/handoff" && PATH="$stage:$PATH" bash scripts/ci-build-darwin-artifact.sh "$review_commit" "$WORK/handoff.tar")
+review_stage="$stage/harness-review"
+sudo mkdir -m 0755 "$review_stage"
+sudo install -o root -g wheel -m 0444 "$WORK/handoff.tar" "$review_stage/approved.tar"
+[[ "$(shasum -a 256 "$review_stage/approved.tar" | awk '{print $1}')" == "$review_tar_sha" ]] || fail 'unexpected paired review archive'
+sudo tar -xf "$review_stage/approved.tar" -C "$review_stage"
+review_rule() {
+    (cd / && sudo -n -H -u "$role" -- "$stage/node" "$review_stage/hq/hq/main.mjs" machine "$@")
+}
 python3 "$root/roles.py" "$subjects/accounts/tests/packaged-darwin-harness-accounts.py"
 fixture_dir="$runtime_dir/fixture-qualification"
 adapter="$fixture_dir/member-adapter"
@@ -36,7 +50,7 @@ handoff() {
     tx_digest="$(jq -er .plan_digest <<<"$first")"
     response="$signer/$action.json"
     message="$signer/$action.transcript"
-    hq_machine "harness-launch-$action" export "$tx_id" --socket "$channel" > "$response"
+    review_rule "harness-launch-$action" export "$tx_id" --socket "$channel" > "$response"
     jq -e --arg m "$machine_key" --arg h "$hq_key" --arg owner "$pin" --arg id "$tx_id" \
         --arg digest "$tx_digest" --arg action "harness-launch-$action" '
       .ok==true and (.body | .action==$action and .machine_key==$m and .hq_key==$h and
@@ -58,7 +72,7 @@ handoff() {
     sudo chown "$role:$role" "$transfer"
     sudo install -o "$role" -g "$role" -m 0600 "$response" "$transfer/frame"
     sudo install -o "$role" -g "$role" -m 0600 "$signer/$action.proof" "$transfer/proof"
-    hq_machine "harness-launch-$action" approve --challenge-file "$transfer/frame" \
+    review_rule "harness-launch-$action" approve --challenge-file "$transfer/frame" \
        --proof-file "$transfer/proof" --socket "$channel" | jq -e --arg id "$tx_id" \
        --arg digest "$tx_digest" '.state=="approved" and .plan_id==$id and .plan_digest==$digest' >/dev/null
     if [[ "$action" == install ]]; then
@@ -90,7 +104,7 @@ install_digest_for_rule="$tx_digest"
    '.[0].changes==0 and .[0].installed_plan_id==$id' >/dev/null
 ok 'paired harness install and read-only reapply preserved the completed root receipt'
 (cd / && sudo -n -H -u "$role" -- /usr/bin/env "GITHUB_ACTIONS=$GITHUB_ACTIONS" "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT" /usr/bin/python3 -I "$stage/checkin.py" "$tx_digest")
-# HQ #200 carries the handoff and Darwin launcher. Its own broker catalog is
+# HQ #200 carries the Darwin launcher. Its own broker catalog is
 # empty. Load the unchanged plugin and production catalog from the #198 tar.
 broker_commit=72d160d37e78e016d65c46dc424e0f192f50c3ce
 broker_tar_sha=99a94b4099da6333e8af46801a2177cc420217b5f731d31f0af6a5aa5e6a8a62
