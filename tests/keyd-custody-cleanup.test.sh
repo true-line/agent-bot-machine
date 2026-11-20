@@ -60,3 +60,53 @@ for script in "$root/keyd-custody-macos.test.sh" "$root/fixtures/with-keyd-test-
         [[ "$rc" == "$expected" ]] || exit 1
     done
 done
+
+# Exercise restoration without system Keychain calls. The tested copy has no
+# path to the real security executable; all state is plain scratch files.
+script="$root/fixtures/with-keyd-test-keychain.sh"
+sed 's|/usr/bin/security|mock_security|g' "$script" > "$scratch/wrapper"
+! grep -q '/usr/bin/security' "$scratch/wrapper" || exit 1
+for scenario in success restore-error restore-no-change delete-error failed-test-and-restore; do
+    base="$scratch/restore-$scenario"
+    mkdir -p "$base"
+    touch "$base/prior"
+    echo "$base/prior" > "$base/current"
+    rc=0
+    # Execute as an independent script so errexit has its normal meaning.
+    cat > "$base/run" <<'STUB'
+set -euo pipefail
+export MM_KEYD_CUSTODY_TEST=1 GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted
+uname() { echo 'Darwin arm64'; }
+id() { echo 501; }
+stat() { echo 501; }
+mktemp() { mkdir "$base/stage" && echo "$base/stage"; }
+mock_security() {
+    case "$1" in
+        default-keychain)
+            if [[ "$#" == 3 ]]; then printf '    "%s"\n' "$(cat "$base/current")"; return; fi
+            if [[ "$5" == "$base/prior" ]]; then
+                case "$scenario" in
+                    restore-error|failed-test-and-restore) return 1 ;;
+                    restore-no-change) return 0 ;;
+                esac
+            fi
+            echo "$5" > "$base/current" ;;
+        create-keychain) touch "$base/stage/fixture.keychain-db" ;;
+        unlock-keychain) return 0 ;;
+        delete-keychain) touch "$base/deletion"; [[ "$scenario" != delete-error ]] || return 1; rm "$2" ;;
+        *) return 1 ;;
+    esac
+}
+run_test() { if [[ "$scenario" == failed-test-and-restore ]]; then return 23; fi; }
+set -- run_test
+source "$wrapper"
+STUB
+    base="$base" scenario="$scenario" wrapper="$scratch/wrapper" /bin/bash "$base/run" >/dev/null 2>&1 || rc=$?
+    case "$scenario" in
+        success) [[ "$rc" == 0 && "$(cat "$base/current")" == "$base/prior" && ! -e "$base/stage" ]] || exit 1 ;;
+        delete-error) [[ "$rc" == 1 && "$(cat "$base/current")" == "$base/prior" && -f "$base/stage/fixture.keychain-db" ]] || exit 1 ;;
+        *) expected=1
+           if [[ "$scenario" == failed-test-and-restore ]]; then expected=23; fi
+           [[ "$rc" == "$expected" && ! -e "$base/deletion" && -f "$base/stage/fixture.keychain-db" ]] || exit 1 ;;
+    esac
+done

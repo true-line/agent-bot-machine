@@ -14,9 +14,21 @@ previous="${previous#*\"}"
 previous="${previous%\"*}"
 [[ "$previous" == /* && "$previous" != "$db" && -f "$previous" ]] || exit 1
 cleanup() {
-  /usr/bin/security default-keychain -d user -s "$previous" >/dev/null 2>&1
-  if [[ -f "$db" ]]; then /usr/bin/security delete-keychain "$db" >/dev/null 2>&1; fi
-  rm -rf "$stage"
+  local status=$? restored
+  trap - EXIT
+  if /usr/bin/security default-keychain -d user -s "$previous" >/dev/null 2>&1 &&
+     restored="$(/usr/bin/security default-keychain -d user)" &&
+     [[ "${restored#*\"}" == "$previous\"" ]]; then
+    if { [[ ! -f "$db" ]] || /usr/bin/security delete-keychain "$db" >/dev/null 2>&1; } &&
+       rm -rf "$stage"; then
+      exit "$status"
+    fi
+    echo 'Temporary Keychain cleanup failed after restoring the original default' >&2
+  else
+    echo 'Original default Keychain restoration could not be verified; retaining the temporary Keychain' >&2
+  fi
+  if [[ "$status" == 0 ]]; then status=1; fi
+  exit "$status"
 }
 trap cleanup EXIT
 /usr/bin/security create-keychain -p '' "$db" >/dev/null 2>&1
