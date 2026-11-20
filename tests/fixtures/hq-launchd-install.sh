@@ -29,6 +29,7 @@ trap cleanup_launch EXIT
 sudo chmod 0755 "$stage"
 if [[ -n "${MM_HQ_DEVICE_ARCHIVE:-}" ]]; then
     source "$ROOT/tests/fixtures/stage-darwin-hq-device.sh"
+    stage_signed_device_release
 fi
 if [[ "${MM_HQ_UPGRADE_TEST:-}" == paired ]]; then
     [[ "$real_hq" == true && "${MM_KEYD_CUSTODY_TEST:-}" == 1 && -z "${MM_HQ_DEVICE_ARCHIVE:-}" ]] || exit 1

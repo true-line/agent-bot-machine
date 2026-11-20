@@ -48,15 +48,15 @@ refused() {
     else
         rc=$?
     fi
-    [[ "$rc" == 1 && ! -s "$temp/denied-out" ]]
-    [[ "$(cat "$temp/denied-err")" == 'agent-bot-keyd: custody requires the nonroot administrator who owns the Homebrew prefix' ]]
+    [[ "$rc" == 1 && ! -s "$temp/denied-out" ]] || exit 1
+    [[ "$(cat "$temp/denied-err")" == 'agent-bot-keyd: custody requires the nonroot administrator who owns the Homebrew prefix' ]] || exit 1
 }
 refused nobody --version
 refused nobody serve --state-dir "$temp/state"
 refused nobody presence-key --keychain "$temp/absent.keychain-db"
 refused nobody mcp --state-dir "$temp/state"
 refused root --version
-[[ ! -e "$temp/state" && ! -e "$temp/absent.keychain-db" ]]
+[[ ! -e "$temp/state" && ! -e "$temp/absent.keychain-db" ]] || exit 1
 
 refused nobody hq-device-init
 refused nobody hq-device
@@ -70,25 +70,41 @@ if ! /usr/bin/xcrun swift -e 'import CryptoKit; import Darwin; exit(SecureEnclav
     exit 1
 fi
 echo 'Hosted Secure Enclave available'
-[[ "$(id -u)" == "$(stat -f %u /opt/homebrew)" ]]
+bash "$root/tests/keyd-custody-cleanup.test.sh"
 role=_agent-bot-hq
-if dscl . -read "/Users/$role" >/dev/null 2>&1; then
-    echo 'FAIL disposable HQ account already exists' >&2; exit 1
+role_home=/private/var/agent-bot-hq
+channel=/opt/homebrew/var/agent-machine
+if dscl . -read "/Users/$role" >/dev/null 2>&1 || dscl . -read "/Groups/$role" >/dev/null 2>&1 ||
+    [[ -e "$role_home" || -L "$role_home" || -e "$channel" || -L "$channel" ]]; then
+    echo 'FAIL dedicated role, home or Machine channel already exists'; exit 1
 fi
-role_uid=590
-while dscl . -list /Users UniqueID | awk -v u="$role_uid" '$2 == u { found=1 } END { exit !found }'; do
-    role_uid=$((role_uid + 1))
-    [[ "$role_uid" -lt 700 ]]
+# Use the production dedicated-account layout. Allocate an unused UID/GID
+# pair on this host, independently of the prefix administrator.
+users="$(dscl . -list /Users UniqueID)"
+groups="$(dscl . -list /Groups PrimaryGroupID)"
+for candidate in {300..399}; do
+    if ! awk -v n="$candidate" '$NF == n { taken=1 } END { exit !taken }' <<<"$users
+$groups"; then role_uid="$candidate"; break; fi
 done
+: "${role_uid:?no free macOS service UID/GID}"
+mkdir -m 0755 "$channel"
+made_group=false; made_role=false; made_home=false
+source "$root/tests/fixtures/cleanup-darwin-custody.sh"
+trap cleanup_role EXIT
+sudo -n dscl . -create "/Groups/$role"
+made_group=true
+sudo -n dscl . -create "/Groups/$role" PrimaryGroupID "$role_uid"
 sudo -n dscl . -create "/Users/$role"
-trap 'sudo -n dscl . -delete "/Users/$role" >/dev/null; sudo -n rm -rf "$temp/role-home"; rm -rf "$temp"' EXIT
+made_role=true
 sudo -n dscl . -create "/Users/$role" UniqueID "$role_uid"
-sudo -n dscl . -create "/Users/$role" PrimaryGroupID 20
+sudo -n dscl . -create "/Users/$role" PrimaryGroupID "$role_uid"
 sudo -n dscl . -create "/Users/$role" UserShell /usr/bin/false
-sudo -n install -d -m 0700 -o "$role_uid" -g 20 "$temp/role-home"
-sudo -n dscl . -create "/Users/$role" NFSHomeDirectory "$temp/role-home"
+sudo -n mkdir -m 0700 "$role_home"
+made_home=true
+sudo -n chown "$role_uid:$role_uid" "$role_home"
+sudo -n dscl . -create "/Users/$role" NFSHomeDirectory "$role_home"
 sudo -n dscl . -create "/Users/$role" IsHidden 1
-[[ "$(id -u "$role")" == "$role_uid" ]]
+[[ "$(id -u "$role")" == "$role_uid" && "$(id -g "$role")" == "$role_uid" ]] || exit 1
 refused "$role" hq-device-init
 refused "$role" hq-device
 sudo -n chmod 0700 "$helper"
@@ -147,6 +163,11 @@ PY
 # PRs exercise the same signed request gate and native helper via a Go test
 # binary. A published signed pair is exercised separately on dispatch.
 (cd "$root" && go test -c -o "$temp/machine-test" ./internal/daemon && go build -o "$temp/managed-machine" ./cmd/managed-machine)
-install -m 0755 "$(command -v node)" "$temp/node"
+command -v gtar >/dev/null || HOMEBREW_NO_AUTO_UPDATE=1 brew install gnu-tar
+mkdir -m 0700 "$temp/artifact"
+bash "$root/tests/fixtures/prepare-real-darwin-hq.sh" "$temp/artifact" --paired-device
+install -m 0755 "$temp/artifact/bin/node" "$temp/node"
+tar --no-same-owner -xf "$temp/artifact/approved.tar" -C "$temp"
+install -m 0644 "$root/tests/fixtures/packaged-darwin-hq-device.mjs" "$temp/packaged-device.mjs"
 install -m 0644 "$root/tests/fixtures/paired-darwin-hq-device.mjs" "$temp/role-check.mjs"
 MM_NATIVE_WHOAMI_TEST="$whoami_test" bash "$root/tests/fixtures/with-keyd-test-keychain.sh" node "$root/tests/fixtures/keyd-device-native.mjs" "$helper" "$role_uid"
