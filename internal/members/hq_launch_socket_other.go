@@ -17,3 +17,7 @@ func prepareLaunchDirectory(*launchDirectory, string, bool) (*os.File, error) {
 func rollbackLaunchDirectory(*os.File, HQService, string) error {
 	return errors.New("HQ LaunchDaemon directory rollback requires macOS")
 }
+
+func createDarwinBrokerDirectory(string, string, string, uint32) error {
+	return errors.New("Darwin broker directories require macOS")
+}

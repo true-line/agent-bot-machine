@@ -149,6 +149,7 @@ func TestPrivateStateDirPermissionsAndNoUserAccess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix permissions only")
 	}
+	t.Setenv(channelEnv, t.TempDir())
 	base, err := os.MkdirTemp("/tmp", "mm-priv")
 	if err != nil {
 		t.Fatal(err)
@@ -368,5 +369,84 @@ func assertNoDarwinACL(t *testing.T, path string) {
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) > 1 {
 		t.Fatalf("expected no ACL entries on %s, got:\n%s", path, string(out))
+	}
+}
+
+func TestInstallKeydUpgradesItsOwnUnitAndPreservesConcurrentRegistration(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, ".local", "state", "agent-bot")
+	binDir := t.TempDir()
+	for _, keg := range []string{"old", "new"} {
+		dir := filepath.Join(binDir, keg)
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "agent-bot-keyd"), []byte("fixture"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldBin := filepath.Join(binDir, "old", "managed-machine")
+	newBin := filepath.Join(binDir, "new", "managed-machine")
+	initial, err := planKeydUnit("darwin", root, oldBin, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := InstallKeyd("darwin", root, newBin, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := initial.write(); !os.IsExist(err) {
+		t.Fatalf("overlapping install returned %v", err)
+	}
+	assertPointsTo := func(keg string) {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		want := keydAgent(state, filepath.Join(binDir, keg, "agent-bot-keyd"))
+		if err != nil || string(data) != want {
+			t.Fatalf("expected %s registration: %v", keg, err)
+		}
+	}
+	assertPointsTo("new")
+	if _, err := InstallKeyd("darwin", root, oldBin, state); err != nil {
+		t.Fatal(err)
+	}
+	assertPointsTo("old")
+}
+
+func TestKeydUnitRechecksExistingRegistrationBeforeReuseAndRollback(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, ".local", "state", "agent-bot")
+	executable := filepath.Join(root, "managed-machine")
+	if err := os.WriteFile(filepath.Join(root, "agent-bot-keyd"), []byte("fixture"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	first, err := planKeydUnit("darwin", root, executable, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.write(); err != nil {
+		t.Fatal(err)
+	}
+	reuse, err := planKeydUnit("darwin", root, executable, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another installer publishes a replacement between lifecycle steps.
+	other := filepath.Join(filepath.Dir(first.path), "replacement")
+	const foreign = "independent keyd registration"
+	if err := os.WriteFile(other, []byte(foreign), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(other, first.path); err != nil {
+		t.Fatal(err)
+	}
+	if err := reuse.write(); err == nil {
+		t.Fatal("reused a replaced registration")
+	}
+	if err := first.rollback(); err == nil {
+		t.Fatal("rolled back a replaced registration")
+	}
+	if data, err := os.ReadFile(first.path); err != nil || string(data) != foreign {
+		t.Fatal("replacement was lost", err)
 	}
 }

@@ -30,6 +30,19 @@ extern "C" {
     fn keyd_device_valid_point(point: *const u8, count: isize) -> i32;
 }
 
+const CREATE_INTERACTION_DENIED: &str =
+    "macOS denied user interaction during Secure Enclave device key creation";
+
+fn enclave_output_size(op: i32, size: isize, capacity: usize) -> Result<usize, &'static str> {
+    if op == 0 && size == -2 {
+        return Err(CREATE_INTERACTION_DENIED);
+    }
+    if size <= 0 || size as usize > capacity {
+        return Err(UNAVAILABLE);
+    }
+    Ok(size as usize)
+}
+
 struct Native<'a> {
     dir: &'a File,
     pair: &'a Pair,
@@ -50,11 +63,9 @@ impl Native<'_> {
                 out.len() as isize,
             )
         };
-        if !(1..=out.len() as isize).contains(&n) {
-            return Err(UNAVAILABLE);
-        }
+        let size = enclave_output_size(op, n, out.len())?;
         self.check_live()?;
-        out.truncate(n as usize);
+        out.truncate(size);
         Ok(out)
     }
 }
@@ -249,6 +260,25 @@ fn read_pair(dir: &File, uid: u32) -> Result<Pair, &'static str> {
     })
 }
 
+// The peer command can create an ephemeral key, but it never gets native diagnostics.
+pub(crate) fn cli_result(
+    init: bool,
+    result: Result<(), &'static str>,
+    stderr: &mut impl Write,
+) -> std::process::ExitCode {
+    match result {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            let message = match (init, error) {
+                (true, CREATE_INTERACTION_DENIED | hq_device::READ_INTERACTION_DENIED) => error,
+                _ => UNAVAILABLE,
+            };
+            let _ = writeln!(stderr, "agent-bot-keyd: {message}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
 pub(crate) fn command(init: bool) -> Result<(), &'static str> {
     if init {
         crate::standalone::begin_custody()?;
@@ -274,7 +304,10 @@ pub(crate) fn command(init: bool) -> Result<(), &'static str> {
         return Err(UNAVAILABLE);
     }
     let request = serde_json::from_slice(&raw).map_err(|_| UNAVAILABLE)?;
-    let result = hq_device::run(&items, &native, &pair, request, crate::server::unix_now())?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| UNAVAILABLE)?;
+    let result = hq_device::run(&items, &native, &pair, request, now)?;
     native.check_live()?;
     writeln!(std::io::stdout().lock(), "{result}").map_err(|_| UNAVAILABLE)
 }
@@ -286,6 +319,45 @@ mod tests {
         fs,
         os::unix::fs::{symlink, PermissionsExt},
     };
+
+    #[test]
+    fn only_explicit_initialization_reports_denied_interaction_at_creation() {
+        let report = |init, op, n| {
+            let mut stderr = Vec::new();
+            let result = enclave_output_size(op, n, 8192).map(|_| ());
+            assert_eq!(
+                cli_result(init, result, &mut stderr),
+                std::process::ExitCode::FAILURE
+            );
+            String::from_utf8(stderr).unwrap()
+        };
+        assert_eq!(report(true, 0, -2),
+            "agent-bot-keyd: macOS denied user interaction during Secure Enclave device key creation\n");
+        let generic = "agent-bot-keyd: device custody unavailable\n";
+        assert_eq!(report(false, 0, -2), generic);
+        for (op, n) in [(0, -1), (0, -9), (1, -2), (2, -2)] {
+            assert_eq!(report(true, op, n), generic);
+            assert_eq!(report(false, op, n), generic);
+        }
+    }
+
+    #[test]
+    fn only_admin_init_reports_a_keychain_lookup_denial() {
+        for (init, expected) in [
+            (true, hq_device::READ_INTERACTION_DENIED),
+            (false, UNAVAILABLE),
+        ] {
+            let mut out = Vec::new();
+            assert_eq!(
+                cli_result(init, Err(hq_device::READ_INTERACTION_DENIED), &mut out),
+                std::process::ExitCode::FAILURE
+            );
+            assert_eq!(
+                String::from_utf8(out).unwrap(),
+                format!("agent-bot-keyd: {expected}\n")
+            );
+        }
+    }
 
     #[test]
     fn reads_only_a_locked_admin_pair_and_honors_revocation() {

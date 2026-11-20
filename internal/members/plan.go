@@ -45,8 +45,9 @@ const (
 	DarwinNoLoginShell    = "/usr/bin/false"
 	darwinHarnessRoleName = "Agent Bot Harness"
 	darwinHQRoleName      = "Agent Bot HQ"
-	// DarwinDir is the members directory of a macOS plan: there is none.
-	DarwinDir = "none"
+	// DarwinDir preserves account-only macOS plans and their existing digests.
+	DarwinDir       = "none"
+	DarwinBrokerDir = launchRuntimeDir + "/ipc"
 	// PlanVersion is part of the digest: a change to what a plan means
 	// invalidates every approval made before it.
 	PlanVersion = 3
@@ -91,10 +92,12 @@ const (
 
 // Input is what the owner asked for.
 type Input struct {
-	HQService *HQService
-	HQAccount string
-	Dir       string
-	Members   []string
+	upgradeObservation *upgradeObservation
+	UpgradeFrom        *priorServicePlan
+	HQService          *HQService
+	HQAccount          string
+	Dir                string
+	Members            []string
 	// Invoker is the account running the plan. It can never be a member.
 	Invoker string
 	// Platform is PlatformDarwin on macOS and empty on Linux. It is not part
@@ -217,10 +220,16 @@ func Normalize(in Input) (Input, error) {
 		return in, refuse(RefusedList, "HQ account %q is not an account name", in.HQAccount)
 	}
 	if in.Platform == PlatformDarwin {
-		if in.Dir != "" && in.Dir != DarwinDir {
-			return in, refuse(RefusedList, "a macOS plan has no members directory")
+		switch in.Dir {
+		case "", DarwinDir:
+			in.Dir = DarwinDir
+		case DarwinBrokerDir:
+			if in.HQAccount != DarwinHQAccount || len(in.Members) == 0 {
+				return in, refuse(RefusedList, "Darwin broker directories require the dedicated HQ account and at least one harness")
+			}
+		default:
+			return in, refuse(RefusedList, "Darwin harness endpoints require %s", DarwinBrokerDir)
 		}
-		in.Dir = DarwinDir
 	} else if in.Dir == "" {
 		in.Dir = DefaultDir
 	}
@@ -257,6 +266,9 @@ func Build(in Input, h Host) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	if in.UpgradeFrom != nil && (in.Platform != PlatformDarwin || in.HQService == nil || in.HQAccount != DarwinHQAccount || len(in.Members) != 0) {
+		return Plan{}, refuse(RefusedList, "upgrade requires a dedicated macOS service-only plan")
+	}
 	p := Plan{Version: PlanVersion, HQAccount: in.HQAccount, Dir: in.Dir, Members: in.Members, Steps: []Step{}}
 	if p.Members == nil {
 		p.Members = []string{}
@@ -281,6 +293,11 @@ func Build(in Input, h Host) (Plan, error) {
 	}
 
 	if in.Platform == PlatformDarwin {
+		if in.Dir == DarwinBrokerDir {
+			if err := appendDarwinBrokerDirectories(&p, h); err != nil {
+				return Plan{}, err
+			}
+		}
 		if in.HQService != nil {
 			if err := appendLaunchDaemon(&p, in, h); err != nil {
 				return Plan{}, err
@@ -454,7 +471,7 @@ func (p Plan) SharedHQAdvice() string {
 	for _, s := range p.Steps {
 		if s.Kind == KindHQAccount && s.Action == ActionNone && s.Mode == "" {
 			platform := ""
-			if p.Dir == DarwinDir {
+			if p.Dir == DarwinDir || p.Dir == DarwinBrokerDir {
 				platform = PlatformDarwin
 			}
 			return "HQ account " + s.Target + " is not a dedicated account: every process in it can read HQ's state and start members. " + sharedAdvice(platform, s.Target)

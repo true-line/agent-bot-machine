@@ -49,10 +49,46 @@ The owner's digest approval and root apply create each harness role with
 a unique UID, a same-name private group, a locked password, shell
 `/usr/bin/false`, and a 0700 home at `/var/agent-bot-harness-<account>`.
 Existing harness accounts must match the managed role. Shared HQ and owner
-accounts are refused for a harness plan. Darwin only provisions the accounts
-in this plan. The Linux endpoint, launch and egress steps below are separate
-parts of the protected-harness qualification on macOS.
-The disposable macOS acceptance test is `tests/members-apply-macos.test.sh`.
+accounts are refused for a harness plan. Omitting the endpoint directory
+or using a shared HQ config with a Linux broker path preserves the existing
+account-only plan and its digest. On macOS, only the fixed path below opts in.
+
+To stage broker directories, set `harnesses.dir` in the same HQ config to
+`/Library/Application Support/ai.true-line.agent-bot-hq/ipc` and run
+`managed-machine members plan --hq-config <file>`. The dedicated HQ service's
+root-owned v2 runtime directory must already exist. The plan includes the
+`root:wheel` 0755 `ipc` directory and one `_agent-bot-hq:<account>` 2750 child
+per distinct account. HQ creates `broker.sock` inside its account directory.
+The Linux launch rule and egress policy are separate from this operation.
+
+The normal `sudo managed-machine members apply <plan-id>` checks the exact
+approved digest again. First-HQ and paired service-recovery proofs cannot
+approve this broader plan. A protected pairing needs an owner approval path
+for harness plans before its operator can apply one.
+
+The harness plan has its own root apply receipt containing its ID and digest.
+Existing directories must match their reviewed metadata. An apply failure
+retains earlier completed steps. Plan again and review the remaining changes.
+Omitting an account from a subsequent plan preserves its directory and data.
+The HQ service receipt does not confer removal authority for the harness
+accounts, homes, broker directories or their contents.
+
+The account provisioning fixture is `tests/members-apply-macos.test.sh`.
+
+The [Darwin harness egress profile](../../internal/members/darwin/harness-egress.sb)
+implements the per-process policy selected in [platform decision #52](https://github.com/true-line/agent-bot-platform/discussions/52).
+The trusted launcher supplies the admitted account's absolute broker path with
+`-D BROKER_SOCKET=<path>` and the absolute Souls member socket it assigned to
+this launch with `-D MEMBER_SOCKET=<path>`. A broker-only invocation omits
+`MEMBER_SOCKET`. Each grant matches one literal pathname.
+
+The unprivileged native fixture starts two launches in the same directory.
+Each can reach its own member socket and the broker. The sibling launch's
+socket, another Unix socket and direct IPv4/IPv6 loopback all remain denied.
+Only the fixture invokes this profile today. T03 still needs packaged HQ to
+apply it to the child running as its provisioned harness account and verify
+the operation with distinct accounts. Track the design
+and its implementation status in [Platform #96](https://github.com/true-line/agent-bot-platform/pull/96).
 
 ### What is created
 
@@ -168,6 +204,50 @@ durable state before recording the usual ten-minute approval. Only the
 existing human-run `sudo managed-machine members apply PLAN_ID` acts on the
 host and verifies the running service. The protected route leaves generic
 member approvals, first installation, and enrollment on their existing terms.
+
+### Updating a running paired HQ release on macOS
+
+The prefix administrator stages an independently verified new HQ release and
+runs `managed-machine members plan --hq-service NEW_SERVICE_JSON --upgrade-from PREVIOUS_PLAN_ID`.
+The planner checks the retained previous saved plan, matching installed plist
+and running dedicated HQ job. It includes the previous plan ID and digest
+in the proposal. Root verifies that reference against its private completed
+receipt before consuming the approval and again under the service lock before
+stopping HQ.
+The previous receipt commits to the original canonical plan through its
+digest. Machine verifies both releases, their extracted files, the same
+pinned Node executable and the protected version 2 owner-control directory.
+The role, owner UID and state location are part of the reviewed plan.
+
+The paired HQ CLI exports `hq-service-upgrade` through the signed Machine
+channel. The challenge, transport signature and owner transcript use the
+service recovery field order above with `hq-service-upgrade` as the purpose.
+The service step has action `upgrade`. Its content includes
+`previous_plan_id`, `previous_plan_digest`, `previous` and `next`.
+The last two values are the full service records, including their plists.
+The owner reviews this exact change and returns a fresh proof signed by
+the existing owner key. A compatible protected owner proof provider is
+required. The administrator runs `sudo managed-machine members apply PLAN_ID`
+in their own terminal.
+
+The service update supports an already Machine-backed HQ on Apple Silicon
+running Darwin kernel 25 or later. Both releases must report the same public
+hardware signer identity and generation. An older software signer requires
+a separate custody migration before this operation. Machine checks this
+before stopping the running HQ. It also checks the current HQ pairing and
+its enrollment epoch, validates the existing job's UID, then records the
+reviewed inputs before unloading it. The two verified plists exchange
+atomically. Launchd restarts HQ using the new release. Machine verifies the
+owner endpoint and the signed HQ-to-Machine status through the dedicated role.
+
+After interruption, repeat the same `members apply PLAN_ID` command. The
+root transaction record identifies the exact reviewed files, original pairing
+and last phase. Machine can confirm a running new release or restore the
+verified previous one. It leaves an unidentified job, changed plist or
+unverified endpoint intact for administrator reconciliation. A completed
+receipt permits a read-only verification when the previous terminal result
+was lost. Retain the old release, its saved plan and the shared Node binary
+through completion.
 
 ### How root is obtained
 
@@ -512,6 +592,18 @@ layout or release requires an explicit cutover. A second approved apply
 verifies the same loaded job. The experimental v2 layout requires installation
 evidence on a Mac with fully enabled SIP. In the macOS 27 HQ installation
 workflow, the manually selected `require_sip` input enforces this condition.
+
+Hosted upgrade tests run a real system LaunchDaemon under its dedicated
+account. One job verifies that a software predecessor keeps its PID and plist
+when a service-only upgrade is refused. A second uses the public paired HQ
+releases, a disposable owner key and a test executable that delegates to the
+native admin keyd in a temporary Keychain. It checks rollback after a candidate
+status failure, a successful replacement and a read-only retry. The hosted
+test executable is built separately from the distributed Machine binary.
+Testing the distribution signature requirement for the upgrade requires a
+public signed Machine and keyd release supporting both hardware custody and
+the upgrade operation. Physical SIP-enabled evidence remains a separate gate.
+
 For a newly started job that advertises `darwin-hq-launch-exits/v2`, exit
 88 reports a native socket check-in return of 159. Machine includes the
 sandbox classification when this Mac's launchctl confirms it.

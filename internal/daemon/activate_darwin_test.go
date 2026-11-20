@@ -70,8 +70,15 @@ esac
 			}
 			t.Setenv("PATH", root)
 			deps := owner(root)
-			deps.Deactivate = func(path string) error { return DeactivateUserService("darwin", path) }
+			var attempted []string
+			deps.Deactivate = func(path string) error {
+				attempted = append(attempted, path)
+				return DeactivateUserService("darwin", path)
+			}
 			result := run(deps, cli.Context{}, []string{tc.verb})
+			if len(attempted) != 2 || attempted[0] != machine || attempted[1] != keyd {
+				t.Fatalf("expected to stop both Machine and keyd, attempted %v", attempted)
+			}
 			if len(tc.failedDomains) > 0 {
 				if result.Diagnostic == nil || result.Diagnostic.ID != diag.DaemonServiceFailed {
 					t.Fatalf("expected unload failure, got %+v", result)
@@ -121,5 +128,19 @@ func TestDarwinUninstallWithoutPlistsUsesOnlyMachineServiceTargets(t *testing.T)
 	want := fmt.Sprintf("bootout gui/%[1]d/dev.qwts.agent-machine\nbootout user/%[1]d/dev.qwts.agent-machine\nbootout gui/%[1]d/dev.qwts.agent-bot.keyd\nbootout user/%[1]d/dev.qwts.agent-bot.keyd\n", os.Getuid())
 	if string(got) != want {
 		t.Fatalf("unexpected unload targets: %s", got)
+	}
+}
+
+func TestDarwinStopReportsBothServiceErrors(t *testing.T) {
+	deps := owner(t.TempDir())
+	deps.Deactivate = func(path string) error { return fmt.Errorf("unload failed for %s", filepath.Base(path)) }
+	res := run(deps, cli.Context{}, []string{"stop"})
+	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonServiceFailed {
+		t.Fatalf("expected a service failure, got %+v", res.Diagnostic)
+	}
+	for _, label := range []string{darwinServiceLabel, darwinKeydServiceLabel} {
+		if !strings.Contains(res.Diagnostic.Message, "unload failed for "+label+".plist") {
+			t.Fatalf("missing error for %s in %q", label, res.Diagnostic.Message)
+		}
 	}
 }

@@ -319,6 +319,29 @@ func TestApplyRunsAnApprovedPlanOnce(t *testing.T) {
 	}
 }
 
+type unavailableFinalReceipt struct{ Root }
+
+func (unavailableFinalReceipt) Finish(string, []byte) error {
+	return errors.New("receipt storage unavailable")
+}
+
+func TestApplyRequiresFinalReceipt(t *testing.T) {
+	w := newWorld(bare())
+	p := w.planned(t, applyID)
+	w.approved(t, applyID, p)
+	w.deps.Root = func() Root { return unavailableFinalReceipt{w.r} }
+
+	result := w.apply(applyID)
+	if result.Diagnostic == nil || result.Diagnostic.ID != diag.MembersApplyFailed || len(result.Records) != 0 {
+		t.Fatalf("expected a final receipt failure, got %+v", result)
+	}
+	if len(w.r.log) == 0 || w.r.receipts[applyID].Result != "started" {
+		t.Fatalf("expected completed host changes with a pending receipt: %v, %+v", w.r.log, w.r.receipts)
+	}
+	w.r.log = nil
+	wantRefused(t, w, w.apply(applyID), diag.MembersNotApproved)
+}
+
 func TestApplyRefusesTheWrongCaller(t *testing.T) {
 	cases := []struct {
 		name string

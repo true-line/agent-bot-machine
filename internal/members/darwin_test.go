@@ -3,6 +3,7 @@ package members
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -178,5 +179,94 @@ func TestDarwinPlanGuidesFirstHQExport(t *testing.T) {
 				t.Fatalf("wrong first-HQ advice: %v", value)
 			}
 		})
+	}
+}
+
+func TestDarwinBrokerConfigAndDigestApproval(t *testing.T) {
+	h, in := brokerFixture()
+	d, state := deps(t, h)
+	d.ReadFile = func(string) ([]byte, error) {
+		return json.Marshal(map[string]any{"harnesses": map[string]any{"dir": in.Dir,
+			"accounts": map[string]string{"adapter-a": "_lead", "adapter-b": "_spec", "shared": "_lead"}}})
+	}
+	ctx := on(target.DarwinARM64)
+	result := Command(d).Run(ctx, []string{"plan", "--hq-config", "fixture.json"})
+	if result.Diagnostic != nil {
+		t.Fatal(result.Diagnostic)
+	}
+	const id = "plan-20261110T040000Z-abcd"
+	raw, err := os.ReadFile(filepath.Join(state, "members", "plans", id+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Saved
+	if err = json.Unmarshal(raw, &saved); err != nil || saved.Plan.Dir != in.Dir || len(saved.Plan.Members) != 2 {
+		t.Fatal(saved, err)
+	}
+	w := newWorld(h.fakeHost)
+	w.deps.Host = func() Host { return h }
+	for n := range h.accounts {
+		w.r.shadow[n] = "*"
+	}
+	h.files[filepath.Join("/home/owner", "Library", "Application Support", "managed-machine", "members", "plans", id+".json")] = string(raw)
+	run := func() bool { return Command(w.deps).Run(ctx, []string{"apply", id}).Diagnostic == nil }
+	if run() || len(w.r.log) != 0 {
+		t.Fatal("applied without approval")
+	}
+	if _, _, err := FirstHQPlan("/home/owner", "owner", id, h); err == nil {
+		t.Fatal("accepted for first HQ")
+	}
+	w.approved(t, id, saved.Plan)
+	h.entries[in.Dir] = Entry{Dir: true, Owner: "root", Group: "wheel", Mode: 0755}
+	if run() || len(w.r.log) != 0 {
+		t.Fatal("accepted changed digest")
+	}
+	delete(h.entries, in.Dir)
+	if !run() || w.r.receipts[id].Result != "applied" || w.r.receipts[id].PlanDigest != saved.PlanDigest {
+		t.Fatal(w.r.log, w.r.receipts)
+	}
+	if run() {
+		t.Fatal("replayed a previously applied plan")
+	}
+}
+
+func TestDarwinSharedConfigPreservesAccountOnlyDigest(t *testing.T) {
+	h, _ := brokerFixture()
+	ctx := on(target.DarwinARM64)
+	var accountDigest string
+	for _, dir := range []string{"", "/var/run/agent-bot-hq/members", "/opt/custom-shared-brokers", DarwinBrokerDir} {
+		d, _ := deps(t, h)
+		d.ReadFile = func(string) ([]byte, error) {
+			config := map[string]any{"accounts": map[string]string{"fixture": "_lead"}}
+			if dir != "" {
+				config["dir"] = dir
+			}
+			return json.Marshal(map[string]any{"harnesses": config})
+		}
+		res := Command(d).Run(ctx, []string{"plan", "--hq-config", "shared.json"})
+		if res.Diagnostic != nil {
+			t.Fatal(dir, res.Diagnostic)
+		}
+		actualDir, _ := res.Records[0].Get("dir")
+		digest, _ := res.Records[0].Get("plan_digest")
+		if dir == DarwinBrokerDir {
+			if actualDir != DarwinBrokerDir || digest == accountDigest || len(res.Records) != 5 {
+				t.Fatal("fixed Darwin path did not select both broker directories")
+			}
+			continue
+		}
+		if actualDir != DarwinDir || len(res.Records) != 3 {
+			t.Fatal("shared config changed account-only plan", dir)
+		}
+		if dir == "" {
+			accountDigest = digest.(string)
+			continue
+		}
+		if digest != accountDigest {
+			t.Fatal("shared config changed account-only digest", dir)
+		}
+		if Command(d).Run(ctx, []string{"plan", "--members", "_lead", "--dir", dir}).Diagnostic == nil {
+			t.Fatal("explicit directory flag accepted unmanaged location", dir)
+		}
 	}
 }

@@ -1,15 +1,20 @@
 package daemon
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/diag"
@@ -143,6 +148,7 @@ func TestDaemonUsage(t *testing.T) {
 }
 
 func TestDaemonPairAndUnpair(t *testing.T) {
+	t.Setenv(channelEnv, t.TempDir())
 	root := t.TempDir()
 	debugOn(t, stateDir(root))
 	res := run(owner(root), cli.Context{}, []string{"pair"})
@@ -194,7 +200,6 @@ func TestDaemonPairAndUnpair(t *testing.T) {
 			t.Fatalf("expected user %s to be refused, got %#v", verb, res.Diagnostic)
 		}
 	}
-	t.Setenv("AGENT_MACHINE_CHANNEL", filepath.Join(userRoot, "channel"))
 	res = run(userDeps, cli.Context{}, []string{"pair"})
 	if res.Diagnostic != nil {
 		t.Fatal(res.Diagnostic.Message)
@@ -446,5 +451,248 @@ func TestPairEnrollAgentDaemonReportsTheBinding(t *testing.T) {
 	res = run(deps, cli.Context{}, append(args, "--user", "ghost"))
 	if res.Diagnostic == nil || res.Diagnostic.ID != diag.DaemonCallerRefused {
 		t.Fatalf("unknown --user: %#v", res.Diagnostic)
+	}
+}
+
+// Drive normal install and start against disposable services; launchd dispatch
+// is the only simulated service lifecycle operation.
+func TestBundledDarwinKeydReadiness(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Darwin LaunchAgent and Unix peer credentials")
+	}
+	home, err := os.MkdirTemp("/private/tmp", "mmkr.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
+	t.Setenv(channelEnv, filepath.Join(home, "channel"))
+	if err := os.MkdirAll(filepath.Dir(ChannelSocket()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	machine, err := net.Listen("unix", ChannelSocket())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer machine.Close()
+	keydDir := filepath.Join(home, ".local", "state", "agent-bot", "keyd")
+	if err := os.MkdirAll(keydDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(home, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "agent-bot-keyd"), []byte("fixture"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", other)
+	caller := Caller{UID: os.Getuid(), Username: "fixture", PrefixOwner: "fixture", Home: home, RegisteredHome: home, DarwinAdmin: true}
+	deps := owner(home)
+	deps.Caller = func() (Caller, error) { return caller, nil }
+	deps.Executable = func() (string, error) { return filepath.Join(bin, "managed-machine"), nil }
+	deps.Activate = func(string) error { return nil }
+	deps.WaitHealthy = func() error { return WaitListening(ChannelSocket(), time.Second) }
+	path := filepath.Join(keydDir, "keyd.sock")
+	if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res := run(deps, cli.Context{}, []string{"install"})
+	if res.Diagnostic == nil || !strings.Contains(res.Diagnostic.Message, "Machine is listening, but bundled keyd is not ready") {
+		t.Fatalf("missing partial-start diagnostic: %#v", res.Diagnostic)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "keep" {
+		t.Fatal("changed the existing endpoint")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	sock, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sock.Close()
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	checked := make(chan error, 1)
+	go func() {
+		c, err := sock.Accept()
+		if err != nil {
+			checked <- err
+			return
+		}
+		defer c.Close()
+		c.SetDeadline(time.Now().Add(2 * time.Second))
+		line, err := bufio.NewReader(c).ReadString('\n')
+		if err == nil && !strings.Contains(line, `"method":"initialize"`) {
+			err = errors.New("unexpected request")
+		}
+		if err == nil {
+			_, err = fmt.Fprintln(c, `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","serverInfo":{"name":"agent-bot-keyd","version":"0.2.1"}}}`)
+		}
+		checked <- err
+	}()
+	caller.Home = home + "/" // legal spelling of the same registered home
+	res = run(deps, cli.Context{}, []string{"start"})
+	if res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	state, _ := res.Records[0].Get("state")
+	if state != "running" {
+		t.Fatalf("state %v", state)
+	}
+	if err := <-checked; err != nil {
+		t.Fatal(err)
+	}
+
+	// A new Machine executable without the helper beside it must preserve
+	// the previous registration and stop before activating either unit.
+	deps.Executable = func() (string, error) { return filepath.Join(home, "new", "managed-machine"), nil }
+	activated := false
+	deps.Activate = func(string) error { activated = true; return nil }
+	keydPlist, err := keydUnitPath("darwin", home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machinePlist, err := unitPath("darwin", home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err := os.ReadFile(machinePlist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = run(deps, cli.Context{}, []string{"start"})
+	if res.Diagnostic == nil || !strings.Contains(res.Diagnostic.Message, "restore agent-bot-keyd") || activated {
+		t.Fatalf("missing companion reported ready or activated an old unit: %#v", res.Diagnostic)
+	}
+	if current, err := os.ReadFile(machinePlist); err != nil || !bytes.Equal(current, prior) {
+		t.Fatal("changed the existing Machine LaunchAgent before the missing-companion refusal", err)
+	}
+	body := keydAgent(filepath.Join(home, ".local", "state", "agent-bot"), filepath.Join(bin, "agent-bot-keyd"))
+	if current, err := os.ReadFile(keydPlist); err != nil || string(current) != body {
+		t.Fatal("changed the existing keyd LaunchAgent", err)
+	}
+
+	// An independent plist does not turn a manual binary into a bundle.
+	custom := strings.Replace(body, "<string>serve</string>", "<string>custom</string>", 1)
+	if err := os.WriteFile(keydPlist, []byte(custom), 0600); err != nil {
+		t.Fatal(err)
+	}
+	deps.Activate = func(path string) error {
+		if path != machinePlist {
+			t.Fatal("activated a unit from an unrelated registration")
+		}
+		return nil
+	}
+	if res := run(deps, cli.Context{}, []string{"start"}); res.Diagnostic != nil {
+		t.Fatal(res.Diagnostic.Message)
+	}
+	if current, err := os.ReadFile(keydPlist); err != nil || string(current) != custom {
+		t.Fatal("changed an unrelated LaunchAgent", err)
+	}
+
+}
+
+func TestDarwinInstallPreservesIndependentKeyd(t *testing.T) {
+	for _, verb := range []string{"install", "start"} {
+		t.Run(verb, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv(channelEnv, filepath.Join(home, "channel"))
+			deps := owner(home)
+			deps.Executable = func() (string, error) { return filepath.Join(home, "managed-machine"), nil }
+			keyd, _ := keydUnitPath("darwin", home)
+			if err := os.MkdirAll(filepath.Dir(keyd), 0700); err != nil {
+				t.Fatal(err)
+			}
+			// Another supervisor owns the same launchd label. Its program and
+			// formatting may differ from the unit installed by Machine.
+			foreign := []byte("<plist><dict><key>Label</key><string>" + darwinKeydServiceLabel + "</string><key>ProgramArguments</key><array><string>/fixture/identity/keyd</string></array></dict></plist>")
+			if err := os.WriteFile(keyd, foreign, 0600); err != nil {
+				t.Fatal(err)
+			}
+			prior, err := os.Stat(keyd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sibling := filepath.Join(home, "agent-bot-keyd")
+			if err := os.WriteFile(sibling, []byte("fixture"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			var calls []string
+			deps.Activate = func(p string) error { calls = append(calls, p); return errors.New("fixture activation failure") }
+			machine, _ := unitPath("darwin", home)
+			res := run(deps, cli.Context{}, []string{verb})
+			if res.Diagnostic == nil || len(calls) != 0 {
+				t.Fatalf("bundled operation touched a foreign job: calls %v, result %+v", calls, res.Diagnostic)
+			}
+			if _, err := os.Stat(machine); !os.IsNotExist(err) {
+				t.Fatalf("Machine unit changed before refusal: %v", err)
+			}
+			if err := os.Remove(sibling); err != nil {
+				t.Fatal(err)
+			}
+			res = run(deps, cli.Context{}, []string{verb})
+			if res.Diagnostic == nil || len(calls) != 1 || calls[0] != machine {
+				t.Fatalf("manual operation did not isolate Machine activation: %v", calls)
+			}
+			current, err := os.Stat(keyd)
+			if err != nil || !os.SameFile(prior, current) {
+				t.Fatal("rollback replaced the independent keyd unit", err)
+			}
+			data, err := os.ReadFile(keyd)
+			if err != nil || !bytes.Equal(data, foreign) {
+				t.Fatal("independent keyd registration changed", err)
+			}
+		})
+	}
+}
+
+func TestDarwinDaemonInstallPreservesTemporarySibling(t *testing.T) {
+	for _, phase := range []string{"install", "rollback"} {
+		t.Run(phase, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv(channelEnv, filepath.Join(home, "channel"))
+			original := filepath.Join(home, "previous-machine")
+			path, err := Install("darwin", home, original, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			next := filepath.Join(home, "next-machine")
+			deps := owner(home)
+			deps.Executable = func() (string, error) { return next, nil }
+			sibling := path + ".tmp"
+			const note = "existing temporary file"
+			writeSibling := func() {
+				t.Helper()
+				if err := os.WriteFile(sibling, []byte(note), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wantExecutable := next
+			if phase == "install" {
+				writeSibling()
+			} else {
+				wantExecutable = original
+				deps.Activate = func(string) error {
+					writeSibling()
+					return errors.New("fixture activation refused")
+				}
+			}
+			res := run(deps, cli.Context{}, []string{"install"})
+			if phase == "install" && res.Diagnostic != nil {
+				t.Fatal(res.Diagnostic.Message)
+			}
+			if phase == "rollback" && (res.Diagnostic == nil || !strings.Contains(res.Diagnostic.Message, "fixture activation refused")) {
+				t.Fatal("expected the activation refusal")
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != darwinAgent(home, wantExecutable) {
+				t.Fatal("unexpected Machine registration", err)
+			}
+			if got, err := os.ReadFile(sibling); err != nil || string(got) != note {
+				t.Fatal("temporary sibling was lost or changed", err)
+			}
+		})
 	}
 }

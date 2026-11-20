@@ -131,7 +131,7 @@ func main() {
 					Username: func() (string, error) { return fleet.DefaultUsername(runtime.GOOS) },
 					Now:      time.Now,
 				},
-				ApplyDeps: members.ApplyDeps{DaemonState: membersDaemonState},
+				ApplyDeps: members.ApplyDeps{DaemonState: membersDaemonState, CheckUpgradePair: daemon.CheckHQUpgradePair},
 			}),
 			daemon.Command(daemon.Deps{
 				GOOS: runtime.GOOS,

@@ -1,0 +1,95 @@
+// Included only in the hosted test executable. Pairing and these signed
+// requests use the same Machine executable in its throwaway default Keychain.
+package daemon
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"os/signal"
+	"os/user"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+)
+
+func RunHostedUpgradeFixture(fp string) error {
+	refused := errors.New("not the disposable hosted service-upgrade fixture")
+	if os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("RUNNER_ENVIRONMENT") != "github-hosted" || os.Getenv("MM_KEYD_CUSTODY_TEST") != "1" || os.Getuid() == 0 || os.Getuid() != os.Geteuid() {
+		return refused
+	}
+	bin, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	stage := filepath.Dir(bin)
+	parent := filepath.Dir(stage)
+	if filepath.Dir(parent) != "/Library" || !strings.HasPrefix(filepath.Base(parent), "hq-install-ci.") || filepath.Base(stage) != "upgrade-provider" {
+		return refused
+	}
+	current, err := exec.Command("/usr/bin/security", "default-keychain", "-d", "user").Output()
+	db := strings.Trim(strings.TrimSpace(string(current)), "\"")
+	if err != nil || filepath.Dir(filepath.Dir(db)) != "/private/tmp" || !strings.HasPrefix(filepath.Base(filepath.Dir(db)), "mm-native-keychain.") || filepath.Base(db) != "fixture.keychain-db" {
+		return refused
+	}
+	if len(fp) != 64 || SocketListening(ChannelSocket()) {
+		return refused
+	}
+	u, err := user.Current()
+	if err != nil {
+		return err
+	}
+	key, err := serviceKey(u.HomeDir, fp)
+	if err != nil {
+		return err
+	}
+	defer zeroBytes(key)
+	dir := stateDir(u.HomeDir)
+	pairing, err := loadPairing(dir)
+	if err != nil {
+		return err
+	}
+	ln, err := listenForRun(dir)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM)
+	defer cancel()
+	provider := func(ctx context.Context, home string, d deviceDelegation) ([]byte, error) {
+		raw, err := json.Marshal(d)
+		if err != nil {
+			return nil, err
+		}
+		cmd := exec.CommandContext(ctx, filepath.Join(stage, "agent-bot-keyd"), "hq-device")
+		cmd.Dir = "/"
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home}
+		cmd.Stdin = bytes.NewReader(append(raw, '\n'))
+		var out keydOutput
+		cmd.Stdout = &out
+		if err = cmd.Run(); err != nil {
+			return nil, err
+		}
+		return out.buf.Bytes(), nil
+	}
+	hooks := Hooks{
+		Status:       func() (string, []byte, error) { return statusBody(dir) },
+		MembersPlans: func(option, id string) ([]byte, error) { return readMembersPlans(u.HomeDir, option, id) },
+		HQDevice:     func(r Request) Response { return requestHQDevice(ctx, u.HomeDir, key, r, time.Now, provider) },
+		ServiceRecovery: func(r Request) Response {
+			return recoverHQService(dir, key.Public().(ed25519.PublicKey), r, time.Now, func(id, digest string, uid int) (string, error) {
+				return currentPairedServicePlan(r.Verb, u.HomeDir, u.Username, id, digest, uid)
+			})
+		},
+	}
+	err = Serve(ctx, ln, &Gate{Dir: dir, Pairing: pairing}, key, peerCred, hooks)
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
+}

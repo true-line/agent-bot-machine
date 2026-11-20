@@ -39,6 +39,7 @@ func Command(deps Deps) cli.Command {
 
 const usage = `Usage: managed-machine members plan [--hq-account <account>] (--hq-config <path> | --members <a,b,...>) [--dir <path>]
        managed-machine members plan [--hq-service <record.json>]  (macOS dedicated HQ only)
+       managed-machine members plan --hq-service <record.json> --upgrade-from <prior-plan-id>
        sudo managed-machine members apply <plan-id>
 
 Plan the account HQ runs in, one OS account per harness credential, the broker
@@ -58,14 +59,18 @@ verified launchd service.
 apply needs root and owner approval of the exact plan ID and digest.
 On Linux and on macOS channels that accept approve-members, the owner uses
 the local web UI's Approvals tab.
-A macOS Machine with an owner pin supports two transfers for local owner review:
+A macOS Machine with an owner pin supports these transfers for local owner review:
   First dedicated HQ role: the prefix administrator exports the plan with
   managed-machine daemon first-hq export <plan-id> and submits the owner proof
   with managed-machine daemon first-hq approve <plan-id> --proof-file <path>.
   Down service, healthy paired HQ role: the paired HQ CLI runs
   machine hq-service-recovery export <plan-id> --socket <machine-socket>
   and submits the returned owner proof through the same paired HQ CLI.
-Both transfers require a dedicated HQ-only plan without harness accounts.
+  Running Machine-backed HQ, compatible staged update: prepare the replacement
+  with --upgrade-from, then use the paired HQ CLI's hq-service-upgrade export
+  and approve commands for the new plan ID. An interrupted upgrade resumes
+  through members apply with that same ID.
+These transfers require a dedicated HQ-only plan without harness accounts.
 The prefix administrator then runs apply with sudo in their own terminal within
 ten minutes. apply builds the plan again from the host and runs only when
 its digest is the approved one. It takes a plan id and nothing else; no
@@ -79,12 +84,15 @@ Options
                         exist. Naming your own account works but is not
                         recommended: the plan says it is not dedicated
 --hq-config <path>      Read HQ's harnesses.accounts (adapter ID to account)
-                        and optional Linux harnesses.dir. Shared accounts are
+                        and optional harnesses.dir. Shared accounts are
                         provisioned once. Legacy members config is refused
+--upgrade-from <id>     Replace a running dedicated macOS HQ service from its applied plan
 --hq-service <json>     Install the platform HQ service from a verified release record
 --members <a,b,...>     Name the harness accounts directly (compatibility flag)
 --dir <path>            The endpoint directory, with --members
-                        (default ` + DefaultDir + `)
+                        (Linux default ` + DefaultDir + `). On macOS, specify
+                        ` + DarwinBrokerDir + ` explicitly
+                        to provision broker directories under the existing HQ runtime.
 --json                  Return the records as one JSON document
 --human                 Render the records in a readable form
 `
@@ -97,11 +105,12 @@ func failure(id, format string, args ...any) cli.Result {
 // Saved is the plan file apply reads: the request, so the plan can be built
 // again from the host, and the digest the owner is asked to approve.
 type Saved struct {
-	HQService  *HQService `json:"hq_service,omitempty"`
-	PlanID     string     `json:"plan_id"`
-	PlanDigest string     `json:"plan_digest"`
-	CreatedAt  string     `json:"created_at"`
-	Plan       Plan       `json:"plan"`
+	UpgradeFrom *priorServicePlan `json:"upgrade_from,omitempty"`
+	HQService   *HQService        `json:"hq_service,omitempty"`
+	PlanID      string            `json:"plan_id"`
+	PlanDigest  string            `json:"plan_digest"`
+	CreatedAt   string            `json:"created_at"`
+	Plan        Plan              `json:"plan"`
 }
 
 // HQ adapter IDs identify harness credentials (PDR-0053). Several adapters
@@ -167,15 +176,16 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if len(args) == 0 || args[0] != "plan" {
 		return cli.Result{Diagnostic: command.UsageErr("members takes one action: plan or apply")}
 	}
-	var hqAccount, hqConfigPath, list, dir, serviceRecord string
+	var hqAccount, hqConfigPath, list, dir, serviceRecord, priorID string
 	var hasList, hasDir bool
 	if d := command.Parse(args[1:], command.Spec{
 		Values: map[string]command.Flag{
-			"--hq-service": {Value: &serviceRecord},
-			"--hq-account": {Value: &hqAccount},
-			"--hq-config":  {Value: &hqConfigPath},
-			"--members":    {Value: &list, Set: &hasList, Optional: true},
-			"--dir":        {Value: &dir, Set: &hasDir},
+			"--upgrade-from": {Value: &priorID},
+			"--hq-service":   {Value: &serviceRecord},
+			"--hq-account":   {Value: &hqAccount},
+			"--hq-config":    {Value: &hqConfigPath},
+			"--members":      {Value: &list, Set: &hasList, Optional: true},
+			"--dir":          {Value: &dir, Set: &hasDir},
 		},
 	}); d != nil {
 		return cli.Result{Diagnostic: d}
@@ -192,8 +202,8 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		hqAccount = DefaultHQAccountFor(platform)
 	}
 	switch {
-	case platform == PlatformDarwin && hasDir:
-		return failure(diag.MembersUnsupported, "endpoint directory setup is Linux only")
+	case platform == PlatformDarwin && hasDir && (!hasList || dir != DarwinBrokerDir):
+		return failure(diag.MembersUnsupported, "Darwin --dir requires --members and %s", DarwinBrokerDir)
 	case platform == PlatformDarwin && hqConfigPath == "" && !hasList:
 	case (hqConfigPath != "") == hasList:
 		return cli.Result{Diagnostic: command.UsageErr("members plan needs exactly one of --hq-config and --members")}
@@ -214,8 +224,9 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		if in.Dir, in.Members, err = fromConfig(raw); err != nil {
 			return failure(diag.MembersListInvalid, "%s: %v", hqConfigPath, err)
 		}
-		if platform == PlatformDarwin {
-			// Only the credential accounts are provisioned on Darwin.
+		// Shared configs may name the Linux broker directory. Keep their
+		// original account-only plan on macOS unless the Darwin path is selected.
+		if platform == PlatformDarwin && in.Dir != DarwinBrokerDir {
 			in.Dir = DarwinDir
 		}
 	} else {
@@ -231,6 +242,19 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return failure(diag.MembersAccountRefused, "cannot identify the owner planning Darwin harness accounts: %v", err)
 	}
 
+	if priorID != "" {
+		if platform != PlatformDarwin || serviceRecord == "" || hqAccount != DarwinHQAccount || hqConfigPath != "" || hasList || hasDir {
+			return cli.Result{Diagnostic: command.UsageErr("--upgrade-from requires a prior plan id and only a dedicated macOS --hq-service record")}
+		}
+		state, err := deps.ResolveStateDir(usernameOS(platform))
+		if err != nil {
+			return failure(diag.MembersPlanFailed, "cannot locate prior plan")
+		}
+		in.UpgradeFrom, err = readPriorServicePlan(state, priorID)
+		if err != nil {
+			return failure(diag.MembersPlanFailed, "%s", err)
+		}
+	}
 	if serviceRecord != "" {
 		read := deps.ReadFile
 		if read == nil {
@@ -271,7 +295,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if err != nil {
 		return failure(diag.MembersPlanFailed, "cannot locate the state directory: %v", err)
 	}
-	saved := Saved{HQService: in.HQService, PlanID: planID, PlanDigest: digest, CreatedAt: now.UTC().Format("2006-01-02T15:04:05Z"), Plan: plan}
+	saved := Saved{UpgradeFrom: in.UpgradeFrom, HQService: in.HQService, PlanID: planID, PlanDigest: digest, CreatedAt: now.UTC().Format("2006-01-02T15:04:05Z"), Plan: plan}
 	if err := save(filepath.Join(state, "members", "plans"), saved); err != nil {
 		return failure(diag.MembersPlanFailed, "cannot save the plan: %v", err)
 	}
@@ -308,7 +332,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 }
 
 // platformOf maps a host target to Input.Platform. Linux plans everything;
-// macOS plans the HQ account alone.
+// macOS plans the requested role accounts, broker directories and optional HQ service.
 func platformOf(target string) (string, bool) {
 	switch {
 	case strings.HasPrefix(target, "linux/"):

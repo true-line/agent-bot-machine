@@ -36,7 +36,10 @@ const (
 var rootEnv = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C"}
 
 // OSRoot changes the running host. Every method needs root.
-type OSRoot struct{}
+type OSRoot struct {
+	upgradeApproval  Approval
+	checkUpgradePair upgradePairGuard
+}
 
 func runProgram(name string, args ...string) error {
 	return runProgramInput("", name, args...)
@@ -228,6 +231,9 @@ func ids(owner, group string) (int, int, error) {
 // EnsureDir implements Root. The mode is set after the owner, because
 // changing the owner clears the setgid bit.
 func (OSRoot) EnsureDir(p, owner, group string, mode uint32) error {
+	if runtime.GOOS == "darwin" {
+		return createDarwinBrokerDirectory(p, owner, group, mode)
+	}
 	uid, gid, err := ids(owner, group)
 	if err != nil {
 		return err
@@ -365,7 +371,10 @@ func (OSRoot) PreflightHQ() error {
 
 // ActivateHQ never runs release code as root. The compatibility check uses
 // the HQ account; the status round trip uses the approved owner's UID.
-func (OSRoot) ActivateHQ(step Step) error {
+func (r OSRoot) ActivateHQ(step Step) error {
+	if step.Action == upgradeAction {
+		return activateUpgrade(step, r.upgradeApproval, r.checkUpgradePair)
+	}
 	if runtime.GOOS == "darwin" {
 		return activateLaunchDaemon(step)
 	}
@@ -421,7 +430,15 @@ func (OSRoot) ActivateHQ(step Step) error {
 }
 
 // Claim implements Root.
-func (OSRoot) Claim(planID string, receipt []byte) (bool, error) {
+func (r OSRoot) Claim(planID string, receipt []byte) (bool, error) {
+	if r.upgradeApproval.Purpose == UpgradePurpose {
+		// An eligible upgrade always has an existing protected receipt directory.
+		err := claimUpgradeReceipt(planID, receipt)
+		if errors.Is(err, fs.ErrExist) {
+			return false, nil
+		}
+		return err == nil, err
+	}
 	if err := os.MkdirAll(receiptsDir(), 0o755); err != nil {
 		return false, err
 	}
