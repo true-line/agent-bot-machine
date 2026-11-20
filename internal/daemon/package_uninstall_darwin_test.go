@@ -137,6 +137,38 @@ esac
 		l.SetUnlinkOnClose(false)
 		l.Close()
 	}
+	// First both stops fail, then only Machine refuses. Neither attempt may
+	// remove service files or the keg. The remaining steps retry from there.
+	machineUnit := filepath.Join(home, "Library", "LaunchAgents", darwinServiceLabel+".plist")
+	keydUnit := filepath.Join(home, "Library", "LaunchAgents", darwinKeydServiceLabel+".plist")
+	preserved := []string{core, receipt, machineUnit, keydUnit, filepath.Join(channel, "daemon.sock"),
+		filepath.Join(private, "keyd.sock"), filepath.Join(private, "owner.sock")}
+	machineFailure := errors.New("Machine bootout failed")
+	keydFailure := errors.New("keyd bootout failed")
+	normalStop := deps.Deactivate
+	for _, keydResult := range []error{keydFailure, nil} {
+		var attempted []string
+		deps.Deactivate = func(path string) error {
+			attempted = append(attempted, path)
+			if path == machineUnit {
+				return machineFailure
+			}
+			return keydResult
+		}
+		err := runRemove(func() error { return nil })
+		if len(attempted) != 2 || attempted[0] != machineUnit || attempted[1] != keydUnit {
+			t.Fatalf("expected both verified service stops in order, observed %v", attempted)
+		}
+		if !errors.Is(err, machineFailure) || errors.Is(err, keydFailure) != (keydResult != nil) {
+			t.Fatalf("missing or unexpected stop failure: %v", err)
+		}
+		for _, path := range preserved {
+			if _, e := os.Lstat(path); e != nil {
+				t.Fatalf("did not preserve %s after a failed stop: %v", filepath.Base(path), e)
+			}
+		}
+	}
+	deps.Deactivate = normalStop
 	put(filepath.Join(prefix, "refuse"), "", 0600)
 	if err := runRemove(func() error { return nil }); err == nil || !strings.Contains(err.Error(), "Homebrew could not remove") {
 		t.Fatalf("expected safe Homebrew refusal, got %v", err)

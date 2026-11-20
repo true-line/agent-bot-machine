@@ -408,10 +408,12 @@ func stopPackageServices(deps Deps, prefix string, caller Caller, readJob func(i
 		}
 		leaves = append(leaves, leaf)
 	}
-	for _, leaf := range leaves[:2] {
-		if err := deps.Deactivate(leaf.path); err != nil {
-			return err
-		}
+	// Each verified job can be stopped independently. Keep all files for a
+	// retry if either stop failed.
+	machineErr := deps.Deactivate(leaves[0].path)
+	keydErr := deps.Deactivate(leaves[1].path)
+	if err := errors.Join(machineErr, keydErr); err != nil {
+		return err
 	}
 	for i, leaf := range leaves {
 		current, err := os.Lstat(leaf.path)
