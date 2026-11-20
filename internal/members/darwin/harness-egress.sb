@@ -1,6 +1,9 @@
 (version 1)
-; The trusted launcher must derive this absolute path from the admitted account.
-; This profile restricts network operations for the launched process.
+; The trusted launcher supplies the admitted account's broker and the member
+; socket assigned to this launch. Paths are absolute. A broker-only
+; invocation has no member socket grant.
 (allow default)
 (deny network*)
 (allow network-outbound (remote unix-socket (path-literal (param "BROKER_SOCKET"))))
+(if (param "MEMBER_SOCKET")
+    (allow network-outbound (remote unix-socket (path-literal (param "MEMBER_SOCKET")))))

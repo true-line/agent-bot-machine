@@ -56,14 +56,17 @@ The disposable macOS acceptance test is `tests/members-apply-macos.test.sh`.
 
 The [Darwin harness egress profile](../../internal/members/darwin/harness-egress.sb)
 implements the per-process policy selected in [platform decision #52](https://github.com/true-line/agent-bot-platform/discussions/52).
-Its unprivileged native fixture checks IPv4 and IPv6 loopback, a second Unix
-socket and a successful request relayed through the designated Unix socket.
-The profile is currently exercised by the fixture only.
+The trusted launcher supplies the admitted account's absolute broker path with
+`-D BROKER_SOCKET=<path>` and the absolute Souls member socket it assigned to
+this launch with `-D MEMBER_SOCKET=<path>`. A broker-only invocation omits
+`MEMBER_SOCKET`. Each grant matches one literal pathname.
 
-For normal launch, the broker socket must come from the admitted harness's
-provisioned account. The production launcher must apply the profile to the
-child running as that account. T03 still needs the same operation exercised
-through packaged HQ with distinct provisioned accounts. Track the design
+The unprivileged native fixture starts two launches in the same directory.
+Each can reach its own member socket and the broker. The sibling launch's
+socket, another Unix socket and direct IPv4/IPv6 loopback all remain denied.
+Only the fixture invokes this profile today. T03 still needs packaged HQ to
+apply it to the child running as its provisioned harness account and verify
+the operation with distinct accounts. Track the design
 and its implementation status in [Platform #96](https://github.com/true-line/agent-bot-platform/pull/96).
 
 ### What is created

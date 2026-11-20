@@ -25,10 +25,11 @@ def exchange(family, address, request=REQUEST):
             return stream.readline(64)
 
 
-def child(port4, port6, broker, other):
-    for family, addr in ((socket.AF_INET, ("127.0.0.1", int(port4))),
-                         (socket.AF_INET6, ("::1", int(port6))),
-                         (socket.AF_UNIX, other)):
+def child(port4, port6, broker, member, member_reply, *unassigned):
+    denied = [(socket.AF_INET, ("127.0.0.1", int(port4))),
+              (socket.AF_INET6, ("::1", int(port6)))]
+    denied.extend((socket.AF_UNIX, path) for path in unassigned)
+    for family, addr in denied:
         try:
             exchange(family, addr)
         except PermissionError as error:
@@ -38,6 +39,8 @@ def child(port4, port6, broker, other):
             raise AssertionError("expected a sandbox permission refusal")
     if exchange(socket.AF_UNIX, broker) != REPLY:
         raise AssertionError("brokered response did not match")
+    if member and exchange(socket.AF_UNIX, member) != member_reply.encode():
+        raise AssertionError("per-launch member response did not match")
 
 
 class Listener:
@@ -96,18 +99,33 @@ class DarwinHarnessEgress(unittest.TestCase):
                             lambda request: exchange(socket.AF_INET, v4.address, request))
             other = listen(socket.AF_UNIX, str(Path(tmp) / "other.sock"), lambda request: REPLY)
 
+            # Two live callbacks in the same directory as the broker. Each is
+            # used by its own launch and must remain unavailable to the other.
+            first = listen(socket.AF_UNIX, str(Path(tmp) / "member-first.sock"), lambda _: b"first ready\n")
+            second = listen(socket.AF_UNIX, str(Path(tmp) / "member-second.sock"), lambda _: b"second ready\n")
+
+            def launch(member, member_reply, unassigned):
+                args = ["/usr/bin/sandbox-exec", "-f", str(PROFILE), "-D", "BROKER_SOCKET=" + broker.address]
+                if member:
+                    args.extend(["-D", "MEMBER_SOCKET=" + member.address])
+                subprocess.run([*args, sys.executable, "-I", str(Path(__file__).resolve()), "--child",
+                                str(v4.address[1]), str(v6.address[1]), broker.address,
+                                member.address if member else "", member_reply, other.address,
+                                *(service.address for service in unassigned)], check=True, timeout=15)
+
             for family, service in ((socket.AF_INET, v4), (socket.AF_INET6, v6), (socket.AF_UNIX, other)):
                 self.assertEqual(exchange(family, service.address), REPLY)
-            subprocess.run(["/usr/bin/sandbox-exec", "-f", str(PROFILE), "-D",
-                            "BROKER_SOCKET=" + broker.address, sys.executable, "-I",
-                            str(Path(__file__).resolve()), "--child", str(v4.address[1]),
-                            str(v6.address[1]), broker.address, other.address], check=True, timeout=15)
+            launch(first, "first ready\n", [second])
+            launch(second, "second ready\n", [first])
+            launch(None, "", [first, second])
             for family, service in ((socket.AF_INET, v4), (socket.AF_INET6, v6), (socket.AF_UNIX, other)):
                 self.assertEqual(exchange(family, service.address), REPLY)
 
             self.assertEqual(other.received, [REQUEST, REQUEST])
-            self.assertEqual(broker.received, [REQUEST])
-            self.assertEqual(v4.received, [REQUEST, REQUEST, REQUEST])
+            self.assertEqual(first.received, [REQUEST])
+            self.assertEqual(second.received, [REQUEST])
+            self.assertEqual(broker.received, [REQUEST] * 3)
+            self.assertEqual(v4.received, [REQUEST] * 5)
             self.assertEqual(v6.received, [REQUEST, REQUEST])
 
 
