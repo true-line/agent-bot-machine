@@ -306,8 +306,14 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		if strings.Contains(step.Run, wantSignedVerify) {
 			sawSignedVerify = true
 		}
+		if strings.Contains(step.Run, "generate-notes") {
+			t.Fatal("public release notes must come from validated release data")
+		}
 		if strings.Contains(step.Run, wantPublish) {
-			check := strings.Index(step.Run, "verify-public-draft.py publish")
+			check := strings.Index(step.Run, `verify-public-draft.py publish "${TAG#v}" "$RUNNER_TEMP/public-assets.json" > "$RUNNER_TEMP/public-release-notes.md"`)
+			if !strings.Contains(step.Run, wantPublish+` -f name="$TAG" -F "body=@$RUNNER_TEMP/public-release-notes.md"`) {
+				t.Fatal("publish must attach the release notes from the final asset verification")
+			}
 			if !sawPublicPublisher || check < 0 || check >= strings.Index(step.Run, wantPublish) {
 				t.Fatal("publishing requires the embedded public publishers and current draft inventory")
 			}

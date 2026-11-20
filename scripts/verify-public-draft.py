@@ -47,6 +47,14 @@ def check(phase, version, snapshot, rows):
         snapshot.write_text(json.dumps(observed))
     else:
         require(observed == json.loads(snapshot.read_text()))
+        repo = "https://github.com/true-line/agent-bot-machine"
+        tag = f"v{version}"
+        downloads = f"{repo}/releases/download/{tag}"
+        print(f"[Changes through {tag}]({repo}/commits/{tag}).")
+        print()
+        print(f"See the [support matrix]({downloads}/support-matrix.md) for tested targets. "
+              f"Verify downloads with the [SHA-256 checksums]({downloads}/SHA256SUMS). "
+              f"The [Homebrew formula]({downloads}/managed-machine.rb) pins the macOS archive.")
 
 
 if __name__ == "__main__":

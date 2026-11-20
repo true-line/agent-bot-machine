@@ -115,11 +115,10 @@ jobs:
         run: |
           TAG="v$(cat VERSION)"
           gh release upload "$TAG" support-matrix.md release-gate-*.json Formula/managed-machine.rb --clobber
-          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body >notes.md
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)" = "$(git rev-parse HEAD)"
           gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" |
             jq -e --arg tag "$TAG" --arg sha "$(git rev-parse HEAD)" '.draft and .tag_name == $tag and .target_commitish == $sha' >/dev/null
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
             --jq '[.[][] | {name,id,state,digest}]' |
-            python3 scripts/verify-public-draft.py publish "${TAG#v}" "$RUNNER_TEMP/public-assets.json"
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -f name="$TAG" -F body=@notes.md --silent
+            python3 scripts/verify-public-draft.py publish "${TAG#v}" "$RUNNER_TEMP/public-assets.json" > "$RUNNER_TEMP/public-release-notes.md"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -f name="$TAG" -F "body=@$RUNNER_TEMP/public-release-notes.md" --silent

@@ -182,7 +182,8 @@ The release workflow checks the embedded organization, full publisher name and
 reviewed leaf on the signed binaries before notarization, on the repacked
 archive before draft upload, and on the bytes downloaded before publication.
 It verifies the complete draft asset inventory and digests immediately before
-publishing the checked release ID. Keep other release writers idle during this
+publishing the checked release ID. The public notes link the validated tag’s change
+history, checksums, support matrix, and Homebrew formula. Keep other release writers idle during this
 last step because GitHub exposes asset edits and publication as separate operations.
 
 Changes merged to `main` open or refresh a version PR. Merging the reviewed version PR starts the five-target Machine build and macOS signing. After CI and signing pass on that merge commit, automation tags it and publishes the verified archives. The published release includes the Homebrew formula with the signed macOS checksum. A separate formula-only PR updates the tap.
