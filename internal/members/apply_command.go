@@ -181,6 +181,9 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: %s", planID, why)
 	}
 
+	if saved.Plan.Purpose != "" || approval.Purpose == HarnessAccountsPurpose {
+		return runHarnessAccountApply(saved, approval, platform, owner, h, deps, pairCheck)
+	}
 	if saved.UpgradeFrom == nil && (approval.Purpose != "" || approval.MachineFingerprint != "" || approval.PairCommitment != "") {
 		return failure(diag.MembersNotApproved, "a paired purpose-specific approval cannot authorize this operation")
 	}
