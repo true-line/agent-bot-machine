@@ -280,6 +280,11 @@ pub(crate) fn cli_result(
 }
 
 pub(crate) fn command(init: bool) -> Result<(), &'static str> {
+    if init {
+        crate::standalone::begin_custody()?;
+    } else {
+        crate::standalone::admission(std::path::Path::new("/Library"))?;
+    }
     let (dir, _pair_lock, pair) = trusted_state()?;
     let native = Native {
         dir: &dir,

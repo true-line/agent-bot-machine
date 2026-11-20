@@ -166,11 +166,56 @@ main() {
         die "Run this installer as $owner to use Homebrew at $prefix."
     fi
 
+    local result=0
+    check_standalone_signing || result=$?
+    if [[ "$result" != 0 ]]; then
+        [[ "$result" == 42 ]] || exit "$result"
+        retire_standalone_signing
+        check_standalone_signing || die "The administrator must finish retiring standalone HQ signing before Machine can install."
+    fi
     run_install
     local installed="$prefix/opt/managed-machine/bin/managed-machine"
     local version
     version="$("$installed" --version)"
     echo "Machine $version installed. To check it again, run $installed --version."
+}
+
+# Homebrew's formula repeats this check after publishing its standard keg.
+check_standalone_signing() {
+    /usr/bin/ruby --disable-gems -e '
+      dir = "/Library/Application Support/ai.true-line.agent-bot-hq/standalone"
+      ["declaration-pending-v1", "declaration-v1"].each do |name|
+        begin
+          File.lstat(File.join(dir, name))
+        rescue Errno::ENOENT
+          next
+        end
+        exit 42
+      end
+    '
+}
+
+retire_standalone_signing() {
+    # Only this fixed root-owned utility receives elevated rights. The Ruby
+    # verifier and the AppleScript command are passed by value to the prompt.
+    local verify='require "open3"
+      root = "/Library/Application Support/ai.true-line.agent-bot-hq/standalone/installer"
+      tool = File.join(root, "standalone-hq-signing")
+      path = "/"
+      (tool.split("/").reject(&:empty?) + [nil]).each do |part|
+        s = File.lstat(path)
+        acl, ok = Open3.capture2("/bin/ls", "-lde", path)
+        valid = path == tool ? (s.file? && s.nlink == 1) : s.directory?
+        abort "Cannot verify the installed administrator retirement utility" unless valid && s.uid.zero? &&
+          (s.mode & 022).zero? && ok.success? && acl.lines.drop(1).none? { |l| l.include?(" allow ") }
+        path = File.join(path, part) if part
+      end
+      exec("/usr/bin/ruby", "--disable-gems", tool, "retire")'
+    /usr/bin/osascript \
+      -e 'on run argv' \
+      -e 'set cmd to "/usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/bin/ruby --disable-gems -e " & quoted form of (item 1 of argv)' \
+      -e 'do shell script cmd with prompt "Permanently retire standalone HQ signing before installing Machine." with administrator privileges' \
+      -e 'end run' "$verify"
 }
 
 main "$@"
