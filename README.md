@@ -15,7 +15,7 @@ On an Apple Silicon Mac running macOS 15 or later, open Terminal and run the pub
 )
 ```
 
-The installer downloads the public package from [true-line/agent-bot-machine](https://github.com/true-line/agent-bot-machine). If Homebrew already belongs to another administrator, macOS asks permission to run Homebrew in that account. A successful install prints a confirmation. The confirmation includes the installed version. Run `managed-machine --update` to update Machine from its public tap.
+The installer downloads the public package from [true-line/agent-bot-machine](https://github.com/true-line/agent-bot-machine). If Homebrew already belongs to another administrator, macOS asks permission to run Homebrew in that account. A successful install prints a confirmation. The confirmation includes the installed version. Rerun the installer to upgrade Machine from its public tap.
 
 ### Delivery channels
 
@@ -349,11 +349,15 @@ Bump the pin by editing `managed-machine-config/local-bin.ref` and committing it
 
 ## Update an existing machine
 
+To upgrade the Machine package, rerun the [public installer](#install-on-a-fresh-mac) from a human Terminal. It refreshes the Machine tap and runs Homebrew as the prefix owner.
+
+Run this command to reapply the daemon's default catalog flavor.
+
 ```bash
 managed-machine --update
 ```
 
-Run updates from a human Terminal. The Homebrew prefix stays under its administrator owner. A machine with fleet configuration can also refresh the selected configuration and tools. Existing fleet data stays outside the Homebrew package.
+On macOS the legacy updater handles the request when the daemon client is unavailable or the daemon reports the flavor is outside its catalog. That path upgrades the package and reruns applicable setup steps. An explicitly selected fleet also refreshes its configuration. Other daemon refusals and failures are reported directly.
 
 Managed-machine no longer owns agent-bot installation, upgrades, pinning, machine wiring, account credential seeding, or GitHub CLI interposition. The retired setup commands explain this boundary and leave existing runtime state untouched.
 
