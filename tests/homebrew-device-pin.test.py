@@ -70,21 +70,30 @@ class HomebrewDevicePinTest(unittest.TestCase):
                 self.assertEqual(log.read_text().splitlines() if log.exists() else [], operations)
 
     def test_published_lifecycle_requires_every_nonhistorical_archive(self):
-        checkout = "c" * 40
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        workflow, tap = Path(scratch.name) / "workflow", Path(scratch.name) / "tap"
+        subprocess.run(["git", "init", "-q", workflow], check=True)
+        git = ["git", "-C", workflow, "-c", "user.name=fixture", "-c", "user.email=fixture@invalid",
+               "-c", "commit.gpgSign=false", "-c", "core.hooksPath=/dev/null"]
+        subprocess.run([*git, "commit", "-qm", "release", "--allow-empty"], check=True)
+        checkout = subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip()
+        subprocess.run([*git, "worktree", "add", "-q", "--detach", tap, checkout], check=True)
+        subprocess.run([*git, "commit", "-qm", "workflow", "--allow-empty"], check=True)
+        workflow_commit = subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip()
+        self.assertNotEqual(workflow_commit, checkout)
         template = (PATH.parents[2] / pins.FORMULA).read_text()
         baseline_version, baseline_digest = pins.pin(template)
         script = """
-            expected_checkout="$4"
             source "$1/stage-darwin-hq-device.sh"
-            git() { [[ "$*" == 'rev-parse HEAD' ]] && echo "$expected_checkout"; }
-            qualify_published_device_lifecycle "$1/formula" "$2" "$1/unpacked" "$3"
+            qualify_published_device_lifecycle "$1/formula" "$2" "$1/unpacked" "$3" "$4"
         """
         cases = [
             # version, checksum, source, cycle exit code (None = absent), ran, succeeded
             (*pins.LEGACY, checkout, None, False, True),
             (pins.LEGACY[0], "0" * 64, checkout, 0, False, False),
             ("0.12.5", "b" * 64, checkout, None, False, False),
-            ("0.12.5", "b" * 64, "d" * 40, 0, False, False),
+            ("0.12.5", "b" * 64, workflow_commit, 0, False, False),
             ("0.12.5", "b" * 64, checkout, 0, True, True),
             ("0.12.5", "b" * 64, checkout, 1, True, False),
         ]
@@ -100,7 +109,7 @@ class HomebrewDevicePinTest(unittest.TestCase):
                     (work / "homebrew-launch-agents.py").touch()
                     (work / "homebrew-uninstall-cycle.sh").write_text(
                         'set -eu\nprintf "%s\\n" "$1" > "$2/ran"\n' + f'exit {cycle_exit}\n')
-                proc = subprocess.run(["bash", "-c", script, "test", tmp, version, source, checkout], capture_output=True)
+                proc = subprocess.run(["bash", "-c", script, "test", tmp, version, source, tap], cwd=workflow, capture_output=True)
                 self.assertEqual(proc.returncode == 0, success, proc.stderr)
                 self.assertEqual((work / "unpacked/ran").exists(), ran)
                 if ran:

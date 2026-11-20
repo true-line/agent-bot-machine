@@ -43,7 +43,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.publish.outputs.source_commit }}
           persist-credentials: false
       - name: Verify the released package and service lifecycle
         env:

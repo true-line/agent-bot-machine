@@ -10,7 +10,8 @@ prefix=/opt/homebrew
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 tap_homebrew_device_release "$brew" "$prefix"
-recipe="$("$brew" --repository true-line/agent-bot-machine)/Formula/managed-machine.rb"
+tapdir="$("$brew" --repository true-line/agent-bot-machine)"
+recipe="$tapdir/Formula/managed-machine.rb"
 source_commit=
 if [[ "$#" == 1 && "$1" == --published-formula ]]; then
     [[ "${MM_HQ_TAP_REVISION:-}" =~ ^[0-9a-f]{40}$ ]] || exit 1
@@ -30,6 +31,6 @@ fetch_public_device_archive "$version" "$work" "$digest"
 unpack_signed_device_release "$work/$asset" "$digest" "$work/unpacked"
 qualify_homebrew_device_release "$brew" "$prefix" "$version" "$digest" "$work/unpacked" "$source_commit"
 if [[ "$#" == 1 ]]; then
-    qualify_published_device_lifecycle "$work/managed-machine.rb" "$version" "$work/unpacked" "$source_commit"
+    qualify_published_device_lifecycle "$work/managed-machine.rb" "$version" "$work/unpacked" "$source_commit" "$tapdir"
     cmp "$work/managed-machine.rb" "$recipe" || { echo 'The release formula changed during qualification' >&2; exit 1; }
 fi

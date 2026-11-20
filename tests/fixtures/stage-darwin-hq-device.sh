@@ -47,17 +47,21 @@ qualify_homebrew_device_release() (
 # Only the historical checksum-qualified archive predates the uninstall command.
 qualify_published_device_lifecycle() (
     set -euo pipefail
-    local recipe="$1" version="$2" unpack="$3" source_commit="$4" fixtures mode
+    local recipe="$1" version="$2" unpack="$3" source_commit="$4" tapdir="$5" fixtures mode
     fixtures="$(dirname "${BASH_SOURCE[0]}")"
+    # The harness runs at the workflow revision. Check the release source in the detached tap.
+    [[ "$source_commit" =~ ^[0-9a-f]{40}$ &&
+       "$(git -C "$tapdir" rev-parse --verify 'HEAD^{commit}')" == "$source_commit" ]] || {
+        echo 'The installed Homebrew tap differs from the published release commit' >&2; return 1;
+    }
     mode="$(python3 "$fixtures/homebrew-device-pin.py" --published-mode "$recipe")"
     case "$mode" in
         package) echo 'Historical archive passed package verification'; return ;;
         custody) ;;
         *) return 1 ;;
     esac
-    [[ "$source_commit" =~ ^[0-9a-f]{40}$ && "$(git rev-parse HEAD)" == "$source_commit" ]] || return 1
     [[ -f "$fixtures/homebrew-uninstall-cycle.sh" && -f "$fixtures/homebrew-launch-agents.py" ]] || {
-        echo 'Required Machine uninstall qualification missing from this release' >&2; return 1;
+        echo 'Required Machine uninstall qualification missing from the workflow checkout' >&2; return 1;
     }
     # The formula writes its checkout commit into the keg. Supply the independently
     # verified publish commit as the expected receipt for both installations.

@@ -261,6 +261,11 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		t.Error("every successful release publication must be followed by the read-only macOS install check")
 	}
 
+	if len(smoke.Steps) == 0 || !strings.HasPrefix(smoke.Steps[0].Uses, "actions/checkout@") ||
+		!reflect.DeepEqual(smoke.Steps[0].With, map[string]any{"persist-credentials": false}) {
+		t.Error("post-publication tests must check out the workflow revision without a ref override or persisted credentials")
+	}
+
 	var (
 		sawCheckout       bool
 		sawDistDownload   bool
