@@ -8,6 +8,7 @@ on:
       - 'internal/members/**'
       - 'tests/members-apply-macos.test.sh'
       - 'tests/fixtures/*darwin-hq*'
+      - 'tests/fixtures/darwin-harness-egress.py'
       - 'tests/fixtures/hq-launchd-install.sh'
       - 'tests/fixtures/hq-launchd-runtime.c'
   push:
@@ -19,6 +20,7 @@ on:
       - 'internal/members/**'
       - 'tests/members-apply-macos.test.sh'
       - 'tests/fixtures/*darwin-hq*'
+      - 'tests/fixtures/darwin-harness-egress.py'
       - 'tests/fixtures/hq-launchd-install.sh'
       - 'tests/fixtures/hq-launchd-runtime.c'
   workflow_dispatch:
@@ -48,6 +50,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Exercise the Darwin harness process egress profile
+        run: /usr/bin/python3 -I tests/fixtures/darwin-harness-egress.py
       - name: Fetch the reviewed signed Machine release for optional hardware qualification
         if: inputs.device_release_version != '' || inputs.device_archive_sha256 != ''
         shell: bash

@@ -1,0 +1,6 @@
+(version 1)
+; The trusted launcher must derive this absolute path from the admitted account.
+; This profile restricts network operations for the launched process.
+(allow default)
+(deny network*)
+(allow network-outbound (remote unix-socket (path-literal (param "BROKER_SOCKET"))))

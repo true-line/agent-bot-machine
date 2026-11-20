@@ -54,6 +54,18 @@ in this plan. The Linux endpoint, launch and egress steps below are separate
 parts of the protected-harness qualification on macOS.
 The disposable macOS acceptance test is `tests/members-apply-macos.test.sh`.
 
+The [Darwin harness egress profile](../../internal/members/darwin/harness-egress.sb)
+implements the per-process policy selected in [platform decision #52](https://github.com/true-line/agent-bot-platform/discussions/52).
+Its unprivileged native fixture checks IPv4 and IPv6 loopback, a second Unix
+socket and a successful request relayed through the designated Unix socket.
+The profile is currently exercised by the fixture only.
+
+For normal launch, the broker socket must come from the admitted harness's
+provisioned account. The production launcher must apply the profile to the
+child running as that account. T03 still needs the same operation exercised
+through packaged HQ with distinct provisioned accounts. Track the design
+and its implementation status in [Platform #96](https://github.com/true-line/agent-bot-platform/pull/96).
+
 ### What is created
 
 For an HQ account `H` and each listed harness credential account `M`:
