@@ -2,9 +2,12 @@ package members
 
 import (
 	"errors"
+	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"testing"
 )
 
@@ -131,4 +134,70 @@ func TestDarwinBrokerDirectoryPublishesExactGroupModeOnce(t *testing.T) {
 	if err != nil || !os.SameFile(st, current) {
 		t.Fatal("lost original directory", err)
 	}
+}
+
+// Check the kernel's inherited group on two successive Unix listeners. The
+// process UID is unchanged; only the directory groups differ.
+func TestDarwinBrokerDirectorySocketRestart(t *testing.T) {
+	groups, err := os.Getgroups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(t *testing.T, gid int) {
+		dir := filepath.Join(t.TempDir(), "broker")
+		pin, err := createProtectedDirectory(dir, os.Getuid(), gid, fileMode(02750))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pin.Close()
+		// A relative leaf avoids Darwin's 103-byte Unix socket path limit
+		// under long per-user test roots.
+		t.Chdir(dir)
+		host := OSHost{}
+		expected, exists, err := host.Lstat(".")
+		group, groupErr := user.LookupGroupId(strconv.Itoa(gid))
+		if err != nil || !exists || groupErr != nil || expected.Group != group.Name || expected.Mode != 02750 {
+			t.Fatal("staged directory metadata", err, groupErr)
+		}
+		for _, cycle := range []string{"start", "restart"} {
+			t.Run(cycle, func(t *testing.T) {
+				step, err := brokerDirectoryStep(host, dir, expected.Owner, group.Name, 02750)
+				if err != nil || step.Action != ActionNone {
+					t.Fatal("reviewed directory was not reusable", err)
+				}
+				const path = "broker.sock"
+				listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := listener.Close(); err != nil {
+						t.Error(err)
+					}
+				})
+				if err := os.Chmod(path, 0660); err != nil {
+					t.Fatal(err)
+				}
+				got, exists, err := host.Lstat(path)
+				if err != nil || !exists || got.Owner != expected.Owner || got.Group != group.Name || got.Mode != 0660 {
+					t.Fatal("socket did not inherit the reviewed ownership and access", err)
+				}
+			})
+			if _, err := os.Lstat("broker.sock"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("stopped listener left an endpoint", err)
+			}
+		}
+	}
+	t.Run("primary", func(t *testing.T) { check(t, os.Getgid()) })
+	t.Run("supplementary", func(t *testing.T) {
+		for _, gid := range groups {
+			if gid != os.Getgid() && gid > 0 {
+				if _, err := user.LookupGroupId(strconv.Itoa(gid)); err == nil {
+					check(t, gid)
+					return
+				}
+			}
+		}
+		t.Skip("no other named group for the current process")
+	})
 }
