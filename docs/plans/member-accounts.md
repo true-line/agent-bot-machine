@@ -560,6 +560,14 @@ service and does not transfer that state or qualify a protected host.
 
 ### macOS HQ LaunchDaemon
 
+Machine ships a native arm64 executable for macOS 15 and later. Run the public
+installer from a native session where `uname -m` reports `arm64`. On the target
+Mac, run `managed-machine daemon --help` and check for `first-hq export PLAN_ID`
+before staging a release for a fresh installation. The
+public v0.12.4 CLI can plan a service but lacks the first-HQ approval command.
+First-time provisioning needs an approved Machine build with the
+[first-HQ transfer](cross-account-channel.md#first-hq-provisioning-on-macos).
+
 A macOS owner can run `managed-machine members plan --hq-service <record.json>`
 and approve/apply its digest through the existing members workflow. The service
 record uses the Linux `release_dir`, `artifact_sha256`, `node` and `node_sha256`
@@ -567,8 +575,14 @@ fields and adds `archive`, the absolute path to the retained approved Darwin
 ustar artifact. Stage the archive, its complete extraction (ending in `/hq`)
 and a standalone Node executable under root-owned, read-only-to-others paths.
 The installer checks each extracted entry, the Node digest, and Mach-O loader
-dependencies. Node must use Apple system libraries. Owner-writable Homebrew
-runtimes are unsuitable. No build tools or downloads run during installation.
+dependencies. The supported macOS service runs natively on Apple Silicon.
+When staging an official Node distribution, choose the approved version's
+`darwin-arm64` tar and verify its archive checksum. Use the SHA-256 of the
+extracted `bin/node` executable for `node_sha256`. A universal executable
+must include an arm64 slice. Each architecture directory entry must match its
+image’s CPU type and subtype. The planner checks every slice for Apple system
+library dependencies. Owner-writable Homebrew runtimes are unsuitable.
+No build tools or downloads run during installation.
 
 Machine creates the system LaunchDaemon `ai.true-line.agent-bot-hq` for
 `_agent-bot-hq`. The verified Darwin archive selects the owner-control
