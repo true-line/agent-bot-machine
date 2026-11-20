@@ -11,6 +11,7 @@ on:
       - 'tests/fixtures/with-keyd-test-keychain.sh'
       - 'tests/members-apply-macos.test.sh'
       - 'tests/fixtures/*darwin-hq*'
+      - 'tests/fixtures/darwin-harness-egress.py'
       - 'tests/fixtures/hq-launchd-install.sh'
       - 'tests/fixtures/hq-launchd-runtime.c'
   push:
@@ -25,6 +26,7 @@ on:
       - 'tests/fixtures/with-keyd-test-keychain.sh'
       - 'tests/members-apply-macos.test.sh'
       - 'tests/fixtures/*darwin-hq*'
+      - 'tests/fixtures/darwin-harness-egress.py'
       - 'tests/fixtures/hq-launchd-install.sh'
       - 'tests/fixtures/hq-launchd-runtime.c'
   workflow_dispatch:

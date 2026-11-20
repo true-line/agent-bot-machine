@@ -75,6 +75,21 @@ accounts, homes, broker directories or their contents.
 
 The account provisioning fixture is `tests/members-apply-macos.test.sh`.
 
+The [Darwin harness egress profile](../../internal/members/darwin/harness-egress.sb)
+implements the per-process policy selected in [platform decision #52](https://github.com/true-line/agent-bot-platform/discussions/52).
+The trusted launcher supplies the admitted account's absolute broker path with
+`-D BROKER_SOCKET=<path>` and the absolute Souls member socket it assigned to
+this launch with `-D MEMBER_SOCKET=<path>`. A broker-only invocation omits
+`MEMBER_SOCKET`. Each grant matches one literal pathname.
+
+The unprivileged native fixture starts two launches in the same directory.
+Each can reach its own member socket and the broker. The sibling launch's
+socket, another Unix socket and direct IPv4/IPv6 loopback all remain denied.
+Only the fixture invokes this profile today. T03 still needs packaged HQ to
+apply it to the child running as its provisioned harness account and verify
+the operation with distinct accounts. Track the design
+and its implementation status in [Platform #96](https://github.com/true-line/agent-bot-platform/pull/96).
+
 ### What is created
 
 For an HQ account `H` and each listed harness credential account `M`:
