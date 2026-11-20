@@ -11,9 +11,14 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+func absentPackageServices() packageObservers {
+	return packageObservers{job: func(int, string, string) ([]byte, bool, error) { return nil, false, nil }, processes: func(int) ([]byte, error) { return nil, nil }}
+}
 
 func TestHomebrewPackageUninstall(t *testing.T) {
 	base, err := os.MkdirTemp("/private/tmp", "abu.")
@@ -105,8 +110,9 @@ esac
 	stops := 0
 	deps := Deps{LockLifecycle: testMacPackageLock, GOOS: "darwin", Caller: func() (Caller, error) { return caller, nil }, Root: func() (string, error) { return home, nil }, Deactivate: func(string) error { stops++; return nil }}
 	t.Setenv(channelEnv, filepath.Join(prefix, "var", "agent-machine"))
+	observe := absentPackageServices()
 	runRemove := func(check func() error) error {
-		return removeMacPackage(deps, core, []string{prefix}, check, func(int, string, string) ([]byte, bool, error) { return nil, false, nil })
+		return removeMacPackage(deps, core, []string{prefix}, check, observe)
 	}
 	if err := runRemove(func() error { return removeHQFirst }); !errors.Is(err, removeHQFirst) || stops != 0 {
 		t.Fatalf("HQ gate: %v; stops=%d", err, stops)
@@ -168,6 +174,23 @@ esac
 			}
 		}
 	}
+	deactivated := false
+	deps.Deactivate = func(string) error { deactivated = true; return nil }
+	observe.job = func(int, string, string) ([]byte, bool, error) {
+		if deactivated {
+			return nil, false, errors.New("fixture launchd observation failed")
+		}
+		return nil, false, nil
+	}
+	if err := runRemove(func() error { return nil }); err == nil || !strings.Contains(err.Error(), "fixture launchd") {
+		t.Fatalf("post-stop observation failure: %v", err)
+	}
+	for _, path := range preserved {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatalf("lost %v on failed post-stop observation", filepath.Base(path))
+		}
+	}
+	observe = absentPackageServices()
 	deps.Deactivate = normalStop
 	put(filepath.Join(prefix, "refuse"), "", 0600)
 	if err := runRemove(func() error { return nil }); err == nil || !strings.Contains(err.Error(), "Homebrew could not remove") {
@@ -203,6 +226,51 @@ func removeObservedTestSocket(path string, uid int, unlinkStopped func(int, stri
 		return err
 	}
 	return removeStoppedPackageSocket(packageLeaf{path: path, info: info}, uid, unlinkStopped)
+}
+
+func TestPackageStopWaitsForDeregistrationAndOriginalProcesses(t *testing.T) {
+	uid := os.Getuid()
+	observe := absentPackageServices()
+	seen := map[string]int{}
+	observe.job = func(id int, domain, label string) ([]byte, bool, error) {
+		if id != uid {
+			t.Fatal("wrong owner")
+		}
+		target := domain + "/" + label
+		seen[target]++
+		return nil, target == "user/"+darwinServiceLabel && seen[target] <= 2, nil
+	}
+	if err := observe.waitForStop(uid, nil, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	for _, label := range []string{darwinServiceLabel, darwinKeydServiceLabel} {
+		for _, domain := range []string{"gui", "user"} {
+			if seen[domain+"/"+label] < 3 {
+				t.Fatal("did not confirm absence on both domains")
+			}
+		}
+	}
+	observe = absentPackageServices()
+	observe.job = func(int, string, string) ([]byte, bool, error) { return nil, true, nil }
+	if err := observe.waitForStop(uid, nil, 0); err == nil {
+		t.Fatal("accepted a continuing registration")
+	}
+	observe = absentPackageServices()
+	if err := observe.waitForStop(uid, []int{os.Getpid()}, 0); err == nil {
+		t.Fatal("declared a recorded living PID stopped")
+	}
+	observe.processes = func(int) ([]byte, error) { return []byte(fmt.Sprintf("%d\n%d\n", os.Getpid(), os.Getpid()+1)), nil }
+	if err := observe.waitForStop(uid, nil, 0); err == nil {
+		t.Fatal("retry ignored a process without a registered job")
+	}
+	observe.processes = func(int) ([]byte, error) { return nil, errors.New("unavailable") }
+	if err := observe.waitForStop(uid, nil, 0); err == nil {
+		t.Fatal("unknown process inventory permitted cleanup")
+	}
+	observe.processes = func(int) ([]byte, error) { return []byte(strconv.Itoa(os.Getpid())), nil }
+	if err := observe.waitForStop(uid, nil, 0); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestStoppedSocketNeedsExclusiveEvidence(t *testing.T) {
@@ -276,7 +344,7 @@ func TestVerifyPackageServicesRequiresKnownFilesAndLiveJobs(t *testing.T) {
 			file := filepath.Join(agents, tc.label+".plist")
 			// launchd may still have the registered job after its plist was removed.
 			job := func(bin string, args []string) []byte {
-				return []byte("path = " + file + "\nprogram = " + bin + "\narguments = {\n" + bin + "\n" + strings.Join(args, "\n") + "\n}\n")
+				return []byte("path = " + file + "\nprogram = " + bin + "\narguments = {\n" + bin + "\n" + strings.Join(args, "\n") + "\n}\n\tpid = 12345\n")
 			}
 			args := tc.args
 			program := tc.program
@@ -289,8 +357,9 @@ func TestVerifyPackageServicesRequiresKnownFilesAndLiveJobs(t *testing.T) {
 				}
 				return nil, false, nil
 			}
-			if _, err := inspectPackageServices(prefix, caller, readJob); err != nil {
-				t.Fatal(err)
+			snapshot, err := inspectPackageServices(prefix, caller, readJob)
+			if err != nil || len(snapshot.pids) != 1 || snapshot.pids[0] != 12345 {
+				t.Fatalf("expected verified original PID: %v", err)
 			}
 			program = "/tmp/unrelated-program"
 			if _, err := inspectPackageServices(prefix, caller, readJob); err == nil {
@@ -424,7 +493,7 @@ func TestPackageStopPreservesChangesDuringUnload(t *testing.T) {
 				return nil
 			}}
 			caller := Caller{UID: os.Getuid(), RegisteredHome: home}
-			err = stopPackageServices(deps, prefix, caller, func(int, string, string) ([]byte, bool, error) { return nil, false, nil })
+			err = stopPackageServices(deps, prefix, caller, absentPackageServices())
 			if !changed || err == nil || !strings.Contains(err.Error(), "changed during unload") {
 				t.Fatalf("expected a changed service refusal, got %v", err)
 			}

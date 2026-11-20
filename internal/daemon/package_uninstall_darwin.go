@@ -25,10 +25,10 @@ func uninstallMacPackage(deps Deps) error {
 	if err != nil {
 		return err
 	}
-	return removeMacPackage(deps, executable, []string{"/opt/homebrew", "/usr/local"}, noSystemHQ, readMachineUserJob)
+	return removeMacPackage(deps, executable, []string{"/opt/homebrew", "/usr/local"}, noSystemHQ, packageObservers{job: readMachineUserJob, processes: darwinCustodyPIDs})
 }
 
-func removeMacPackage(deps Deps, executable string, prefixes []string, checkHQ func() error, readJob func(int, string, string) ([]byte, bool, error)) error {
+func removeMacPackage(deps Deps, executable string, prefixes []string, checkHQ func() error, observe packageObservers) error {
 	caller, err := deps.caller()
 	if err != nil {
 		return err
@@ -64,7 +64,7 @@ func removeMacPackage(deps Deps, executable string, prefixes []string, checkHQ f
 	if err := verifyHomebrewRemovalPrefix(prefix, caller.RegisteredHome); err != nil {
 		return err
 	}
-	if err := stopPackageServices(deps, prefix, caller, readJob); err != nil {
+	if err := stopPackageServices(deps, prefix, caller, observe); err != nil {
 		return err
 	}
 	if err := checkHQ(); err != nil {
@@ -223,14 +223,12 @@ func unlinkQuiescentSocket(fd int, path string, uid int, original unix.Stat_t, p
 	if !samePackageNode(original, before) || before.Mode&unix.S_IFMT != unix.S_IFSOCK || int(before.Uid) != uid || before.Nlink != 1 {
 		return errors.New("preserving changed socket")
 	}
-	pids, err := processes(uid)
+	quiet, err := packageProcessesStopped(uid, processes)
 	if err != nil {
-		return errors.New("could not establish that Machine and keyd have stopped")
+		return err
 	}
-	for _, pid := range strings.Fields(string(pids)) {
-		if pid != strconv.Itoa(os.Getpid()) {
-			return errors.New("another Machine or keyd process still exists; wait for it to stop and retry")
-		}
+	if !quiet {
+		return errors.New("another Machine or keyd process still exists; wait for it to stop and retry")
 	}
 	if err := verifyPackageSocketParent(fd, path, uid); err != nil {
 		return err
@@ -286,8 +284,18 @@ func isPackageProgram(prefix, program string, keyd bool) bool {
 	return filepath.Base(dir) == "bin" && filepath.Dir(version) == filepath.Join(prefix, "Cellar", "managed-machine") && homebrewKegVersion.MatchString(filepath.Base(version))
 }
 
-func inspectPackageServices(prefix string, caller Caller, readJob func(int, string, string) ([]byte, bool, error)) ([]packageLeaf, error) {
-	var plists []packageLeaf
+type packageObservers struct {
+	job       func(int, string, string) ([]byte, bool, error)
+	processes func(int) ([]byte, error)
+}
+
+type packageServiceSnapshot struct {
+	plists []packageLeaf
+	pids   []int
+}
+
+func inspectPackageServices(prefix string, caller Caller, readJob func(int, string, string) ([]byte, bool, error)) (*packageServiceSnapshot, error) {
+	var snapshot packageServiceSnapshot
 	agents := filepath.Join(caller.RegisteredHome, "Library", "LaunchAgents")
 	if info, err := os.Lstat(agents); err == nil {
 		if !info.IsDir() || int(info.Sys().(*syscall.Stat_t).Uid) != caller.UID || info.Mode().Perm()&0022 != 0 {
@@ -330,7 +338,7 @@ func inspectPackageServices(prefix string, caller Caller, readJob func(int, stri
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-		plists = append(plists, leaf)
+		snapshot.plists = append(snapshot.plists, leaf)
 		for _, domain := range []string{"gui", "user"} {
 			job, loaded, err := readJob(caller.UID, domain, label)
 			if err != nil {
@@ -340,6 +348,7 @@ func inspectPackageServices(prefix string, caller Caller, readJob func(int, stri
 				continue
 			}
 			var source, program string
+			var pid int
 			var args []string
 			inArgs := false
 			for _, raw := range strings.Split(string(job), "\n") {
@@ -353,6 +362,13 @@ func inspectPackageServices(prefix string, caller Caller, readJob func(int, stri
 					continue
 				}
 				switch {
+				case strings.HasPrefix(line, "pid = "):
+					rawPID := strings.TrimPrefix(line, "pid = ")
+					n, err := strconv.Atoi(rawPID)
+					if pid != 0 || err != nil || n <= 0 || strconv.Itoa(n) != rawPID {
+						return nil, errors.New("cannot verify the Machine service process ID")
+					}
+					pid = n
 				case line == "arguments = {":
 					inArgs = true
 				case strings.HasPrefix(line, "path = ") && source == "":
@@ -368,12 +384,15 @@ func inspectPackageServices(prefix string, caller Caller, readJob func(int, stri
 			if keyd {
 				want = []string{"serve", "--state-dir", state}
 			}
+			if pid > 0 && !slices.Contains(snapshot.pids, pid) {
+				snapshot.pids = append(snapshot.pids, pid)
+			}
 			if !slices.Equal(args[1:], want) {
 				return nil, errors.New("preserving a loaded Machine service with unrelated arguments")
 			}
 		}
 	}
-	return plists, nil
+	return &snapshot, nil
 }
 
 type packageLeaf struct {
@@ -385,14 +404,15 @@ type packageLeaf struct {
 // Snapshot both unit files and all three endpoint identities before bootout.
 // launchd may unlink an endpoint itself. A replacement, including a new file
 // in a previously absent slot, never acquires the old file's removal authority.
-func stopPackageServices(deps Deps, prefix string, caller Caller, readJob func(int, string, string) ([]byte, bool, error)) error {
+func stopPackageServices(deps Deps, prefix string, caller Caller, observe packageObservers) error {
 	if deps.Deactivate == nil {
 		return errors.New("missing Machine service manager")
 	}
-	leaves, err := inspectPackageServices(prefix, caller, readJob)
+	snapshot, err := inspectPackageServices(prefix, caller, observe.job)
 	if err != nil {
 		return err
 	}
+	leaves := snapshot.plists
 	private := filepath.Join(caller.RegisteredHome, ".local", "state", "agent-bot", "keyd")
 	for _, path := range []string{filepath.Join(prefix, "var", "agent-machine", "daemon.sock"), filepath.Join(private, "keyd.sock"), filepath.Join(private, "owner.sock")} {
 		leaf := packageLeaf{path: path}
@@ -413,6 +433,9 @@ func stopPackageServices(deps Deps, prefix string, caller Caller, readJob func(i
 	machineErr := deps.Deactivate(leaves[0].path)
 	keydErr := deps.Deactivate(leaves[1].path)
 	if err := errors.Join(machineErr, keydErr); err != nil {
+		return err
+	}
+	if err := observe.waitForStop(caller.UID, snapshot.pids, 3*time.Second); err != nil {
 		return err
 	}
 	for i, leaf := range leaves {
@@ -439,6 +462,60 @@ func stopPackageServices(deps Deps, prefix string, caller Caller, readJob func(i
 		}
 	}
 	return nil
+}
+
+// A successful bootout can precede both deregistration and process exit.
+func (observe packageObservers) waitForStop(uid int, pids []int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		draining := false
+		for _, label := range []string{darwinServiceLabel, darwinKeydServiceLabel} {
+			for _, domain := range []string{"gui", "user"} {
+				_, loaded, err := observe.job(uid, domain, label)
+				if err != nil {
+					return err
+				}
+				draining = draining || loaded
+			}
+		}
+		// Signal zero observes the original process. A reused PID also keeps removal pending.
+		for _, pid := range pids {
+			switch err := unix.Kill(pid, 0); {
+			case err == nil:
+				draining = true
+			case !errors.Is(err, unix.ESRCH):
+				return errors.New("cannot establish that the original Machine service process exited")
+			}
+		}
+		if !draining {
+			// On retry, launchd may no longer report a PID. Check the same
+			// fixed owner and executables even if there are no socket files.
+			quiet, err := packageProcessesStopped(uid, observe.processes)
+			if err != nil {
+				return err
+			}
+			if quiet {
+				return nil
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return errors.New("Machine or keyd is still registered or running; wait for shutdown or stop the foreground service and retry uninstall")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func packageProcessesStopped(uid int, processes func(int) ([]byte, error)) (bool, error) {
+	pids, err := processes(uid)
+	if err != nil {
+		return false, errors.New("could not establish that Machine and keyd have stopped")
+	}
+	for _, pid := range strings.Fields(string(pids)) {
+		if pid != strconv.Itoa(os.Getpid()) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (l packageLeaf) unchanged(current os.FileInfo) bool {

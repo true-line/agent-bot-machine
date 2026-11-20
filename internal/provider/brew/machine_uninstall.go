@@ -1,12 +1,14 @@
 package brew
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"time"
 )
 
 const MachineTap = "true-line/agent-bot-machine"
@@ -48,7 +50,9 @@ func exitedWith(err error, code int) bool {
 }
 
 func MachineCustodyPIDs(uid int) ([]byte, error) {
-	cmd := exec.Command("/usr/bin/pgrep", "-u", strconv.Itoa(uid), "-x", "managed-machine|agent-machine|agent-bot-keyd")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "/usr/bin/pgrep", "-u", strconv.Itoa(uid), "-x", "managed-machine|agent-machine|agent-bot-keyd")
 	out, err := cmd.Output()
 	if exitedWith(err, 1) {
 		return nil, nil
@@ -81,7 +85,9 @@ func UninstallMachineFormula(prefix string, env []string) error {
 // ReadMachineUserJob reads current job metadata without logging its environment.
 func ReadMachineUserJob(uid int, domain, label string) ([]byte, bool, error) {
 	target := domain + "/" + strconv.Itoa(uid) + "/" + label
-	out, err := exec.Command("/bin/launchctl", "print", target).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "/bin/launchctl", "print", target).Output()
 	if exitedWith(err, 113) || exitedWith(err, 112) {
 		return nil, false, nil
 	}
