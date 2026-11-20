@@ -26,7 +26,8 @@ export async function exerciseNativeChannel(stage, machine, hq, epoch, expectedT
     for(const [k,v] of Object.entries(JSON.parse(readFileSync(0)))) writeFileSync(join(dir,k),Buffer.from(v,'base64'),{mode:0o600,flag:'wx'});`],
   { cwd:'/', input:JSON.stringify(roleMaterial), stdio:['pipe','ignore','ignore'] });
   requireCheck(setup.status===0);
-  const args = op => ['-n','-H','-u',role,'--','/usr/bin/env','GITHUB_ACTIONS=true',join(stage,'node'),join(stage,'role-check.mjs'),op,socket,epoch];
+  const args = op => ['-n','-H','-u',role,'--','/usr/bin/env','GITHUB_ACTIONS=true',join(stage,'node'),join(stage,'role-check.mjs'),op,socket,epoch,
+    ...(op === 'prove' ? [expectedThumb] : [])];
   const check = op => {
     const r=spawnSync('/usr/bin/sudo',args(op),{cwd:'/',encoding:'utf8',timeout:8000,maxBuffer:2048});
     requireCheck(r.status===0);return r.stdout.trim();
@@ -47,11 +48,15 @@ export async function exerciseNativeChannel(stage, machine, hq, epoch, expectedT
   try {
     check('outage');
     server=await start();
-    requireCheck(check('identity')===expectedThumb && check('prove')===expectedThumb);
+    requireCheck(check('identity')===expectedThumb);
+    const proofIdBefore = check('prove');
+    requireCheck(/^[0-9a-f]{64}$/.test(proofIdBefore));
     await stop(server);server=undefined;
     check('outage');
     server=await start();
     requireCheck(check('identity')===expectedThumb);
+    const proofIdAfter = check('prove');
+    requireCheck(/^[0-9a-f]{64}$/.test(proofIdAfter) && proofIdAfter !== proofIdBefore);
     outstanding=spawn('/usr/bin/sudo',args('deferred'),{cwd:'/',stdio:['pipe','pipe','ignore']});
     const finished=once(outstanding,'exit');
     const [connected]=await once(outstanding.stdout,'data',{signal:AbortSignal.timeout(5000)});
