@@ -190,13 +190,11 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		caller = Caller{}
 	}
 	root, err := deps.root()
+	if err == nil && (verb == "install" || verb == "start" || verb == "pair") {
+		err = checkMachineAdmission()
+	}
 	if err != nil {
 		return serviceFailed(err)
-	}
-	if verb == "install" || verb == "start" || verb == "pair" {
-		if err := checkMachineAdmission(); err != nil {
-			return serviceFailed(err)
-		}
 	}
 	switch verb {
 	case "status":
