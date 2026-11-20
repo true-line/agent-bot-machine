@@ -289,6 +289,13 @@ func removeReviewedHQ(dir string, h uninstallHost, endpoint string, want uninsta
 		if _, e = os.Lstat(endpoint); !errors.Is(e, os.ErrNotExist) {
 			return "", errors.New("preserving an endpoint that appeared after completed removal")
 		}
+		// An interrupted publication may have renamed the receipt before its
+		// directory was synced. Confirm that last step on an explicit retry.
+		if !preview {
+			if e = syncUpgradeDir(dir); e != nil {
+				return "", e
+			}
+		}
 		return "already-uninstalled", nil
 	}
 	if active && plist.Inode == 0 {
@@ -299,6 +306,13 @@ func removeReviewedHQ(dir string, h uninstallHost, endpoint string, want uninsta
 			if _, e = os.Lstat(endpoint); !errors.Is(e, os.ErrNotExist) {
 				return "", errors.New("preserving an unverified endpoint from an absent service")
 			}
+			// Retire this plan even when there are no service resources left.
+			// Its plist bytes may match a later installation of the same release.
+			if !preview {
+				if e = writeUninstallEvidence(donePath, &want, true); e != nil {
+					return "", e
+				}
+			}
 			return "already-absent", nil
 		}
 		stop, e := h.capture(endpoint, pid, active)
@@ -308,7 +322,7 @@ func removeReviewedHQ(dir string, h uninstallHost, endpoint string, want uninsta
 		want.Plist, want.Job, want.Endpoint = plist, active, stop
 		j = &want
 		if !preview {
-			if e = writeUninstallJournal(journal, j, true); e != nil {
+			if e = writeUninstallEvidence(journal, j, true); e != nil {
 				return "", e
 			}
 		}
@@ -350,7 +364,7 @@ func removeReviewedHQ(dir string, h uninstallHost, endpoint string, want uninsta
 			return "", e
 		}
 		j.BootoutAccepted = true
-		if e = writeUninstallJournal(journal, j, false); e != nil {
+		if e = writeUninstallEvidence(journal, j, false); e != nil {
 			return "", e
 		}
 	}
@@ -407,7 +421,7 @@ func removeReviewedHQ(dir string, h uninstallHost, endpoint string, want uninsta
 	return "uninstalled", nil
 }
 
-func writeUninstallJournal(path string, j *uninstallEvidence, exclusive bool) error {
+func writeUninstallEvidence(path string, j *uninstallEvidence, exclusive bool) error {
 	raw, e := json.Marshal(j)
 	if e != nil {
 		return e

@@ -20,8 +20,7 @@ revision="$(git rev-parse HEAD)"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$revision" =~ ^[0-9a-f]{40}$ && "$revision" == "$GITHUB_SHA" ]] || exit 1
 mkdir -p "$work/source" "$work/tap/Formula"
 CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$version" -o "$work/source/managed-machine" ./cmd/managed-machine
-(cd keyd && CARGO_TARGET_DIR="$work/cargo" cargo build --locked --release)
-install -m 0700 "$work/cargo/release/agent-bot-keyd" "$work/source/agent-bot-keyd"
+"$root/scripts/build-darwin-keyd" "$work/source/agent-bot-keyd"
 printf '%s\n' "$revision" > "$work/source/RELEASE_COMMIT"
 archive="$work/managed-machine-$version.tar.gz"
 tar -czf "$archive" -C "$work" source

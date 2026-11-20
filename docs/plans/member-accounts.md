@@ -243,7 +243,10 @@ If Machine cannot establish that the socket is unused, it preserves the
 journal and endpoint for a later retry. A running or
 unidentified replacement, or an occupied endpoint without job provenance,
 requires administrator reconciliation. Repeat the same command to resume an
-interrupted removal or confirm a completed one.
+interrupted removal or confirm a completed one. If the reviewed job, plist
+and endpoint are already absent, an explicit uninstall records completion for
+that plan. Repeating its removal leaves a later installation of the same release intact.
+A dry run leaves the receipt unchanged.
 
 If a crash occurs after the job, process, socket and plist are gone, only
 the root audit record may still need its final directory sync and rename.

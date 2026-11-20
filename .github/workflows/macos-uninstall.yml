@@ -10,6 +10,7 @@ on:
       - 'internal/statedir/**'
       - 'internal/provider/brew/**'
       - 'keyd/**'
+      - 'scripts/build-darwin-keyd'
       - 'tests/fixtures/*homebrew-uninstall*.sh'
       - 'tests/fixtures/homebrew-launch-agents.py'
       - 'tests/fixtures/paired-darwin-hq-*'
@@ -36,8 +37,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Verify removal preserves a socket still open in another process
-        run: go test -v -count=1 -race ./internal/members -run '^TestHQDatagramProbeOfPublishedStream$'
+      - name: Verify HQ uninstall receipts, retries and open socket preservation
+        run: go test -v -count=1 -race ./internal/members -run '^(TestHQUninstall|TestHQDatagramProbeOfPublishedStream$)'
       - name: Qualify the checkout through a disposable local Homebrew tap
         run: |
           sw_vers

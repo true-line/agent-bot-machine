@@ -91,6 +91,58 @@ func TestHQUninstallLocalTransaction(t *testing.T) {
 		}
 	}
 }
+func TestHQUninstallRetiresReceiptForAlreadyAbsentService(t *testing.T) {
+	f := newUninstallFixture(t, false)
+	f.plist = upgradeNodeIdentity{}
+	if result, err := f.run(true); err != nil || result != "already-absent" {
+		t.Fatal(result, err)
+	}
+	if entries, err := os.ReadDir(f.dir); err != nil || len(entries) != 0 {
+		t.Fatal("preview wrote an uninstall record", entries, err)
+	}
+	if err := os.WriteFile(f.endpoint, []byte("unexpected entry"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.run(false); err == nil {
+		t.Fatal("unverified endpoint was accepted")
+	}
+	if err := os.Remove(f.endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(f.dir); err != nil || len(entries) != 0 {
+		t.Fatal("refusal consumed the receipt", entries, err)
+	}
+	if result, err := f.run(false); err != nil || result != "already-absent" {
+		t.Fatal(result, err)
+	}
+	if result, err := f.run(false); err != nil || result != "already-uninstalled" {
+		t.Fatal(result, err)
+	}
+	// The same release is installed again using a new plan. A retry of the
+	// earlier explicit removal must leave that installation alone.
+	f.plist = upgradeNodeIdentity{Inode: 22}
+	f.job, f.pid = true, "125"
+	if _, err := f.run(false); err == nil || f.stops != 0 || f.unlinks != 0 || !f.job {
+		t.Fatal("the old plan acted on the new installation", f.stops, f.unlinks, err)
+	}
+	newID := "plan-20261120T101500Z-beef"
+	entries, err := os.ReadDir(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{f.want.PlanID + ".json", newID + ".json"}
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if got := matchingUninstallPlans(names, func(string) bool { return true }); len(got) != 1 || got[0] != newID {
+		t.Fatal("expected only the new receipt in discovery", got)
+	}
+	f.want.PlanID, f.want.Digest = newID, strings.Repeat("b", 64)
+	if result, err := f.run(false); err != nil || result != "uninstalled" || f.stops != 1 || f.unlinks != 1 {
+		t.Fatal(result, f.stops, f.unlinks, err)
+	}
+}
+
 func TestHQUninstallResumesAndPreservesReplacements(t *testing.T) {
 	for _, change := range []string{"unchanged", "new-pid", "new-plist", "another-plan", "changed-endpoint"} {
 		t.Run(change, func(t *testing.T) {
