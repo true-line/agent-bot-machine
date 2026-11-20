@@ -383,6 +383,9 @@ func TestApplyNeedsAMatchingUnexpiredApproval(t *testing.T) {
 			e.Mode = 0o777
 			w.h.entries[ApprovalsDir(machineDir)] = e
 		}, diag.MembersNotApproved},
+		{"harness consent cannot authorize generic apply", func(w *world) {
+			w.h.files[approval] = strings.Replace(w.h.files[approval], `"plan_id":`, `"purpose":"harness-launch-install","plan_id":`, 1)
+		}, diag.MembersNotApproved},
 		{"approval for another digest", func(w *world) {
 			w.h.files[approval] = strings.Replace(w.h.files[approval], `"plan_digest":"`, `"plan_digest":"0000`, 1)
 		}, diag.MembersNotApproved},
