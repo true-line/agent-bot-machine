@@ -115,6 +115,11 @@ uninstall) test "$HOMEBREW_NO_AUTOREMOVE" = 1 || exit 1
 *) exit 1;;
 esac
 `, 0700)
+	for path, mode := range map[string]os.FileMode{home: 0750, filepath.Join(home, "Library"): 0755} {
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
 	u, err := user.Current()
 	if err != nil {
 		t.Fatal(err)
@@ -274,7 +279,8 @@ esac
 	if err := runRemove(func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{filepath.Join(channel, "daemon.sock"), filepath.Join(private, "keyd.sock"), filepath.Join(private, "owner.sock"), core} {
+	for _, p := range []string{filepath.Join(channel, "daemon.sock"), filepath.Join(private, "keyd.sock"),
+		filepath.Join(private, "owner.sock"), filepath.Join(home, "Library", ".managed-machine-lifecycle.lock"), core} {
 		if _, err := os.Lstat(p); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("left %s: %v", filepath.Base(p), err)
 		}
