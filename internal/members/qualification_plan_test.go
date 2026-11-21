@@ -71,6 +71,52 @@ func TestQualificationRequestAcceptsEmptyArgvAndRequiresSingleClosure(t *testing
 	}
 }
 
+func TestQualificationRequiresCanonicalExecutables(t *testing.T) {
+	for _, bad := range []string{"./candidate", "/a/../candidate"} {
+		r := validQualificationRequest()
+		r.Adapter.Launch.Executable = bad
+		if err := validateQualificationRequest(r); err == nil {
+			t.Fatal("accepted launch executable", bad)
+		}
+		r = validQualificationRequest()
+		r.Adapter.Harness.BinaryPath = bad
+		if err := validateQualificationRequest(r); err == nil {
+			t.Fatal("accepted harness executable", bad)
+		}
+	}
+}
+
+func TestQualificationRechecksProvisionedRole(t *testing.T) {
+	h := emptyHost()
+	const name = "_codex"
+	const uid = 325
+	account := Account{Name: name, Group: name, UID: uid, GID: uid, Home: darwinHarnessHome(name), Shell: DarwinNoLoginShell, DarwinRole: darwinHarnessRoleName}
+	h.entries[account.Home] = Entry{Dir: true, Owner: name, Group: name, Mode: 0700}
+	h.accounts[name] = account
+	if err := checkQualificationRole(name, uid, h); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkQualificationRole(name, uid+1, h); err == nil {
+		t.Fatal("accepted changed UID")
+	}
+	for _, change := range []func(*Account){
+		func(a *Account) { a.Groups = []string{"admin"} },
+		func(a *Account) { a.Shell = "/bin/zsh" },
+	} {
+		changed := account
+		change(&changed)
+		h.accounts[name] = changed
+		if err := checkQualificationRole(name, uid, h); err == nil {
+			t.Fatal("accepted changed account properties")
+		}
+	}
+	h.accounts[name] = account
+	h.entries[account.Home] = Entry{Dir: true, Owner: name, Group: name, Mode: 0755}
+	if err := checkQualificationRole(name, uid, h); err == nil {
+		t.Fatal("accepted a home needing repair")
+	}
+}
+
 func TestQualificationPlanReviewBindsWholeFixedPlan(t *testing.T) {
 	r := validQualificationRequest()
 	run := &QualificationRun{RequestSHA256: strings.Repeat("a", 64), Request: r, MemberState: "disposable", OneUse: true, Gates: []qualificationGate{

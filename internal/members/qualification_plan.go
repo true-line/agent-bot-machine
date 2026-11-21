@@ -190,7 +190,13 @@ func validateQualificationRequest(r QualificationRequest) error {
 			return errors.New("qualification identity fields must be nonempty single-line values of at most 256 bytes")
 		}
 	}
-	files := []qualificationFile{{r.Adapter.PackagePath, r.Adapter.PackageSHA}, {r.Runner.BinaryPath, r.Runner.BinarySHA}, {r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA}}
+	files := []qualificationFile{
+		{r.Adapter.PackagePath, r.Adapter.PackageSHA},
+		{r.Adapter.Launch.Executable, r.Adapter.Launch.ExecutableSHA},
+		{r.Adapter.Harness.BinaryPath, r.Adapter.Harness.BinarySHA},
+		{r.Runner.BinaryPath, r.Runner.BinarySHA},
+		{r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA},
+	}
 	for label, artifact := range map[string]qualificationFile{"code input manifest": r.Adapter.Launch.CodeInputManifest, "driver": r.Adapter.Launch.Driver} {
 		if (artifact.Path == "") != (artifact.SHA256 == "") {
 			return fmt.Errorf("%s must provide both path and digest", label)
@@ -210,7 +216,7 @@ func validateQualificationRequest(r QualificationRequest) error {
 			return errors.New("every qualification artifact needs a clean absolute path and lowercase SHA-256 digest")
 		}
 	}
-	if !qualificationDigest.MatchString(r.Adapter.Harness.BinarySHA) || r.Adapter.Launch.Argv == nil || r.Adapter.Launch.CodeInputs == nil || len(r.Adapter.Launch.Argv) > 128 || (len(r.Adapter.Launch.CodeInputs) == 0) == (r.Adapter.Launch.CodeInputManifest.Path == "") || len(r.Adapter.Launch.CodeInputs) > 2048 {
+	if r.Adapter.Launch.Argv == nil || r.Adapter.Launch.CodeInputs == nil || len(r.Adapter.Launch.Argv) > 128 || (len(r.Adapter.Launch.CodeInputs) == 0) == (r.Adapter.Launch.CodeInputManifest.Path == "") || len(r.Adapter.Launch.CodeInputs) > 2048 {
 		return errors.New("qualification request needs exact harness digest, an argv array, and either code inputs or a code-input manifest")
 	}
 	for _, arg := range r.Adapter.Launch.Argv {
@@ -235,9 +241,8 @@ func validateQualificationRequest(r QualificationRequest) error {
 }
 
 func qualificationRunPlan(raw []byte, r QualificationRequest, h Host) (Plan, *QualificationRun, error) {
-	role, ok, err := h.Account(r.Target.Account)
-	if err != nil || !ok || role.UID != r.Target.UID || role.DarwinRole != darwinHarnessRoleName || role.UID < 300 || role.UID > 399 {
-		return Plan{}, nil, errors.New("qualification target must be the named existing dedicated harness role with its exact UID")
+	if err := checkQualificationRole(r.Target.Account, r.Target.UID, h); err != nil {
+		return Plan{}, nil, err
 	}
 	for _, f := range []qualificationFile{{r.Adapter.PackagePath, r.Adapter.PackageSHA}, {r.Runner.BinaryPath, r.Runner.BinarySHA}, {r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA}} {
 		if err := verifyQualificationFile(f); err != nil {
@@ -275,6 +280,20 @@ func qualificationRunPlan(raw []byte, r QualificationRequest, h Host) (Plan, *Qu
 		return Plan{}, nil, errors.New("qualification plan exceeds the bounded review size")
 	}
 	return p, run, nil
+}
+
+// Qualification cannot repair a changed role. Require the ordinary account
+// planner to confirm the existing role and its private home need no changes.
+func checkQualificationRole(name string, uid int, h Host) error {
+	uids := make(map[int]string)
+	step, err := platformAccountStep(PlatformDarwin, name, h, uids)
+	if err != nil {
+		return err
+	}
+	if uid < 300 || uid > 399 || step.Action != ActionNone || uids[uid] != name {
+		return errors.New("qualification target must be the named existing dedicated harness role with its exact UID")
+	}
+	return nil
 }
 
 func verifyQualificationFile(f qualificationFile) error {
