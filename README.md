@@ -17,6 +17,11 @@ On an Apple Silicon Mac running macOS 15 or later, open Terminal and run the pub
 
 The installer downloads the public package from [true-line/agent-bot-machine](https://github.com/true-line/agent-bot-machine). If Homebrew already belongs to another administrator, macOS asks permission to run Homebrew in that account. A successful install prints a confirmation. The confirmation includes the installed version. Rerun the installer to upgrade Machine from its public tap.
 
+To pair a new HQ with Machine on macOS, the signed-in owner must approve its
+exact Machine challenge. Fresh approvals await a compatible unbundled
+owner-presence provider. Existing pairings continue to use their saved pins.
+See [owner approval for a new HQ pairing](docs/plans/macos-signing.md#owner-approval-for-a-new-hq-pairing).
+
 ### Delivery channels
 
 | Platform | Install method |
@@ -436,7 +441,7 @@ repaired, and setup fails if the check still cannot pass.
 2. Review and merge the version PR. Machine builds the five archives and signs and notarizes the macOS CLI and custody helper at that merge commit.
 3. When CI and signing pass, Machine tags the tested commit and publishes the archives, checksums, platform reports and pinned Homebrew formula. A formula-only PR then updates the tap to the published release.
 
-Manual Sign dispatches, including the owner-presence app, require a deployment review. Operators can use `scripts/release prepare` and `scripts/release tag` for recovery. [Signing and release configuration](docs/plans/macos-signing.md)
+Manual Machine signing dispatches require a deployment review. Operators can use `scripts/release prepare` and `scripts/release tag` for recovery. [Signing and release configuration](docs/plans/macos-signing.md)
 
 ---
 
