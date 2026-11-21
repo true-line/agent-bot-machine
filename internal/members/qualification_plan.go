@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"path"
 	"regexp"
 	"strings"
 )
@@ -206,7 +206,7 @@ func validateQualificationRequest(r QualificationRequest) error {
 		files = append(files, r.Adapter.Launch.Driver)
 	}
 	for _, f := range files {
-		if !filepath.IsAbs(f.Path) || filepath.Clean(f.Path) != f.Path || hasASCIIControl(f.Path) || !qualificationDigest.MatchString(f.SHA256) {
+		if !path.IsAbs(f.Path) || path.Clean(f.Path) != f.Path || hasASCIIControl(f.Path) || !qualificationDigest.MatchString(f.SHA256) {
 			return errors.New("every qualification artifact needs a clean absolute path and lowercase SHA-256 digest")
 		}
 	}
