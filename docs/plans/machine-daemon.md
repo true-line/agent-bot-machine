@@ -457,6 +457,24 @@ sandbox: with only `~/.local` and the state directory writable, brew refused
 the read-only prefix, npm failed with EROFS on `~/.npm`, and uv could not take
 its lock in `~/.cache`.
 
+### macOS package lifecycle coordination
+
+Machine service changes and root-managed HQ apply and removal coordinate
+through the registered administrator's `Library` directory. The per-owner
+`.managed-machine-lifecycle.lock` is a private empty file with one link.
+Machine finishes lifecycle work before removing the verified name and
+closing its kernel lock. A later command can recover an interrupted operation's
+stale lock after its holder exits. Files with changed ownership, permissions
+or identity are preserved and the operation fails closed.
+
+Together with the private file, Machine retains the older Library directory
+lock on layouts where the registered home or Library is private. On a
+group-readable home with a readable Library, the private file provides
+coordination and older lock-aware versions refuse that layout. Keep the
+registered home and Library permissions and paths stable while lifecycle
+operations from different versions are running. Versions before the Library
+lock have no cross-version lifecycle coordination.
+
 ### P3: local channel and signing (managed-machine)
 
 Unix socket (macOS, Linux) and named pipe (Windows), peer identity, Ed25519

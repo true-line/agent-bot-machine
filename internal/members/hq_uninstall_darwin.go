@@ -54,7 +54,7 @@ func uninstallPlan(state, id string, uid uint32) (Plan, error) {
 	return saved.Plan, nil
 }
 
-func uninstallDarwinHQ(owner, state, id string, preview bool) (string, error) {
+func uninstallDarwinHQ(owner, state, id string, preview bool) (result string, err error) {
 	uid, err := uninstallOwnerUID(owner)
 	if err != nil {
 		return "", err
@@ -67,9 +67,12 @@ func uninstallDarwinHQ(owner, state, id string, preview bool) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	defer outer.Close()
+	defer func() {
+		if closeErr := outer.Close(); err == nil {
+			err = closeErr
+		}
+	}()
 	physicalReceipts := filepath.Join("/private", DarwinReceiptsDir)
-	var result string
 	mode := syscall.LOCK_EX
 	if preview {
 		mode = syscall.LOCK_SH

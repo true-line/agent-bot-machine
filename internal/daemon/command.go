@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"strconv"
 
@@ -30,7 +30,7 @@ type Deps struct {
 	Executable    func() (string, error)
 	Caller        func() (Caller, error)
 	Root          func() (string, error)
-	LockLifecycle func(string, int) (*os.File, error)
+	LockLifecycle func(string, int) (io.Closer, error)
 	ReadUserJob   func(int, string, string) ([]byte, bool, error)
 	Activate      func(path string) error
 	Deactivate    func(path string) error
@@ -204,7 +204,11 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		if err != nil {
 			return serviceFailed(err)
 		}
-		defer lock.Close()
+		defer func() {
+			if err := lock.Close(); err != nil && result.Diagnostic == nil {
+				result = serviceFailed(err)
+			}
+		}()
 	}
 	root, err := deps.root()
 	if err == nil && (verb == "install" || verb == "start" || verb == "pair") {

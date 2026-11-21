@@ -15,8 +15,15 @@ func TestDarwinServiceRemovalCoordinatesWithInstall(t *testing.T) {
 	for _, verb := range []string{"stop", "uninstall"} {
 		t.Run(verb, func(t *testing.T) {
 			home := t.TempDir()
+			if err := os.Chmod(home, 0750); err != nil {
+				t.Fatal(err)
+			}
 			t.Setenv(channelEnv, filepath.Join(home, "channel"))
-			if err := os.Mkdir(filepath.Join(home, "Library"), 0700); err != nil {
+			library := filepath.Join(home, "Library")
+			if err := os.Mkdir(library, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(library, 0755); err != nil {
 				t.Fatal(err)
 			}
 			deps := owner(home)
