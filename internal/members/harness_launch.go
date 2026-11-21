@@ -302,8 +302,20 @@ func (s Saved) CanonicalForReview() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.SoulBridgeAccounts != nil || s.Plan.Purpose == SoulBridgeAccountsPurpose || s.Plan.SoulBridges != nil {
+		if s.SoulBridgeAccounts == nil || s.SoulRunnerAccounts != nil || s.HarnessLaunch != nil ||
+			s.HQService != nil || s.UpgradeFrom != nil || s.QualificationRun != nil ||
+			s.Plan.Purpose != SoulBridgeAccountsPurpose || s.Plan.SoulRunners != nil {
+			return nil, errors.New("invalid saved Soul bridge account request")
+		}
+		bridges, accounts, err := validateSoulBridgeAccounts(s.SoulBridgeAccounts)
+		if err != nil || !slices.Equal(bridges, s.Plan.SoulBridges) || !slices.Equal(accounts, s.Plan.Members) {
+			return nil, errors.New("Soul bridge request differs from the canonical plan")
+		}
+		return raw, nil
+	}
 	if s.SoulRunnerAccounts != nil || s.Plan.Purpose == SoulRunnerAccountsPurpose || s.Plan.SoulRunners != nil {
-		if s.SoulRunnerAccounts == nil || s.HarnessLaunch != nil || s.HQService != nil || s.UpgradeFrom != nil || s.QualificationRun != nil || s.Plan.Purpose != SoulRunnerAccountsPurpose {
+		if s.SoulRunnerAccounts == nil || s.SoulBridgeAccounts != nil || s.HarnessLaunch != nil || s.HQService != nil || s.UpgradeFrom != nil || s.QualificationRun != nil || s.Plan.Purpose != SoulRunnerAccountsPurpose {
 			return nil, errors.New("invalid saved Soul runner account request")
 		}
 		runners, accounts, err := validateSoulRunnerAccounts(s.SoulRunnerAccounts)
