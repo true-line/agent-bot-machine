@@ -115,6 +115,9 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if err := json.Unmarshal([]byte(raw), &saved); err != nil || saved.PlanID != planID {
 		return failure(diag.MembersPlanFailed, "the saved plan %s cannot be read", planID)
 	}
+	if saved.QualificationRun != nil || saved.Plan.Purpose == HarnessQualificationPurpose {
+		return failure(diag.MembersNotApproved, "qualification review plans are non-applicable and cannot install or launch a harness")
+	}
 
 	if saved.isHarnessLaunchPlan() {
 		if platform != PlatformDarwin || saved.HarnessLaunch == nil || saved.HQService != nil || saved.UpgradeFrom != nil {
