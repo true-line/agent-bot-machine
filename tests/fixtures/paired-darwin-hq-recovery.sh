@@ -163,8 +163,11 @@ failed_id="$repair_id"
 if (cd "$signer" && sudo "$MM" members apply "$failed_id") > "$signer/failed-apply.log" 2>&1; then
     fail 'the deliberately failing status probe unexpectedly succeeded'
 fi
-grep -Fq MM_MEMBERS_APPLY_FAILED "$signer/failed-apply.log" || fail 'wrong apply failure'
-grep -Fq 'query launched HQ as approved owner: sudo exit status 42' "$signer/failed-apply.log" || fail 'apply did not reach the test owner-status failure'
+if ! grep -Fq MM_MEMBERS_APPLY_FAILED "$signer/failed-apply.log" ||
+   ! grep -Fq 'query launched HQ as approved owner: sudo exit status 42' "$signer/failed-apply.log"; then
+    jq -Rsr -f "$ROOT/tests/fixtures/darwin-hq-apply-diagnostic.jq" "$signer/failed-apply.log" >&2
+    fail 'apply did not reach the test owner-status failure'
+fi
 failed_receipt="$RECEIPTS/$failed_id.json"
 [[ "$(sudo stat -f '%u' "$failed_receipt")" == 0 ]] || fail 'failed receipt is not root-owned'
 sudo jq -e --arg id "$failed_id" --arg digest "$repair_digest" --arg role "$role" --arg step "service $label" '
