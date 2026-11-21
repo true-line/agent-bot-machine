@@ -51,3 +51,32 @@ test('supervisor refuses a skipped outage and a mismatched host claim', async ()
     await assert.rejects(observer.result(), /unexpected T02 observer report/);
   } finally { await observer.abort(); }
 });
+
+test('supervisor cancellation waits for a live observer to handle SIGTERM and close', async () => {
+  const child = stub(`
+    process.once('SIGTERM', () => setTimeout(() => {
+      process.stdout.write('observer stopped', () => process.exit(0));
+    }, 25));
+    console.error('T02:before');
+    setInterval(() => {}, 1000);
+  `);
+  const observer = superviseT02(child, expected, 5_000);
+  let stdout = '';
+  let closed = false;
+  child.stdout.on('data', (data) => { stdout += data; });
+  const closedEvent = new Promise((resolve) => child.once('close', () => { closed = true; resolve(); }));
+  try {
+    await observer.before();
+    // Model an error notification without process exit. Cleanup still needs
+    // to deliver the real termination signal and await stdio closure.
+    child.emit('error', new Error('earlier process error'));
+    assert.equal(child.exitCode, null);
+    await observer.abort();
+    assert.equal(closed, true);
+    assert.equal(child.exitCode, 0);
+    assert.equal(stdout, 'observer stopped');
+  } finally {
+    if (!child.killed && child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+    await closedEvent;
+  }
+});
