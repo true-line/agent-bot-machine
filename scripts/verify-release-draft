@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Resolve pending tags via the CLI, then verify the numeric release and tagged source.
+set -euo pipefail
+[[ $# == 1 || $# == 2 ]] || exit 1
+tag=$1
+release_id="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json databaseId --jq .databaseId)"
+[[ "$release_id" =~ ^[1-9][0-9]*$ ]] || exit 1
+[[ $# == 1 || "$release_id" == "$2" ]] || exit 1
+source_sha="$(git rev-parse HEAD)"
+tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)"
+[[ "$tag_sha" == "$source_sha" ]] || exit 1
+gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" |
+    jq -e --arg id "$release_id" --arg tag "$tag" --arg sha "$source_sha" \
+        '(.id | tostring) == $id and .draft == true and .tag_name == $tag and .target_commitish == $sha and
+         .author.type == "Bot" and .author.id == 41898282' >/dev/null || {
+        echo 'Expected a matching release draft created by GitHub Actions' >&2
+        exit 1
+    }
+printf '%s\n' "$release_id"

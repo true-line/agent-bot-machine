@@ -335,6 +335,12 @@ generic signing or credential fallback is provided.
 
 ### First HQ provisioning on macOS
 
+The administrator prepares a plan. The owner reviews it and returns a
+fresh, purpose-specific proof. For customer qualification on a fresh Mac,
+exercise this transfer with the signed first-enrollment CLI and have Machine
+verify the proof against the independently pinned owner key.
+[Owner proof and packaging](macos-signing.md#owner-approval-for-a-new-hq-pairing)
+
 Before the dedicated `_agent-bot-hq` role exists, the Homebrew prefix
 administrator runs `managed-machine members plan` in their own login. The
 plan can include the existing `--hq-service` option for a verified HQ release.
@@ -344,7 +350,8 @@ it with `managed-machine daemon pair --pin-owner BASE64`.
 
 The administrator exports the saved plan and a two-minute challenge using the
 default JSON Lines output. Each export replaces the previous first-HQ
-challenge. Transfer the resulting file to the signed-in owner's approval app.
+challenge. Transfer the resulting file to the signed-in owner's verified
+[proof provider](macos-signing.md#owner-approval-for-a-new-hq-pairing).
 The owner checks the Machine key, plan identity, digest, and complete account
 and service changes before approving. Transfer the returned JSON proof to the
 administrator. Treat the live proof as an approval until it expires.
@@ -418,7 +425,7 @@ The returned object carries `public_key` (base64 of the X9.63 uncompressed
 P-256 point) and `signature` (base64 of the DER ECDSA signature). Machine checks
 the signature against its independently pinned key and revalidates the saved
 plan, host role and Machine identity before recording consent. This transfer
-requires only local administrator commands and the owner app. The signed HQ
+requires the local administrator and the owner’s unbundled proof provider. The signed HQ
 socket continues to enforce its existing verb restrictions.
 
 ### S6 — HQ account (this repo, D6)

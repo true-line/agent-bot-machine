@@ -58,6 +58,70 @@ for bad in "${pull/chores-dumb/nonrelease}" "${pull/$cut/$pr}" "${pull/release\/
     refuses select_pr <<<"$bad"
 done
 
+# Exercise the actual Sign request before the macOS signing job. Only gh is a
+# fixture: the exact PR ref, checkout history and release-only diff are real.
+(
+    git clone -q --no-local "$tmp/work" "$tmp/sign-work"
+    cd "$tmp/sign-work"
+    workflow="$(dirname "$script")/../.github/workflows/sign.yml"
+    ruby -ryaml -e 'steps = YAML.load_file(ARGV.fetch(0)).fetch("jobs").fetch("request").fetch("steps")
+      print steps.find { |step| step["name"] == "Verify the reviewed Machine request" }.fetch("run")' \
+        "$workflow" > "$tmp/sign-request.sh"
+    mkdir scripts
+    cp "$script" scripts/version-cut.py
+    export GITHUB_REPOSITORY="$repo" GITHUB_REF_PROTECTED=true
+    export SIGN_PULL="$pull"
+    approved_reviews() { jq -cn --arg head "$1" '[[{id:1,user:{id:1},state:"APPROVED",commit_id:$head}]]'; }
+    export SIGN_REVIEWS
+    SIGN_REVIEWS="$(approved_reviews "$pr")"
+    gh() {
+        : > "$SIGN_API_CALLED"
+        case "${*: -1}" in
+            */pulls\?*) jq -cn --argjson pull "$SIGN_PULL" '[$pull]' ;;
+            */reviews\?*) printf '%s\n' "$SIGN_REVIEWS" ;;
+            *) return 1 ;;
+        esac
+    }
+    export SIGN_API_CALLED="$tmp/sign-api-called"
+    export -f gh
+    git push -q origin "$pr:refs/pull/21/head"
+    bash "$tmp/sign-request.sh"
+
+    refuses_request() {
+        if bash "$tmp/sign-request.sh" > "$tmp/refusal" 2>&1; then
+            echo "Sign accepted an ineligible release request" >&2; exit 1
+        fi
+        grep -Fq "$1" "$tmp/refusal" || exit 1
+    }
+    GITHUB_REF_PROTECTED=false refuses_request 'requires a protected main branch'
+    for rejected_pull in '[]' "${pull/$cut/$base}" "${pull/main/other}" "${pull/release\/v0.12.0/release\/v0.11.5}"; do
+        SIGN_PULL="$rejected_pull" refuses_request 'expected the merged Machine release PR at the exact cut SHA'
+    done
+    SIGN_REVIEWS="$(approved_reviews "$base")" refuses bash "$tmp/sign-request.sh"
+    SIGN_REVIEWS="$(jq -c '.[0] += [(.[0][0] | .id=2 | .state="CHANGES_REQUESTED")]' <<<"$SIGN_REVIEWS")" \
+        refuses bash "$tmp/sign-request.sh"
+
+    git switch -q --detach "$pr"
+    echo 'A separate source change' >product-source
+    git add product-source && git commit -qm 'Release with unrelated changes'
+    SIGN_HEAD="$(git rev-parse HEAD)"
+    SIGN_REVIEWS="$(approved_reviews "$SIGN_HEAD")"
+    git push -q origin "$SIGN_HEAD:refs/pull/21/head"
+    git switch -q --detach "$base"
+    git merge -q --no-ff --no-edit "$SIGN_HEAD"
+    GITHUB_SHA="$(git rev-parse HEAD)"
+    SIGN_PULL="$(jq -c --arg cut "$GITHUB_SHA" --arg head "$SIGN_HEAD" \
+        '.[0].merge_commit_sha=$cut | .[0].head.sha=$head' <<<"$pull")"
+    refuses_request 'a version PR may only bump VERSION and its skill metadata'
+
+    # A merge with no version change must stop before looking up a release PR.
+    git commit -q --allow-empty -m 'Unrelated change'
+    GITHUB_SHA="$(git rev-parse HEAD)"
+    rm "$SIGN_API_CALLED"
+    refuses bash "$tmp/sign-request.sh"
+    test ! -e "$SIGN_API_CALLED" || exit 1
+)
+
 # Another main commit with unchanged release intent cannot redirect the tag.
 echo docs >notes
 git add notes && git commit -qm docs
@@ -120,5 +184,8 @@ STUB
 chmod +x "$tmp/bin/go"
 export CHECK_VERIFIER_CWD="$tmp/verifier-cwd"
 refuses env PATH="$tmp/bin:$PATH" "$root/scripts/release" render v0.12.0 "$tmp/unsigned" "$tmp/signed"
-[[ "$(cat "$CHECK_VERIFIER_CWD")" == "$root" ]]
+[[ -f "$CHECK_VERIFIER_CWD" && "$(cat "$CHECK_VERIFIER_CWD")" == "$root" ]] || {
+    echo 'Renderer did not run the verifier in the trusted checkout' >&2
+    exit 1
+}
 echo 'version-cut tests passed'

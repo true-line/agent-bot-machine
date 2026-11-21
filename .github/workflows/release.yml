@@ -20,10 +20,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
 env:
   GOTOOLCHAIN: local
   CGO_ENABLED: '0'
@@ -63,8 +59,11 @@ jobs:
       formula_digest: ${{ steps.render.outputs.formula_digest }}
     needs: gates
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 15
+    concurrency:
+      group: release-publish-${{ inputs.tag || github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: write
     defaults:
@@ -123,16 +122,21 @@ jobs:
           fi
           git tag --points-at HEAD | grep -qxF "$TAG"
           go run ./cmd/mm-release verify -dist dist
+      - name: Identify the signed draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(cat VERSION)"
+          release_id="$(bash scripts/verify-release-draft "$TAG")"
+          echo "RELEASE_ID=$release_id" >> "$GITHUB_ENV"
       - name: Download the signed draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$(cat VERSION)"
-          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "true" ]; then
-            echo "Error: $TAG has no draft release; run scripts/release prepare $TAG first" >&2
-            exit 1
-          fi
           gh release download "$TAG" --dir signed --pattern 'managed-machine_*' --pattern SHA256SUMS
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" |
+            python3 scripts/verify-public-draft.py downloaded "${TAG#v}" "$RUNNER_TEMP/public-assets.json"
       - name: Render the Homebrew pin from the verified signed archive
         id: render
         run: |
@@ -147,11 +151,20 @@ jobs:
           echo "formula_digest=$(shasum -a 256 Formula/managed-machine.rb | awk '{print $1}')" >> "$GITHUB_OUTPUT"
       - name: Verify the signed dist against the deterministic build and the formula pin
         run: go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -require-keyd -formula Formula/managed-machine.rb -require-pin
+          -darwin-gate release-gate-darwin-arm64.json -source-revision "$GITHUB_SHA" >> support-matrix.md
+      - name: Verify both public publishers in the downloaded Darwin archive
+        run: bash scripts/verify-public-darwin-publisher --archive "signed/managed-machine_$(cat VERSION)_darwin_arm64.tar.gz"
       - name: Publish the signed draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$(cat VERSION)"
+          check_draft() {
+            bash scripts/verify-release-draft "$TAG" "$RELEASE_ID" >/dev/null
+          }
+          check_draft
           gh release upload "$TAG" support-matrix.md release-gate-*.json Formula/managed-machine.rb --clobber
-          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body >notes.md
-          gh release edit "$TAG" --draft=false --verify-tag --title "$TAG" --notes-file notes.md
+          check_draft
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" |
+            python3 scripts/verify-public-draft.py publish "${TAG#v}" "$RUNNER_TEMP/public-assets.json" > "$RUNNER_TEMP/public-release-notes.md"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -f name="$TAG" -F "body=@$RUNNER_TEMP/public-release-notes.md" --silent

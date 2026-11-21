@@ -20,6 +20,10 @@ type workflowDoc struct {
 }
 
 type workflowJob struct {
+	Concurrency struct {
+		Group  string `yaml:"group"`
+		Cancel bool   `yaml:"cancel-in-progress"`
+	} `yaml:"concurrency"`
 	Name        string            `yaml:"name"`
 	Uses        string            `yaml:"uses"`
 	Needs       any               `yaml:"needs"`
@@ -87,7 +91,7 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		var allowed int
 		switch e.Name() {
 		case "sign.yml":
-			allowed = 6 // TestSignWorkflowContract checks each reference and its location.
+			allowed = 5 // TestSignWorkflowContract checks each reference and its location.
 		case "version-cut.yml", "prepare-release.yml":
 			var doc workflowDoc
 			if err := tree.Decode(&doc); err != nil {
@@ -249,8 +253,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	if pubJob.Needs != "gates" {
 		t.Errorf("publish.needs = %v, want gates", pubJob.Needs)
 	}
-	if pubJob.RunsOn != "ubuntu-24.04" {
-		t.Errorf("publish.runs-on = %q, want ubuntu-24.04", pubJob.RunsOn)
+	if pubJob.RunsOn != "macos-15" {
+		t.Errorf("publish.runs-on = %q, want macos-15", pubJob.RunsOn)
 	}
 	if len(pubJob.Permissions) != 1 || pubJob.Permissions["contents"] != "write" {
 		t.Errorf("publish.permissions = %v, want {contents: write}", pubJob.Permissions)
@@ -267,16 +271,18 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	}
 
 	var (
-		sawCheckout       bool
-		sawDistDownload   bool
-		sawGateDownload   bool
-		sawMatrix         bool
-		sawTagVerifyStep  bool
-		sawSignedVerify   bool
-		sawPublishedDraft bool
+		sawCheckout        bool
+		sawDistDownload    bool
+		sawGateDownload    bool
+		sawMatrix          bool
+		sawTagVerifyStep   bool
+		sawSignedVerify    bool
+		sawDraftSnapshot   bool
+		sawPublicPublisher bool
+		sawPublishedDraft  bool
 	)
 	const wantSignedVerify = `go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -require-keyd -formula Formula/managed-machine.rb -require-pin`
-	const wantPublish = `gh release edit "$TAG" --draft=false --verify-tag`
+	const wantPublish = `gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false`
 	for i, step := range pubJob.Steps {
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
 			sawCheckout = true
@@ -299,10 +305,32 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 			strings.Contains(step.Run, "mm-release verify -dist dist") {
 			sawTagVerifyStep = true
 		}
+		if strings.Contains(step.Run, "verify-public-draft.py downloaded") {
+			sawDraftSnapshot = true
+		}
+		if strings.Contains(step.Run, "verify-public-darwin-publisher --archive") {
+			if !sawSignedVerify || !sawDraftSnapshot {
+				t.Fatal("public publisher check must use the downloaded, verified release")
+			}
+			sawPublicPublisher = true
+		}
 		if strings.Contains(step.Run, wantSignedVerify) {
 			sawSignedVerify = true
+			if !strings.Contains(step.Run, `-darwin-gate release-gate-darwin-arm64.json -source-revision "$GITHUB_SHA" >> support-matrix.md`) {
+				t.Errorf("signed distribution verification must link the native gate to the published download in the support matrix")
+			}
+		}
+		if strings.Contains(step.Run, "generate-notes") {
+			t.Fatal("public release notes must come from validated release data")
 		}
 		if strings.Contains(step.Run, wantPublish) {
+			check := strings.Index(step.Run, `verify-public-draft.py publish "${TAG#v}" "$RUNNER_TEMP/public-assets.json" > "$RUNNER_TEMP/public-release-notes.md"`)
+			if !strings.Contains(step.Run, wantPublish+` -f name="$TAG" -F "body=@$RUNNER_TEMP/public-release-notes.md"`) {
+				t.Fatal("publish must attach the release notes from the final asset verification")
+			}
+			if !sawPublicPublisher || check < 0 || check >= strings.Index(step.Run, wantPublish) {
+				t.Fatal("publishing requires the embedded public publishers and current draft inventory")
+			}
 			sawPublishedDraft = true
 			if step.Env["GH_TOKEN"] != "${{ github.token }}" {
 				t.Errorf("publish step GH_TOKEN = %q, want ${{ github.token }}", step.Env["GH_TOKEN"])
@@ -330,8 +358,124 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	}
 }
 
+// Exercise the real draft checks with disposable CLI responses. GitHub's
+// pending-tag lookup can succeed when the REST published-tag route returns 404.
+func TestPendingReleaseDraftLookup(t *testing.T) {
+	for _, tool := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s unavailable", tool)
+		}
+	}
+	root, err := findRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc workflowDoc
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	job := doc.Jobs["publish"]
+	if job.Concurrency.Group != "release-publish-${{ inputs.tag || github.ref_name }}" || job.Concurrency.Cancel {
+		t.Fatal("manual and pushed publishes must serialize by release tag")
+	}
+	steps := map[string]string{}
+	for _, item := range job.Steps {
+		steps[item.Name] = item.Run
+	}
+	const lookup = "Identify the signed draft"
+	const publish = "Publish the signed draft"
+	for _, name := range []string{lookup, publish} {
+		if steps[name] == "" {
+			t.Fatalf("missing step %s", name)
+		}
+	}
+	const gh = `#!/bin/bash
+set -eu
+case "$*" in
+	'release view v1.2.3 --repo org/project --json databaseId --jq .databaseId')
+		test "$LOOKUP" != missing || exit 1
+		echo "$LOOKUP" ;;
+	'api repos/org/project/commits/v1.2.3 --jq .sha') echo "$TAG_SHA" ;;
+	'api repos/org/project/releases/37')
+		if [[ -e uploaded ]]; then touch rechecked; echo '{"draft":false}'
+		else echo "$RECORD"; fi ;;
+	'release upload v1.2.3 '*) touch uploaded ;;
+	*) exit 1 ;;
+esac
+`
+	const draft = `{"id":37,"draft":true,"tag_name":"v1.2.3","target_commitish":"reviewed-source","author":{"id":41898282,"type":"Bot"}}`
+	for _, tc := range []struct {
+		name, step, lookup, record, tagSHA string
+		valid, upload                      bool
+	}{
+		{"pending draft", lookup, "37", draft, "reviewed-source", true, false},
+		{"no draft found", lookup, "missing", draft, "reviewed-source", false, false},
+		{"invalid release ID", lookup, "0", draft, "reviewed-source", false, false},
+		{"different release", lookup, "37", strings.Replace(draft, "37", "38", 1), "reviewed-source", false, false},
+		{"already published", lookup, "37", strings.Replace(draft, "true", "false", 1), "reviewed-source", false, false},
+		{"human draft author", lookup, "37", strings.Replace(draft, `"Bot"`, `"User"`, 1), "reviewed-source", false, false},
+		{"other bot author", lookup, "37", strings.Replace(draft, "41898282", "1000", 1), "reviewed-source", false, false},
+		{"absent author on retry", publish, "37", strings.Replace(draft, `"author"`, `"other"`, 1), "reviewed-source", false, false},
+		{"different tag", lookup, "37", strings.Replace(draft, "1.2.3", "1.2.4", 1), "reviewed-source", false, false},
+		{"different source", lookup, "37", strings.Replace(draft, "reviewed-source", "other-source", 1), "reviewed-source", false, false},
+		{"published before upload", publish, "37", strings.Replace(draft, "true", "false", 1), "reviewed-source", false, false},
+		{"replaced before upload", publish, "38", draft, "reviewed-source", false, false},
+		{"tag moved before upload", publish, "37", draft, "other-source", false, false},
+		{"published after upload", publish, "37", draft, "reviewed-source", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, "scripts"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			guard, err := os.ReadFile(filepath.Join(root, "scripts", "verify-release-draft"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, body := range map[string]string{
+				"scripts/verify-release-draft": string(guard), "VERSION": "1.2.3\n", "gh": gh, "git": "#!/bin/bash\ntest \"$*\" = 'rev-parse HEAD' && echo reviewed-source\n",
+			} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			envFile := filepath.Join(dir, "github-env")
+			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", steps[tc.step])
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"GITHUB_ENV="+envFile, "GITHUB_REPOSITORY=org/project", "RELEASE_ID=37", "RUNNER_TEMP="+dir,
+				"LOOKUP="+tc.lookup, "RECORD="+tc.record, "TAG_SHA="+tc.tagSHA)
+			output, err := cmd.CombinedOutput()
+			if (err == nil) != tc.valid {
+				t.Fatalf("success = %t, want %t: %s", err == nil, tc.valid, output)
+			}
+			_, err = os.Stat(filepath.Join(dir, "uploaded"))
+			if (err == nil) != tc.upload {
+				t.Fatalf("metadata upload = %t, want %t", err == nil, tc.upload)
+			}
+			if tc.upload {
+				if _, err := os.Stat(filepath.Join(dir, "rechecked")); err != nil {
+					t.Fatal("published draft was not rechecked after upload")
+				}
+			}
+			body, err := os.ReadFile(envFile)
+			if tc.valid {
+				if err != nil || string(body) != "RELEASE_ID=37\n" {
+					t.Fatalf("unexpected workflow output %q: %v", body, err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("refused step exported %q (%v)", body, err)
+			}
+		})
+	}
+}
+
 // TestSignWorkflowContract pins the main-only jobs and both signing paths.
-// Only the signer in release reads the six distribution secrets.
+// Only the signer in release reads the five distribution secrets.
 func TestSignWorkflowContract(t *testing.T) {
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -351,6 +495,11 @@ func TestSignWorkflowContract(t *testing.T) {
 	}
 	if len(doc.On) != 2 || doc.On["workflow_dispatch"] == nil || !reflect.DeepEqual(doc.On["push"], push) {
 		t.Errorf("sign.yml triggers = %v, want dispatch or a release request on main", doc.On)
+	}
+	dispatch, _ := doc.On["workflow_dispatch"].(map[string]any)
+	inputs, _ := dispatch["inputs"].(map[string]any)
+	if len(inputs) != 1 || inputs["version"] == nil {
+		t.Fatalf("manual Machine signing takes only a release version, got %v", inputs)
 	}
 	if len(doc.Permissions) != 1 || doc.Permissions["contents"] != "read" {
 		t.Errorf("sign.yml top-level permissions = %v, want {contents: read}", doc.Permissions)
@@ -384,11 +533,24 @@ func TestSignWorkflowContract(t *testing.T) {
 		t.Errorf("sign.permissions = %v, want {contents: write}", job.Permissions)
 	}
 	allowed := map[string]bool{
-		"MACOS_DEVID_P12": true, "MACOS_DEVID_P12_PASSWORD": true, "MACOS_PROVISION_PROFILE": true,
+		"MACOS_DEVID_P12": true, "MACOS_DEVID_P12_PASSWORD": true,
 		"NOTARY_KEY_P8": true, "NOTARY_KEY_ID": true, "NOTARY_ISSUER_ID": true,
 	}
+	configured, publicSigned := false, false
 	seen := map[string]bool{}
 	for i, step := range job.Steps {
+		if strings.Contains(step.Run, "verify-public-darwin-publisher --configured") {
+			configured = true
+		}
+		if strings.Contains(step.Run, "scripts/sign-darwin --public-release") {
+			if !configured {
+				t.Fatal("release signing must check publisher configuration first")
+			}
+			publicSigned = true
+		}
+		if strings.Contains(step.Run, "gh release upload") && !publicSigned {
+			t.Fatal("draft asset upload requires public publisher validation")
+		}
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
 			if v, ok := step.With["persist-credentials"]; !ok || v != false {
 				t.Errorf("sign step %d checkout persist-credentials = %v, want false", i+1, v)
@@ -402,9 +564,6 @@ func TestSignWorkflowContract(t *testing.T) {
 				continue
 			}
 			name := strings.TrimSuffix(strings.TrimPrefix(v, "${{ secrets."), " }}")
-			if name == "MACOS_PROVISION_PROFILE" && step.If != "inputs.artifact == 'owner-presence'" {
-				t.Errorf("sign step %d may read the profile on a Machine CLI release", i+1)
-			}
 			if !allowed[name] {
 				t.Errorf("sign step %d reads unexpected secret %q", i+1, v)
 			}
@@ -443,8 +602,8 @@ func TestSignWorkflowContract(t *testing.T) {
 	}
 }
 
-// Exercise the actual preflight shell and jq predicates using recorded API
-// response shapes. The fixture accepts only the intended repository endpoints.
+// Exercise manual signing approval against its two expected API endpoints.
+// tests/version-cut.test.sh checks automatic signing against real Git history.
 func TestSignPreflight(t *testing.T) {
 	for _, dependency := range []string{"bash", "jq"} {
 		if _, err := exec.LookPath(dependency); err != nil {
@@ -467,27 +626,19 @@ func TestSignPreflight(t *testing.T) {
 	for _, step := range doc.Jobs["request"].Steps {
 		steps[step.If] = step.Run
 	}
-	const push = "github.event_name == 'push'"
 	const dispatch = "github.event_name == 'workflow_dispatch'"
 	const receipt = "approved deployment"
 	steps[receipt] = doc.Jobs["manual-approval"].Steps[0].Run
 	const fixture = `api_fixture() {
 	case "${!#}" in
-		'repos/org/project/commits/merged/pulls?per_page=100') echo "$PRS" ;;
-		'repos/org/project/pulls/7/files?per_page=100') echo "$FILES" ;;
-		'repos/org/project/pulls/7/reviews?per_page=100') echo "$REVIEWS" ;;
 		'repos/org/project/environments/release-manual') echo "$ENVIRONMENT" ;;
 		'repos/org/project/actions/runs/15/approvals') echo "$APPROVALS" ;;
 		*) return 22 ;;
 	esac
 }
 `
-	const pulls = `PRS=[[{"merged_at":"now","base":{"ref":"main","repo":{"full_name":"org/project"}},"merge_commit_sha":"merged","number":7,"user":{"login":"trueline-chores-dumb[bot]"},"head":{"sha":"head","ref":"release/v0.12.4","repo":{"full_name":"org/project"}}}]]`
-	const reviews = `REVIEWS=[[{"id":1,"user":{"id":42},"state":"APPROVED","commit_id":"head"}]]`
 	defaults := []string{
-		"GITHUB_REPOSITORY=org/project", "GITHUB_SHA=merged", "GITHUB_REF_PROTECTED=true", "GITHUB_RUN_ID=15",
-		pulls, reviews,
-		`FILES=[[{"filename":"VERSION","status":"modified"}]]`,
+		"GITHUB_REPOSITORY=org/project", "GITHUB_RUN_ID=15",
 		`ENVIRONMENT={"protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":42}}]}]}`,
 		`APPROVALS=[{"state":"approved","environments":[{"name":"release-manual"}]}]`,
 	}
@@ -495,14 +646,6 @@ func TestSignPreflight(t *testing.T) {
 		name, step, override string
 		pass                 bool
 	}{
-		{"reviewed push", push, "", true},
-		{"unprotected push", push, "GITHUB_REF_PROTECTED=false", false},
-		{"direct push", push, "PRS=[[]]", false},
-		{"other merge", push, strings.Replace(pulls, `"merge_commit_sha":"merged"`, `"merge_commit_sha":"elsewhere"`, 1), false},
-		{"different PR base", push, strings.Replace(pulls, `"ref":"main"`, `"ref":"other"`, 1), false},
-		{"unrelated PR", push, "FILES=[[]]", false},
-		{"stale approval", push, strings.Replace(reviews, `"commit_id":"head"`, `"commit_id":"old"`, 1), false},
-		{"changes requested later", push, `REVIEWS=[[{"id":1,"user":{"id":42},"state":"APPROVED","commit_id":"head"},{"id":2,"user":{"id":42},"state":"CHANGES_REQUESTED","commit_id":"head"}]]`, false},
 		{"configured manual gate", dispatch, "", true},
 		{"unconfigured environment", dispatch, "ENVIRONMENT={}", false},
 		{"empty reviewer list", dispatch, `ENVIRONMENT={"protection_rules":[{"type":"required_reviewers","reviewers":[]}]}`, false},

@@ -151,6 +151,8 @@ func verifySignedCmd(args []string, stdout io.Writer) error {
 	team := fs.String("team", "", "Developer ID Team ID the signatures must name")
 	formulaPath := fs.String("formula", "", "path to Formula/managed-machine.rb")
 	requireKeyd := fs.Bool("require-keyd", false, "require the custody helper shipped by current Machine releases")
+	gate := fs.String("darwin-gate", "", "native release gate receipt for the published support matrix")
+	revision := fs.String("source-revision", "", "expected full Git revision of the native release gate")
 	requirePin := fs.Bool("require-pin", false, "require the formula's tag, version and core sha256 to match the signed darwin archive")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -207,6 +209,10 @@ func verifySignedCmd(args []string, stdout io.Writer) error {
 		if err := verifyFormula(fp, uVersion, signedSHA); err != nil {
 			return err
 		}
+	}
+	if *gate != "" || *revision != "" {
+		return writeDarwinGateLink(stdout, *gate, *revision, uVersion,
+			uDigests[darwinName], signedSHA, unsignedEntries["managed-machine"], signedEntries["managed-machine"])
 	}
 	fmt.Fprintln(stdout, signedSHA)
 	return nil
