@@ -128,7 +128,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
-      T02_CONFORMANCE_REVISION: 137d22b6d1df1051fab2f1146cec8f5819b5ab13
+      T02_CONFORMANCE_REVISION: 116bf6987f33e3165e6c1067d40a063ccd8b44b9
     strategy:
       fail-fast: false
       matrix:

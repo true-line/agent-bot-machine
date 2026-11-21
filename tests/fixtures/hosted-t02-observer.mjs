@@ -53,6 +53,8 @@ export function superviseT02(child, expected, timeoutMs = 30_000) {
       const report = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (report.scope !== 'T02 paired positive signing observation' || report.outcome !== 'observed'
         || report.host_qualification !== 'not_assessed' || report.hq_commit !== expected.hqCommit
+        || report.hq_archive_sha256 !== expected.archiveSha256 || report.node_version !== expected.nodeVersion
+        || report.hardware_model !== expected.hardwareModel
         || report.platform !== 'darwin' || report.arch !== 'arm64'
         || report.hq_uid !== expected.roleUid || report.machine_socket_uid !== expected.machineUid
         || report.signed_status_state !== 'idle' || report.verified_es256 !== true

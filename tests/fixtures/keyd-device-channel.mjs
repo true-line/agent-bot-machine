@@ -1,6 +1,6 @@
 // Hosted pre-release native acceptance. Only disposable keys cross this test
 // setup; role requests themselves pass through the signed UNIX socket.
-import { spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -65,12 +65,19 @@ function startWarmController(stage, role, thumb) {
 async function startIndependentObserver(stage, role, roleUid) {
   const root = join(stage, 't02-observer');
   const conformanceCommit = readFileSync(join(root, 'conformance-commit'), 'ascii').trim();
-  const hqCommit = JSON.parse(readFileSync(join(root, 'governance/archives.json'), 'utf8')).archives['t02-hq'].commit;
+  const pin = JSON.parse(readFileSync(join(root, 'governance/archives.json'), 'utf8')).archives['t02-hq'];
+  const node = join(stage, 'node');
+  const probe = { encoding: 'utf8', timeout: 5000 };
+  const expected = {
+    hqCommit: pin.commit, archiveSha256: pin.sha256, roleUid, machineUid: process.getuid(),
+    hardwareModel: execFileSync('/usr/sbin/sysctl', ['-n', 'hw.model'], probe).trim(),
+    nodeVersion: execFileSync(node, ['--version'], probe).trim(),
+  };
   const { superviseT02 } = await import('./hosted-t02-observer.mjs');
   const child = spawn('/usr/bin/sudo', ['-n', '-H', '-u', role, '--', '/usr/bin/env', '-i',
-    'PATH=/usr/bin:/bin', join(stage, 'node'), join(root, 'suites/T02-key-boundary/paired-proof.mjs'),
+    'PATH=/usr/bin:/bin', node, join(root, 'suites/T02-key-boundary/paired-proof.mjs'),
     '--verified-cache', join(root, 'cache'), '--disposable', '--checkpoints'], { cwd: '/', stdio: ['ignore', 'pipe', 'pipe'] });
-  return { conformanceCommit, ...superviseT02(child, { hqCommit, roleUid, machineUid: process.getuid() }) };
+  return { conformanceCommit, ...superviseT02(child, expected) };
 }
 
 export async function exerciseNativeChannel(stage, machine, hq, epoch, expectedThumb, roleUid) {
