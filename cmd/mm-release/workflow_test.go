@@ -139,12 +139,22 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 			t.Errorf("go-core.yml job %s has unexpected permissions %v", jobID, job.Permissions)
 		}
 		for i, step := range job.Steps {
+			if strings.Contains(step.Run, "git fetch --tags") {
+				t.Errorf("go-core.yml job %s step %d fetches tags after checkout without persisted credentials", jobID, i+1)
+			}
 			if strings.HasPrefix(step.Uses, "actions/checkout@") {
 				if v, ok := step.With["persist-credentials"]; !ok || v != false {
 					t.Errorf("go-core.yml job %s step %d checkout persist-credentials = %v, want false", jobID, i+1, v)
 				}
 			}
 		}
+	}
+	coreJob, ok := goCore.Jobs["core"]
+	if !ok {
+		t.Fatal("go-core.yml missing core job")
+	}
+	if len(coreJob.Steps) == 0 || !strings.HasPrefix(coreJob.Steps[0].Uses, "actions/checkout@") || coreJob.Steps[0].With["fetch-tags"] != true {
+		t.Error("core job must fetch release tags during checkout")
 	}
 	rgJob, ok := goCore.Jobs["release-gate"]
 	if !ok {
@@ -155,6 +165,9 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	}
 	if rgJob.Needs != "build" {
 		t.Errorf("release-gate.needs = %v, want build", rgJob.Needs)
+	}
+	if len(rgJob.Steps) == 0 || !strings.HasPrefix(rgJob.Steps[0].Uses, "actions/checkout@") || rgJob.Steps[0].With["fetch-depth"] != "${{ matrix.os == 'darwin' && 0 || 1 }}" {
+		t.Error("release-gate must fetch full history and tags on Darwin during checkout")
 	}
 	var sawDistDL, sawRGUpload bool
 	for _, step := range rgJob.Steps {
