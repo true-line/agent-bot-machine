@@ -13,6 +13,7 @@ on:
       - 'tests/fixtures/*darwin-hq*'
       - 'tests/fixtures/darwin-harness-egress.py'
       - 'tests/fixtures/hq-launchd-install.sh'
+      - 'tests/fixtures/harness-transaction/**'
       - 'tests/fixtures/hq-launchd-runtime.c'
   push:
     branches: [main]
@@ -28,6 +29,7 @@ on:
       - 'tests/fixtures/*darwin-hq*'
       - 'tests/fixtures/darwin-harness-egress.py'
       - 'tests/fixtures/hq-launchd-install.sh'
+      - 'tests/fixtures/harness-transaction/**'
       - 'tests/fixtures/hq-launchd-runtime.c'
   workflow_call:
     inputs:
@@ -140,6 +142,32 @@ jobs:
             bash tests/members-apply-macos.test.sh --real-hq
           fi
     if: inputs.formula_qualification != 'package'
+  harness-transaction:
+    name: Paired launch rule and two real harness callers
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install, exercise and retire the reviewed test adapter mapping
+        shell: bash
+        env:
+          MM_MEMBERS_REAL_ACCOUNTS: '1'
+          MM_MEMBERS_RUNNER: ${{ runner.environment }}
+          MM_HQ_PREDECESSOR: harness
+          MM_HARNESS_TRANSACTION: '1'
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          CGO_ENABLED: '0'
+          GOTOOLCHAIN: local
+        run: |
+          command -v gtar >/dev/null || brew install gnu-tar
+          bash tests/members-apply-macos.test.sh --real-hq
   rollback-macos-15:
     if: inputs.formula_qualification != 'custody'
     name: HQ socket rollback on macOS 15
