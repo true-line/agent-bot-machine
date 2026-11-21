@@ -3,6 +3,7 @@
 cleanup_role() {
     local status=$? failed=0
     trap - EXIT
+    if [[ -n "${issuer_pid:-}" ]]; then kill "$issuer_pid" 2>/dev/null || true; wait "$issuer_pid" 2>/dev/null || true; fi
     if "$made_role"; then sudo -n dscl . -delete "/Users/$role" || failed=1; fi
     if "$made_group"; then sudo -n dscl . -delete "/Groups/$role" || failed=1; fi
     if "$made_home"; then sudo -n rm -rf "$role_home" || failed=1; fi
