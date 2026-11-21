@@ -73,6 +73,15 @@ type Policy struct {
 	MaxRevocationAgeSeconds int `json:"max_revocation_age_seconds"`
 }
 
+// VerifiedPolicy can only be obtained by verifying an owner signature against
+// a root supplied by the reviewed Machine release.
+type VerifiedPolicy struct {
+	value    Policy
+	verified bool
+}
+
+func (p VerifiedPolicy) Payload() Policy { return p.value }
+
 func digest(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -242,61 +251,61 @@ func parseTime(s string) (time.Time, error) {
 // VerifyOwnerPolicy checks exact signed bytes against a release-pinned root.
 // highest and acceptedDigest come from the protected persisted policy state.
 // Equal revisions may be reused only with exactly the previously accepted bytes.
-func VerifyOwnerPolicy(envelope []byte, ownerKeyID string, root ed25519.PublicKey, highest uint64, acceptedDigest string, now time.Time) (Policy, error) {
+func VerifyOwnerPolicy(envelope []byte, ownerKeyID string, root ed25519.PublicKey, highest uint64, acceptedDigest string, now time.Time) (VerifiedPolicy, error) {
 	var zero Policy
 	if len(root) != ed25519.PublicKeySize || now.IsZero() {
-		return zero, ErrUnqualified
+		return VerifiedPolicy{}, ErrUnqualified
 	}
 	e, err := parseEnvelope(envelope, PolicyPurpose)
 	if err != nil || e.OwnerKeyID != ownerKeyID {
-		return zero, ErrUnqualified
+		return VerifiedPolicy{}, ErrUnqualified
 	}
 	raw, err := decode(e.PolicyBase64URL, MaxReportBytes)
 	if err != nil || digest(raw) != e.PolicySHA256 {
-		return zero, ErrUnqualified
+		return VerifiedPolicy{}, ErrUnqualified
 	}
 	if _, err = canonicalBytes(raw, MaxReportBytes); err != nil {
-		return zero, err
+		return VerifiedPolicy{}, err
 	}
 	sig, err := decode(e.SignatureBase64URL, ed25519.SignatureSize)
 	if err != nil || len(sig) != ed25519.SignatureSize || !ed25519.Verify(root, preimage(PolicyPurpose, raw), sig) {
-		return zero, ErrUnqualified
+		return VerifiedPolicy{}, ErrUnqualified
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&zero) != nil || zero.Contract != "control/v1" || zero.Kind != "qualification-trust-policy" || zero.OwnerKeyID != ownerKeyID || zero.PolicyRevision < highest || zero.PolicyRevision == 0 || zero.MaxRevocationAgeSeconds != 3600 {
-		return Policy{}, ErrUnqualified
+		return VerifiedPolicy{}, ErrUnqualified
 	}
 	if highest > 0 && zero.PolicyRevision == highest && digest(raw) != acceptedDigest {
-		return Policy{}, ErrUnqualified
+		return VerifiedPolicy{}, ErrUnqualified
 	}
 	issued, e1 := parseTime(zero.IssuedAt)
 	expires, e2 := parseTime(zero.ExpiresAt)
 	snapshot, e3 := parseTime(zero.RevocationSnapshot.UpdatedAt)
 	if e1 != nil || e2 != nil || e3 != nil || issued.After(now) || !expires.After(now) || snapshot.After(now) || now.Sub(snapshot) > MaxRevocationAge || snapshot.Before(issued) {
-		return Policy{}, ErrUnqualified
+		return VerifiedPolicy{}, ErrUnqualified
 	}
 	workflow := zero.ReleaseWorkflow
 	if workflow.Repository != "true-line/soul-adapters" || workflow.ID == "" || !strings.HasPrefix(workflow.WorkflowPath, ".github/workflows/") || !strings.HasSuffix(workflow.WorkflowPath, ".yml") && !strings.HasSuffix(workflow.WorkflowPath, ".yaml") || !validHex(workflow.SourceCommit, 40) || !httpsURL(workflow.OIDCIssuer) || !httpsURL(workflow.CertificateIdentity) || !validSHA(workflow.TrustRootSHA256) || len(zero.EvidenceSigners) == 0 {
-		return Policy{}, ErrUnqualified
+		return VerifiedPolicy{}, ErrUnqualified
 	}
 	seen := map[string]bool{}
 	for _, signer := range zero.EvidenceSigners {
 		if signer.ID == "" || signer.HostID == "" || signer.Algorithm != "ES256" || seen[signer.ID] {
-			return Policy{}, ErrUnqualified
+			return VerifiedPolicy{}, ErrUnqualified
 		}
 		seen[signer.ID] = true
 		der, err := base64.StdEncoding.Strict().DecodeString(signer.PublicKeySPKIDERBase64)
 		if err != nil || base64.StdEncoding.EncodeToString(der) != signer.PublicKeySPKIDERBase64 {
-			return Policy{}, ErrUnqualified
+			return VerifiedPolicy{}, ErrUnqualified
 		}
 		parsed, err := x509.ParsePKIXPublicKey(der)
 		key, ok := parsed.(*ecdsa.PublicKey)
 		if err != nil || !ok || key.Curve.Params().Name != "P-256" {
-			return Policy{}, ErrUnqualified
+			return VerifiedPolicy{}, ErrUnqualified
 		}
 	}
-	return zero, nil
+	return VerifiedPolicy{value: zero, verified: true}, nil
 }
 
 func validHex(s string, n int) bool {
@@ -313,7 +322,11 @@ func httpsURL(s string) bool {
 
 // VerifyHostReport checks exact canonical report bytes and its designated
 // Secure Enclave signature under the already verified owner policy.
-func VerifyHostReport(envelope []byte, policy Policy) ([]byte, error) {
+func VerifyHostReport(envelope []byte, verified VerifiedPolicy) ([]byte, error) {
+	if !verified.verified {
+		return nil, ErrUnqualified
+	}
+	policy := verified.value
 	e, err := parseEnvelope(envelope, HostPurpose)
 	if err != nil {
 		return nil, err
