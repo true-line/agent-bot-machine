@@ -7,7 +7,8 @@ set -euo pipefail
    "$(uname -sm)" == 'Darwin arm64' && "$(id -u)" != 0 && "$(id -u)" == "$(stat -f %u /opt/homebrew)" ]] || exit 1
 root="$(cd "$(dirname "$0")/.." && pwd)"
 temp="$(mktemp -d /private/tmp/mm-custody.XXXXXXXX)"
-trap 'rm -rf "$temp"' EXIT
+issuer_pid=
+trap '[[ -z "$issuer_pid" ]] || kill "$issuer_pid" 2>/dev/null || true; rm -rf "$temp"' EXIT
 chmod 0755 "$temp"
 helper="$temp/agent-bot-keyd"
 t02_source=
@@ -31,6 +32,30 @@ enrollment|--t02-observer)
     [[ "$#" == 1 ]] || exit 1
     mkdir -m 0700 "$temp/issuer"
     node "$root/tests/fixtures/hosted-whoami.mjs" create-issuer "$temp/issuer"
+    # Pin the public HQ source used by the second, bound-client check. Its
+    # loopback issuer has a separate ephemeral key, also trusted only by this
+    # test build of keyd.
+    hq_revision=30a425cd26cdc4e3943dcb71e7f651ff5ebc9d4e
+    git -c init.defaultBranch=main init -q "$temp/hq-source"
+    git -C "$temp/hq-source" -c credential.helper= fetch -q --depth=1 --no-tags https://github.com/true-line/agent-bot-hq.git "$hq_revision"
+    git -C "$temp/hq-source" checkout -q --detach FETCH_HEAD
+    [[ "$(git -C "$temp/hq-source" rev-parse HEAD)" == "$hq_revision" ]] || exit 1
+    chmod -R a+rX "$temp/hq-source"
+    node "$root/tests/fixtures/hq-warm-issuer.mjs" "$temp/hq-source" "$temp" &
+    issuer_pid=$!
+    for ((i=0; i<200; i++)); do
+        kill -0 "$issuer_pid" 2>/dev/null || exit 1
+        [[ -f "$temp/hq-issuer.json" ]] && break
+        sleep 0.05
+    done
+    [[ -f "$temp/hq-issuer.json" ]] && kill -0 "$issuer_pid" 2>/dev/null || exit 1
+    node - "$temp/issuer/server-keys.json" "$temp/hq-issuer.json" <<'JS'
+const fs = require('node:fs');
+const [manifest, config] = process.argv.slice(2);
+const pins = JSON.parse(fs.readFileSync(manifest));
+pins.keys.push(JSON.parse(fs.readFileSync(config)).key);
+fs.writeFileSync(manifest, JSON.stringify(pins), { mode: 0o600 });
+JS
     bash "$root/tests/fixtures/build-native-whoami-keyd.sh" "$temp/whoami-build" "$temp/issuer/server-keys.json"
     install -m 0700 "$temp/whoami-build/target/release/agent-bot-keyd" "$helper"
     install -m 0644 "$root/tests/fixtures/hosted-whoami.mjs" "$temp/hosted-whoami.mjs"
@@ -208,3 +233,12 @@ tar --no-same-owner -xf "$temp/artifact/approved.tar" -C "$temp"
 install -m 0644 "$root/tests/fixtures/packaged-darwin-hq-device.mjs" "$temp/packaged-device.mjs"
 install -m 0644 "$root/tests/fixtures/paired-darwin-hq-device.mjs" "$temp/role-check.mjs"
 MM_NATIVE_WHOAMI_TEST="$whoami_test" bash "$root/tests/fixtures/with-keyd-test-keychain.sh" node "$root/tests/fixtures/keyd-device-native.mjs" "$helper" "$role_uid"
+if (( whoami_test == 1 )); then
+    # The first run has revoked its own disposable pair. A new Keychain and
+    # role channel give the bound HQ client an independent enrollment.
+    sudo -n rm -rf "$role_home/.config"
+    kill -0 "$issuer_pid" 2>/dev/null || exit 1
+    install -m 0644 "$root/tests/fixtures/hq-warm-revoke.mjs" "$temp/hq-warm-revoke.mjs"
+    MM_NATIVE_WHOAMI_TEST=2 bash "$root/tests/fixtures/with-keyd-test-keychain.sh" node "$root/tests/fixtures/keyd-device-native.mjs" "$helper" "$role_uid"
+    kill -0 "$issuer_pid" 2>/dev/null || exit 1
+fi

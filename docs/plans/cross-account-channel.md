@@ -334,6 +334,20 @@ records the observer revision, hardware probe result and boolean outcomes. The r
 contents. A missing Secure Enclave or an unsuccessful probe fails this check.
 The declared operator Mac still requires its own qualification.
 
+The same Darwin job's `--whoami` custody check also runs a separate bound
+HQ-client pass with a fresh disposable Keychain and pairing. It checks out HQ
+at the public commit pinned in `keyd-custody-macos.test.sh`, enrolls through
+HQ's normal Machine signer against a loopback test issuer, and verifies two
+self-lookups: the second reuses the cached access token. After the admin runs
+`daemon revoke-hq`, the same client must clear its token and refuse locally
+without another issuer request. Signed Machine refusals on both sides of that
+call confirm the listener remained available. The test-built native helper
+trusts only disposable fixture issuer keys; production trust is unchanged.
+As in the existing native fixture, a Go test listener substitutes for the
+distribution-signature launcher. This is hosted test evidence, not a signed
+release or physical-host qualification. Rerun the Darwin arm64 job for the
+reviewed Machine revision to replay it.
+
 After publication, a fresh macOS 15 runner downloads the release's attached
 formula, checksum list and Darwin archive from their public URLs. It checks
 the formula and archive against the verified publish job's digests, installs

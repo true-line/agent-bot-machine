@@ -39,6 +39,29 @@ function startPackagedController(stage, role, thumb) {
   };
 }
 
+function startWarmController(stage, role, thumb) {
+  const child = spawn('/usr/bin/sudo', ['-n', '-H', '-u', role, '--', '/usr/bin/env', '-i',
+    'PATH=/usr/bin:/bin', 'GITHUB_ACTIONS=true', 'RUNNER_ENVIRONMENT=github-hosted',
+    join(stage, 'node'), join(stage, 'hq-warm-revoke.mjs'), stage, thumb],
+  { cwd: '/', stdio: ['pipe', 'pipe', 'inherit'] });
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  const closed = new Promise(resolve => { child.once('error', () => resolve(1)); child.once('close', resolve); });
+  child.stdin.on('error', () => {});
+  async function expect(value) {
+    const timer = new AbortController();
+    try {
+      const timeout = pause(30_000, undefined, { signal: timer.signal }).then(() => { throw new Error('HQ warm fixture timed out'); });
+      const line = await Promise.race([lines.next(), timeout]);
+      requireCheck(!line.done && line.value === value);
+    } finally { timer.abort(); }
+  }
+  return {
+    ready: () => expect('warm'),
+    async revoke() { child.stdin.write('revoked\n'); await expect('revoked'); child.stdin.end(); requireCheck(await closed === 0); },
+    async abort() { child.kill(); await closed; },
+  };
+}
+
 async function startIndependentObserver(stage, role, roleUid) {
   const root = join(stage, 't02-observer');
   const conformanceCommit = readFileSync(join(root, 'conformance-commit'), 'ascii').trim();
@@ -84,8 +107,25 @@ export async function exerciseNativeChannel(stage, machine, hq, epoch, expectedT
     const closed=once(child,'exit'); child.kill('SIGTERM'); await closed;
     requireCheck(!existsSync(socket));
   };
-  let server, outstanding, packaged, observer;
+  let server, outstanding, packaged, observer, warm;
   try {
+    if (process.env.MM_NATIVE_WHOAMI_TEST === '2') {
+      server = await start();
+      warm = startWarmController(stage, role, expectedThumb);
+      await warm.ready();
+      const revoke = spawnSync(join(stage, 'managed-machine'), ['daemon', 'revoke-hq'], {
+        cwd: '/', stdio: 'ignore', timeout: 5000,
+      });
+      requireCheck(revoke.status === 0);
+      // A verified signed refusal confirms this is revocation, not a lost
+      // Machine socket, on both sides of the warmed client's request.
+      check('refused');
+      await warm.revoke();
+      check('refused');
+      warm = undefined;
+      console.log('PASS enrolled HQ warmed one native Machine session; admin revoke cleared its token and blocked issuer calls');
+      return;
+    }
     if (process.env.MM_NATIVE_WHOAMI_TEST === '1') {
       server = await start();
       const { startWhoami } = await import('./hosted-whoami.mjs');
@@ -153,6 +193,7 @@ export async function exerciseNativeChannel(stage, machine, hq, epoch, expectedT
   } finally {
     try { await observer?.abort(); }
     finally {
+      await warm?.abort();
       await packaged?.abort();
       if(outstanding)outstanding.kill();
       if(server && server.exitCode===null)await stop(server);
