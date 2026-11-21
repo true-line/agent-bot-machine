@@ -115,6 +115,9 @@ hosted_harness_accounts() (
             [[ "$gid" == "$uid" || ( "$gid" != "$nobody_gid" && " $common_groups " == *" $gid "* ) ]] || fail 'harness has an unreviewed supplementary group'
         done
         [[ "$(sudo stat -f '%u:%g:%Lp' "$home")" == "$uid:$uid:700" ]]
+        (cd / && sudo -n -H -u "$account" /bin/sh -c '
+            test "$HOME" = "$1" && cd "$HOME" && test "$(/usr/bin/id -u)" = "$2"
+        ' verify-home "$home" "$uid") || fail 'harness cannot enter its private home as the reviewed UID'
         [[ "$(dscl . -search /Users PrimaryGroupID "$uid" | awk '{print $1}')" == "$account" ]]
         # Refuse explicit or nested group members. dscl -plist returns an
         # array for each attribute present in the Directory Services record.
