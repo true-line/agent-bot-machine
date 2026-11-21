@@ -2,6 +2,7 @@
 # Exercise the public installer without a network, a real prefix or account changes.
 set -euo pipefail
 host_os="$(uname -s)"
+if [[ "$host_os" == Darwin ]]; then go_bin="$(command -v go)"; fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"
 TEST_DIR="$(cd "$TEST_DIR" && pwd -P)"
@@ -65,7 +66,9 @@ STUB
 cat > "$PREFIX/bin/brew" <<'STUB'
 #!/bin/sh
 set -eu
-[ "$HOMEBREW_NO_AUTO_UPDATE" = 1 ] && [ "$GIT_TERMINAL_PROMPT" = 0 ] || exit 92
+if [ "$*" != --prefix ]; then
+    [ "${HOMEBREW_NO_AUTO_UPDATE:-}" = 1 ] && [ "${GIT_TERMINAL_PROMPT:-}" = 0 ] || exit 92
+fi
 if [ "${BREW_FAIL:-}" = "$1" ]; then exit 13; fi
 record="$PREFIX/var/homebrew/linked/managed-machine"
 case "$*" in
@@ -90,7 +93,12 @@ case "$*" in
      ln -s managed-machine "$keg/agent-machine"
      cp "$keg/managed-machine" "$keg/agent-bot-keyd"
      for name in managed-machine agent-machine agent-bot-keyd; do ln -s "$keg/$name" "$PREFIX/bin/$name"; done ;;
-  "upgrade $FORMULA") echo "$*" >> "$LOG" ;;
+  "upgrade $FORMULA")
+     echo "$*" >> "$LOG"
+     if [ -n "${NEXT_KEG:-}" ]; then
+         rm "$PREFIX/opt/managed-machine"
+         ln -s "$NEXT_KEG" "$PREFIX/opt/managed-machine"
+     fi ;;
   "unlink $FORMULA")
      echo "$*" >> "$LOG"
      test "$record" -ef "$PREFIX/opt/managed-machine"
@@ -151,6 +159,66 @@ RETIRE_RESPONSE=approve bash "$TEST_DIR/install.sh"
 [[ -e "$marker/machine-retired-v1" && ! -e "$marker/declaration-v1" ]]
 cmp "$LOG" "$TEST_DIR/expected"
 [[ ! -e "$AUTH_LOG" ]]
+# Start the real Darwin CLI under its public link. Keep the old keg after
+# Homebrew switches versions so running the wrong setup is observable.
+if [[ "$host_os" == Darwin ]]; then
+    old="$PREFIX/Cellar/managed-machine/old"
+    new="$PREFIX/Cellar/managed-machine/new"
+    opt="$PREFIX/opt/managed-machine"
+    mkdir -p "$(dirname "$old")" "$TEST_DIR/user-home" "$TEST_DIR/other-bin"
+    cp -R "$opt" "$old"
+    cp -R "$opt" "$new"
+    rm "$old/bin/managed-machine"
+    (cd "$ROOT" && "$go_bin" build -buildvcs=false -o "$old/bin/managed-machine" ./cmd/managed-machine)
+    for keg in "$old" "$new"; do
+        legacy="$keg/libexec/legacy"
+        mkdir -p "$legacy/bin" "$legacy/scripts" "$legacy/lib"
+        cp "$ROOT/legacy/bin/managed-machine" "$legacy/bin/"
+        sed "s|/opt/homebrew|$PREFIX|g" "$ROOT/legacy/scripts/update" > "$legacy/scripts/update"
+        chmod +x "$legacy/scripts/update"
+        cp "$TEST_DIR/install.sh" "$keg/libexec/install.sh"
+        touch "$keg/libexec/RELEASE_COMMIT"
+        cat > "$legacy/lib/install.sh" <<'LIB'
+managed_machine_agent_session() { return 1; }
+managed_machine_config_selected() { return 1; }
+LIB
+        printf 'echo "setup resumed in %s"; exit 0\n' "${keg##*/}" > "$legacy/lib/bootstrap.sh"
+    done
+    mv "$opt" "$TEST_DIR/original-keg"
+    ln -s "$old" "$opt"
+    printf '#!/bin/sh\nexit 42\n' > "$TEST_DIR/other-bin/brew"
+    chmod +x "$TEST_DIR/other-bin/brew"
+    run_packaged_update() {
+        HOME="$TEST_DIR/user-home" AGENT_MACHINE_CHANNEL="$TEST_DIR/no-daemon" \
+            NEXT_KEG="$new" PATH="$1" "${2:-$PREFIX/bin/managed-machine}" --update
+    }
+    run_packaged_update "$TEST_DIR/other-bin:$PATH" > "$TEST_DIR/resume"
+    grep -Fxq 'setup resumed in new' "$TEST_DIR/resume"
+
+    # An older keg invoked directly cannot update an unrelated active one.
+    cp "$LOG" "$TEST_DIR/before-mismatch"
+    if run_packaged_update "$PATH" "$old/bin/managed-machine" > "$TEST_DIR/result" 2>&1; then
+        echo 'Inactive updater unexpectedly changed the package' >&2; exit 1
+    fi
+    grep -Fq "outside Homebrew's current Machine keg" "$TEST_DIR/result"
+    cmp "$LOG" "$TEST_DIR/before-mismatch"
+
+    # If the public installer restores a missing Homebrew, it must resume in
+    # that same prefix. Serve only the fixture bootstrap, entirely offline.
+    rm "$opt"
+    ln -s "$old" "$opt"
+    mv "$PREFIX/bin/brew" "$TEST_DIR/saved-brew"
+    cat > "$TEST_DIR/bin/curl" <<'CURL'
+#!/bin/bash
+[[ "${@: -3:1}" == https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh && "${@: -2:1}" == -o ]] || exit 1
+echo 'mv "$PREFIX/../saved-brew" "$PREFIX/bin/brew"' > "${@: -1}"
+CURL
+    chmod +x "$TEST_DIR/bin/curl"
+    run_packaged_update "$PATH" > "$TEST_DIR/resume"
+    grep -Fxq 'setup resumed in new' "$TEST_DIR/resume"
+    rm "$opt" "$TEST_DIR/bin/curl"
+    mv "$TEST_DIR/original-keg" "$opt"
+fi
 # The other account must refresh only public main, and only upgrade Machine.
 /usr/bin/git -C "$UPSTREAM" commit -q --allow-empty -m second
 : > "$LOG"

@@ -132,6 +132,13 @@ run_install() {
         -e 'end run' "#$owner_uid" "$brew_shell" "$TAP" "$REPO_URL" "$FORMULA" "$owner_uid"
 }
 
+# A packaged --update resumes setup in the same Homebrew installation.
+check_update_keg() {
+    if [[ "$packaged_update" == true && ! "$0" -ef "$1/opt/managed-machine/libexec/install.sh" ]]; then
+        die "This updater is outside Homebrew's current Machine keg. Run the public installer."
+    fi
+}
+
 main() {
     [[ $# == 0 || ( $# == 1 && "${1:-}" == --update ) ]] || die "Usage: install.sh [--update]"
     [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || die "Machine's macOS installer requires an Apple Silicon Mac."
@@ -139,7 +146,11 @@ main() {
     major="$(sw_vers -productVersion)"
     [[ "${major%%.*}" =~ ^[0-9]+$ && "${major%%.*}" -ge 15 ]] || die "Machine requires macOS 15 or later."
 
-    local caller_uid owner_uid owner brew prefix installer
+    local caller_uid owner_uid owner brew prefix installer packaged_update=false
+    if [[ "${1:-}" == --update && "${MANAGED_MACHINE_UPDATE_REEXECED:-}" == 1 &&
+          -f "$(dirname "$0")/RELEASE_COMMIT" ]]; then
+        packaged_update=true
+    fi
     caller_uid="$(id -u)"
     [[ "$caller_uid" != 0 ]] || die "Open Terminal as the Homebrew administrator and run the installer without sudo."
     if [[ -x /opt/homebrew/bin/brew ]]; then
@@ -147,6 +158,7 @@ main() {
     elif command -v brew >/dev/null 2>&1; then
         brew="$(command -v brew)"
     else
+        check_update_keg /opt/homebrew
         in_admin_group "$(id -un)" || die "To install Homebrew, run this installer from the administrator account that will own it."
         if [[ -d /opt/homebrew && "$(/usr/bin/stat -f '%u' /opt/homebrew)" != "$caller_uid" ]]; then
             die "Run this installer from the administrator account that owns /opt/homebrew."
@@ -158,6 +170,7 @@ main() {
         brew=/opt/homebrew/bin/brew
     fi
     prefix="$("$brew" --prefix)"
+    check_update_keg "$prefix"
     owner_uid="$(/usr/bin/stat -f '%u' "$prefix")"
     [[ "$owner_uid" =~ ^[0-9]+$ && "$owner_uid" != 0 ]] || die "Homebrew's prefix must be owned by a non-root administrator."
     owner="$(id -nu "$owner_uid")"
