@@ -118,6 +118,18 @@ not accepted by ordinary `members apply` and creates no reusable launch rule.
 Approval consumption, physical host designation, the independent fixed runner,
 and a signed qualification result remain separate work under [#620](https://github.com/true-line/agent-bot-machine/issues/620).
 
+The first executor building block now has an irreversible, root-owned
+qualification claim: it rechecks the paired approval, saved plan, exact local
+artifacts, and dedicated roles under the live-pair guard, then atomically
+publishes a private `started` receipt before any future runner action. A
+concurrent request or retry cannot claim the same plan again. An interrupted
+attempt leaves that spent `started` receipt for inspection; a failed or
+incomplete attempt may add a separate immutable result record. The claim is
+not yet exposed as an execution command. The independent runner's fixed input
+and output protocol, designated-host verification, and purpose-bound
+Machine/keyd evidence signature are still required before candidate execution
+or any protected certification can be enabled.
+
 ## Target
 
 On macOS, `members plan` without an account list retains the HQ-only plan.
