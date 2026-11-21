@@ -128,6 +128,13 @@ For an HQ account `H` and each listed harness credential account `M`:
 | `/etc/systemd/system/agent-bot-hq-members-egress.service` | root, 0644              | Enables the exact approved policy at boot and activates it before the launch rule is installed                                                                                                   |
 | `/etc/sudoers.d/agent-bot-hq-members`       | root, 0440                              | `H` may run commands as the listed `M` accounts and as nothing else. No root, no group target, no `SETENV`. A fixed environment allowlist. Checked with `visudo -c` before it is moved into place |
 
+On macOS, Machine creates a private primary group for each harness account.
+macOS can also report inherited memberships. Use `id -Gn <account>` to
+inspect them. When checking whether an account is dedicated, Machine always
+counts membership in `admin`, `wheel`, `sudo` and the dedicated HQ group.
+A harness account with any of these memberships fails its privacy check.
+The check reports memberships and never removes them.
+
 Refused, never adopted: an `M` that already exists with a shared group, a
 password, extra group memberships or uid 0; an `M` equal to `H`, to the prefix
 owner or to the invoking owner; two distinct account names with one uid.

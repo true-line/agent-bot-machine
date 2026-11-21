@@ -52,6 +52,22 @@ func TestDarwinIDsAndGroups(t *testing.T) {
 	}
 }
 
+func TestDarwinPrivilegedGroupsRemainVisible(t *testing.T) {
+	for _, harnessHome := range []bool{true, false} {
+		for _, name := range []string{"admin", "wheel", "sudo", DarwinHQAccount} {
+			if !darwinReportGroup(name, harnessHome, true) {
+				t.Errorf("omitted %s from account privacy check", name)
+			}
+		}
+		if darwinReportGroup("localaccounts", harnessHome, true) {
+			t.Error("reported ordinary inherited localaccounts membership")
+		}
+		if !darwinReportGroup("custom-team", harnessHome, false) {
+			t.Error("omitted non-inherited group")
+		}
+	}
+}
+
 func TestDarwinRoleRespectsDirectorySearchPolicy(t *testing.T) {
 	old := runOutput
 	t.Cleanup(func() { runOutput = old })
