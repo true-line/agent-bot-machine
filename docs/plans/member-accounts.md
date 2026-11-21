@@ -100,18 +100,19 @@ accounts are refused for a harness plan. Omitting the endpoint directory
 or using a shared HQ config with a Linux broker path preserves the existing
 account-only plan and its digest. On macOS, only the fixed path below opts in.
 
-To stage broker directories, set `harnesses.dir` in the same HQ config to
-`/Library/Application Support/ai.true-line.agent-bot-hq/ipc` and run
-`managed-machine members plan --hq-config <file>`. The dedicated HQ service's
-root-owned v2 runtime directory must already exist. The plan includes the
-`root:wheel` 0755 `ipc` directory and one `_agent-bot-hq:<account>` 2750 child
-per distinct account. HQ creates `broker.sock` inside its account directory.
-The Linux launch rule and egress policy are separate from this operation.
+On a paired Mac, install the dedicated v2 HQ service before enabling harness
+endpoints in its runtime configuration. The service plan creates the root-owned
+runtime directory. HQ checks configured endpoint directories at startup.
 
-The normal `sudo managed-machine members apply <plan-id>` checks the exact
-approved digest again. First-HQ and paired service-recovery proofs cannot
-approve this broader plan. A protected pairing needs an owner approval path
-for harness plans before its operator can apply one.
+Set `harnesses.dir` in the proposed configuration to
+`/Library/Application Support/ai.true-line.agent-bot-hq/ipc` and run
+`managed-machine members plan --harness-account-provision --hq-config <file>`.
+The plan includes the `root:wheel` 0755 `ipc` directory and one
+`_agent-bot-hq:<account>` 2750 child per distinct account. Have the paired HQ
+role export the plan and return the owner's proof with
+`machine harness-account-provision`. The prefix administrator then runs
+`sudo managed-machine members apply <plan-id>`. After apply, HQ can load the
+configuration and bind `broker.sock` in each account's directory.
 
 The harness plan has its own root apply receipt containing its ID and digest.
 Existing directories must match their reviewed metadata. An apply failure
