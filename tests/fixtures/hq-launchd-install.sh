@@ -9,7 +9,7 @@ layout_v2=false
 ! exists "$role" && [[ ! -e "$plist" && ! -L "$plist" && ! -e "$socket" && ! -L "$socket" ]] || fail 'existing HQ installation'
 ! sudo launchctl print "system/$label" >/dev/null 2>&1 || fail 'existing HQ job'
 real_hq=false
-if [[ "${1:-}" == --real-hq ]]; then real_hq=true; fi
+case "${1:-}" in --real-hq|--real-hq-uninstall) real_hq=true ;; esac
 if "$real_hq"; then
     stage="$(sudo mktemp -d /Library/hq-install-ci.XXXXXXXX)"
 else
@@ -29,6 +29,27 @@ trap cleanup_launch EXIT
 sudo chmod 0755 "$stage"
 if [[ -n "${MM_HQ_DEVICE_ARCHIVE:-}" ]]; then
     source "$ROOT/tests/fixtures/stage-darwin-hq-device.sh"
+    stage_signed_device_release
+fi
+if [[ "${MM_HQ_UPGRADE_TEST:-}" == paired ]]; then
+    [[ "$real_hq" == true && "${MM_KEYD_CUSTODY_TEST:-}" == 1 && -z "${MM_HQ_DEVICE_ARCHIVE:-}" ]] || exit 1
+    provider_dir="$stage/upgrade-provider"
+    sudo install -d -o root -g wheel -m 0755 "$provider_dir"
+    # Add two fixture files to the disposable build. No tracked product source
+    # is replaced. A single executable both creates and reads its self-only
+    # Machine Keychain item from first pairing through the upgrade.
+    module="$(cd "$ROOT" && go list -m)"
+    jq -jRs --arg module "$module" 'split("MODULE_PATH") | if length == 2 then join($module) else error("expected one module placeholder") end' \
+        "$ROOT/tests/fixtures/paired-darwin-hq-upgrade-main.go.txt" > "$WORK/hosted-upgrade-main.go"
+    jq -n --arg root "$ROOT" --arg main "$WORK/hosted-upgrade-main.go" '{Replace:{
+        ($root+"/cmd/managed-machine/hosted_upgrade_fixture_darwin.go"):$main,
+        ($root+"/internal/daemon/hosted_upgrade_fixture_darwin.go"):($root+"/tests/fixtures/paired-darwin-hq-upgrade-daemon.go.txt")
+    }}' > "$WORK/upgrade-overlay.json"
+    (cd "$ROOT" && go build -overlay "$WORK/upgrade-overlay.json" -o "$WORK/native-upgrade-test" ./cmd/managed-machine)
+    "$ROOT/scripts/build-darwin-keyd" "$WORK/native-upgrade-keyd"
+    sudo install -o "$ME" -g "$(id -gn)" -m 0700 "$WORK/native-upgrade-keyd" "$provider_dir/agent-bot-keyd"
+    sudo install -o "$ME" -g "$(id -gn)" -m 0700 "$WORK/native-upgrade-test" "$provider_dir/managed-machine"
+    MM="$provider_dir/managed-machine"
 fi
 prepare_native_hq_fixture() {
     local fixture="$1"
@@ -69,7 +90,7 @@ fixture="$WORK/launch-fixture"
 record="$WORK/hq-service.json"
 if "$real_hq"; then
     mkdir "$fixture"
-    bash "$ROOT/tests/fixtures/prepare-real-darwin-hq.sh" "$fixture"
+    bash "$ROOT/tests/fixtures/prepare-real-darwin-hq.sh" "$fixture" "${MM_HQ_PREDECESSOR:-original}"
     install_hq_fixture "$fixture" "$fixture/bin/node" "$stage" "$record" "$fixture/installed.sha256"
     case "$(jq -er '.owner_control_capability // "v1-unmarked"' "$stage/hq/governance/interim-release.json")" in
         v1-unmarked) ;;
@@ -137,6 +158,8 @@ for count in 1 2; do
     id="$(jq -r .plan_id <<<"$row")"
     digest="$(jq -r .plan_digest <<<"$row")"
     if [[ "$count" == 1 ]]; then
+        install_id="$id"
+        install_digest="$digest"
         first_hq_approve "$id" "$digest"
     else
         [[ "$(jq -r .changes <<<"$row")" == 0 ]] || fail 'unexpected reapply change'
@@ -159,9 +182,9 @@ for count in 1 2; do
     fi
     if [[ "$count" == 1 ]]; then
         uid="$(id -u "$role")"
-        [[ "$uid" -ge 300 && "$uid" -le 399 && "$(id -g "$role")" == "$uid" ]]
-        [[ "$(attr "$role" NFSHomeDirectory)" == /var/agent-bot-hq ]]
-        [[ "$(sudo stat -f '%Su %Sg %Lp' /var/agent-bot-hq)" == "$role $role 700" ]]
+        [[ "$uid" -ge 300 && "$uid" -le 399 && "$(id -g "$role")" == "$uid" ]] || exit 1
+        [[ "$(attr "$role" NFSHomeDirectory)" == /var/agent-bot-hq ]] || exit 1
+        [[ "$(sudo stat -f '%Su %Sg %Lp' /var/agent-bot-hq)" == "$role $role 700" ]] || exit 1
         refused MM_MEMBERS_NOT_APPROVED sudo "$MM" members apply "$id"
         refused MM_DAEMON_CALLER_REFUSED "$MM" daemon first-hq export "$id"
     fi
@@ -179,16 +202,42 @@ for count in 1 2; do
                 fail 'separate account did not reach the peer-checked listener'
         fi
     fi
-    [[ "$(sudo stat -f '%Su %Sg %Lp' "$plist")" == 'root wheel 644' ]]
-    [[ "$(sudo stat -f '%Su %Lp' /var/agent-bot-hq/.agent-bot-hq)" == "$role 700" ]]
+    [[ "$(sudo stat -f '%Su %Sg %Lp' "$plist")" == 'root wheel 644' ]] || exit 1
+    [[ "$(sudo stat -f '%Su %Lp' /var/agent-bot-hq/.agent-bot-hq)" == "$role 700" ]] || exit 1
     newpid="$(sudo launchctl print "system/$label" | awk '$1 == "pid" && $2 == "=" {print $3}')"
-    [[ "$newpid" =~ ^[0-9]+$ ]]
+    [[ "$newpid" =~ ^[0-9]+$ ]] || exit 1
     if "$real_hq"; then [[ "$(ps -o uid= -p "$newpid" | tr -d ' ')" == "$(id -u "$role")" ]] || fail 'HQ PID has the wrong account'; fi
     if [[ "$count" == 2 ]]; then [[ "$pid" == "$newpid" ]] || fail 'reapply restarted HQ'; fi
     pid="$newpid"
 done
 if "$real_hq"; then
     ok 'signed first-HQ install served cooperative status; the refused repeat apply preserved its PID'
+    if [[ "$1" == --real-hq-uninstall ]]; then
+        # v0.12.4 wrote the applied receipt without a service lock. Recreate
+        # that directory layout after the disposable install has finished.
+        lock="$RECEIPTS/.hq-launchd.lock"
+        [[ "$(sudo stat -f '%u:%Lp:%z' "$lock")" == '0:600:0' ]] || fail 'unexpected fixture lock'
+        sudo mv "$lock" "$RECEIPTS/.fixture-held-first-install-lock"
+        home_identity="$(sudo stat -f '%d:%i:%u:%g:%Lp' /var/agent-bot-hq)"
+        sudo "$MM" members uninstall-hq --list | jq -e --arg id "$install_id" '.matching_plan_ids == [$id]' >/dev/null
+        sudo "$MM" members uninstall-hq "$install_id" --dry-run | jq -e '.result == "would-uninstall"' >/dev/null
+        if sudo test -e "$lock" || sudo test -L "$lock"; then fail 'list or preview created a lock'; fi
+        [[ "$(sudo launchctl print "system/$label" | awk '$1 == "pid" && $2 == "=" {print $3}')" == "$pid" ]] || fail 'preview changed HQ PID'
+        sudo "$MM" members uninstall-hq "$install_id" | jq -e '.result == "uninstalled"' >/dev/null
+        if sudo launchctl print "system/$label" >/dev/null 2>&1; then
+            fail 'HQ is still registered after uninstall'
+        else
+            [[ "$?" == 113 ]] || fail 'launchd did not confirm HQ absence'
+        fi
+        [[ ! -e "$plist" && ! -L "$plist" && ! -e "$socket" && ! -L "$socket" ]] || fail 'HQ plist or endpoint survived uninstall'
+        [[ "$(id -u "$role")" == "$uid" && "$(sudo stat -f '%d:%i:%u:%g:%Lp' /var/agent-bot-hq)" == "$home_identity" &&
+           -d "$stage/hq" && -x "$stage/node" ]] || fail 'uninstall changed retained account or release data'
+        if "$layout_v2"; then [[ -d "$runtime_dir" && ! -L "$runtime_dir" ]] || fail 'uninstall removed the reviewed runtime directory'; fi
+        sudo jq -e --arg id "$install_id" --arg digest "$install_digest" '.plan_id == $id and .plan_digest == $digest and .result == "applied"' "$RECEIPTS/$install_id.json" >/dev/null
+        sudo "$MM" members uninstall-hq "$install_id" | jq -e '.result == "already-uninstalled"' >/dev/null
+        ok 'receipt-bound uninstall removed the dedicated system HQ job, plist and socket; retained its role, home, release and applied receipt'
+        return 0
+    fi
     # Run in a subshell to own the foreground Machine child independently of launchd cleanup.
     (source "$ROOT/tests/fixtures/paired-darwin-hq-recovery.sh")
 else

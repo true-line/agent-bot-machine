@@ -11,7 +11,7 @@ checkout_review_source() {
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 git -C "$subjects/$name" \
         -c credential.helper= fetch -q --depth=1 --no-tags "https://github.com/true-line/$repo.git" "$sha"
     git -C "$subjects/$name" checkout -q --detach FETCH_HEAD
-    [[ "$(git -C "$subjects/$name" rev-parse HEAD)" == "$sha" ]]
+    [[ "$(git -C "$subjects/$name" rev-parse HEAD)" == "$sha" ]] || exit 1
 }
 checkout_review_source conformance soul-conformance e41baba741bab974fee19acb09b5edb446a3d1f0
 suite="$subjects/conformance/suites/paired-hq-recovery"
@@ -53,7 +53,11 @@ stop_fixture_machine() {
 trap stop_fixture_machine EXIT
 start_fixture_machine() {
     [[ ! -e "$channel" && ! -L "$channel" ]] || fail 'Machine channel already exists'
-    "$MM" daemon run "$@" > "$signer/machine.log" 2>&1 &
+    if [[ -n "${upgrade_test_daemon:-}" ]]; then
+        "$MM" hosted-upgrade-fixture "$machine_pin" > "$signer/machine.log" 2>&1 &
+    else
+        "$MM" daemon run "$@" > "$signer/machine.log" 2>&1 &
+    fi
     machine_pid=$!
     for ((i=0; i<100; i++)); do
         kill -0 "$machine_pid" || fail 'foreground Machine exited before opening the channel'
@@ -89,6 +93,19 @@ paired_status() {
 }
 start_fixture_machine --require-identity "$machine_pin"
 paired_status --daemon-key "$machine_key"
+
+case "${MM_HQ_UPGRADE_TEST:-}" in
+    legacy|paired) source "$ROOT/tests/fixtures/paired-darwin-hq-accounts.sh" ;;
+esac
+
+if [[ "${MM_HQ_UPGRADE_TEST:-}" == paired ]]; then
+    [[ "${MM_KEYD_CUSTODY_TEST:-}" == 1 && "${MM_HQ_PREDECESSOR:-}" == paired && -z "${MM_HQ_DEVICE_ARCHIVE:-}" ]] || exit 1
+    stop_fixture_machine
+    "$provider_dir/agent-bot-keyd" hq-device-init
+    upgrade_test_daemon=true
+    start_fixture_machine --require-identity "$machine_pin"
+    paired_status
+fi
 
 # Remove only the service installed earlier. Keep its role, state and pairs.
 if "$layout_v2"; then runtime_id="$(stat -f '%d:%i' "$runtime_dir")"; fi
@@ -146,8 +163,11 @@ failed_id="$repair_id"
 if (cd "$signer" && sudo "$MM" members apply "$failed_id") > "$signer/failed-apply.log" 2>&1; then
     fail 'the deliberately failing status probe unexpectedly succeeded'
 fi
-grep -Fq MM_MEMBERS_APPLY_FAILED "$signer/failed-apply.log" || fail 'wrong apply failure'
-grep -Fq 'query launched HQ as approved owner: sudo exit status 42' "$signer/failed-apply.log" || fail 'apply did not reach the test owner-status failure'
+if ! grep -Fq MM_MEMBERS_APPLY_FAILED "$signer/failed-apply.log" ||
+   ! grep -Fq 'query launched HQ as approved owner: sudo exit status 42' "$signer/failed-apply.log"; then
+    jq -Rsr -f "$ROOT/tests/fixtures/darwin-hq-apply-diagnostic.jq" "$signer/failed-apply.log" >&2
+    fail 'apply did not reach the test owner-status failure'
+fi
 failed_receipt="$RECEIPTS/$failed_id.json"
 [[ "$(sudo stat -f '%u' "$failed_receipt")" == 0 ]] || fail 'failed receipt is not root-owned'
 sudo jq -e --arg id "$failed_id" --arg digest "$repair_digest" --arg role "$role" --arg step "service $label" '
@@ -189,6 +209,10 @@ paired_status
 repair_pid="$(sudo launchctl print "system/$label" | awk '$1=="pid" && $2=="=" {print $3}')"
 [[ "$repair_pid" =~ ^[1-9][0-9]*$ && "$(ps -o uid= -p "$repair_pid" | tr -d ' ')" == "$(id -u "$role")" ]] || fail 'repaired job is not running as HQ'
 ok 'the existing paired role recovered only its service through a signed owner review and root apply'
+
+if [[ -n "${MM_HQ_UPGRADE_TEST:-}" ]]; then
+    source "$ROOT/tests/fixtures/paired-darwin-hq-upgrade.sh"
+fi
 
 # A requested native release qualification has no software signing alternative.
 if [[ -n "${MM_HQ_DEVICE_ARCHIVE:-}" ]]; then

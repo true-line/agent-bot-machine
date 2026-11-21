@@ -30,6 +30,7 @@ on:
       - 'install-core.ps1'
       - '.github/workflows/go-core.yml'
       - '.github/workflows/sign.yml'
+      - '.github/workflows/release.yml'
       - '.github/workflows/prepare-release.yml'
       - '.github/workflows/version-cut.yml'
       - 'legacy/**'
@@ -80,7 +81,7 @@ jobs:
           fi
           changed="$(git diff --name-only HEAD^1 HEAD)"
           echo "changed files:"; echo "$changed"
-          re='^(cmd/|internal/|keyd/|Formula/|legacy/|scripts/|tests/)|^(go\.mod|go\.sum|install\.sh|install-core\.(sh|ps1)|VERSION|LICENSE|\.github/workflows/(go-core|sign|prepare-release|version-cut)\.yml)$'
+          re='^(cmd/|internal/|keyd/|Formula/|legacy/|scripts/|tests/)|^(go\.mod|go\.sum|install\.sh|install-core\.(sh|ps1)|VERSION|LICENSE|\.github/workflows/(go-core|sign|prepare-release|release|version-cut)\.yml)$'
           if printf '%s\n' "$changed" | grep -Eq "$re"; then go=true; else go=false; fi
           echo "go=$go" >> "$GITHUB_OUTPUT"; echo "go=$go"
 
@@ -180,6 +181,7 @@ jobs:
         run: |
           node --test tests/prepare-release.test.mjs
           bash tests/version-cut.test.sh
+          python3 tests/select-gate-evidence.test.py
       - name: Toolchain matches core/go.mod
         run: |
           want="go$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)"
@@ -190,10 +192,11 @@ jobs:
         if: matrix.os == 'darwin'
         working-directory: keyd
         run: cargo test --locked
-      - name: Verify presence refusals in disposable Keychains
+      - name: Verify grant upgrades and presence refusals in disposable Keychains
         if: matrix.os == 'darwin'
         working-directory: keyd
         run: |
+          cargo test --locked --bin agent-bot-keyd store::tests::grant_key_survives_keg_replacement -- --ignored --exact
           cargo test --locked --bin agent-bot-keyd server::tests::foreign_presence_item_survives_refused_owner_request -- --ignored --exact
           cargo test --locked --bin agent-bot-keyd tests::presence_key_marks_a_readable_item_with_untrusted_access -- --ignored --exact
       - name: Test the public installer and prepared Homebrew formula on macOS
@@ -212,11 +215,19 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test -count=1 ./...
+      - name: Exercise the Darwin harness process egress profile
+        if: matrix.os == 'darwin'
+        run: python3 -I tests/fixtures/darwin-harness-egress.py
       - name: Check custody helper access across macOS accounts
         if: matrix.os == 'darwin'
         env:
           MM_KEYD_CUSTODY_TEST: '1'
         run: bash tests/keyd-custody-macos.test.sh
+      - name: Verify the fixed self-lookup using native admin custody and a disposable role
+        if: matrix.os == 'darwin'
+        env:
+          MM_KEYD_CUSTODY_TEST: '1'
+        run: bash tests/keyd-custody-macos.test.sh --whoami
       - name: Test standalone release notarization verdicts
         if: matrix.os == 'darwin'
         run: |
@@ -267,7 +278,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: walkthrough-${{ matrix.os }}-${{ matrix.arch }}
+          name: walkthrough-${{ matrix.os }}-${{ matrix.arch }}-attempt-${{ github.run_attempt }}
           path: walkthrough-${{ matrix.os }}-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 30
@@ -284,7 +295,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: install-gate-${{ matrix.os }}-${{ matrix.arch }}
+          name: install-gate-${{ matrix.os }}-${{ matrix.arch }}-attempt-${{ github.run_attempt }}
           path: install-gate-${{ matrix.os }}-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 30
@@ -334,7 +345,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: provider-gate-${{ matrix.os }}-${{ matrix.arch }}
+          name: provider-gate-${{ matrix.os }}-${{ matrix.arch }}-attempt-${{ github.run_attempt }}
           path: provider-gate-${{ matrix.os }}-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 30
@@ -348,7 +359,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: config-gate-${{ matrix.os }}-${{ matrix.arch }}
+          name: config-gate-${{ matrix.os }}-${{ matrix.arch }}-attempt-${{ github.run_attempt }}
           path: config-gate-${{ matrix.os }}-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 30
@@ -364,7 +375,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: fleet-gate-${{ matrix.os }}-${{ matrix.arch }}
+          name: fleet-gate-${{ matrix.os }}-${{ matrix.arch }}-attempt-${{ github.run_attempt }}
           path: fleet-gate-${{ matrix.os }}-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 30
@@ -394,10 +405,11 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: walkthrough-*
-          path: evidence
-          merge-multiple: true
+          path: evidence-attempts
+          merge-multiple: false
       - name: Five targets, one revision, identical portable output
         run: |
+          python3 scripts/select-gate-evidence.py evidence-attempts evidence
           go run ./cmd/mm-walkthrough aggregate -source-revision '${{ github.sha }}' evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   s2-gate:
@@ -425,10 +437,11 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: install-gate-*
-          path: evidence
-          merge-multiple: true
+          path: evidence-attempts
+          merge-multiple: false
       - name: Five targets, one revision, real macOS installs
         run: |
+          python3 scripts/select-gate-evidence.py evidence-attempts evidence
           go run ./cmd/mm-walkthrough install-aggregate -source-revision '${{ github.sha }}' evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   s3-gate:
@@ -457,10 +470,11 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: provider-gate-*
-          path: evidence
-          merge-multiple: true
+          path: evidence-attempts
+          merge-multiple: false
       - name: Five targets, one revision, every provider combination
         run: |
+          python3 scripts/select-gate-evidence.py evidence-attempts evidence
           go run ./cmd/mm-walkthrough providers-aggregate -source-revision '${{ github.sha }}' evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   s4-gate:
@@ -488,10 +502,11 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: config-gate-*
-          path: evidence
-          merge-multiple: true
+          path: evidence-attempts
+          merge-multiple: false
       - name: Five targets, one revision, every configuration case
         run: |
+          python3 scripts/select-gate-evidence.py evidence-attempts evidence
           go run ./cmd/mm-walkthrough config-aggregate -source-revision '${{ github.sha }}' evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   s5-gate:
@@ -519,10 +534,11 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: fleet-gate-*
-          path: evidence
-          merge-multiple: true
+          path: evidence-attempts
+          merge-multiple: false
       - name: Five targets, one revision, every fleet case
         run: |
+          python3 scripts/select-gate-evidence.py evidence-attempts evidence
           go run ./cmd/mm-walkthrough fleet-aggregate -source-revision '${{ github.sha }}' evidence/*.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   release-gate:
@@ -616,7 +632,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-gate-${{ matrix.os }}-${{ matrix.arch }}
+          name: release-gate-${{ matrix.os }}-${{ matrix.arch }}-attempt-${{ github.run_attempt }}
           path: release-gate-${{ matrix.os }}-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 30
@@ -653,10 +669,11 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: '*-gate-*'
-          path: evidence
-          merge-multiple: true
+          path: evidence-attempts
+          merge-multiple: false
       - name: Aggregate release gate and generate support matrix
         run: |
+          python3 scripts/select-gate-evidence.py evidence-attempts evidence
           go run ./cmd/mm-walkthrough release-aggregate \
             -source-revision '${{ github.sha }}' \
             -version "$(tr -d '[:space:]' <VERSION)" \

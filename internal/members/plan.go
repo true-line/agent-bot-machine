@@ -45,8 +45,9 @@ const (
 	DarwinNoLoginShell    = "/usr/bin/false"
 	darwinHarnessRoleName = "Agent Bot Harness"
 	darwinHQRoleName      = "Agent Bot HQ"
-	// DarwinDir is the members directory of a macOS plan: there is none.
-	DarwinDir = "none"
+	// DarwinDir preserves account-only macOS plans and their existing digests.
+	DarwinDir       = "none"
+	DarwinBrokerDir = launchRuntimeDir + "/ipc"
 	// PlanVersion is part of the digest: a change to what a plan means
 	// invalidates every approval made before it.
 	PlanVersion = 3
@@ -91,10 +92,14 @@ const (
 
 // Input is what the owner asked for.
 type Input struct {
-	HQService *HQService
-	HQAccount string
-	Dir       string
-	Members   []string
+	HarnessAccounts    bool
+	upgradeObservation *upgradeObservation
+	UpgradeFrom        *priorServicePlan
+	HarnessLaunch      *HarnessPolicyRecord
+	HQService          *HQService
+	HQAccount          string
+	Dir                string
+	Members            []string
 	// Invoker is the account running the plan. It can never be a member.
 	Invoker string
 	// Platform is PlatformDarwin on macOS and empty on Linux. It is not part
@@ -180,6 +185,8 @@ type Step struct {
 	// Content is the exact content of a file step.
 	Content string `json:"content,omitempty"`
 	Detail  string `json:"detail,omitempty"`
+	UID     int    `json:"uid,omitempty"`
+	GID     int    `json:"gid,omitempty"`
 }
 
 // Plan is the exact request the owner approves.
@@ -189,6 +196,7 @@ type Plan struct {
 	Dir       string   `json:"dir"`
 	Members   []string `json:"members"`
 	Steps     []Step   `json:"steps"`
+	Purpose   string   `json:"purpose,omitempty"`
 }
 
 // Refusal is a host or request the plan will not touch. Code is one of the
@@ -211,16 +219,32 @@ func refuse(code, format string, args ...any) error {
 	return &Refusal{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
+// A harness gets a primary group of the same name. Reserve the groups that
+// also make an existing macOS account ineligible as a harness.
+func darwinProtectedGroup(name string) bool {
+	switch name {
+	case "admin", "wheel", "sudo", DarwinHQAccount:
+		return true
+	}
+	return false
+}
+
 // Normalize validates an input and returns it with the members sorted.
 func Normalize(in Input) (Input, error) {
 	if !accountName.MatchString(in.HQAccount) {
 		return in, refuse(RefusedList, "HQ account %q is not an account name", in.HQAccount)
 	}
 	if in.Platform == PlatformDarwin {
-		if in.Dir != "" && in.Dir != DarwinDir {
-			return in, refuse(RefusedList, "a macOS plan has no members directory")
+		switch in.Dir {
+		case "", DarwinDir:
+			in.Dir = DarwinDir
+		case DarwinBrokerDir:
+			if in.HQAccount != DarwinHQAccount || len(in.Members) == 0 {
+				return in, refuse(RefusedList, "Darwin broker directories require the dedicated HQ account and at least one harness")
+			}
+		default:
+			return in, refuse(RefusedList, "Darwin harness endpoints require %s", DarwinBrokerDir)
 		}
-		in.Dir = DarwinDir
 	} else if in.Dir == "" {
 		in.Dir = DefaultDir
 	}
@@ -241,7 +265,7 @@ func Normalize(in Input) (Input, error) {
 			return in, refuse(RefusedList, "member account %q is the HQ account; a member needs a separate one", m)
 		case in.Platform == PlatformDarwin && darwinHarnessHome(m) == HQHome(in.Platform, in.HQAccount):
 			return in, refuse(RefusedList, "member account %q would share the HQ home", m)
-		case m == "root" || m == "admin":
+		case m == "root" || m == "admin" || (in.Platform == PlatformDarwin && darwinProtectedGroup(m)):
 			return in, refuse(RefusedList, "%s cannot be a member account", m)
 		case in.Invoker != "" && m == in.Invoker:
 			return in, refuse(RefusedList, "member account %q is the account running this command", m)
@@ -256,6 +280,15 @@ func Build(in Input, h Host) (Plan, error) {
 	in, err := Normalize(in)
 	if err != nil {
 		return Plan{}, err
+	}
+	if in.HarnessAccounts && (in.Platform != PlatformDarwin || in.HQAccount != DarwinHQAccount || len(in.Members) == 0 || len(in.Members) > 99 || in.HQService != nil || in.UpgradeFrom != nil || in.HarnessLaunch != nil) {
+		return Plan{}, refuse(RefusedList, "paired account provisioning requires only a dedicated macOS HQ and a nonempty list of harness accounts")
+	}
+	if in.UpgradeFrom != nil && (in.HarnessLaunch != nil || in.Platform != PlatformDarwin || in.HQService == nil || in.HQAccount != DarwinHQAccount || len(in.Members) != 0) {
+		return Plan{}, refuse(RefusedList, "upgrade requires a dedicated macOS service-only plan")
+	}
+	if in.HarnessLaunch != nil {
+		return buildHarnessLaunch(in, h)
 	}
 	p := Plan{Version: PlanVersion, HQAccount: in.HQAccount, Dir: in.Dir, Members: in.Members, Steps: []Step{}}
 	if p.Members == nil {
@@ -281,9 +314,28 @@ func Build(in Input, h Host) (Plan, error) {
 	}
 
 	if in.Platform == PlatformDarwin {
+		if in.HarnessAccounts {
+			if err := bindHarnessAccounts(&p, h); err != nil {
+				return Plan{}, err
+			}
+		}
+		if in.Dir == DarwinBrokerDir {
+			if err := appendDarwinBrokerDirectories(&p, h); err != nil {
+				return Plan{}, err
+			}
+		}
 		if in.HQService != nil {
 			if err := appendLaunchDaemon(&p, in, h); err != nil {
 				return Plan{}, err
+			}
+		}
+		if in.HarnessAccounts {
+			raw, err := p.Canonical()
+			if err != nil {
+				return Plan{}, err
+			}
+			if len(raw) > 32*1024 {
+				return Plan{}, refuse(RefusedList, "harness account plan exceeds the paired review size limit")
 			}
 		}
 		return p, nil
@@ -454,7 +506,7 @@ func (p Plan) SharedHQAdvice() string {
 	for _, s := range p.Steps {
 		if s.Kind == KindHQAccount && s.Action == ActionNone && s.Mode == "" {
 			platform := ""
-			if p.Dir == DarwinDir {
+			if p.Dir == DarwinDir || p.Dir == DarwinBrokerDir {
 				platform = PlatformDarwin
 			}
 			return "HQ account " + s.Target + " is not a dedicated account: every process in it can read HQ's state and start members. " + sharedAdvice(platform, s.Target)
@@ -514,9 +566,13 @@ func platformAccountStep(platform, name string, h Host, uids map[int]string) (St
 	}
 	if home.Mode&0o7777 != 0o700 {
 		want.Action = ActionRepair
-		want.Detail = fmt.Sprintf("exists; home %s has mode %04o and is set to 0700; its password is checked at apply", a.Home, home.Mode&0o7777)
+		want.Detail = accountHomeRepairDetail(a.Home, home.Mode&0o7777)
 	}
 	return want, nil
+}
+
+func accountHomeRepairDetail(home string, mode uint32) string {
+	return fmt.Sprintf("exists; home %s has mode %04o and is set to 0700; its password is checked at apply", home, mode)
 }
 
 func dirStep(h Host, p, owner, group string, mode uint32) (Step, error) {

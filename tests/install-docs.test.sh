@@ -6,7 +6,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"
 TEST_DIR="$(cd "$TEST_DIR" && pwd -P)"
 trap 'rm -rf "$TEST_DIR"' EXIT
-mkdir "$TEST_DIR/bin"
+mkdir "$TEST_DIR/bin" "$TEST_DIR/Library"
+export FIXTURE_LIBRARY="$TEST_DIR/Library"
 export LOG="$TEST_DIR/brew.log"
 export PATH="$TEST_DIR/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PREFIX="$TEST_DIR/homebrew"
@@ -21,7 +22,7 @@ export GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_EMAIL=fixture@exam
 /usr/bin/git -C "$UPSTREAM" commit -q --allow-empty -m first
 mkdir -p "$PREFIX/bin"
 # Redirect Apple's fixed paths into this fixture on both macOS and Linux.
-sed -e "s|/opt/homebrew|$PREFIX|g" -e "s|/usr/bin/osascript|$TEST_DIR/bin/osascript|g" -e "s|/usr/bin/git|$TEST_DIR/bin/git|g" -e "s|/usr/bin/stat|$TEST_DIR/bin/stat|g" "$ROOT/install.sh" > "$TEST_DIR/install.sh"
+sed -e "s|\"/Library/Application Support|\"$FIXTURE_LIBRARY/Application Support|g" -e "s|/opt/homebrew|$PREFIX|g" -e "s|/usr/bin/osascript|$TEST_DIR/bin/osascript|g" -e "s|/usr/bin/git|$TEST_DIR/bin/git|g" -e "s|/usr/bin/stat|$TEST_DIR/bin/stat|g" "$ROOT/install.sh" > "$TEST_DIR/install.sh"
 
 cat > "$TEST_DIR/bin/uname" <<'STUB'
 #!/bin/sh
@@ -66,6 +67,7 @@ cat > "$PREFIX/bin/brew" <<'STUB'
 set -eu
 [ "$HOMEBREW_NO_AUTO_UPDATE" = 1 ] && [ "$GIT_TERMINAL_PROMPT" = 0 ] || exit 92
 if [ "${BREW_FAIL:-}" = "$1" ]; then exit 13; fi
+record="$PREFIX/var/homebrew/linked/managed-machine"
 case "$*" in
   --prefix|--repository) echo "$PREFIX" ;;
   'commands --quiet') echo trust ;;
@@ -77,12 +79,33 @@ case "$*" in
      mkdir -p "$(dirname "$TAPDIR")"
      /usr/bin/git clone -q "$UPSTREAM" "$TAPDIR"
      /usr/bin/git -C "$TAPDIR" remote set-url origin "$ORIGIN" ;;
-  "install $FORMULA"|"upgrade $FORMULA")
+  "install $FORMULA")
      echo "$*" >> "$LOG"
      : > "$PREFIX/installed"
-     mkdir -p "$PREFIX/opt/managed-machine/bin"
-     printf '#!/bin/sh\necho 0.12.0\n' > "$PREFIX/opt/managed-machine/bin/managed-machine"
-     chmod +x "$PREFIX/opt/managed-machine/bin/managed-machine" ;;
+     keg="$PREFIX/opt/managed-machine/bin"
+     mkdir -p "$keg" "$(dirname "$record")"
+     ln -s "$PREFIX/opt/managed-machine" "$record"
+     printf '#!/bin/sh\necho 0.12.0\n' > "$keg/managed-machine"
+     chmod +x "$keg/managed-machine"
+     ln -s managed-machine "$keg/agent-machine"
+     cp "$keg/managed-machine" "$keg/agent-bot-keyd"
+     for name in managed-machine agent-machine agent-bot-keyd; do ln -s "$keg/$name" "$PREFIX/bin/$name"; done ;;
+  "upgrade $FORMULA") echo "$*" >> "$LOG" ;;
+  "unlink $FORMULA")
+     echo "$*" >> "$LOG"
+     test "$record" -ef "$PREFIX/opt/managed-machine"
+     for name in managed-machine agent-machine agent-bot-keyd; do
+         cmd="$PREFIX/bin/$name"
+         if [ -L "$cmd" ] && [ "$cmd" -ef "$PREFIX/opt/managed-machine/bin/$name" ]; then rm "$cmd"; fi
+     done
+     rm "$record" ;;
+  "link $FORMULA")
+     echo "$*" >> "$LOG"
+     if [ -L "$record" ] || [ "${LINK_NOOP:-0}" = 1 ]; then exit 0; fi
+     for name in managed-machine agent-machine agent-bot-keyd; do
+         ln -s "$PREFIX/opt/managed-machine/bin/$name" "$PREFIX/bin/$name"
+     done
+     ln -s "$PREFIX/opt/managed-machine" "$record" ;;
   *) echo "unexpected brew invocation: $*" >&2; exit 9 ;;
 esac
 STUB
@@ -91,6 +114,13 @@ cat > "$TEST_DIR/bin/osascript" <<'STUB'
 set -eu
 : > "$SCRIPT_FILE"
 while [ "$1" = '-e' ]; do printf '%s\n' "$2" >> "$SCRIPT_FILE"; shift 2; done
+if grep -Fq 'Permanently retire standalone HQ signing' "$SCRIPT_FILE"; then
+    test -f "$FIXTURE_LIBRARY/Application Support/ai.true-line.agent-bot-hq/standalone/declaration-v1"
+    [ "${RETIRE_RESPONSE:-deny}" = approve ] || exit 57
+    rm "$FIXTURE_LIBRARY/Application Support/ai.true-line.agent-bot-hq/standalone/declaration-v1"
+    touch "$FIXTURE_LIBRARY/Application Support/ai.true-line.agent-bot-hq/standalone/machine-retired-v1"
+    exit 0
+fi
 if [ -x /usr/bin/osacompile ] && [ ! -e "$SCRIPT_FILE.scpt" ]; then
     /usr/bin/osacompile -o "$SCRIPT_FILE.scpt" "$SCRIPT_FILE"
 fi
@@ -112,7 +142,13 @@ tap true-line/agent-bot-machine https://github.com/true-line/agent-bot-machine.g
 install true-line/agent-bot-machine/managed-machine
 EXPECTED
 
-bash "$TEST_DIR/install.sh"
+marker="$FIXTURE_LIBRARY/Application Support/ai.true-line.agent-bot-hq/standalone"
+mkdir -p "$marker"
+touch "$marker/declaration-v1"
+if bash "$TEST_DIR/install.sh"; then echo "Installer ignored cancelled retirement" >&2; exit 1; fi
+[[ -e "$marker/declaration-v1" && ! -e "$PREFIX/installed" && ! -e "$LOG" ]]
+RETIRE_RESPONSE=approve bash "$TEST_DIR/install.sh"
+[[ -e "$marker/machine-retired-v1" && ! -e "$marker/declaration-v1" ]]
 cmp "$LOG" "$TEST_DIR/expected"
 [[ ! -e "$AUTH_LOG" ]]
 # The other account must refresh only public main, and only upgrade Machine.
@@ -131,6 +167,61 @@ cmp "$LOG" "$TEST_DIR/upgrade"
 bash "$TEST_DIR/install.sh"
 cmp "$LOG" "$TEST_DIR/upgrade"
 [[ "$(/usr/bin/git -C "$TAPDIR" rev-parse HEAD)" == "$(/usr/bin/git -C "$UPSTREAM" rev-parse HEAD)" ]]
+
+# A current keg can be unlinked. Retry as the real prefix owner, and never
+# execute or replace another package's command when the names conflict.
+record="$PREFIX/var/homebrew/linked/managed-machine"
+rm "$record"
+for name in managed-machine agent-machine agent-bot-keyd; do rm "$PREFIX/bin/$name"; done
+: > "$LOG"
+CALLER_UID=502 bash "$TEST_DIR/install.sh" --update > "$TEST_DIR/result"
+grep -Fxq "link $FORMULA" "$LOG"
+for name in managed-machine agent-machine agent-bot-keyd; do
+    test "$PREFIX/bin/$name" -ef "$PREFIX/opt/managed-machine/bin/$name"
+done
+
+# A missing individual link leaves Homebrew believing the current keg is linked.
+rm "$PREFIX/bin/agent-bot-keyd"
+: > "$LOG"
+CALLER_UID=502 bash "$TEST_DIR/install.sh" --update > "$TEST_DIR/result"
+printf '%s\n' "trust $ORIGIN" "upgrade $FORMULA" "unlink $FORMULA" "link $FORMULA" > "$TEST_DIR/relink"
+cmp "$LOG" "$TEST_DIR/relink"
+for name in managed-machine agent-machine agent-bot-keyd; do
+    test "$PREFIX/bin/$name" -ef "$PREFIX/opt/managed-machine/bin/$name"
+done
+
+# If linking fails after unlinking, the next run starts with an unlinked keg.
+rm "$PREFIX/bin/agent-bot-keyd"
+if BREW_FAIL=link bash "$TEST_DIR/install.sh" > "$TEST_DIR/result" 2>&1; then exit 1; fi
+test ! -L "$record"
+
+if LINK_NOOP=1 bash "$TEST_DIR/install.sh" > "$TEST_DIR/result" 2>&1; then
+    echo 'Unexpected success after Homebrew left the links missing' >&2; exit 1
+fi
+grep -Fq 'Homebrew did not link managed-machine' "$TEST_DIR/result"
+
+ln -s "$PREFIX/opt/managed-machine" "$record"
+for occupant in file dangling; do
+    if [[ "$occupant" == file ]]; then
+        printf 'unrelated command\n' > "$PREFIX/bin/agent-machine"
+    else
+        ln -s missing-target "$PREFIX/bin/agent-machine"
+    fi
+    : > "$LOG"
+    if bash "$TEST_DIR/install.sh" > "$TEST_DIR/result" 2>&1; then
+        echo "Unexpected success with a conflicting $occupant" >&2; exit 1
+    fi
+    grep -Fq 'agent-machine is occupied' "$TEST_DIR/result"
+    if grep -Eq "^(un)?link " "$LOG"; then exit 1; fi
+    test "$record" -ef "$PREFIX/opt/managed-machine"
+    if [[ "$occupant" == file ]]; then
+        test "$(cat "$PREFIX/bin/agent-machine")" = 'unrelated command'
+    else
+        test "$(readlink "$PREFIX/bin/agent-machine")" = missing-target
+    fi
+    rm "$PREFIX/bin/agent-machine"
+done
+bash "$TEST_DIR/install.sh" > "$TEST_DIR/result"
 
 assert_update_refused() {
     : > "$LOG"
@@ -179,7 +270,8 @@ fi
 # fetch must not execute even a complete-looking script left in the temp file.
 mv "$PREFIX/bin/brew" "$TEST_DIR/homebrew-fixture"
 mv "$TAPDIR" "$TEST_DIR/prior-tap"
-rm "$PREFIX/installed"
+rm "$PREFIX/installed" "$PREFIX/bin/managed-machine" "$PREFIX/bin/agent-machine" "$PREFIX/bin/agent-bot-keyd"
+rm -r "$PREFIX/opt/managed-machine"
 cat > "$TEST_DIR/bin/curl" <<'STUB'
 #!/bin/sh
 set -eu

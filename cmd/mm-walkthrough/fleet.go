@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/qwts/managed-machine/internal/config"
 	"github.com/qwts/managed-machine/internal/config/provider/block"
@@ -870,7 +871,7 @@ func (h *fleetHarness) runDirectoryGist() {
 		return
 	}
 
-	truncatedMode := false
+	var truncatedMode atomic.Bool
 	srv := newFixtureTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/gists/" + fleetGistID:
@@ -879,7 +880,7 @@ func (h *fleetHarness) runDirectoryGist() {
 				"id":      fleetGistID,
 				"history": []map[string]any{{"version": fleetGistRevision}},
 				"files": map[string]any{
-					"alice.yaml": map[string]any{"filename": "alice.yaml", "truncated": truncatedMode, "content": string(aliceFile)},
+					"alice.yaml": map[string]any{"filename": "alice.yaml", "truncated": truncatedMode.Load(), "content": string(aliceFile)},
 					"bob.yaml":   map[string]any{"filename": "bob.yaml", "truncated": false, "content": string(bobFile)},
 				},
 			}
@@ -890,7 +891,7 @@ func (h *fleetHarness) runDirectoryGist() {
 				"id":      fleetGistID,
 				"history": []map[string]any{{"version": fleetGistRevision}},
 				"files": map[string]any{
-					"alice.yaml": map[string]any{"filename": "alice.yaml", "truncated": truncatedMode, "content": string(aliceFile)},
+					"alice.yaml": map[string]any{"filename": "alice.yaml", "truncated": truncatedMode.Load(), "content": string(aliceFile)},
 					"bob.yaml":   map[string]any{"filename": "bob.yaml", "truncated": false, "content": string(bobFile)},
 				},
 			}
@@ -952,7 +953,7 @@ func (h *fleetHarness) runDirectoryGist() {
 	}
 
 	// Truncated file response is refused with MM_FLEET_DIRECTORY_FETCH_FAILED.
-	truncatedMode = true
+	truncatedMode.Store(true)
 	code, out, errOut = h.runCoreEnv(gistEnv, "fleet", "--refresh")
 	if p := checkDiagnostic(code, 1, out, errOut, diag.FleetDirectoryFetchFailed); p != "" {
 		h.recordCase(name, "refreshed+cached+unchanged+truncated-refused", observedFailed, false, "truncated gist: "+p)

@@ -15,7 +15,7 @@ On an Apple Silicon Mac running macOS 15 or later, open Terminal and run the pub
 )
 ```
 
-The installer downloads the public package from [true-line/agent-bot-machine](https://github.com/true-line/agent-bot-machine). If Homebrew already belongs to another administrator, macOS asks permission to run Homebrew in that account. A successful install prints a confirmation. The confirmation includes the installed version. Run `managed-machine --update` to update Machine from its public tap.
+The installer downloads the public package from [true-line/agent-bot-machine](https://github.com/true-line/agent-bot-machine). If Homebrew already belongs to another administrator, macOS asks permission to run Homebrew in that account. A successful install prints a confirmation. The confirmation includes the installed version. Rerun the installer to upgrade Machine from its public tap.
 
 To pair a new HQ with Machine on macOS, the signed-in owner must approve its
 exact Machine challenge. Fresh approvals await a compatible unbundled
@@ -31,6 +31,20 @@ See [owner approval for a new HQ pairing](docs/plans/macos-signing.md#owner-appr
 | Windows (`windows/amd64`, `windows/arm64`) | [install-core.ps1](install-core.ps1) verifies the release ZIP against `SHA256SUMS` and installs to `%LOCALAPPDATA%\Programs\managed-machine` by default. |
 
 All platforms use the [public Machine releases](https://github.com/true-line/agent-bot-machine/releases). To use an existing policy checkout with the portable core, point `MANAGED_MACHINE_POLICY_DIR` at its directory.
+
+## macOS standalone HQ signing
+
+Machine is the default. An installation that intentionally omits Machine may use the dedicated HQ account for local Secure Enclave signing after the administrator declares that the host has no custom Machine installation and the installation and prior-pair checks pass. The declaration authorizes signing only. A Machine outage, uninstall or pairing revocation cannot grant standalone signing.
+
+**Release qualification is pending.** This installer release has no qualified HQ signer digest. Declaration therefore refuses. Publishing the first qualified release requires reviewing the exact guard-capable HQ source and independently verified signed artifact, then recording its source commit and installed executable SHA-256 in [the installer manifest](scripts/standalone-hq-release.json) and shipping the manifest and utility together in one verified installer release. For a private qualification, the reviewers can record the nonpublic artifact’s digest and source commit in a separate private installer release. Distribute that reviewed utility and manifest together to the administrator over the established private release path. Keep the public manifest pending until a publishable release exists. A checksum calculated from the candidate installation cannot supply that independent pin.
+
+When a qualified release is available, the administrator stages the qualified `hq-signer` at `/Library/Application Support/ai.true-line.agent-bot-hq/standalone/hq-signer` (root:wheel, mode 0555). Install [the administrator utility](scripts/standalone-hq-signing) and its manifest from that same verified installer release under the sibling `installer/` directory. The utility and manifest must be root-owned under protected directories. The product and standalone directories must be root:wheel, mode 0755. The utility checks the exact installed helper hash and code signature, the registered dedicated role, its private group and home, standard Homebrew installation paths and retained Machine state. While it inventories Machine, a pending declaration pauses new install, startup and pairing operations. Those operations publish their standard keg or registered Machine state before their final eligibility check. This works on a fresh Machine installation without creating a system-wide lock. It examines metadata at Machine's known account-state paths without opening credential files. After checking for custom copies, run the following from an administrator account.
+
+```sh
+sudo '/Library/Application Support/ai.true-line.agent-bot-hq/standalone/installer/standalone-hq-signing' declare --confirm-no-custom-machine
+```
+
+The public Machine installer asks the administrator to permanently retire an active declaration before Homebrew installs Machine. Direct Homebrew installation, daemon startup, keyd use and pairing require prior retirement. To retire explicitly, run the same utility with `retire`. Retirement immediately excludes new signing operations. An operation already using the dedicated role’s protected transition file must finish before Machine can start. If retirement reports a drain in progress, retry the same command. The permanent retirement record survives stopping, revoking, uninstalling or reinstalling Machine. Retiring standalone authorization does not move credentials or change existing pairing. Earlier Machine installers and binaries predate this interlock. Retire with the verified utility before installing or running a historical release or custom build on a standalone host.
 
 ## Usage
 
@@ -66,6 +80,42 @@ Legacy commands (macOS only; Homebrew install — delegated to `libexec/legacy/b
 Bare `managed-machine status [--json|--human]` is served by the portable Go core (exit 0; reporting `software`, `config`, and `flavor`, with `--section fleet` available under `--user`), and `managed-machine skill path [--json|--human]` is a core command on all five targets (reporting `MM_SKILL_BUNDLE_MISSING`, exit 1, on archive installs where the skill bundle is not present). On macOS, `[legacy] status --section bootstrap|update [--json]` remains a read-only legacy route printing the last recorded `bootstrap.manifest` and `update.manifest` outcomes. The 17 legacy `status` sections removed in `v0.11.0` and `fleet list` fail on all five targets with `MM_LEGACY_ROUTE_REMOVED` (exit 2) naming each route's replacement or `no replacement`: `status --section managed-machine` -> `managed-machine version`; `status --section ssh` -> `managed-machine ssh status`; `status --section agent-accounts` -> `managed-machine account doctor`; `status --section catalog` -> `managed-machine setup --list and managed-machine software --available`; `fleet list` -> `managed-machine fleet --keys`; and `status --section machine|local-bin|zsh-functions|pins|toolchain|homebrew|gh|nvm|node|hostname|rustup|rustc|cargo` -> `no replacement`.
 
 ---
+
+## Uninstall on macOS
+
+Before removal, run `managed-machine uninstall --help` as an ordinary user and look for a line containing only `managed-machine uninstall`. If Machine installed a dedicated HQ service, also check that `managed-machine members --help` lists `members uninstall-hq --list`. The v0.12.4 release prints general help and exits successfully even when the requested uninstall command is unavailable. To use the receipt-based removal procedure below, upgrade to a release that lists the required commands and retain the existing receipts through that upgrade.
+
+Open a login Terminal as the administrator who owns Homebrew. If a harness launch grant is installed, retire it through the paired HQ before removing HQ or Machine. See the [launch rule review procedure](docs/plans/member-accounts.md#review-a-macos-harness-launch-rule). If Machine installed a dedicated HQ service, use its matching applied plan ID to remove that service first. The preview shows what will be removed. The list and preview work with HQ offline.
+
+```sh
+sudo managed-machine members uninstall-hq --list
+sudo managed-machine members uninstall-hq PLAN_ID --dry-run
+sudo managed-machine members uninstall-hq PLAN_ID
+```
+
+If HQ removal is interrupted, retry with the same plan ID. An outstanding removal appears as `resume_plan_id` in `--list`, even after the plist is gone. Retrying a completed removal preserves any later installation. See [HQ service removal and recovery](docs/plans/member-accounts.md#removing-the-receipt-managed-macos-hq-service).
+
+If first enrollment stopped before an HQ service was installed, there is no HQ plan to remove. If you installed the flat owner CLI separately, use [Identity’s owner CLI removal procedure](https://github.com/true-line/agent-bot-identity/blob/a0b21c227b38d72e445106ba660e172ff115d164/owner-presence-macos/FIRST-ENROLLMENT.md#remove-the-owner-cli) with the approved publisher and signed release digest. You can remove that helper before creating an account or pairing Machine.
+
+For a Machine-only install, start here. Run this command as the Homebrew owner without `sudo`.
+
+```sh
+managed-machine uninstall
+```
+
+Machine unloads its two user services, removes their LaunchAgents and stale sockets, and invokes Homebrew to remove the formula and its command links. The dedicated HQ account and its home, the administrator’s keys, pairing and revocation history, and install receipts are retained. A retired standalone-signing authorization stays retired across uninstall and reinstall. Archives and Node runtimes staged separately by an operator remain at their original locations. Applications and accounts previously provisioned with Machine have their own lifecycles.
+
+If Identity installed its own keyd LaunchAgent, the Homebrew uninstall can report `preserving a customized or unrelated Machine LaunchAgent`. It stops before unloading either job or removing the formula. Use `agent-bot keyd status` in the account that installed Identity to check its registration. If you also intend to retire that Identity service, use [Identity’s keyd uninstall procedure](https://github.com/true-line/agent-bot-identity/blob/c38360696ba82e7ca2b6d542d53aed4a9596bcec/docs/soul-credentials.md#L233-L237), then retry Machine removal. If Identity still needs the job, keep the formula installed.
+
+For a manually installed Machine executable with no bundled `agent-bot-keyd` beside it, run the manual executable by its full path as the Machine service owner. Replace the path below with the installed executable.
+
+```sh
+/path/to/managed-machine daemon uninstall
+```
+
+This removes the Machine user service and keeps a separately registered Identity keyd running when its installation record, LaunchAgent and loaded job agree. The manual executable remains on disk.
+
+If you started HQ directly in a Terminal, press Control-C in its Terminal to let it shut down. For an HQ process registered by another supervisor, stop and disable that registration through the same supervisor. You can then remove the separately staged HQ program. Keep its data directory if you intend to reinstall. A Node runtime shared with another installation should stay in place.
 
 ## Setup scripts
 
@@ -354,11 +404,15 @@ Bump the pin by editing `managed-machine-config/local-bin.ref` and committing it
 
 ## Update an existing machine
 
+To upgrade the Machine package, rerun the [public installer](#install-on-a-fresh-mac) from a human Terminal. It refreshes the Machine tap and runs Homebrew as the prefix owner.
+
+Run this command to reapply the daemon's default catalog flavor.
+
 ```bash
 managed-machine --update
 ```
 
-Run updates from a human Terminal. The Homebrew prefix stays under its administrator owner. A machine with fleet configuration can also refresh the selected configuration and tools. Existing fleet data stays outside the Homebrew package.
+On macOS the legacy updater handles the request when the daemon client is unavailable or the daemon reports the flavor is outside its catalog. That path upgrades the package and reruns applicable setup steps. An explicitly selected fleet also refreshes its configuration. Other daemon refusals and failures are reported directly.
 
 Managed-machine no longer owns agent-bot installation, upgrades, pinning, machine wiring, account credential seeding, or GitHub CLI interposition. The retired setup commands explain this boundary and leave existing runtime state untouched.
 

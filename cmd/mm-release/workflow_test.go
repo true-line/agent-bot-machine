@@ -161,7 +161,7 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		if strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.With["name"] == "dist" {
 			sawDistDL = true
 		}
-		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.With["name"] == "release-gate-${{ matrix.os }}-${{ matrix.arch }}" {
+		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.With["name"] == "release-gate-${{ matrix.os }}-${{ matrix.arch }}-attempt-${{ github.run_attempt }}" {
 			sawRGUpload = true
 		}
 	}
@@ -259,8 +259,15 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	if len(pubJob.Permissions) != 1 || pubJob.Permissions["contents"] != "write" {
 		t.Errorf("publish.permissions = %v, want {contents: write}", pubJob.Permissions)
 	}
-	if len(rel.Jobs) != 2 {
-		t.Errorf("release.yml has %d jobs, want 2 (gates, publish)", len(rel.Jobs))
+	smoke := rel.Jobs["public-homebrew"]
+	if len(rel.Jobs) != 3 || smoke.Needs != "publish" || smoke.If != "" || smoke.RunsOn != "macos-15" ||
+		!reflect.DeepEqual(smoke.Permissions, map[string]string{"contents": "read"}) {
+		t.Error("every successful release publication must be followed by the read-only macOS install check")
+	}
+
+	if len(smoke.Steps) == 0 || !strings.HasPrefix(smoke.Steps[0].Uses, "actions/checkout@") ||
+		!reflect.DeepEqual(smoke.Steps[0].With, map[string]any{"persist-credentials": false}) {
+		t.Error("post-publication tests must check out the workflow revision without a ref override or persisted credentials")
 	}
 
 	var (

@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -68,7 +70,19 @@ func keydUnitPath(goos, root string) (string, error) {
 	return filepath.Join(root, "Library", "LaunchAgents", darwinKeydServiceLabel+".plist"), nil
 }
 
+// keyd must start for the prefix owner in either a GUI login or an SSH login.
+const keydSessionTypes = `	<key>LimitLoadToSessionType</key>
+	<array>
+		<string>Aqua</string>
+		<string>Background</string>
+	</array>
+`
+
 func keydAgent(stateDir, bin string) string {
+	return renderKeydAgent(stateDir, bin, keydSessionTypes)
+}
+
+func renderKeydAgent(stateDir, bin, sessions string) string {
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -82,18 +96,15 @@ func keydAgent(stateDir, bin string) string {
 		<string>--state-dir</string>
 		<string>%s</string>
 	</array>
-	<key>RunAtLoad</key>
+%s	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
 </dict>
 </plist>
-`, darwinKeydServiceLabel, xmlEscape(bin), xmlEscape(stateDir))
+`, darwinKeydServiceLabel, xmlEscape(bin), xmlEscape(stateDir), sessions)
 }
 
-// InstallKeyd writes the per-user LaunchAgent for the agent-bot-keyd binary
-// that sits next to executable. A missing binary leaves the agent-machine
-// unit alone. A GeniusBar path is refused.
 func UninstallKeyd(goos, root string) error {
 	path, err := keydUnitPath(goos, root)
 	if err != nil {
@@ -105,41 +116,147 @@ func UninstallKeyd(goos, root string) error {
 	return nil
 }
 
-func InstallKeyd(goos, root, executable, stateDir string) (string, error) {
+// A change of keg may move the old executable. Compare the full Machine
+// template without opening or executing the path in the previous plist.
+func machineKeydRegistration(previous []byte, stateDir string) bool {
+	var plist struct {
+		Arrays []struct {
+			Values []string `xml:"string"`
+		} `xml:"dict>array"`
+	}
+	if xml.Unmarshal(previous, &plist) != nil || len(plist.Arrays) == 0 || len(plist.Arrays[0].Values) != 4 {
+		return false
+	}
+	bin := plist.Arrays[0].Values[0]
+	if !filepath.IsAbs(bin) || filepath.Base(bin) != "agent-bot-keyd" {
+		return false
+	}
+	body := string(previous)
+	// Releases before background login support wrote no session types.
+	return body == keydAgent(stateDir, bin) || body == renderKeydAgent(stateDir, bin, "")
+}
+
+type keydUnitPlan struct {
+	path      string
+	body      string
+	previous  []byte
+	original  os.FileInfo
+	published os.FileInfo
+}
+
+// A zero plan means that a manual installation will leave keyd alone,
+// including during activation rollback.
+func planKeydUnit(goos, root, executable, stateDir string) (keydUnitPlan, error) {
+	var none keydUnitPlan
 	if goos != "darwin" {
-		return "", nil
+		return none, nil
 	}
 	bin, err := KeydBinary(executable)
 	if err != nil {
-		return "", err
+		return none, err
 	}
-	if _, err := os.Stat(bin); err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", err
+	_, err = os.Stat(bin)
+	bundled := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		return none, err
 	}
 	path, err := keydUnitPath(goos, root)
 	if err != nil {
+		return none, err
+	}
+	var prior []byte
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.Mode().IsRegular() {
+			prior, err = os.ReadFile(path)
+			if err != nil {
+				return none, err
+			}
+		}
+		if !machineKeydRegistration(prior, stateDir) {
+			if bundled {
+				return none, fmt.Errorf("preserving an existing keyd LaunchAgent not managed by Machine; resolve the existing installation before starting bundled keyd")
+			}
+			return none, nil
+		}
+		if !bundled {
+			return none, fmt.Errorf("the existing Machine-managed keyd LaunchAgent requires a bundled helper; restore agent-bot-keyd beside the current Machine executable and retry")
+		}
+	} else if !os.IsNotExist(err) {
+		return none, err
+	}
+	if !bundled {
+		return none, nil
+	}
+	return keydUnitPlan{path: path, previous: prior, original: info, body: keydAgent(stateDir, bin)}, nil
+}
+
+// Confirm both identity and contents before reusing, replacing or rolling
+// back an existing registration. Other supervisors share this launchd label.
+func (p *keydUnitPlan) verify(info os.FileInfo, body string) error {
+	current, err := os.Lstat(p.path)
+	if err == nil && current.Mode().IsRegular() && os.SameFile(current, info) {
+		data, err := os.ReadFile(p.path)
+		if err == nil && string(data) == body {
+			return nil
+		}
+	}
+	return fmt.Errorf("keyd LaunchAgent changed during install; preserving the current registration")
+}
+
+func (p *keydUnitPlan) write() error {
+	if p.path == "" {
+		return nil
+	}
+	if p.original != nil {
+		if err := p.verify(p.original, string(p.previous)); err != nil {
+			return err
+		}
+		if string(p.previous) == p.body {
+			return nil
+		}
+	}
+	dir := filepath.Dir(p.path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	tmp, info, err := stageUnit(p.path, []byte(p.body))
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	if p.original == nil {
+		// Another installer may have claimed the label after preflight.
+		err = os.Link(tmp, p.path)
+	} else if err = p.verify(p.original, string(p.previous)); err == nil {
+		err = os.Rename(tmp, p.path)
+	}
+	if err == nil {
+		p.published = info
+	}
+	return err
+}
+
+func (p *keydUnitPlan) rollback() error {
+	if p.published == nil {
+		return nil
+	}
+	if err := p.verify(p.published, p.body); err != nil {
+		return err
+	}
+	return restoreUnit(p.path, p.previous)
+}
+
+// InstallKeyd installs the helper shipped beside Machine, when present.
+func InstallKeyd(goos, root, executable, stateDir string) (string, error) {
+	plan, err := planKeydUnit(goos, root, executable, stateDir)
+	if err != nil {
 		return "", err
 	}
-	body := keydAgent(stateDir, bin)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := plan.write(); err != nil {
 		return "", err
 	}
-	existing, readErr := os.ReadFile(path)
-	if readErr == nil && string(existing) == body {
-		return path, nil
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return "", err
-	}
-	return path, nil
+	return plan.path, nil
 }
 
 func darwinAgent(root, executable string) string {
@@ -261,15 +378,35 @@ func Install(goos, root, executable, username string) (string, error) {
 	if readErr == nil && string(existing) == body {
 		return path, nil
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := replaceUnit(path, []byte(body)); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+// stageUnit writes a private file beside its destination. On success the caller
+// owns the temporary name and must remove it after publication or failure.
+func stageUnit(path string, body []byte) (string, os.FileInfo, error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".machine-unit-*")
+	if err != nil {
+		return "", nil, err
+	}
+	info, statErr := tmp.Stat()
+	_, writeErr := tmp.Write(body)
+	if err := errors.Join(statErr, writeErr, tmp.Close()); err != nil {
+		_ = os.Remove(tmp.Name())
+		return "", nil, err
+	}
+	return tmp.Name(), info, nil
+}
+
+func replaceUnit(path string, body []byte) error {
+	tmp, _, err := stageUnit(path, body)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	return os.Rename(tmp, path)
 }
 
 // readUnit returns the unit file as it is before install, or nil when it is
@@ -292,15 +429,7 @@ func restoreUnit(path string, previous []byte) error {
 		}
 		return nil
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, previous, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return replaceUnit(path, previous)
 }
 
 // Uninstall removes the unit. A missing unit is success.

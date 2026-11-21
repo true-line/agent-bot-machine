@@ -27,6 +27,7 @@ export PASSFILE="$TEST_DIR/pass.counter"
 export CONFIG_DIR="$TEST_DIR/config"
 export WRITE_TREE="$TEST_DIR/write-tree"
 export PHASES="$TEST_DIR/phases.log"
+export BREW_LOG="$TEST_DIR/brew.log"
 STUB_BIN="$TEST_DIR/bin"
 mkdir -p "$LIBEXEC/lib" "$LIBEXEC/scripts" "$STUB_BIN" "$CONFIG_DIR" "$TEST_DIR/home/.local/bin" "$TEST_DIR/home/.config/managed-machine"
 export HOME="$TEST_DIR/home"
@@ -100,6 +101,14 @@ chmod +x "$WRITE_TREE"
 # upgrade repoints the opt symlink.
 cat >"$STUB_BIN/brew" <<'STUB'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >>"$BREW_LOG"
+if [[ "${1:-}" == "${FAIL_BREW_COMMAND:-never}" ]]; then
+    echo "simulated failure in $1" >&2
+    exit 17
+fi
+if [[ "${1:-}" == "commands" ]]; then
+    echo trust
+fi
 if [[ "${1:-}" == "upgrade" ]]; then
     "$WRITE_TREE" 2
 fi
@@ -160,7 +169,10 @@ cmp -s "$HOME/.config/managed-machine/agent-bot-gh-interposer" "$TEST_DIR/interp
 # phase, and every step of the run sees the same declined-dialog marker,
 # which is gone once the run ends (#174).
 [[ "$(grep -c '^phase ' "$PHASES")" == 1 ]]
-grep -q '^phase .*brew update && { .*brew upgrade managed-machine' "$PHASES"
+formula=true-line/agent-bot-machine/managed-machine
+printf '%s\n' 'commands --quiet' 'trust https://github.com/true-line/agent-bot-machine.git' update \
+    "upgrade $formula" "outdated --formula --quiet $formula" >"$TEST_DIR/expected-brew"
+head -n 5 "$BREW_LOG" | diff - "$TEST_DIR/expected-brew"
 declined_file="$(sed -n 's/^declined-file setup-gh=//p' "$LOG")"
 [[ "$declined_file" == */declined ]]
 for step in setup-zsh setup-bin setup-zsh-functions; do
@@ -172,6 +184,21 @@ done
 [[ "$(grep -o '^step setup-[a-z-]*' "$LOG" | sed 's/^step //' | tr '\n' ' ')" == 'setup-gh setup-zsh setup-bin setup-zsh-functions ' ]]
 real_steps="$(sed -n '/^SAFE_STEPS=(/,/^)/p' "$ROOT/legacy/scripts/update" | sed -n 's/^    \(setup-[a-z-]*\)$/\1/p' | tr '\n' ' ')"
 [[ "$real_steps" == 'setup-gh setup-zsh setup-bin setup-zsh-functions ' ]]
+
+# Failed package work stops before running setup against the old or partly
+# updated tree. A pinned outdated formula also exits nonzero from brew outdated.
+for failure in upgrade update outdated trust commands; do
+    : >"$LOG"
+    rm -f "$PASSFILE"
+    "$WRITE_TREE" 1
+    rc=0
+    FAIL_BREW_COMMAND="$failure" PATH="$STUB_BIN:$PATH" "$LIBEXEC/scripts/update" >"$TEST_DIR/brew-failure.out" 2>&1 || rc=$?
+    if [[ "$rc" != 17 ]] || grep -Eq 'already up to date|Update complete' "$TEST_DIR/brew-failure.out" || grep -q '^step ' "$LOG"; then
+        echo "fleet update hid brew $failure failure (exit $rc) or ran later steps" >&2
+        exit 1
+    fi
+    grep -Fq "simulated failure in $failure" "$TEST_DIR/brew-failure.out"
+done
 
 # 5. With no brew installed there is nothing to upgrade, but the run still
 # completes and stays single-version. A bare system PATH has the tools the
@@ -328,7 +355,8 @@ git -C "$PLAN_CONFIG_REPO" add . && git -C "$PLAN_CONFIG_REPO" commit --quiet -m
 
 cat >"$PLAN_BIN/osascript" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >>"$OSA_LOG"
+args="$*"
+printf '%s\n' "${args//$'\n'/ }" >>"$OSA_LOG"
 count="$(wc -l <"$OSA_LOG" | tr -d '[:space:]')"
 if [[ -n "${OSA_CANCEL_ON_CALL:-}" && "$count" == "$OSA_CANCEL_ON_CALL" ]]; then
     printf 'execution error: User canceled. (-128)\n' >&2

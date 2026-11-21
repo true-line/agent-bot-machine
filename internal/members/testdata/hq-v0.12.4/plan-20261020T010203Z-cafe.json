@@ -1,0 +1,36 @@
+{
+  "hq_service": {
+    "archive": "/Library/HQFixture/hq.tar",
+    "release_dir": "/Library/HQFixture/hq",
+    "artifact_sha256": "6f7c57abb9e425f5cfeaaf5a8a15ea4b1cd3a78e9de5b90eda4374fe9027cd96",
+    "node": "/Library/HQFixture/node",
+    "node_sha256": "79e4214b770ec982f202b553b1f70eaa9f1888135d7d4a341d378153fe193e6d"
+  },
+  "plan_id": "plan-20261020T010203Z-cafe",
+  "plan_digest": "c46b45fb98ab38b93fa5dd69cf429845316a6c4af530c409b0fa33250c116143",
+  "created_at": "2026-10-20T01:02:03Z",
+  "plan": {
+    "version": 3,
+    "hq_account": "_agent-bot-hq",
+    "dir": "none",
+    "members": [],
+    "steps": [
+      {
+        "kind": "hq-account",
+        "target": "_agent-bot-hq",
+        "action": "create",
+        "group": "_agent-bot-hq",
+        "mode": "0700",
+        "detail": "hidden role account, home /var/agent-bot-hq, shell /usr/bin/false, private group, no password, no other groups"
+      },
+      {
+        "kind": "service",
+        "target": "ai.true-line.agent-bot-hq",
+        "action": "create",
+        "owner": "operator",
+        "content": "{\"service\":{\"archive\":\"/Library/HQFixture/hq.tar\",\"release_dir\":\"/Library/HQFixture/hq\",\"artifact_sha256\":\"6f7c57abb9e425f5cfeaaf5a8a15ea4b1cd3a78e9de5b90eda4374fe9027cd96\",\"node\":\"/Library/HQFixture/node\",\"node_sha256\":\"79e4214b770ec982f202b553b1f70eaa9f1888135d7d4a341d378153fe193e6d\"},\"plist\":\"\\u003c?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?\\u003e\\n\\u003c!-- Managed by managed-machine members. --\\u003e\\n\\u003c!-- archive 6f7c57abb9e425f5cfeaaf5a8a15ea4b1cd3a78e9de5b90eda4374fe9027cd96 node 79e4214b770ec982f202b553b1f70eaa9f1888135d7d4a341d378153fe193e6d owner UID 501 --\\u003e\\n\\u003cplist version=\\\"1.0\\\"\\u003e\\u003cdict\\u003e\\n\\u003ckey\\u003eLabel\\u003c/key\\u003e\\u003cstring\\u003eai.true-line.agent-bot-hq\\u003c/string\\u003e\\n\\u003ckey\\u003eUserName\\u003c/key\\u003e\\u003cstring\\u003e_agent-bot-hq\\u003c/string\\u003e\\n\\u003ckey\\u003eGroupName\\u003c/key\\u003e\\u003cstring\\u003e_agent-bot-hq\\u003c/string\\u003e\\n\\u003ckey\\u003eUmask\\u003c/key\\u003e\\u003cinteger\\u003e63\\u003c/integer\\u003e\\n\\u003ckey\\u003eProgramArguments\\u003c/key\\u003e\\u003carray\\u003e\\n\\u003cstring\\u003e/usr/bin/ruby\\u003c/string\\u003e\\u003cstring\\u003e--disable-gems\\u003c/string\\u003e\\u003cstring\\u003e/Library/HQFixture/hq/helpers/darwin-owner.rb\\u003c/string\\u003e\\u003cstring\\u003elaunch\\u003c/string\\u003e\\n\\u003cstring\\u003e/Library/HQFixture/node\\u003c/string\\u003e\\u003cstring\\u003e/Library/HQFixture/hq/hq/main.mjs\\u003c/string\\u003e\\u003cstring\\u003erun\\u003c/string\\u003e\\u003cstring\\u003e--home\\u003c/string\\u003e\\u003cstring\\u003e/var/agent-bot-hq/.agent-bot-hq\\u003c/string\\u003e\\n\\u003cstring\\u003e--owner-account\\u003c/string\\u003e\\u003cstring\\u003eoperator\\u003c/string\\u003e\\u003c/array\\u003e\\n\\u003ckey\\u003eSockets\\u003c/key\\u003e\\u003cdict\\u003e\\u003ckey\\u003eowner-control\\u003c/key\\u003e\\u003cdict\\u003e\\n\\u003ckey\\u003eSockPathName\\u003c/key\\u003e\\u003cstring\\u003e/private/var/agent-bot-hq-control.sock\\u003c/string\\u003e\\u003ckey\\u003eSockPathMode\\u003c/key\\u003e\\u003cinteger\\u003e438\\u003c/integer\\u003e\\n\\u003ckey\\u003eSockType\\u003c/key\\u003e\\u003cstring\\u003estream\\u003c/string\\u003e\\u003c/dict\\u003e\\u003c/dict\\u003e\\n\\u003c/dict\\u003e\\u003c/plist\\u003e\\n\",\"owner_uid\":501}",
+        "detail": "install the approved LaunchDaemon and verify status as its owner"
+      }
+    ]
+  }
+}

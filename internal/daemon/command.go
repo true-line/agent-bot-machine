@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 
@@ -15,17 +17,24 @@ import (
 	"github.com/qwts/managed-machine/internal/output"
 )
 
+type serviceUnitReview struct {
+	remove     func() error
+	retainKeyd bool
+}
+
 // Deps is the testable surface of daemon install, uninstall, run, and status.
 type Deps struct {
 	command.Deps
-	MembersHost members.Host // nil reads the running host for first-HQ plans
-	GOOS        string
-	Executable  func() (string, error)
-	Caller      func() (Caller, error)
-	Root        func() (string, error)
-	Activate    func(path string) error
-	Deactivate  func(path string) error
-	WaitHealthy func() error
+	MembersHost   members.Host // nil reads the running host for first-HQ plans
+	GOOS          string
+	Executable    func() (string, error)
+	Caller        func() (Caller, error)
+	Root          func() (string, error)
+	LockLifecycle func(string, int) (*os.File, error)
+	ReadUserJob   func(int, string, string) ([]byte, bool, error)
+	Activate      func(path string) error
+	Deactivate    func(path string) error
+	WaitHealthy   func() error
 	// Reload makes the service manager reread units after install puts a
 	// refused unit file back.
 	Reload func() error
@@ -189,9 +198,41 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	} else if err != nil {
 		caller = Caller{}
 	}
+	writesServices := verb == "install" || verb == "start" || verb == "stop" || verb == "uninstall"
+	if goos == "darwin" && writesServices && deps.LockLifecycle != nil {
+		lock, err := deps.LockLifecycle(caller.RegisteredHome, caller.UID)
+		if err != nil {
+			return serviceFailed(err)
+		}
+		defer lock.Close()
+	}
 	root, err := deps.root()
+	if err == nil && (verb == "install" || verb == "start" || verb == "pair") {
+		err = checkMachineAdmission()
+	}
 	if err != nil {
 		return serviceFailed(err)
+	}
+	var reviewed serviceUnitReview
+	if goos == "darwin" && writesServices && deps.ReadUserJob != nil {
+		executable, err := deps.executable(ctx)
+		if err != nil {
+			return serviceFailed(err)
+		}
+		reviewed, err = inspectServiceLifecycle(caller, root, executable, verb, deps.ReadUserJob)
+		if err != nil {
+			return serviceFailed(err)
+		}
+		if reviewed.retainKeyd && deps.Deactivate != nil {
+			deactivate := deps.Deactivate
+			keydPath, _ := keydUnitPath(goos, root)
+			deps.Deactivate = func(path string) error {
+				if path == keydPath {
+					return nil
+				}
+				return deactivate(path)
+			}
+		}
 	}
 	switch verb {
 	case "status":
@@ -235,40 +276,36 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		}
 		return cli.Result{Records: []*output.Record{rec}}
 	case "install", "start":
-		return ensureService(deps, ctx, goos, root, userName, verb == "install", debug)
-	case "stop":
+		return ensureService(deps, ctx, caller, goos, root, userName, verb == "install", debug)
+	case "stop", "uninstall":
 		path, err := unitPath(goos, root)
 		if err != nil {
 			return serviceFailed(err)
 		}
 		if deps.Deactivate != nil {
-			if err := deps.Deactivate(path); err != nil {
-				return serviceFailed(err)
+			err = deps.Deactivate(path)
+			if kpath, pathErr := keydUnitPath(goos, root); pathErr == nil {
+				err = errors.Join(err, deps.Deactivate(kpath))
 			}
-			if kpath, err := keydUnitPath(goos, root); err == nil {
-				if err := deps.Deactivate(kpath); err != nil {
-					return serviceFailed(err)
-				}
-			}
-		}
-		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "installed").Set("path", path)
-		return cli.Result{Records: []*output.Record{rec}}
-	case "uninstall":
-		if path, err := unitPath(goos, root); err == nil && deps.Deactivate != nil {
-			if err := deps.Deactivate(path); err != nil {
+			if err != nil {
 				return serviceFailed(err)
 			}
 		}
-		if kpath, err := keydUnitPath(goos, root); err == nil && deps.Deactivate != nil {
-			if err := deps.Deactivate(kpath); err != nil {
+		if verb == "stop" {
+			rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "installed").Set("path", path)
+			return cli.Result{Records: []*output.Record{rec}}
+		}
+		if reviewed.remove != nil {
+			if err := reviewed.remove(); err != nil {
 				return serviceFailed(err)
 			}
-		}
-		if err := Uninstall(goos, root); err != nil {
-			return serviceFailed(err)
-		}
-		if err := UninstallKeyd(goos, root); err != nil {
-			return serviceFailed(err)
+		} else {
+			if err := Uninstall(goos, root); err != nil {
+				return serviceFailed(err)
+			}
+			if err := UninstallKeyd(goos, root); err != nil {
+				return serviceFailed(err)
+			}
 		}
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "absent")
 		return cli.Result{Records: []*output.Record{rec}}
@@ -279,6 +316,11 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		rec := output.New().Set("service", "agent-machine").Set("scope", "user").Set("state", "stopped")
 		return cli.Result{Records: []*output.Record{rec}}
 	case "pair":
+		if enrollSet || owner.pinSet {
+			if err := prepareMachineLifecycle(root); err != nil {
+				return serviceFailed(err)
+			}
+		}
 		if goos == "darwin" && (owner.pinSet || hqEnroll) {
 			// Serialize the first pin with legacy enrollment as well. Once a
 			// pin exists every HQ enrollment on this host needs owner presence.
@@ -343,6 +385,9 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 			rec := output.New().Set("service", "agent-machine").Set("client", "terminal").Set("state", "paired").Set("path", path)
 			return cli.Result{Records: []*output.Record{rec}}
 		}
+		if err := prepareMachineLifecycle(root); err != nil {
+			return serviceFailed(err)
+		}
 		path, err := PairClient(root)
 		if err != nil {
 			return serviceFailed(err)
@@ -370,37 +415,41 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	}
 }
 
-func ensureService(deps Deps, ctx cli.Context, goos, root, userName string, install, debug bool) cli.Result {
+func ensureService(deps Deps, ctx cli.Context, caller Caller, goos, root, userName string, install, debug bool) cli.Result {
 	if err := checkChannelIdentity(root); err != nil {
+		return serviceFailed(err)
+	}
+	if err := prepareMachineLifecycle(root); err != nil {
 		return serviceFailed(err)
 	}
 	exec, err := deps.executable(ctx)
 	if err != nil {
 		return serviceFailed(err)
 	}
-	var before []unitBackup
-	for _, locate := range []func(string, string) (string, error){unitPath, keydUnitPath} {
-		upath, err := locate(goos, root)
-		if err != nil {
-			continue
-		}
-		previous, err := readUnit(upath)
-		if err != nil {
-			return serviceFailed(err)
-		}
-		before = append(before, unitBackup{path: upath, previous: previous})
+	machinePath, err := unitPath(goos, root)
+	if err != nil {
+		return serviceFailed(err)
+	}
+	previous, err := readUnit(machinePath)
+	if err != nil {
+		return serviceFailed(err)
+	}
+	before := unitBackup{path: machinePath, previous: previous}
+	keydPlan, err := planKeydUnit(goos, root, exec, filepath.Join(root, ".local", "state", "agent-bot"))
+	if err != nil {
+		return serviceFailed(err)
 	}
 	path, err := Install(goos, root, exec, "")
 	if err != nil {
 		return serviceFailed(err)
 	}
-	keydUnit, err := InstallKeyd(goos, root, exec, filepath.Join(root, ".local", "state", "agent-bot"))
-	if err != nil {
-		return serviceFailed(err)
+	if err := keydPlan.write(); err != nil {
+		return undoInstall(deps, before, keydPlan, err)
 	}
+	keydUnit := keydPlan.path
 	if keydUnit != "" && deps.Activate != nil {
 		if err := deps.Activate(keydUnit); err != nil {
-			return undoInstall(deps, before, err)
+			return undoInstall(deps, before, keydPlan, err)
 		}
 	}
 	if install {
@@ -420,13 +469,18 @@ func ensureService(deps Deps, ctx cli.Context, goos, root, userName string, inst
 	}
 	if deps.Activate != nil {
 		if err := deps.Activate(path); err != nil {
-			return undoInstall(deps, before, err)
+			return undoInstall(deps, before, keydPlan, err)
 		}
 	}
 	state := "installed"
 	if deps.WaitHealthy != nil {
 		if err := deps.WaitHealthy(); err != nil {
 			return serviceFailed(err)
+		}
+		if keydUnit != "" {
+			if err := waitBundledKeyd(caller, healthyWait); err != nil {
+				return serviceFailed(fmt.Errorf("Machine is listening, but bundled keyd is not ready in the Homebrew administrator's login: %w; check its LaunchAgent and retry managed-machine daemon start", err))
+			}
 		}
 		state = "running"
 	}
@@ -447,11 +501,9 @@ type unitBackup struct {
 // undoInstall puts every unit file back after the service manager refused
 // one, then has the manager reread them, so status never reports a unit
 // that is not loaded. The result always carries the activation error.
-func undoInstall(deps Deps, before []unitBackup, cause error) cli.Result {
-	for _, b := range before {
-		if err := restoreUnit(b.path, b.previous); err != nil {
-			return serviceFailed(fmt.Errorf("%v; restoring %s: %v", cause, b.path, err))
-		}
+func undoInstall(deps Deps, machine unitBackup, keyd keydUnitPlan, cause error) cli.Result {
+	if err := errors.Join(keyd.rollback(), restoreUnit(machine.path, machine.previous)); err != nil {
+		return serviceFailed(fmt.Errorf("%v; restoring units: %w", cause, err))
 	}
 	if deps.Reload != nil {
 		if err := deps.Reload(); err != nil {
@@ -496,4 +548,24 @@ func (d Deps) executable(ctx cli.Context) (string, error) {
 		return ctx.Executable()
 	}
 	return "", fmt.Errorf("daemon executable is not configured")
+}
+
+// UninstallCommand is the local operator's package lifecycle, never a daemon RPC.
+func UninstallCommand(deps Deps) cli.Command {
+	return cli.Command{
+		Name: "uninstall", Summary: "Remove the active macOS Homebrew Machine, keyd, and their user services",
+		Usage: "managed-machine uninstall\nRun as the Homebrew prefix administrator after removing the managed HQ service. Pairing, keys, receipts and other applications are preserved.",
+		Run: func(ctx cli.Context, args []string) cli.Result {
+			if len(args) != 0 {
+				return cli.Result{Diagnostic: command.UsageErr("uninstall takes no arguments")}
+			}
+			if deps.GOOS != "darwin" {
+				return serviceFailed(errors.New("package uninstall is supported for macOS Homebrew installations"))
+			}
+			if err := uninstallMacPackage(deps); err != nil {
+				return serviceFailed(err)
+			}
+			return cli.Result{Records: []*output.Record{output.New().Set("package", "managed-machine").Set("state", "removed")}}
+		},
+	}
 }

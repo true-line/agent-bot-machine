@@ -259,6 +259,9 @@ UID, owner pin and enrollment epoch. An existing incompatible binding requires
 a separate transition. Status or a request from HQ cannot provision or rotate
 a key. The release ships the helper beside Machine at mode 0700. Machine
 requires its Developer ID signature and release identifier before delegation.
+If macOS denies user interaction while reading existing device custody from
+Keychain or creating the Secure Enclave device key, the admin initialization
+command identifies which operation was refused and exits unsuccessfully. Requests from HQ receive the usual custody-unavailable refusal.
 
 An authenticated `hq-device` request selects one of these operations. Each
 one binds the original request nonce and the kernel-authenticated HQ UID.
@@ -272,6 +275,9 @@ the second Machine-signed delegation before operating on its matching key.
 | `bind-enrollment` | `bound` | Validate the identity service's signed approved poll receipt against the admin's pending proof and device thumbprint. |
 | `access-assertion` | `asserted` | Use the recorded device ID and a new admin-owned ephemeral key for the fixed OAuth token audience. |
 | `bind-access` | `access-bound` | Validate the server-signed token result for that assertion and return the administrative session thumbprint and deadline. |
+| `whoami` | `whoami-proved` | Return a fresh DPoP proof for the enrolled device’s fixed Identity self-lookup, using its bound, unexpired session. |
+
+For `whoami`, both signed request transcripts append the label `session` and its value immediately after the epoch. The value is the RFC 7638 session thumbprint returned by `bind-access`. Keyd sets the method to `GET`, the URI to `https://agents.true-line.ai/api/daemon/whoami`, and the token hash to the value from the verified token receipt. Keyd generates the issuance time and proof JTI. The Machine-signed response carries `hq_epoch`, `session` and `proof`. HQ carries the HTTPS request and verifies Identity’s response signature and returned device ID.
 
 The signed channel transcript appends the lines `hq_epoch`, then its value,
 after the normal ten fields for every operation except `identity`. A fresh
@@ -287,6 +293,29 @@ assertion. The private keyd message uses the domain
 standard base64), decimal peer UID, original nonce, Unix seconds, option,
 three empty historical field slots, then labelled epoch and receipt lines
 as applicable. Both request transcripts use LF with no trailing newline.
+
+On pull requests, the macOS 15 runner installs the current public Homebrew
+formula and checks the linked Machine and keyd executables against the
+published release checksum, Developer ID requirements and installed modes.
+
+After publication, a fresh macOS 15 runner downloads the release's attached
+formula, checksum list and Darwin archive from their public URLs. It checks
+the formula and archive against the verified publish job's digests, installs
+and reinstalls the formula in a disposable tap, verifies the installed source
+commit after each installation, and runs its package tests.
+
+When the signed Darwin archive pin changes on protected `main`, CI installs
+the public tap at that push's exact Git commit. It verifies the release
+checksums and compares both active keg executables to the published archive.
+The historical v0.12.4 archive receives the package checks. For subsequent
+releases, the macOS 27 runner also pairs a dedicated HQ role, verifies an
+enrollment proof, restarts Machine and revokes HQ.
+
+The hosted run reports its actual SIP state. Physical Stage 2a qualification
+requires separate evidence. To run the installed-release check manually, use
+the `macOS 27 HQ installation` workflow with `device_release_version`, the
+reviewed `device_archive_sha256`, and `device_homebrew_install=true`.
+The `require_sip=true` dispatch additionally requires fully enabled SIP.
 
 An administrator runs `managed-machine daemon revoke-hq` to disable the
 role immediately. The deny marker becomes visible before waiting for

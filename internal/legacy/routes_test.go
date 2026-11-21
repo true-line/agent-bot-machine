@@ -134,7 +134,15 @@ func TestUsageHeredocMatchesLegacyRoutes(t *testing.T) {
 	}
 
 	// Verify one line per new-core command in the Portable core commands block.
-	coreSection := heredoc[coreIdx:legacyIdx]
+	removalIdx := strings.Index(heredoc, "macOS Homebrew removal:\n")
+	if removalIdx <= coreIdx || removalIdx >= legacyIdx {
+		t.Fatal("expected a separate macOS removal section between portable and legacy commands")
+	}
+	removal := heredoc[removalIdx:legacyIdx]
+	if !strings.Contains(removal, "managed-machine uninstall ") || !strings.Contains(removal, "members uninstall-hq --help") {
+		t.Fatalf("missing package or HQ uninstall guidance: %s", removal)
+	}
+	coreSection := heredoc[coreIdx:removalIdx]
 	var coreLines []string
 	for _, ln := range strings.Split(strings.TrimSpace(coreSection), "\n")[1:] {
 		if strings.TrimSpace(ln) != "" {
