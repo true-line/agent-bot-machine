@@ -166,7 +166,7 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	}
 	g.seen[req.Nonce] = struct{}{}
 	if !knownVerb(req.Verb) {
-		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, members-plans, hq-service-recovery, hq-service-upgrade, harness-account-provision, harness-launch-install, harness-launch-retire, hq-device, approve-members, bootstrap"
+		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, members-plans, hq-service-recovery, hq-service-upgrade, harness-account-provision, soul-runner-provision, harness-launch-install, harness-launch-retire, hq-device, approve-members, bootstrap"
 	}
 	if id, msg := catalogFields(req, raw); id != "" {
 		return req, id, msg
@@ -256,7 +256,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, harnessInstallVerb, harnessRetireVerb, deviceVerb, approveMembersVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, harnessInstallVerb, harnessRetireVerb, deviceVerb, approveMembersVerb, "bootstrap":
 		return true
 	default:
 		return false

@@ -22,11 +22,12 @@ const recoveryVerb = "hq-service-recovery"
 const upgradeVerb = "hq-service-upgrade"
 
 const harnessAccountsVerb = members.HarnessAccountsPurpose
+const soulRunnerAccountsVerb = members.SoulRunnerAccountsPurpose
 const harnessInstallVerb = members.HarnessInstall
 const harnessRetireVerb = members.HarnessRetire
 
 func pairedServiceVerb(verb string) bool {
-	return verb == harnessAccountsVerb || verb == recoveryVerb || verb == upgradeVerb || verb == members.HarnessInstall || verb == members.HarnessRetire
+	return verb == harnessAccountsVerb || verb == soulRunnerAccountsVerb || verb == recoveryVerb || verb == upgradeVerb || verb == members.HarnessInstall || verb == members.HarnessRetire
 }
 
 // This record never contains plan contents. UID is a local pairing property.
