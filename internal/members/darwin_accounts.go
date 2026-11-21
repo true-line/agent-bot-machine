@@ -230,7 +230,44 @@ func privateDarwinRoleGroup(account, group string, id int) (bool, error) {
 			}
 		}
 	}
+	// The local node is not the whole login namespace. A directory-backed
+	// account with this UID is the same kernel principal even when it has a
+	// different primary group. A remote group or primary-group user similarly
+	// defeats the dedicated role's group boundary. Search the effective node
+	// and require exactly the one reviewed record for every numeric identity.
+	for _, item := range []struct{ kind, attr, want string }{
+		{"/Users", "UniqueID", account},
+		{"/Groups", "PrimaryGroupID", group},
+		{"/Users", "PrimaryGroupID", account},
+	} {
+		owners, err := darwinSearchIDOwners(item.kind, item.attr, gid)
+		if err != nil {
+			return false, err
+		}
+		if len(owners) != 1 || owners[0] != item.want {
+			return false, nil
+		}
+	}
 	return true, nil
+}
+
+func darwinSearchIDOwners(kind, attr, id string) ([]string, error) {
+	out, err := runOutput(dsclPath, "/Search", "-search", kind, attr, id)
+	if err != nil {
+		return nil, fmt.Errorf("Directory Services search for %s %s: %w", attr, id, err)
+	}
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") || line == ")" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[1] != attr || fields[2] != "=" || fields[3] != "(" {
+			return nil, errors.New("unexpected Directory Services search record")
+		}
+		names = append(names, fields[0])
+	}
+	return names, nil
 }
 
 // darwinPasswordField returns "*" for an account nobody can log in to: its

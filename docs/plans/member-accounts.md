@@ -188,6 +188,10 @@ account name from the installation ID and refuses a different name. It accepts
 the existing HQ/Souls installation ID format, including IDs created before
 this command. The plan names every Soul and installation, the chosen numeric
 UID/GID, and a distinct 0700 home under `/var/agent-bot-soul-runner-*`.
+For an existing managed role, Machine also searches the effective Directory
+Services node for the numeric UID, private GID and primary-group users. Any
+alias, missing record or unavailable search refuses the plan, since a second
+name for that UID would be the same kernel principal.
 The paired HQ exports this plan with the `soul-runner-provision` owner-proof
 purpose, and the prefix administrator applies the exact approved digest with
 `sudo managed-machine members apply <plan-id>`. An interrupted apply consumes
