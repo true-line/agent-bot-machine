@@ -1,0 +1,9 @@
+(version 1)
+; Fixture-only sidecar profile. A reviewed launcher must supply all three
+; absolute socket paths; no runtime request may choose a path. The assigned
+; listener is a private Unix socket, never an IP listener.
+(allow default)
+(deny network*)
+(allow network-outbound (remote unix-socket (path-literal (param "BROKER_SOCKET"))))
+(allow network-outbound (remote unix-socket (path-literal (param "MEMBER_SOCKET"))))
+(allow network-bind (local unix-socket (path-literal (param "LISTEN_SOCKET"))))

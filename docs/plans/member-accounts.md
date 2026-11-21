@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 12698)
+Total output lines: 811
+
 ---
 name: member-accounts
 status: active
@@ -169,6 +172,15 @@ apply it to the child running as its provisioned harness account and verify
 the operation with distinct accounts. Track the design
 and its implementation status in [Platform #96](https://github.com/true-line/agent-bot-platform/pull/96).
 
+The [sidecar fixture profile](../../internal/members/darwin/harness-sidecar.sb)
+adds one exact local Unix listener with `LISTEN_SOCKET` to the assigned broker
+and member outbound paths. The native test starts a sidecar process and checks
+that its assigned listener works while another Unix bind, a sibling Unix
+connect, and direct IPv4/IPv6 binds and connects are denied. The listener
+primitive is not an installed launch grant: Machine still needs a separate
+reviewed sidecar policy, pinned command, live HQ authorization, target UID
+check, process supervision and safe retirement before packaged HQ can use it.
+
 ### What is created
 
 For an HQ account `H` and each listed harness credential account `M`:
@@ -298,185 +310,7 @@ member approvals, first installation, and enrollment on their existing terms.
 ### Updating a running paired HQ release on macOS
 
 The prefix administrator stages an independently verified new HQ release and
-runs `managed-machine members plan --hq-service NEW_SERVICE_JSON --upgrade-from PREVIOUS_PLAN_ID`.
-The planner checks the retained previous saved plan, matching installed plist
-and running dedicated HQ job. It includes the previous plan ID and digest
-in the proposal. Root verifies that reference against its private completed
-receipt before consuming the approval and again under the service lock before
-stopping HQ.
-The previous receipt commits to the original canonical plan through its
-digest. Machine verifies both releases, their extracted files, the same
-pinned Node executable and the protected version 2 owner-control directory.
-The role, owner UID and state location are part of the reviewed plan.
-
-The paired HQ CLI exports `hq-service-upgrade` through the signed Machine
-channel. The challenge, transport signature and owner transcript use the
-service recovery field order above with `hq-service-upgrade` as the purpose.
-The service step has action `upgrade`. Its content includes
-`previous_plan_id`, `previous_plan_digest`, `previous` and `next`.
-The last two values are the full service records, including their plists.
-The owner reviews this exact change and returns a fresh proof signed by
-the existing owner key. A compatible protected owner proof provider is
-required. The administrator runs `sudo managed-machine members apply PLAN_ID`
-in their own terminal.
-
-The service update supports an already Machine-backed HQ on Apple Silicon
-running Darwin kernel 25 or later. Both releases must report the same public
-hardware signer identity and generation. An older software signer requires
-a separate custody migration before this operation. Machine checks this
-before stopping the running HQ. It also checks the current HQ pairing and
-its enrollment epoch, validates the existing job's UID, then records the
-reviewed inputs before unloading it. The two verified plists exchange
-atomically. Launchd restarts HQ using the new release. Machine verifies the
-owner endpoint and the signed HQ-to-Machine status through the dedicated role.
-
-After interruption, repeat the same `members apply PLAN_ID` command. The
-root transaction record identifies the exact reviewed files, original pairing
-and last phase. Machine can confirm a running new release or restore the
-verified previous one. It leaves an unidentified job, changed plist or
-unverified endpoint intact for administrator reconciliation. A completed
-receipt permits a read-only verification when the previous terminal result
-was lost. Retain the old release, its saved plan and the shared Node binary
-through completion.
-
-### Removing the receipt-managed macOS HQ service
-
-Use the administrator account that installed the dedicated HQ service. These
-local commands work with Machine stopped and with HQ offline. List the completed
-root receipts whose retained canonical plan matches the installed plist.
-
-```sh
-sudo managed-machine members uninstall-hq --list
-sudo managed-machine members uninstall-hq PLAN_ID --dry-run
-sudo managed-machine members uninstall-hq PLAN_ID
-```
-
-After an upgrade use the completed upgrade's plan ID. Several reapplications
-of identical service bytes may match. Compare the displayed IDs with the
-administrator's saved plans and the original completed root receipts before
-choosing one. An outstanding removal reports `resume_plan_id` even after the
-service plist is gone. Repeat removal with that ID. Missing plans, invalid receipts, and plans for an older plist
-are excluded from discovery. Preserve both the saved plan and its root
-receipt until removal finishes. This explicit local invocation is the
-administrator's new decision to unload the service.
-
-The command removes the fixed system launchd job, its verified plist and any
-endpoint observed for the identified job. On macOS 15, if launchd leaves the socket behind, Machine rechecks
-the recorded job and process are gone and probes both Unix socket types
-at the recorded filesystem entry. It removes the entry only when both
-report a detached socket and the protected parent and entry still match.
-If Machine cannot establish that the socket is unused, it preserves the
-journal and endpoint for a later retry. A running or
-unidentified replacement, or an occupied endpoint without job provenance,
-requires administrator reconciliation. Repeat the same command to resume an
-interrupted removal or confirm a completed one. If the reviewed job, plist
-and endpoint are already absent, an explicit uninstall records completion for
-that plan. Repeating its removal leaves a later installation of the same release intact.
-A dry run leaves the receipt unchanged.
-
-Retire any installed harness launch grant through the paired HQ before removing
-HQ or its Machine package. Both operations preserve the launcher, sandbox
-profile, launch policy and sudoers rule. If the service is already absent,
-an outstanding grant still prevents completion of a new uninstall receipt.
-An administrator must reconcile partial or changed grant files. If the prefix
-owner cannot inspect sudoers.d, package uninstall can continue only when all
-three public grant files and their recognized staging names are absent. A staging name from an interrupted grant transition also
-preserves the original plan for recovery. Unrelated dotfiles and retained audit
-receipts do not block removal.
-
-If a crash occurs after the job, process, socket and plist are gone, only
-the root audit record may still need its final directory sync and rename.
-Package removal can proceed once those public service resources are gone.
-The package operation preserves the saved plan and root journal. If the CLI
-was removed in that interval, reinstall a compatible Machine binary, run
-`members uninstall-hq --list` as above, and resume the displayed plan. This
-finishes the audit record without starting HQ or pairing again.
-
-The dedicated account and its home, HQ data, pairing, Keychain custody,
-externally staged release archives, extracted HQ and Node binaries, and audit
-receipts remain. Machine retains the runtime directory even when empty.
-Standalone declarations and irreversible retirement records can use that
-directory. Remove the HQ service before removing the Machine package.
-
-### How root is obtained
-
-The owner runs `sudo managed-machine members apply <plan-id>` in their own
-terminal. sudo's password prompt is the privilege grant; the approval is the
-consent to this exact plan. Agent accounts, agent sessions and harness
-markers are refused before anything is read, as `ssh enroll` and `--update`
-do. The machine daemon still never runs as root and gains no execution verb:
-`approve-members` only records a digest.
-
-### What the approval does and does not prove
-
-Until HQ has its own account (S6), the daemon behind the local web UI runs in
-the owner's account, and so does its client key. A process in that account
-could sign `approve-members` itself. It still could not run the apply: that
-needs the owner's password. So the approval binds what is applied to what
-the owner was shown, and sudo keeps an agent from applying it. After S6 the
-signing key is out of the owner's account and the approval stands alone.
-
-### Removal
-
-`members plan` with an account absent from the unique account set plans the
-removal of its sudoers entry, egress rules and endpoint directory. Removing one
-adapter does not remove an account still used by another adapter. The account
-and its home are kept and reported, never deleted by this tool: the home may
-hold work.
-
-## Open questions for the owner
-
-| Question                                    | Recommendation                                                                                                            |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Account names                               | `abm-<name>`, at most 32 characters, matching `^[a-z_][a-z0-9_-]{0,31}$`, which is what HQ accepts                        |
-| One list for both sides                     | HQ's `harnesses.accounts` maps adapter IDs to accounts. `members plan` reads that file and provisions each distinct account once |
-| A graphical prompt instead of terminal sudo | Not now. `pkexec` can be added later without changing the plan, the approval or the digest                                |
-
-## As built
-
-**Step 1, the plan** (`internal/members`):
-
-```sh
-managed-machine members plan [--hq-account <account>] (--hq-config <path> | --members <a,b,...>) [--dir <path>]
-```
-
-- `--hq-config` reads `harnesses.accounts` (adapter ID to account) and optional
-  `harnesses.dir` from HQ's `config.json`. Multiple adapters may share an
-  account; the provisioner sorts and deduplicates the account set before
-  building the plan. Omitted `dir` uses `/run/agent-bot-hq/members`.
-- The `harnesses` section accepts only `accounts` and `dir`. Adapter IDs follow
-  HQ's `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`; account names follow
-  `^[a-z_][a-z0-9_-]{0,31}$`. The existing provisioning path restrictions
-  still apply, including a clean absolute directory safe for tmpfiles/sudoers.
-- Missing, null or malformed account maps are refused before saving a plan.
-  An explicit `accounts: {}` requests the existing removal plan, never deletion
-  of accounts or homes. A legacy `members` section, even alongside `harnesses`,
-  is refused with migration advice; there is no fallback to the retired mapping.
-- `--members` still names accounts directly. Equivalent account sets retain
-  the same version-3 plan and digest, approval protocol and apply behavior.
-  Adapter-to-account binding remains HQ's responsibility; the plan covers
-  the accounts and host changes it provisions.
-- The first record carries `plan_id`, `plan_digest`, `changes` and
-  `applied: false`. One record follows per step, with the exact content of
-  each file.
-- Step actions are `create`, `repair`, `remove`, `none` and `write`.
-- **The sudoers step is always `write`.** `/etc/sudoers.d` is closed to
-  everyone but root, so a plan made without privilege cannot see what is
-  there. A step that depended on it would give root's rebuild a different
-  digest and no apply could ever match. Apply checks the existing file
-  itself, as root.
-- An account that already exists is verified, never changed. Its password
-  can only be read as root, so that check is at apply.
-- New accounts get home `/home/<account>` and shell `/usr/sbin/nologin`.
-  `sudo -u` runs a command directly, so a harness needs no login shell.
-- Diagnostics: `MM_MEMBERS_UNSUPPORTED`, `MM_MEMBERS_LIST_INVALID`,
-  `MM_MEMBERS_ACCOUNT_REFUSED`, `MM_MEMBERS_PATH_REFUSED`,
-  `MM_MEMBERS_PLAN_FAILED`.
-
-**The HQ account** (`internal/members`, S6):
-
-- The first step of every plan has kind `hq-account`.
-- **Missing:** the step is `create`. Apply runs
+runs `managed-machine…2698 tokens truncated…** the step is `create`. Apply runs
   `useradd --system --create-home --home-dir /var/lib/<account> --user-group --shell /usr/sbin/nologin`,
   sets the home to 0700, and fails unless the new account is locked. It comes
   before the harness accounts, so the directories, the tmpfiles entry and the
