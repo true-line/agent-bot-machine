@@ -42,25 +42,26 @@ func ValidateSoulBridges(runners []SoulRunner, bridges []SoulBridge, hqUID int, 
 	}
 	accounts := make([]HarnessAdapter, 0, len(bridges)+len(sharedHarnesses))
 	accounts = append(accounts, sharedHarnesses...)
-	seenAccount := map[string]bool{}
-	seenUID := map[int]bool{hqUID: true}
+	seenAccount := map[string]int{}
+	seenUID := map[int]string{hqUID: DarwinHQAccount}
 	for _, harness := range sharedHarnesses {
-		if !accountName.MatchString(harness.Account) || seenAccount[harness.Account] ||
-			harness.UID < 300 || harness.UID > 399 || seenUID[harness.UID] {
+		if !accountName.MatchString(harness.Account) || harness.UID < 300 || harness.UID > 399 ||
+			(seenAccount[harness.Account] != 0 && seenAccount[harness.Account] != harness.UID) ||
+			(seenUID[harness.UID] != "" && seenUID[harness.UID] != harness.Account) {
 			return invalid
 		}
-		seenAccount[harness.Account], seenUID[harness.UID] = true, true
+		seenAccount[harness.Account], seenUID[harness.UID] = harness.UID, harness.Account
 	}
 	for i, bridge := range bridges {
 		runner := runners[i]
 		if !soulIdentity.MatchString(bridge.SoulID) || bridge.SoulID != runner.SoulID ||
 			!soulInstallationID.MatchString(bridge.InstallationID) || bridge.InstallationID != runner.InstallationID ||
 			bridge.Account != SoulBridgeName(bridge.InstallationID) || !accountName.MatchString(bridge.Account) ||
-			seenAccount[bridge.Account] || bridge.UID < 300 || bridge.UID > 399 || bridge.UID == hqUID ||
-			bridge.GID != bridge.UID || seenUID[bridge.UID] {
+			seenAccount[bridge.Account] != 0 || bridge.UID < 300 || bridge.UID > 399 || bridge.UID == hqUID ||
+			bridge.GID != bridge.UID || seenUID[bridge.UID] != "" {
 			return invalid
 		}
-		seenAccount[bridge.Account], seenUID[bridge.UID] = true, true
+		seenAccount[bridge.Account], seenUID[bridge.UID] = bridge.UID, bridge.Account
 		accounts = append(accounts, HarnessAdapter{Account: bridge.Account, UID: bridge.UID})
 	}
 	return ValidateSoulRunners(runners, hqUID, accounts)

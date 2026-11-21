@@ -16,6 +16,15 @@ func TestSoulBridgeMappingRequiresOneCredentialPrincipalPerInstallation(t *testi
 	if err := ValidateSoulBridges(runners, bridges, 309, shared); err != nil {
 		t.Fatalf("distinct protected principals: %v", err)
 	}
+	if err := ValidateSoulBridges(runners, bridges, 309, append(shared, HarnessAdapter{Account: "_shared-c", UID: 330})); err != nil {
+		t.Fatalf("consistent repeated harness tuple refused: %v", err)
+	}
+	if err := ValidateSoulBridges(runners, bridges, 309, append(shared, HarnessAdapter{Account: "_shared-c", UID: 336})); err == nil {
+		t.Fatal("accepted one shared harness name with two UIDs")
+	}
+	if err := ValidateSoulBridges(runners, bridges, 309, append(shared, HarnessAdapter{Account: "_other-c", UID: 330})); err == nil {
+		t.Fatal("accepted one shared harness UID with two account names")
+	}
 	for name, edit := range map[string]func([]SoulBridge){
 		"shared credential UID":     func(b []SoulBridge) { b[1].UID, b[1].GID = b[0].UID, b[0].GID },
 		"shared credential account": func(b []SoulBridge) { b[1].Account = b[0].Account },

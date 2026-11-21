@@ -214,21 +214,29 @@ from that installation's `_abm-sr-*` package runner, dedicated HQ, Machine and
 keyd, and every shared harness credential account. Two installations cannot
 share either bridge or runner kernel principal. The bridge alone receives the
 HQ broker credential. The runner gets only start-bound relay authority. A
-bridge cannot be reused as a general harness account. This typed contract
-does not create an account or grant a launch; Machine must recheck Directory
-Services aliases and the installed role at every privileged boundary.
+bridge cannot be reused as a general harness account. The paired
+`--soul-bridge-provision <installations.json>` plan accepts a bounded `bridges`
+array of `soul_id`, `installation_id` and the derived `account`. The owner
+reviews its exact UID/GID, private 0700 home and digest. The paired HQ must
+add an export for the `soul-bridge-provision` owner-proof purpose before the
+prefix administrator can apply that digest as root. Machine records a one-use
+receipt and rechecks
+the protected pairing before each creation. An interrupted apply consumes its
+receipt; plan and review only the remaining changes. The account operation
+does not install a broker or launch grant. Machine must recheck Directory
+Services aliases and the installed role at every later privileged boundary.
 
 The fixed endpoint assignment derives a 96-bit directory name from the
 installation ID and HQ start ID. No request may choose a socket path. The
 broker remains in the HQ-owned `ipc/<bridge>` directory. The per-start member
 directory is runner-owned with the bridge group; the relay directory is
 bridge-owned with the runner group; the admission directory is HQ-owned with
-the runner group. Each is 2750, with a 0660 socket and an exact kernel peer UID:
+the runner group. Each is 2750, with a 0660 socket and an exact kernel peer set:
 
 | Channel | Listener owner | Group and admitted peer | Purpose |
 | --- | --- | --- | --- |
 | HQ broker | HQ | bridge | Broad authenticated broker access for the bridge only |
-| Souls member | runner | bridge | One launch's member operations |
+| Souls member | runner | runner and bridge | One launch's member operations; protocol separates their authority |
 | HTTP relay | bridge | runner | Narrow, start-bound stock-client relay |
 | HQ admission | HQ | runner | Entry-point control before vendor confinement |
 
