@@ -92,6 +92,7 @@ const (
 
 // Input is what the owner asked for.
 type Input struct {
+	HarnessAccounts    bool
 	upgradeObservation *upgradeObservation
 	UpgradeFrom        *priorServicePlan
 	HarnessLaunch      *HarnessPolicyRecord
@@ -184,6 +185,8 @@ type Step struct {
 	// Content is the exact content of a file step.
 	Content string `json:"content,omitempty"`
 	Detail  string `json:"detail,omitempty"`
+	UID     int    `json:"uid,omitempty"`
+	GID     int    `json:"gid,omitempty"`
 }
 
 // Plan is the exact request the owner approves.
@@ -193,6 +196,7 @@ type Plan struct {
 	Dir       string   `json:"dir"`
 	Members   []string `json:"members"`
 	Steps     []Step   `json:"steps"`
+	Purpose   string   `json:"purpose,omitempty"`
 }
 
 // Refusal is a host or request the plan will not touch. Code is one of the
@@ -267,6 +271,9 @@ func Build(in Input, h Host) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	if in.HarnessAccounts && (in.Platform != PlatformDarwin || in.HQAccount != DarwinHQAccount || len(in.Members) == 0 || len(in.Members) > 99 || in.HQService != nil || in.UpgradeFrom != nil || in.HarnessLaunch != nil) {
+		return Plan{}, refuse(RefusedList, "paired account provisioning requires only a dedicated macOS HQ and a nonempty list of harness accounts")
+	}
 	if in.UpgradeFrom != nil && (in.HarnessLaunch != nil || in.Platform != PlatformDarwin || in.HQService == nil || in.HQAccount != DarwinHQAccount || len(in.Members) != 0) {
 		return Plan{}, refuse(RefusedList, "upgrade requires a dedicated macOS service-only plan")
 	}
@@ -297,6 +304,11 @@ func Build(in Input, h Host) (Plan, error) {
 	}
 
 	if in.Platform == PlatformDarwin {
+		if in.HarnessAccounts {
+			if err := bindHarnessAccounts(&p, h); err != nil {
+				return Plan{}, err
+			}
+		}
 		if in.Dir == DarwinBrokerDir {
 			if err := appendDarwinBrokerDirectories(&p, h); err != nil {
 				return Plan{}, err
@@ -305,6 +317,15 @@ func Build(in Input, h Host) (Plan, error) {
 		if in.HQService != nil {
 			if err := appendLaunchDaemon(&p, in, h); err != nil {
 				return Plan{}, err
+			}
+		}
+		if in.HarnessAccounts {
+			raw, err := p.Canonical()
+			if err != nil {
+				return Plan{}, err
+			}
+			if len(raw) > 32*1024 {
+				return Plan{}, refuse(RefusedList, "harness account plan exceeds the paired review size limit")
 			}
 		}
 		return p, nil
@@ -535,9 +556,13 @@ func platformAccountStep(platform, name string, h Host, uids map[int]string) (St
 	}
 	if home.Mode&0o7777 != 0o700 {
 		want.Action = ActionRepair
-		want.Detail = fmt.Sprintf("exists; home %s has mode %04o and is set to 0700; its password is checked at apply", a.Home, home.Mode&0o7777)
+		want.Detail = accountHomeRepairDetail(a.Home, home.Mode&0o7777)
 	}
 	return want, nil
+}
+
+func accountHomeRepairDetail(home string, mode uint32) string {
+	return fmt.Sprintf("exists; home %s has mode %04o and is set to 0700; its password is checked at apply", home, mode)
 }
 
 func dirStep(h Host, p, owner, group string, mode uint32) (Step, error) {

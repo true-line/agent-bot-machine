@@ -159,7 +159,7 @@ func (OSRoot) PreflightEgress(script, restore string) error {
 // CreateAccount implements Root. useradd leaves a new account locked.
 func (OSRoot) CreateAccount(name string) error {
 	if runtime.GOOS == "darwin" {
-		return darwinCreateRoleAccount(name, darwinHarnessHome(name), darwinHarnessRoleName)
+		return darwinCreateRoleAccount(name, darwinHarnessHome(name), darwinHarnessRoleName, 0)
 	}
 	home := filepath.Join(HomeBase, name)
 	if err := runProgram(useraddPath, "--create-home", "--home-dir", home, "--user-group", "--shell", NoLoginShell, name); err != nil {
@@ -172,7 +172,7 @@ func (OSRoot) CreateAccount(name string) error {
 // range of people's accounts and no password aging.
 func (OSRoot) CreateHQAccount(name string) error {
 	if runtime.GOOS == "darwin" {
-		return darwinCreateRoleAccount(name, HQHome(PlatformDarwin, name), darwinHQRoleName)
+		return darwinCreateRoleAccount(name, HQHome(PlatformDarwin, name), darwinHQRoleName, 0)
 	}
 	home := filepath.Join(HQHomeBase, name)
 	if err := runProgram(useraddPath, "--system", "--create-home", "--home-dir", home, "--user-group", "--shell", NoLoginShell, name); err != nil {

@@ -126,6 +126,14 @@ func removeLaunchDirectory(dir *os.File, path string) error {
 }
 
 func createDarwinBrokerDirectory(p, owner, group string, mode uint32) error {
+	return createDarwinBrokerDirectoryForIDs(p, owner, group, mode, -1, -1)
+}
+
+func (OSRoot) CreateReviewedBrokerDirectory(p, owner, group string, mode uint32, uid, gid int) error {
+	return createDarwinBrokerDirectoryForIDs(p, owner, group, mode, uid, gid)
+}
+
+func createDarwinBrokerDirectoryForIDs(p, owner, group string, mode uint32, reviewedUID, reviewedGID int) error {
 	switch {
 	case p == DarwinBrokerDir && owner == "root" && group == "wheel" && mode == 0755:
 	case filepath.Dir(p) == DarwinBrokerDir && owner == DarwinHQAccount && accountName.MatchString(group) && filepath.Base(p) == group && mode == 02750:
@@ -142,6 +150,9 @@ func createDarwinBrokerDirectory(p, owner, group string, mode uint32) error {
 	uid, gid, err := ids(owner, group)
 	if err != nil {
 		return err
+	}
+	if reviewedUID >= 0 && (uid != reviewedUID || gid != reviewedGID) {
+		return errors.New("reviewed broker directory ownership changed")
 	}
 	dir, err := createProtectedDirectory(p, uid, gid, fileMode(mode))
 	if err != nil {
