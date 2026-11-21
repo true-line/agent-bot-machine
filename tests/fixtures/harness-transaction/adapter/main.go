@@ -16,6 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -116,6 +118,38 @@ func bind() error {
 	}
 	return nil
 }
+
+// The controller keeps these reachable listeners open outside the sandbox.
+// A timeout or connection refusal is not evidence of policy enforcement.
+func denied(network, address string) error {
+	c, err := net.DialTimeout(network, address, 2*time.Second)
+	if err == nil {
+		c.Close()
+		return invalid
+	}
+	if !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.EACCES) {
+		return invalid
+	}
+	return nil
+}
+
+func probe(ipv4, ipv6 int, sibling string) error {
+	if ipv4 < 1 || ipv4 > 65535 || ipv6 < 1 || ipv6 > 65535 ||
+		!filepath.IsAbs(sibling) || filepath.Dir(sibling) != filepath.Dir(os.Getenv("AGENT_BOT_SOULS_SOCKET")) ||
+		sibling == os.Getenv("AGENT_BOT_SOULS_SOCKET") {
+		return invalid
+	}
+	for _, target := range []struct{ network, address string }{
+		{"tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(ipv4))},
+		{"tcp6", net.JoinHostPort("::1", strconv.Itoa(ipv6))},
+		{"unix", sibling},
+	} {
+		if denied(target.network, target.address) != nil {
+			return invalid
+		}
+	}
+	return nil
+}
 func main() {
 	if len(os.Args) != 1 {
 		os.Exit(2)
@@ -131,6 +165,11 @@ func main() {
 			Method  string
 			Params  struct {
 				SessionID string `json:"sessionId"`
+				Probe     struct {
+					IPv4Port int    `json:"ipv4_port"`
+					IPv6Port int    `json:"ipv6_port"`
+					Sibling  string `json:"sibling"`
+				} `json:"probe"`
 			}
 		}
 		if json.Unmarshal(read.Bytes(), &msg) != nil || msg.JSONRPC != "2.0" {
@@ -148,7 +187,7 @@ func main() {
 			response["result"] = map[string]string{"sessionId": "fixture-session"}
 			session = true
 		case msg.Method == "session/prompt" && session && msg.Params.SessionID == "fixture-session":
-			if bind() != nil {
+			if probe(msg.Params.Probe.IPv4Port, msg.Params.Probe.IPv6Port, msg.Params.Probe.Sibling) != nil || bind() != nil {
 				response["error"] = map[string]any{"code": -32603, "message": "fixture member bind unavailable"}
 			} else {
 				response["result"] = map[string]string{"stopReason": "end_turn"}
@@ -163,4 +202,7 @@ func main() {
 	if read.Err() != nil {
 		os.Exit(1)
 	}
+	// Remain alive after ACP EOF. The launcher must stop this process group;
+	// a natural fixture exit cannot count as cutoff evidence.
+	time.Sleep(20 * time.Second)
 }
