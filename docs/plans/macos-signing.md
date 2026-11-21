@@ -187,7 +187,10 @@ The release workflow checks the embedded organization, full publisher name and
 reviewed leaf on the signed binaries before notarization, on the repacked
 archive before draft upload, and on the bytes downloaded before publication.
 It verifies the complete draft asset inventory and digests immediately before
-publishing the checked release ID. The public notes link the validated tag’s change
+publishing the checked release ID. Both a fresh publication and a retry require
+a draft created by GitHub Actions and assets uploaded by that same bot with empty
+labels. Previously staged drafts or assets attributed to another account, or assets
+with a label, fail this check. The public notes link the validated tag’s change
 history, checksums, support matrix, and Homebrew formula. Keep other release writers idle during this
 last step because GitHub exposes asset edits and publication as separate operations.
 

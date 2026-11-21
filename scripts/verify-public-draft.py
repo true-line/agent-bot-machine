@@ -33,6 +33,13 @@ def check(phase, version, snapshot, rows):
         metadata[gate] = Path(gate)
 
     require(isinstance(rows, list))
+    # Check existing gate assets on retries as well as newly uploaded files.
+    # The release API exposes the uploader, and displays the label if set.
+    for row in rows:
+        uploader = row["uploader"]
+        require(isinstance(uploader, dict) and uploader.get("type") == "Bot"
+                and type(uploader.get("id")) is int and uploader["id"] == 41898282)
+        require(row["label"] in (None, ""))
     assets = {row["name"]: row for row in rows}
     require(len(assets) == len(rows) and len({row["id"] for row in rows}) == len(rows))
     require(dist.keys() <= assets.keys() <= dist.keys() | metadata.keys())
@@ -61,4 +68,4 @@ if __name__ == "__main__":
     try:
         check(sys.argv[1], sys.argv[2], Path(sys.argv[3]), json.load(sys.stdin))
     except (IndexError, KeyError, OSError, TypeError, ValueError):
-        sys.exit("Public release draft inventory or digest mismatch")
+        sys.exit("Public release draft inventory, attribution or digest mismatch")
