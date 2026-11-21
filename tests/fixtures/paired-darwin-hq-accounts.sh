@@ -114,7 +114,8 @@ hosted_harness_accounts() (
         for gid in $groups; do
             [[ "$gid" == "$uid" || ( "$gid" != "$nobody_gid" && " $common_groups " == *" $gid "* ) ]] || fail 'harness has an unreviewed supplementary group'
         done
-        [[ "$(sudo stat -f '%u:%g:%Lp' "$home")" == "$uid:$uid:700" ]]
+        [[ "$(sudo /usr/bin/stat -f '%u:%g:%Mp%Lp' "$home")" == "$uid:$uid:0700" ]] ||
+            fail 'harness home must retain its private owner, group and mode 0700'
         (cd / && sudo -n -H -u "$account" /bin/sh -c '
             test "$HOME" = "$1" && cd "$HOME" && test "$(/usr/bin/id -u)" = "$2"
         ' verify-home "$home" "$uid") || fail 'harness cannot enter its private home as the reviewed UID'
@@ -145,9 +146,11 @@ sys.exit(0 if isinstance(record, dict) and record and
     output="$(plan_accounts)"
     jq -e '.purpose=="harness-account-provision" and .changes==0' <<<"${output%%$'\n'*}" >/dev/null
     if [[ "$broker" != none ]]; then
-        [[ "$(stat -f '%Su:%Sg:%Lp' "$broker")" == root:wheel:755 ]]
+        [[ "$(/usr/bin/stat -f '%Su:%Sg:%Mp%Lp' "$broker")" == root:wheel:0755 ]] ||
+            fail 'broker parent must be root:wheel mode 0755'
         for account in "$left" "$right"; do
-            [[ "$(stat -f '%Su:%Sg:%Lp' "$broker/$account")" == "$role:$account:2750" ]]
+            [[ "$(/usr/bin/stat -f '%Su:%Sg:%Mp%Lp' "$broker/$account")" == "$role:$account:2750" ]] ||
+                fail 'harness broker directory must have its reviewed owner, private group and setgid mode 2750'
         done
         local broker_state="$stage/account-broker-state"
         sudo install -d -o "$role" -g "$role" -m 0700 "$broker_state"
