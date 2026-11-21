@@ -40,6 +40,58 @@ The same plan creates the HQ account when it does not exist. That is S6 in
 [cross-account-channel.md](cross-account-channel.md), issue
 [#475](https://github.com/true-line/agent-bot-machine/issues/475).
 
+## Provision macOS harness accounts through paired HQ
+
+The prefix administrator saves the account plan with
+`managed-machine members plan --harness-account-provision --members <accounts>`.
+Use `--hq-config <file>` to obtain the member list from HQ configuration.
+With an explicit list, add `--dir "/Library/Application Support/ai.true-line.agent-bot-hq/ipc"`
+to include the broker directories. The plan names the existing dedicated HQ
+role, the UID and private GID of each harness, its home, and each requested
+directory. An existing managed harness home can be repaired to mode 0700.
+
+An accounts-only plan can run as soon as the dedicated HQ role is paired.
+The broker plan requires the HQ service’s runtime directory at
+`/Library/Application Support/ai.true-line.agent-bot-hq`, owned by `root:wheel`
+at mode `0755`. Machine creates that parent through the approved HQ service
+plan. If the harness accounts already exist, planning again with the broker
+directory retains the matching accounts and proposes the missing directories.
+
+The dedicated paired HQ exports the saved plan with the
+`harness-account-provision` operation and submits the owner's fresh proof.
+The prefix administrator runs `sudo managed-machine members apply <plan-id>`
+while that approval is valid. An apply claims one receipt. After an interrupted
+or partial apply, save a new plan from the current host and approve the
+remaining changes.
+
+## Review a macOS harness launch rule
+
+After the dedicated HQ account, harness accounts and broker directories exist,
+run `managed-machine members plan --harness-launch-install <adapters.json>`.
+The input has one `adapters` array. Each entry has `adapter_id`, `account`,
+`executable` (an absolute path), `sha256` (lowercase hex) and `args` (an array
+of strings). Machine resolves the local role UIDs, checks the protected native
+executable and binds the reviewed plan to its own executable bytes and the
+embedded Darwin sandbox. The plan includes the fixed launch policy and the
+exact sudoers rule. For an existing installation, run
+`managed-machine members plan --harness-launch-retire <installed-plan-id>`
+to review removal of the recorded rule.
+
+This build saves the plan in the administrator's members plan store.
+The enrolled dedicated HQ can export the Machine-signed challenge and return
+a fresh owner proof with `machine harness-launch-install` or
+`machine harness-launch-retire`. Machine rechecks the authenticated role, pairing,
+canonical plan and host artifacts before recording approval. The approval binds
+the purpose, Machine fingerprint, pairing and exact plan digest. Replacing the
+Machine executable changes the proposed installation digest.
+
+Root install requires an independent qualification for every adapter executable
+and its arguments. This build has no production qualification verifier, so it
+refuses installation and launch. To retire a prior installation, Machine checks
+the original completed receipt, recorded file identities, current pairing and
+fresh retirement approval. It removes the sudoers rule first and preserves
+the accounts, homes, pairing and audit records.
+
 ## Target
 
 On macOS, `members plan` without an account list retains the HQ-only plan.
@@ -49,10 +101,47 @@ The owner's digest approval and root apply create each harness role with
 a unique UID, a same-name private group, a locked password, shell
 `/usr/bin/false`, and a 0700 home at `/var/agent-bot-harness-<account>`.
 Existing harness accounts must match the managed role. Shared HQ and owner
-accounts are refused for a harness plan. Darwin only provisions the accounts
-in this plan. The Linux endpoint, launch and egress steps below are separate
-parts of the protected-harness qualification on macOS.
-The disposable macOS acceptance test is `tests/members-apply-macos.test.sh`.
+accounts are refused for a harness plan. Omitting the endpoint directory
+or using a shared HQ config with a Linux broker path preserves the existing
+account-only plan and its digest. On macOS, only the fixed path below opts in.
+
+On a paired Mac, install the dedicated v2 HQ service before enabling harness
+endpoints in its runtime configuration. The service plan creates the root-owned
+runtime directory. HQ checks configured endpoint directories at startup.
+
+Set `harnesses.dir` in the proposed configuration to
+`/Library/Application Support/ai.true-line.agent-bot-hq/ipc` and run
+`managed-machine members plan --harness-account-provision --hq-config <file>`.
+The plan includes the `root:wheel` 0755 `ipc` directory and one
+`_agent-bot-hq:<account>` 2750 child per distinct account. Have the paired HQ
+role export the plan and return the owner's proof with
+`machine harness-account-provision`. The prefix administrator then runs
+`sudo managed-machine members apply <plan-id>`. After apply, HQ can load the
+configuration and bind `broker.sock` in each account's directory.
+
+The harness plan has its own root apply receipt containing its ID and digest.
+Existing directories must match their reviewed metadata. An apply failure
+retains earlier completed steps. Plan again and review the remaining changes.
+Omitting an account from a subsequent plan preserves its directory and data.
+The HQ service receipt does not confer removal authority for the harness
+accounts, homes, broker directories or their contents.
+
+The account provisioning fixture is `tests/members-apply-macos.test.sh`.
+
+The [Darwin harness egress profile](../../internal/members/darwin/harness-egress.sb)
+implements the per-process policy selected in [platform decision #52](https://github.com/true-line/agent-bot-platform/discussions/52).
+The trusted launcher supplies the admitted account's absolute broker path with
+`-D BROKER_SOCKET=<path>` and the absolute Souls member socket it assigned to
+this launch with `-D MEMBER_SOCKET=<path>`. A broker-only invocation omits
+`MEMBER_SOCKET`. Each grant matches one literal pathname.
+
+The unprivileged native fixture starts two launches in the same directory.
+Each can reach its own member socket and the broker. The sibling launch's
+socket, another Unix socket and direct IPv4/IPv6 loopback all remain denied.
+Only the fixture invokes this profile today. T03 still needs packaged HQ to
+apply it to the child running as its provisioned harness account and verify
+the operation with distinct accounts. Track the design
+and its implementation status in [Platform #96](https://github.com/true-line/agent-bot-platform/pull/96).
 
 ### What is created
 
@@ -68,6 +157,17 @@ For an HQ account `H` and each listed harness credential account `M`:
 | `/usr/local/sbin/agent-bot-hq-members-egress` | root, 0755                            | Owns and replaces `ABHQ_MEMBER_EGRESS` in both `iptables` and `ip6tables`; rejects outbound IP from each listed `M`, without affecting Unix-domain sockets                                        |
 | `/etc/systemd/system/agent-bot-hq-members-egress.service` | root, 0644              | Enables the exact approved policy at boot and activates it before the launch rule is installed                                                                                                   |
 | `/etc/sudoers.d/agent-bot-hq-members`       | root, 0440                              | `H` may run commands as the listed `M` accounts and as nothing else. No root, no group target, no `SETENV`. A fixed environment allowlist. Checked with `visudo -c` before it is moved into place |
+
+On macOS, Machine creates a private primary group for each harness account.
+macOS can also report inherited memberships. Use `id -Gn <account>` to
+inspect them. When checking whether an account is dedicated, Machine always
+counts membership in `admin`, `wheel`, `sudo` and the dedicated HQ group.
+A harness account with any of these memberships fails its privacy check.
+These names are also reserved when planning a macOS harness account because
+Machine would create a primary group of that name. After an upgrade, a
+previously accepted harness with a reserved name requires a different harness
+account for a new plan. Inspection leaves the old account, home and memberships
+in place. The dedicated HQ role keeps its own primary group.
 
 Refused, never adopted: an `M` that already exists with a shared group, a
 password, extra group memberships or uid 0; an `M` equal to `H`, to the prefix
@@ -484,7 +584,27 @@ made to generate one), and `approve-members` itself (Go tests in
 On split accounts Machine serves saved IDs and canonical plan bytes to the
 enrolled HQ service account through the signed [`members-plans` read
 operation](machine-daemon.md#closed-verb-set). Fetching a plan leaves its
-approval and apply state untouched. The protected approval step for an
+approval and apply state untouched.
+
+For a saved macOS harness launch grant, Machine also checks that the recorded
+adapter mapping renders the exact file contents returned for review. This
+version can create and review a saved installation or retirement plan. Applying
+it requires the typed owner approval, matching launcher and qualified adapter
+release tracked in [Machine #585](https://github.com/true-line/agent-bot-machine/issues/585).
+
+During installation the fixed launcher requires the reviewed policy file.
+Machine keeps that file staged while it checks the installed sudoers command.
+It publishes the policy only after syncing the matching successful root receipt.
+If interrupted between those operations, a retry verifies the recorded files,
+current pairing and owner approval before publishing the original staged policy.
+An already active, unchanged installation can return its prior receipt as
+`already-applied` after a read-only verification without a fresh approval.
+If an interrupted retirement already removed all four files, Machine can
+record `retirement-observed` after confirming their absence, the original
+receipts, continued pairing and idle target accounts. This result issues no
+fresh approval and changes no installed grant.
+
+The protected approval step for an
 already paired HQ is tracked in [Machine #539](https://github.com/true-line/agent-bot-machine/issues/539).
 
 **Local owner approval is built.** agent-bot-identity's
@@ -583,6 +703,14 @@ service and does not transfer that state or qualify a protected host.
 
 ### macOS HQ LaunchDaemon
 
+Machine ships a native arm64 executable for macOS 15 and later. Run the public
+installer from a native session where `uname -m` reports `arm64`. On the target
+Mac, run `managed-machine daemon --help` and check for `first-hq export PLAN_ID`
+before staging a release for a fresh installation. The
+public v0.12.4 CLI can plan a service but lacks the first-HQ approval command.
+First-time provisioning needs an approved Machine build with the
+[first-HQ transfer](cross-account-channel.md#first-hq-provisioning-on-macos).
+
 A macOS owner can run `managed-machine members plan --hq-service <record.json>`
 and approve/apply its digest through the existing members workflow. The service
 record uses the Linux `release_dir`, `artifact_sha256`, `node` and `node_sha256`
@@ -590,8 +718,14 @@ fields and adds `archive`, the absolute path to the retained approved Darwin
 ustar artifact. Stage the archive, its complete extraction (ending in `/hq`)
 and a standalone Node executable under root-owned, read-only-to-others paths.
 The installer checks each extracted entry, the Node digest, and Mach-O loader
-dependencies. Node must use Apple system libraries. Owner-writable Homebrew
-runtimes are unsuitable. No build tools or downloads run during installation.
+dependencies. The supported macOS service runs natively on Apple Silicon.
+When staging an official Node distribution, choose the approved version's
+`darwin-arm64` tar and verify its archive checksum. Use the SHA-256 of the
+extracted `bin/node` executable for `node_sha256`. A universal executable
+must include an arm64 slice. Each architecture directory entry must match its
+image’s CPU type and subtype. The planner checks every slice for Apple system
+library dependencies. Owner-writable Homebrew runtimes are unsuitable.
+No build tools or downloads run during installation.
 
 Machine creates the system LaunchDaemon `ai.true-line.agent-bot-hq` for
 `_agent-bot-hq`. The verified Darwin archive selects the owner-control
@@ -609,7 +743,12 @@ the job is confirmed absent and the same directory is empty.
 Kernel peer credentials and the approved owner's UID authorize each request.
 Machine checks the matching versioned capability as the dedicated HQ account
 and queries the running endpoint as the approved owner. Both layouts use a
-root-owned socket at mode `0666`. The existing signed plan and pairing
+root-owned socket at mode `0666`. During bootstrap, Machine waits up to three
+seconds for launchd to bind the socket and apply that mode. It can observe the
+same root-owned socket at its initial private mode `0700` during this window.
+It refuses a changed inode, disappearance after publication begins, an unexpected
+type or owner, or any other mode. It queries HQ only after the socket reaches
+`0666`. The existing signed plan and pairing
 continue to refer to their original subject. Changing an installed service's
 layout or release requires an explicit cutover. A second approved apply
 verifies the same loaded job. The experimental v2 layout requires installation

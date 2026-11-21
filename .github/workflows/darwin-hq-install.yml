@@ -11,6 +11,7 @@ on:
       - 'tests/fixtures/with-keyd-test-keychain.sh'
       - 'tests/members-apply-macos.test.sh'
       - 'tests/fixtures/*darwin-hq*'
+      - 'tests/fixtures/darwin-harness-egress.py'
       - 'tests/fixtures/hq-launchd-install.sh'
       - 'tests/fixtures/hq-launchd-runtime.c'
   push:
@@ -25,8 +26,20 @@ on:
       - 'tests/fixtures/with-keyd-test-keychain.sh'
       - 'tests/members-apply-macos.test.sh'
       - 'tests/fixtures/*darwin-hq*'
+      - 'tests/fixtures/darwin-harness-egress.py'
       - 'tests/fixtures/hq-launchd-install.sh'
       - 'tests/fixtures/hq-launchd-runtime.c'
+  workflow_call:
+    inputs:
+      formula_qualification:
+        type: string
+        required: true
+      device_release_version:
+        type: string
+        required: true
+      device_archive_sha256:
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       require_sip:
@@ -39,6 +52,10 @@ on:
       device_archive_sha256:
         description: Reviewed SHA-256 of the matching signed Darwin arm64 archive
         type: string
+      device_homebrew_install:
+        description: Test the public Homebrew installation of the specified signed release
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -86,23 +103,29 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Verify paired harness plan and owner proof
+        env:
+          GOTOOLCHAIN: local
+        run: go test -count=1 -race ./internal/daemon ./internal/members -run '^(TestHarnessOwnerProofCannotAuthorizeAnotherAction|TestHarnessAccountProtectedApply|TestDarwinHarnessPlanCommandBindsInstalledRolesAndCurrentBuild|TestApplyNeedsAMatchingUnexpiredApproval|TestUpgradeApplyDispatchKeepsDistinctPairedPurposes)$'
       - name: Fetch the reviewed signed Machine release for optional hardware qualification
-        if: inputs.device_release_version != '' || inputs.device_archive_sha256 != ''
+        if: inputs.device_release_version != '' || inputs.device_archive_sha256 != '' || inputs.device_homebrew_install
         shell: bash
         env:
           MM_DEVICE_VERSION: ${{ inputs.device_release_version }}
           MM_DEVICE_SHA: ${{ inputs.device_archive_sha256 }}
-          GH_TOKEN: ${{ github.token }}
         run: |
-          [[ "$MM_DEVICE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$MM_DEVICE_SHA" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$MM_DEVICE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$MM_DEVICE_SHA" =~ ^[0-9a-f]{64}$ ]] || exit 1
           archive="managed-machine_${MM_DEVICE_VERSION}_darwin_arm64.tar.gz"
-          gh release download "v$MM_DEVICE_VERSION" --repo "$GITHUB_REPOSITORY" --pattern "$archive" --dir "$RUNNER_TEMP"
-          [[ "$(shasum -a 256 "$RUNNER_TEMP/$archive" | awk '{print $1}')" == "$MM_DEVICE_SHA" ]]
+          source tests/fixtures/install-homebrew-darwin-hq-device.sh
+          fetch_public_device_archive "$MM_DEVICE_VERSION" "$RUNNER_TEMP" "$MM_DEVICE_SHA" >/dev/null
+          echo "MM_HQ_DEVICE_VERSION=$MM_DEVICE_VERSION" >> "$GITHUB_ENV"
           echo "MM_HQ_DEVICE_ARCHIVE=$RUNNER_TEMP/$archive" >> "$GITHUB_ENV"
           echo "MM_HQ_DEVICE_SHA256=$MM_DEVICE_SHA" >> "$GITHUB_ENV"
       - name: Install the real HQ archive with a signed first-HQ approval
         shell: bash
         env:
+          MM_HQ_DEVICE_HOMEBREW: ${{ inputs.device_homebrew_install || inputs.formula_qualification == 'custody' || 'false' }}
+          MM_HQ_TAP_REVISION: ${{ inputs.formula_qualification && github.sha || '' }}
           MM_HQ_REQUIRE_SIP: ${{ inputs.require_sip || 'false' }}
           MM_MEMBERS_REAL_ACCOUNTS: '1'
           MM_MEMBERS_RUNNER: ${{ runner.environment }}
@@ -116,10 +139,12 @@ jobs:
           else
             bash tests/members-apply-macos.test.sh --real-hq
           fi
+    if: inputs.formula_qualification != 'package'
   rollback-macos-15:
+    if: inputs.formula_qualification != 'custody'
     name: HQ socket rollback on macOS 15
     runs-on: macos-15
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -128,11 +153,26 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Verify paired harness plan and owner proof
+        env:
+          GOTOOLCHAIN: local
+        run: go test -count=1 -race ./internal/daemon ./internal/members -run '^(TestHarnessOwnerProofCannotAuthorizeAnotherAction|TestHarnessAccountProtectedApply|TestDarwinHarnessPlanCommandBindsInstalledRolesAndCurrentBuild|TestApplyNeedsAMatchingUnexpiredApproval|TestUpgradeApplyDispatchKeepsDistinctPairedPurposes)$'
+      - name: Test release qualification guards on stock Bash
+        run: /bin/bash tests/fixtures/test-darwin-hq-release-guards.sh
       - name: Check socket preservation when guarded removal is unavailable
         shell: bash
         env:
           GOTOOLCHAIN: local
         run: |
           sw_vers
-          [[ "$(sw_vers -productVersion)" == 15.* ]]
+          [[ "$(sw_vers -productVersion)" == 15.* ]] || exit 1
           go test -v -count=1 -race ./internal/members -run '^TestRollbackOfObservedLaunchSocket$'
+      - name: Verify the current public Homebrew Machine and keyd
+        if: github.event_name == 'pull_request' || inputs.formula_qualification == 'package'
+        env:
+          MM_HQ_TAP_REVISION: ${{ inputs.formula_qualification && github.sha || '' }}
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          MM_HQ_DEVICE_VERSION: ${{ inputs.device_release_version }}
+          MM_HQ_DEVICE_SHA256: ${{ inputs.device_archive_sha256 }}
+          HOMEBREW_NO_ANALYTICS: '1'
+        run: bash tests/fixtures/public-homebrew-darwin-hq-device.sh

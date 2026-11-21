@@ -8,7 +8,7 @@ import { connect } from 'node:net';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 
-const [operation, socket, epoch] = process.argv.slice(2);
+const [operation, socket, epoch, expectedThumbprint] = process.argv.slice(2);
 const account = userInfo();
 assert.equal(process.env.GITHUB_ACTIONS, 'true');
 assert.equal(account.username, '_agent-bot-hq');
@@ -62,15 +62,20 @@ if (operation==='deferred'||operation==='refused') {
   assert.equal(thumbprint,createHash('sha256').update(JSON.stringify({crv:jwk.crv,kty:jwk.kty,x:jwk.x,y:jwk.y})).digest('base64url'));
   if(operation==='identity') {
     assert.equal(response.state,'identity'); assert.equal(proof,undefined);
+    console.log(thumbprint);
   } else {
     assert.equal(operation,'prove'); assert.equal(response.state,'proved');
+    assert.ok(thumbprint === expectedThumbprint, 'enrollment proof used a different device');
     const [header,claims,sig]=proof.split('.');
     const parsed=part=>JSON.parse(Buffer.from(part,'base64url'));
     assert.deepEqual(parsed(header),{alg:'ES256',typ:'ab-enroll+jwt',jwk});
     const body=parsed(claims);
     assert.equal(body.aud,'https://agents.true-line.ai/oauth/device_authorization');
-    assert.ok(Math.abs(body.iat-timestamp)<=30); assert.equal(Buffer.from(body.jti,'base64url').length,16);
+    assert.ok(Math.abs(body.iat-timestamp)<=30);
+    const jti = Buffer.from(body.jti, 'base64url');
+    assert.ok(jti.length === 16 && jti.toString('base64url') === body.jti, 'invalid enrollment proof ID');
     assert.ok(verify('sha256',Buffer.from(header+'.'+claims),{key:createPublicKey({key:jwk,format:'jwk'}),dsaEncoding:'ieee-p1363'},Buffer.from(sig,'base64url')));
+    // The shell compares only these digests so a previously issued proof cannot satisfy the restart check.
+    console.log(createHash('sha256').update(jti).digest('hex'));
   }
-  console.log(thumbprint);
 }

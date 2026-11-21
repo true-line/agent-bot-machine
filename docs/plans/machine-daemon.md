@@ -419,9 +419,25 @@ system service manager needs root, which this daemon does not have.
 
 A refused caller gets `MM_DAEMON_CALLER_REFUSED`; any other lifecycle failure
 gets `MM_DAEMON_SERVICE_FAILED`. When the service manager refuses the unit
-(no user bus, a launchctl error), install restores the previous unit files (the
-daemon's and, on Linux, keyd's) or removes the new ones and, on Linux, reloads systemd so it drops the refused
-unit. `daemon status` does not report a unit that is not loaded.
+(no user bus, a launchctl error), install restores the units it managed or
+removes its new ones. On Linux it reloads systemd to drop the refused unit.
+
+On macOS a bundled install or start requires keyd to answer its read-only
+initialization request on the prefix administrator's socket. If another
+installation owns the keyd plist, Machine preserves it and reports the
+conflict before activating either service. A manual Machine-only install
+leaves an independent keyd unit in place, including when Machine activation
+fails. Moving an existing Machine-managed unit to a new keg requires the
+bundled helper at its new location.
+
+Machine registers bundled keyd for the prefix administrator’s graphical
+(`Aqua`) and background (`Background`) login sessions. An administrator
+connected through SSH can start the per-user service before opening a graphical
+session. The administrator’s Keychain must still be available for operations
+that require it. On upgrade, Machine recognizes its exact earlier plist with
+no session list. If activation fails after migration, rollback restores that
+previous registration. The native regression test exercises both registration
+formats and checks the restored plist byte for byte.
 
 Acceptance: install and uninstall are idempotent, run from the owner's account,
 and refuse agent accounts, root/SYSTEM, foreign-HOME callers, and a caller

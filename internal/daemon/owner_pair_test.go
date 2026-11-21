@@ -350,6 +350,39 @@ func TestPinPreservesExistingHQPairing(t *testing.T) {
 	}
 }
 
+// Legacy enrollment can persist the admin's selected HQ UID before a peer key
+// is staged. A first pin must leave this partial enrollment for explicit review.
+func TestFirstOwnerPinPreservesLegacyHQAccountBinding(t *testing.T) {
+	root := t.TempDir()
+	const account = "_agent-bot-hq"
+	previous := lookupUser
+	lookupUser = func(name string) (*user.User, error) {
+		if name != account {
+			return nil, user.UnknownUserError(name)
+		}
+		return &user.User{Username: account, Uid: "331"}, nil
+	}
+	t.Cleanup(func() { lookupUser = previous })
+	if _, bound, err := PinAgentDaemonUser(root, account); err != nil || !bound {
+		t.Fatalf("expected legacy HQ account binding, got %t, %v", bound, err)
+	}
+	dir := stateDir(root)
+	ownerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin, _ := signedOwnerReply(t, ownerKey, ownerPairChallenge{})
+	if err := pinPairOwner(dir, pin, nil); err == nil {
+		t.Fatal("first owner pin adopted the existing legacy HQ account binding")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ownerPairFile)); !os.IsNotExist(err) {
+		t.Fatalf("unexpected owner pin: %v", err)
+	}
+	if uid, bound, err := readAgentDaemonUID(dir); err != nil || uid != 331 || !bound {
+		t.Fatalf("legacy binding changed: %d, %t, %v", uid, bound, err)
+	}
+}
+
 // Generated independently using Node's crypto.sign with SHA-256 and a
 // synthetic P-256 key. The verifier must consume the exact public wire bytes.
 func TestOwnerPairInteroperability(t *testing.T) {

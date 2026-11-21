@@ -14,6 +14,9 @@ use std::{
 };
 mod hq_device;
 mod store {
+    // This adapter reads ordinary disposable files and never calls Keychain.
+    pub fn keychain_read_interaction_denied(_: &str) -> bool { false }
+
     pub trait Items {
         fn read(&self, s: &str, a: &str) -> Result<Option<Vec<u8>>, String>;
         fn write(&self, s: &str, a: &str, v: &[u8]) -> Result<(), String>;
@@ -138,8 +141,7 @@ fn go() -> Result<(), &'static str> {
     let items = State(dir.join("disposable-state.json"));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+        .map_err(|_| "clock")?;
     match std::env::args().nth(1).as_deref() {
         Some("hq-device-init") => hq_device::initialize(&items, &Soft, pair),
         Some("hq-device") => {

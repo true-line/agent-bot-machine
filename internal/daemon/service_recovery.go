@@ -21,7 +21,13 @@ import (
 const recoveryVerb = "hq-service-recovery"
 const upgradeVerb = "hq-service-upgrade"
 
-func pairedServiceVerb(verb string) bool { return verb == recoveryVerb || verb == upgradeVerb }
+const harnessAccountsVerb = members.HarnessAccountsPurpose
+const harnessInstallVerb = members.HarnessInstall
+const harnessRetireVerb = members.HarnessRetire
+
+func pairedServiceVerb(verb string) bool {
+	return verb == harnessAccountsVerb || verb == recoveryVerb || verb == upgradeVerb || verb == members.HarnessInstall || verb == members.HarnessRetire
+}
 
 // This record never contains plan contents. UID is a local pairing property.
 type recoveryChallenge struct {
@@ -132,12 +138,18 @@ func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now fu
 	}
 	canonical, err := check(req.PlanID, req.PlanDigest, req.peerUID)
 	if err != nil {
-		return refused(diag.DaemonPlanFailed, "saved plan is not eligible for the requested HQ service operation")
+		return refused(diag.DaemonPlanFailed, "saved plan is not eligible for the requested paired operation")
 	}
 	// Revocation by legacy admin tooling and Machine key replacement do not
 	// take the pairing lock. Recheck after the potentially slow artifact scan.
-	current, err := p.liveKey(peers)
-	if err != nil || !live.Equal(current) || !dedicatedMembersPlanPeer(req.peerUID) {
+	stillPaired := func() bool {
+		if !dedicatedMembersPlanPeer(req.peerUID) {
+			return false
+		}
+		current, err := p.liveKey(peers)
+		return err == nil && live.Equal(current)
+	}
+	if !stillPaired() {
 		return deny()
 	}
 	t := now()
@@ -155,6 +167,9 @@ func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now fu
 		if err := p.save(dir); err != nil {
 			return deny()
 		}
+		if req.Verb != recoveryVerb && !stillPaired() {
+			return deny()
+		}
 		return Response{OK: true, State: "challenged", Body: body}
 	}
 	if c.Expires <= t.Unix() || c.Expires > t.Unix()+ownerChallengeTTL {
@@ -166,14 +181,19 @@ func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now fu
 		return deny()
 	}
 	var a members.Approval
-	if req.Verb == upgradeVerb {
+	if req.Verb != recoveryVerb {
 		fp := sha256.Sum256(machine)
-		a, err = members.RecordUpgradeApproval(dir, req.PlanID, req.PlanDigest, hex.EncodeToString(fp[:]), pairCommitment(p), t)
+		a, err = members.RecordPairedPlanApproval(req.Verb, dir, req.PlanID, req.PlanDigest, hex.EncodeToString(fp[:]), pairCommitment(p), t)
 	} else {
 		a, err = members.RecordApproval(dir, req.PlanID, req.PlanDigest, t)
 	}
 	if err != nil {
-		return refused(diag.DaemonPlanFailed, "recovery approval could not be recorded")
+		return refused(diag.DaemonPlanFailed, "paired owner approval could not be recorded")
+	}
+	// Revocation publishes its marker before waiting for the pairing lock.
+	// A persisted harness approval remains bound to the retired pairing.
+	if req.Verb != recoveryVerb && !stillPaired() {
+		return deny()
 	}
 	a.MachineFingerprint = ""
 	a.PairCommitment = ""
@@ -182,8 +202,9 @@ func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now fu
 	return Response{OK: true, State: "approved", Body: body}
 }
 
-var errRecoveryPlan = errors.New("saved plan is not eligible for the requested HQ service operation")
+var errRecoveryPlan = errors.New("saved plan is not eligible for the requested paired operation")
 
+// Keep the existing paired-plan commitment transcript used by service upgrades.
 func pairCommitment(p *ownerPairState) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{"hq-service-upgrade/pair/v1", p.Owner, p.Machine, p.HQ, strconv.Itoa(p.UID), p.HQEpoch, ""}, "\n")))
 	return hex.EncodeToString(sum[:])

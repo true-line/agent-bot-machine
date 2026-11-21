@@ -39,3 +39,26 @@ pub fn require_custodian() -> Result<(), &'static str> {
     }
     Ok(())
 }
+
+/// The protected issuer inventories registered homes, including this prefix
+/// administrator's, regardless of the caller's HOME environment.
+pub fn registered_home() -> Result<std::path::PathBuf, &'static str> {
+    use std::ffi::{CStr, OsStr};
+    use std::os::unix::ffi::OsStrExt;
+    // Called by main before starting any threads. Copy the directory-service
+    // result before returning or invoking any subsequent account lookup.
+    let home = unsafe {
+        let entry = libc::getpwuid(libc::getuid())
+            .as_ref()
+            .ok_or("cannot resolve custodian home")?;
+        if entry.pw_dir.is_null() {
+            return Err("cannot resolve custodian home");
+        }
+        std::path::PathBuf::from(OsStr::from_bytes(CStr::from_ptr(entry.pw_dir).to_bytes()))
+    };
+    if home.is_absolute() {
+        Ok(home)
+    } else {
+        Err("invalid custodian home")
+    }
+}

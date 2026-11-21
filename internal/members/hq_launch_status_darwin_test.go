@@ -122,6 +122,69 @@ func TestWaitForLaunchSocket(t *testing.T) {
 	}
 }
 
+func TestWaitForLaunchSocketModePublication(t *testing.T) {
+	for _, change := range []string{"chmod", "replaced", "disappeared", "overbroad"} {
+		t.Run(change, func(t *testing.T) {
+			dir, err := os.MkdirTemp("/tmp", "hqpublish.")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(dir) })
+			listen := func(name string, mode os.FileMode) string {
+				t.Helper()
+				path := filepath.Join(dir, name)
+				listener, err := net.Listen("unix", path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { listener.Close() })
+				if err := os.Chmod(path, mode); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			}
+			initial := os.FileMode(0700)
+			if change == "overbroad" {
+				initial = 0777
+			}
+			path := listen("control", initial)
+			original, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			uid := uint32(os.Geteuid())
+			if _, err := waitForLaunchSocket(path, uid, 0); err == nil {
+				t.Fatal("one-shot observation accepted an unpublished mode")
+			}
+			update := func() error { return os.Chmod(path, 0666) }
+			switch change {
+			case "replaced":
+				staged := listen("staged", 0666)
+				update = func() error { return os.Rename(staged, path) }
+			case "disappeared":
+				update = func() error { return os.Remove(path) }
+			}
+			changed := make(chan error, 1)
+			time.AfterFunc(75*time.Millisecond, func() { changed <- update() })
+			ready, err := waitForLaunchSocket(path, uid, time.Second)
+			if updateErr := <-changed; updateErr != nil {
+				t.Fatal(updateErr)
+			}
+			if change == "chmod" {
+				if err != nil || !os.SameFile(original, ready) || ready.Mode() != os.ModeSocket|0666 {
+					t.Fatalf("socket never became ready on the original inode: %v", err)
+				}
+			} else if change == "overbroad" {
+				if err == nil || !strings.Contains(err.Error(), "mode 0777, expected 0666") {
+					t.Fatalf("expected immediate refusal of the overbroad mode: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), change+" during publication") {
+				t.Fatalf("expected refusal when socket %s: %v", change, err)
+			}
+		})
+	}
+}
+
 func TestWaitForLaunchSocketRefusesForeignOrPrivateNode(t *testing.T) {
 	dir, err := os.MkdirTemp("/tmp", "hqmode.")
 	if err != nil {
@@ -138,11 +201,17 @@ func TestWaitForLaunchSocketRefusesForeignOrPrivateNode(t *testing.T) {
 	for _, tc := range []struct {
 		mode    os.FileMode
 		wantUID uint32
-	}{{0600, uid}, {0666, uid + 1}} {
+		reason  string
+	}{
+		{0600, uid, "mode 0600, expected 0666"},
+		{0700, uid, "mode 0700, expected 0666"},
+		{0700 | os.ModeSticky, uid, "mode 1700, expected 0666"},
+		{0666, uid + 1, "wrong owner"},
+	} {
 		if err := os.Chmod(path, tc.mode); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := waitForLaunchSocket(path, tc.wantUID, time.Second); err == nil || !strings.Contains(err.Error(), "unexpected type, owner or mode") {
+		if _, err := waitForLaunchSocket(path, tc.wantUID, 75*time.Millisecond); err == nil || !strings.Contains(err.Error(), tc.reason) {
 			t.Fatalf("accepted wrong socket metadata: %v", err)
 		}
 	}

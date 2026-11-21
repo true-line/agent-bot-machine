@@ -15,7 +15,7 @@ On an Apple Silicon Mac running macOS 15 or later, open Terminal and run the pub
 )
 ```
 
-The installer downloads the public package from [true-line/agent-bot-machine](https://github.com/true-line/agent-bot-machine). If Homebrew already belongs to another administrator, macOS asks permission to run Homebrew in that account. A successful install prints a confirmation. The confirmation includes the installed version. Run `managed-machine --update` to update Machine from its public tap.
+The installer downloads the public package from [true-line/agent-bot-machine](https://github.com/true-line/agent-bot-machine). If Homebrew already belongs to another administrator, macOS asks permission to run Homebrew in that account. A successful install prints a confirmation. The confirmation includes the installed version. Rerun the installer to upgrade Machine from its public tap.
 
 ### Delivery channels
 
@@ -26,6 +26,20 @@ The installer downloads the public package from [true-line/agent-bot-machine](ht
 | Windows (`windows/amd64`, `windows/arm64`) | [install-core.ps1](install-core.ps1) verifies the release ZIP against `SHA256SUMS` and installs to `%LOCALAPPDATA%\Programs\managed-machine` by default. |
 
 All platforms use the [public Machine releases](https://github.com/true-line/agent-bot-machine/releases). To use an existing policy checkout with the portable core, point `MANAGED_MACHINE_POLICY_DIR` at its directory.
+
+## macOS standalone HQ signing
+
+Machine is the default. An installation that intentionally omits Machine may use the dedicated HQ account for local Secure Enclave signing after the administrator declares that the host has no custom Machine installation and the installation and prior-pair checks pass. The declaration authorizes signing only. A Machine outage, uninstall or pairing revocation cannot grant standalone signing.
+
+**Release qualification is pending.** This installer release has no qualified HQ signer digest. Declaration therefore refuses. Publishing the first qualified release requires reviewing the exact guard-capable HQ source and independently verified signed artifact, then recording its source commit and installed executable SHA-256 in [the installer manifest](scripts/standalone-hq-release.json) and shipping the manifest and utility together in one verified installer release. For a private qualification, the reviewers can record the nonpublic artifact’s digest and source commit in a separate private installer release. Distribute that reviewed utility and manifest together to the administrator over the established private release path. Keep the public manifest pending until a publishable release exists. A checksum calculated from the candidate installation cannot supply that independent pin.
+
+When a qualified release is available, the administrator stages the qualified `hq-signer` at `/Library/Application Support/ai.true-line.agent-bot-hq/standalone/hq-signer` (root:wheel, mode 0555). Install [the administrator utility](scripts/standalone-hq-signing) and its manifest from that same verified installer release under the sibling `installer/` directory. The utility and manifest must be root-owned under protected directories. The product and standalone directories must be root:wheel, mode 0755. The utility checks the exact installed helper hash and code signature, the registered dedicated role, its private group and home, standard Homebrew installation paths and retained Machine state. While it inventories Machine, a pending declaration pauses new install, startup and pairing operations. Those operations publish their standard keg or registered Machine state before their final eligibility check. This works on a fresh Machine installation without creating a system-wide lock. It examines metadata at Machine's known account-state paths without opening credential files. After checking for custom copies, run the following from an administrator account.
+
+```sh
+sudo '/Library/Application Support/ai.true-line.agent-bot-hq/standalone/installer/standalone-hq-signing' declare --confirm-no-custom-machine
+```
+
+The public Machine installer asks the administrator to permanently retire an active declaration before Homebrew installs Machine. Direct Homebrew installation, daemon startup, keyd use and pairing require prior retirement. To retire explicitly, run the same utility with `retire`. Retirement immediately excludes new signing operations. An operation already using the dedicated role’s protected transition file must finish before Machine can start. If retirement reports a drain in progress, retry the same command. The permanent retirement record survives stopping, revoking, uninstalling or reinstalling Machine. Retiring standalone authorization does not move credentials or change existing pairing. Earlier Machine installers and binaries predate this interlock. Retire with the verified utility before installing or running a historical release or custom build on a standalone host.
 
 ## Usage
 
@@ -383,11 +397,15 @@ Bump the pin by editing `managed-machine-config/local-bin.ref` and committing it
 
 ## Update an existing machine
 
+To upgrade the Machine package, rerun the [public installer](#install-on-a-fresh-mac) from a human Terminal. It refreshes the Machine tap and runs Homebrew as the prefix owner.
+
+Run this command to reapply the daemon's default catalog flavor.
+
 ```bash
 managed-machine --update
 ```
 
-Run updates from a human Terminal. The Homebrew prefix stays under its administrator owner. A machine with fleet configuration can also refresh the selected configuration and tools. Existing fleet data stays outside the Homebrew package.
+On macOS the legacy updater handles the request when the daemon client is unavailable or the daemon reports the flavor is outside its catalog. That path upgrades the package and reruns applicable setup steps. An explicitly selected fleet also refreshes its configuration. Other daemon refusals and failures are reported directly.
 
 Managed-machine no longer owns agent-bot installation, upgrades, pinning, machine wiring, account credential seeding, or GitHub CLI interposition. The retired setup commands explain this boundary and leave existing runtime state untouched.
 

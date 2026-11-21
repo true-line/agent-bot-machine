@@ -43,6 +43,11 @@ case "${1:-}" in
 esac
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# The component needs one macOS 27 run, including when the install matrix
+# also qualifies a paired predecessor. Run it before creating accounts.
+if [[ "${1:-}" == --real-hq && "${MM_HQ_UPGRADE_TEST:-}" != paired ]]; then
+    /usr/bin/python3 -I "$ROOT/tests/fixtures/darwin-harness-egress.py"
+fi
 WORK="$(mktemp -d)"
 chmod 755 "$WORK"
 MM="$WORK/managed-machine"

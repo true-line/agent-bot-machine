@@ -170,11 +170,11 @@ ensure_signed_dist() {
 
 write_formula() {
     local formula_path="$1" ver="$2" bare_ver="$3" core_sha="$4"
-    python3 - "$formula_path" "$ver" "$bare_ver" "$core_sha" <<'PY' || return 1
+    python3 - "$formula_path" "$ver" "$bare_ver" "$core_sha" "$script_root/Formula/managed-machine.rb" <<'PY' || return 1
 import re
 import sys
 
-formula_path, version, bare, core_sha = sys.argv[1:]
+formula_path, version, bare, core_sha, reviewed_formula = sys.argv[1:]
 with open(formula_path, encoding="utf-8") as fh:
     text = fh.read()
 
@@ -280,98 +280,19 @@ else:
     else:
         sys.exit(1)
 
-d3_install_block = """  def install
-    libexec.mkpath
-    libexec.install "install.sh"
-    legacy = libexec / "legacy"
-    legacy.mkpath
+# The release checkout's reviewed formula defines all behavior following the
+# core resource. Use that same policy when migrating older formula layouts.
+# Only the pin metadata above is specific to the signed archive.
+def core_end(recipe: str) -> int:
+    resources = re.findall(r"""^[ \t]*resource ["']([^"']+)["'] do[ \t]*$""", recipe, re.MULTILINE)
+    resource = re.search(r'^  resource "core" do$.*?^  end$', recipe, re.MULTILINE | re.DOTALL)
+    if resources != ["core"] or not resource:
+        sys.exit("expected only the core resource in the release formula")
+    return resource.end()
 
-    # Install legacy macOS Bash orchestration files into libexec/legacy.
-    (legacy / "bin").install "legacy/bin/managed-machine"
-    legacy.install Dir["legacy/setup-*"]
-    legacy.install "legacy/lib"
-    (legacy / "scripts").install Dir["legacy/scripts/*"]
-    (legacy / "git-hooks").install Dir["legacy/git-hooks/*"]
-
-    # Older installations re-exec this path after a Homebrew upgrade.
-    (libexec / "scripts").mkpath
-    (libexec / "scripts/update").write <<~SH
-      #!/usr/bin/env bash
-      exec "$(dirname "$0")/../legacy/scripts/update" "$@"
-    SH
-    chmod 0755, libexec / "scripts/update"
-
-    # Install the prebuilt Go core binary directly as bin/managed-machine
-    # (S8 P01 inversion: the Go core is the primary entry point; agent-machine
-    # is the command alias).
-    bin.mkpath
-    resource("core").stage do
-      bin.install "managed-machine"
-      chmod 0755, bin / "managed-machine"
-      bin.install "agent-bot-keyd"
-      chmod 0700, bin / "agent-bot-keyd"
-    end
-    bin.install_symlink "managed-machine" => "agent-machine"
-
-    # ENG-0055 skill bundle: `managed-machine --version` and `skill path`
-    # resolve VERSION, skills/managed-machine and RELEASE_COMMIT from libexec.
-    if File.exist?("VERSION")
-      cp "VERSION", legacy / "VERSION"
-      libexec.install "VERSION"
-      (libexec / "skills").install "skills/managed-machine"
-      commit = Utils.safe_popen_read("git", "-C", buildpath, "rev-parse", "HEAD").strip
-      (libexec / "RELEASE_COMMIT").write "#{commit.match?(/\\A\\h{40}\\z/) ? commit : "unknown"}\\n"
-    end
-  end
-
-  def post_install
-    chmod 0700, bin / "agent-bot-keyd"
-  end
-
-  test do"""
-
-if d3_install_block not in text:
-    text, n_inst = re.subn(
-        r"^[ \t]*def install[ \t]*\n.*?^[ \t]*test do[ \t]*$",
-        lambda _m: d3_install_block,
-        text,
-        count=1,
-        flags=re.MULTILINE | re.DOTALL,
-    )
-    if n_inst != 1:
-        sys.exit(1)
-
-d3_test_block = """  test do
-    assert_predicate libexec/"install.sh", :executable?
-    help_output = shell_output("#{bin}/managed-machine --help")
-    assert_match "managed-machine", help_output
-    assert_match "status", help_output
-    assert_match "[legacy] adopt", help_output
-    assert_equal 0700, (bin/"agent-bot-keyd").stat.mode & 07777
-    assert_predicate libexec/"legacy/setup-hostname", :executable?
-    assert_predicate libexec/"scripts/update", :executable?
-
-    # The failure path resolves libexec/legacy through the core exec seam and
-    # must name the bad input.
-    invalid = shell_output("#{bin}/managed-machine setup no-such-setup 2>&1", 1)
-    assert_match "unknown setup name", invalid
-
-    assert_equal version.to_s, shell_output("#{bin}/managed-machine --version").strip
-    assert_equal version.to_s, shell_output("#{bin}/agent-machine --version").strip
-    shell_output("#{bin}/managed-machine version")
-  end
-end"""
-
-if d3_test_block not in text:
-    text, n_test = re.subn(
-        r"^[ \t]*test do[ \t]*\n.*?^[ \t]*end[ \t]*\nend[ \t]*\n?\Z",
-        lambda _m: d3_test_block + "\n",
-        text,
-        count=1,
-        flags=re.MULTILINE | re.DOTALL,
-    )
-    if n_test != 1:
-        sys.exit(1)
+with open(reviewed_formula, encoding="utf-8") as fh:
+    reviewed = fh.read()
+text = text[:core_end(text)] + reviewed[core_end(reviewed):]
 
 with open(formula_path, "w", encoding="utf-8") as fh:
     fh.write(text)
@@ -425,6 +346,17 @@ if not sha_m or sha_m.group(1) == "0" * 64:
     sys.exit(1)
 if want_core_sha and sha_m.group(1) != want_core_sha:
     sys.exit(1)
+
+# Reject an old pin commit that predates this release's standalone guard.
+# The first check precedes all staging; the second observes any declaration
+# that appeared during keg creation. Homebrew also rechecks on post-install.
+guarded_install = "  def install\n    check_standalone_signing"
+guarded_keg = "    prefix.mkpath\n    check_standalone_signing\n"
+guarded_post = "    def post_install\n      check_standalone_signing\n"
+guarded_steps = '    post_install_steps do\n      run "/usr/bin/ruby", args: STANDALONE_CHECK_ARGS\n      set_permissions "bin/agent-bot-keyd", "0700", base: :prefix, recursive: false'
+for required in ("  def check_standalone_signing\n", guarded_install, guarded_keg, guarded_post, guarded_steps):
+    if required not in text:
+        sys.exit(1)
 
 for snippet in (
     'libexec.install "install.sh"',

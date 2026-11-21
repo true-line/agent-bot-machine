@@ -27,6 +27,7 @@ type Request struct {
 	Name             string `json:"name,omitempty"`
 	Option           string `json:"option,omitempty"`
 	Target           string `json:"target,omitempty"`
+	DeviceSession    string `json:"session,omitempty"`
 	HQEpoch          string `json:"hq_epoch,omitempty"`
 	ReceiptBody      string `json:"receipt_body,omitempty"`
 	ReceiptJTI       string `json:"receipt_jti,omitempty"`
@@ -165,7 +166,7 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	}
 	g.seen[req.Nonce] = struct{}{}
 	if !knownVerb(req.Verb) {
-		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, members-plans, hq-service-recovery, hq-device, approve-members, bootstrap"
+		return req, diag.DaemonVerbUnknown, "verb is not one of status, receipts, plan, apply, update, catalog, members-plans, hq-service-recovery, hq-service-upgrade, harness-account-provision, harness-launch-install, harness-launch-retire, hq-device, approve-members, bootstrap"
 	}
 	if id, msg := catalogFields(req, raw); id != "" {
 		return req, id, msg
@@ -255,7 +256,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, deviceVerb, approveMembersVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, harnessInstallVerb, harnessRetireVerb, deviceVerb, approveMembersVerb, "bootstrap":
 		return true
 	default:
 		return false
@@ -371,6 +372,9 @@ func canonical(r Request) []byte {
 	}
 	if r.Verb == deviceVerb && r.Option != "identity" {
 		parts = append(parts, "hq_epoch", r.HQEpoch)
+	}
+	if r.Verb == deviceVerb && r.Option == "whoami" {
+		parts = append(parts, "session", r.DeviceSession)
 	}
 	if r.Verb == deviceVerb && (r.Option == "bind-enrollment" || r.Option == "bind-access") {
 		parts = append(parts, "receipt_body", r.ReceiptBody, "receipt_jti", r.ReceiptJTI, "receipt_kid", r.ReceiptKID, "receipt_signature", r.ReceiptSignature)

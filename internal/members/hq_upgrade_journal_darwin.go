@@ -309,6 +309,19 @@ func clearRecordedEndpoint(path string, stop *stoppingHQ, remove func(*os.File, 
 	if err != nil || upgradeNode(dir) != stop.Parent {
 		return errors.New("protected HQ runtime directory changed after stop")
 	}
+	// The label and its published leaf can both disappear before the prior
+	// process releases the shared HQ state. The outer observation loop retries
+	// EBUSY with the pairing lock released between samples.
+	pid, err := strconv.Atoi(stop.PID)
+	if err != nil || pid <= 0 || strconv.Itoa(pid) != stop.PID {
+		return errors.New("missing verified HQ process at recorded stop")
+	}
+	if err := unix.Kill(pid, 0); !errors.Is(err, unix.ESRCH) {
+		if err == nil {
+			return errors.Join(errors.New("recorded HQ process is still exiting"), unix.EBUSY)
+		}
+		return errors.Join(errors.New("cannot confirm recorded HQ process exit"), err)
+	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -343,11 +356,8 @@ func (j *upgradeJournal) verify(r launchRecord) error {
 	return nil
 }
 
-func (j *upgradeJournal) finish(applied bool) error {
-	r, e := currentUpgradeReceipt(j.Approval, j.Owner)
-	if e != nil {
-		return e
-	}
+// The external service and signer probes must finish before this boundary.
+func (j *upgradeJournal) commitReceipt(path string, r Receipt, applied bool) error {
 	wanted := "applied"
 	if !applied {
 		wanted = "failed"
@@ -355,16 +365,33 @@ func (j *upgradeJournal) finish(applied bool) error {
 	if r.Result != "started" && r.Result != wanted {
 		return errors.New("conflicting root receipt; preserving HQ journal")
 	}
-	if r.Result == "started" {
-		r.Result = wanted
-		r.Upgrade = &upgradeReceiptEvidence{Approval: j.Approval, Signer: j.Signer}
-		r.FinishedAt = time.Now().UTC().Format(approvalTime)
-		if !applied {
-			r.FailedAt = "service upgrade; previous release restored"
+	if r.Result == wanted {
+		if applied {
+			return j.pair(j.Approval, nil)
 		}
-		if e = writeUpgradeFile(ReceiptPath(r.PlanID), encodeReceipt(r), 0644, false); e != nil {
-			return e
-		}
+		return nil
+	}
+	r.Result = wanted
+	r.Upgrade = &upgradeReceiptEvidence{Approval: j.Approval, Signer: j.Signer}
+	r.FinishedAt = time.Now().UTC().Format(approvalTime)
+	if !applied {
+		r.FailedAt = "service upgrade; previous release restored"
+	}
+	data := encodeReceipt(r)
+	publish := func() error { return writeUpgradeFile(path, data, 0644, false) }
+	if applied {
+		return j.pair(j.Approval, publish)
+	}
+	return publish()
+}
+
+func (j *upgradeJournal) finish(applied bool) error {
+	r, e := currentUpgradeReceipt(j.Approval, j.Owner)
+	if e != nil {
+		return e
+	}
+	if e = j.commitReceipt(ReceiptPath(r.PlanID), r, applied); e != nil {
+		return e
 	}
 	want, identity := j.Upgrade.Next.Plist, j.PreparedPlist
 	if applied {
@@ -497,7 +524,7 @@ func completedUpgrade(saved Saved, owner string, pair upgradePairGuard) (bool, e
 		if r.Result == "failed" {
 			return errors.New("prior upgrade rolled back; previous release remains verified")
 		}
-		return nil
+		return pair(a, nil)
 	})
 }
 
@@ -635,7 +662,8 @@ func (j *upgradeJournal) start(r launchRecord) error {
 	if e := j.pair(j.Approval, nil); e != nil {
 		return e
 	}
-	return startReviewedRecord(r, j.Owner, func(parent *os.File, published os.FileInfo) error {
+	guardBootstrap := func(submit func() error) error { return j.pair(j.Approval, submit) }
+	return startReviewedRecord(r, j.Owner, guardBootstrap, func(parent *os.File, published os.FileInfo) error {
 		phase := "stopping-previous"
 		if r.Plist == j.Upgrade.Next.Plist {
 			phase = "stopping-next"

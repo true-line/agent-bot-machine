@@ -94,6 +94,10 @@ paired_status() {
 start_fixture_machine --require-identity "$machine_pin"
 paired_status --daemon-key "$machine_key"
 
+case "${MM_HQ_UPGRADE_TEST:-}" in
+    legacy|paired) source "$ROOT/tests/fixtures/paired-darwin-hq-accounts.sh" ;;
+esac
+
 if [[ "${MM_HQ_UPGRADE_TEST:-}" == paired ]]; then
     [[ "${MM_KEYD_CUSTODY_TEST:-}" == 1 && "${MM_HQ_PREDECESSOR:-}" == paired && -z "${MM_HQ_DEVICE_ARCHIVE:-}" ]] || exit 1
     stop_fixture_machine
