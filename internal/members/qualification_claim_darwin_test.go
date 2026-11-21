@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,64 @@ func qualificationClaimFixture(t *testing.T) (string, QualificationAttempt, time
 		t.Fatal(err)
 	}
 	return filepath.Join(t.TempDir(), a.PlanID+".qualification.json"), attempt, now
+}
+
+func TestQualificationClaimUsesPhysicalDarwinReceiptAncestry(t *testing.T) {
+	_, attempt, _ := qualificationClaimFixture(t)
+	want := filepath.Join("/private"+DarwinReceiptsDir, attempt.PlanID+".qualification.json")
+	if got := qualificationAttemptPath(attempt.PlanID); got != want {
+		t.Fatalf("qualification claim uses %q, want physical path %q", got, want)
+	}
+	h := emptyHost()
+	parent := filepath.Dir(want)
+	for _, p := range pathAncestry(parent) {
+		h.entries[p] = Entry{Dir: true, Owner: "root", Group: "wheel", Mode: 0755}
+	}
+	// Darwin's /var is a symlink. The wrapper must never traverse it.
+	h.entries["/var"] = Entry{Owner: "root", Group: "wheel", Mode: 0755}
+	var checkedACL, claimed bool
+	checkACL := func(paths []string) error {
+		checkedACL = true
+		if !slices.Contains(paths, parent) || slices.Contains(paths, "/var") {
+			return errors.New("qualification ACL check used logical /var")
+		}
+		return nil
+	}
+	claimFile := func(path string, got QualificationAttempt) error {
+		claimed = true
+		if path != want || got != attempt {
+			return errors.New("qualification claim changed its reviewed subject")
+		}
+		return nil
+	}
+	if err := claimQualificationAttemptWith(h, checkACL, claimFile, want, attempt); err != nil || !checkedACL || !claimed {
+		t.Fatalf("physical receipt ancestry refused: acl=%v claim=%v err=%v", checkedACL, claimed, err)
+	}
+	claimed = false
+	legacy := filepath.Join(DarwinReceiptsDir, attempt.PlanID+".qualification.json")
+	if err := claimQualificationAttemptWith(h, checkACL, claimFile, legacy, attempt); err == nil || claimed {
+		t.Fatal("logical /var symlink reached a qualification claim")
+	}
+}
+
+func TestQualificationClaimPhysicalHostAncestry(t *testing.T) {
+	parent := filepath.Dir(qualificationAttemptPath("plan-20261121T190000Z-abcd"))
+	if _, err := os.Lstat(parent); errors.Is(err, fs.ErrNotExist) {
+		t.Skip("Machine receipt tree is not installed on this Mac")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	if err := trustedPath(OSHost{}, parent, true); err != nil {
+		t.Fatalf("physical qualification receipt tree was refused: %v", err)
+	}
+	if err := checkDarwinACLs(pathAncestry(parent)); err != nil {
+		t.Fatalf("physical qualification receipt tree has an ACL: %v", err)
+	}
+	if link, err := os.Lstat("/var"); err == nil && link.Mode()&os.ModeSymlink != 0 {
+		if err := trustedPath(OSHost{}, DarwinReceiptsDir, true); err == nil {
+			t.Fatal("logical /var symlink unexpectedly passed trusted ancestry")
+		}
+	}
 }
 
 func TestQualificationClaimIsAtomicAndSpentAcrossConcurrentRetries(t *testing.T) {

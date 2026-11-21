@@ -27,7 +27,9 @@ type QualificationAttempt struct {
 }
 
 func qualificationAttemptPath(planID string) string {
-	return filepath.Join(receiptsDir(), planID+".qualification.json")
+	// /var is a symlink on macOS. trustedPath checks every ancestor with Lstat,
+	// so the one-use claim must name the physical root-owned receipt tree.
+	return filepath.Join("/private"+DarwinReceiptsDir, planID+".qualification.json")
 }
 
 func newQualificationAttempt(a Approval, run *QualificationRun, owner string, now time.Time) (QualificationAttempt, error) {
@@ -90,13 +92,18 @@ func claimDarwinQualificationApproval(saved Saved, a Approval, owner string, hqU
 // guard, have checked the saved plan and all artifacts, and run as root.
 // Existing records are never replaced, including an interrupted "started".
 func claimQualificationAttempt(path string, attempt QualificationAttempt) error {
-	if err := trustedPath(OSHost{}, filepath.Dir(path), true); err != nil {
+	return claimQualificationAttemptWith(OSHost{}, checkDarwinACLs, claimQualificationAttemptFile, path, attempt)
+}
+
+func claimQualificationAttemptWith(h Host, checkACLs func([]string) error,
+	claimFile func(string, QualificationAttempt) error, path string, attempt QualificationAttempt) error {
+	if err := trustedPath(h, filepath.Dir(path), true); err != nil {
 		return fmt.Errorf("qualification receipt directory is not protected: %w", err)
 	}
-	if err := checkDarwinACLs(pathAncestry(filepath.Dir(path))); err != nil {
+	if err := checkACLs(pathAncestry(filepath.Dir(path))); err != nil {
 		return fmt.Errorf("qualification receipt directory has an ACL: %w", err)
 	}
-	return claimQualificationAttemptFile(path, attempt)
+	return claimFile(path, attempt)
 }
 
 func claimQualificationAttemptFile(path string, attempt QualificationAttempt) error {
