@@ -99,7 +99,7 @@ func pairedReleaseStatus(s HQService, fingerprint string) error {
 }
 
 func activateUpgrade(step Step, approval Approval, pair upgradePairGuard) error {
-	return withLaunchLock(syscall.LOCK_EX|syscall.LOCK_NB, func() error { return upgradeUnderLock(step, approval, pair) })
+	return withLaunchLock(step.Owner, syscall.LOCK_EX|syscall.LOCK_NB, func() error { return upgradeUnderLock(step, approval, pair) })
 }
 
 func upgradeUnderLock(step Step, approval Approval, pair upgradePairGuard) (err error) {

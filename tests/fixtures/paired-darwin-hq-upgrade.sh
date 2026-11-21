@@ -223,5 +223,24 @@ JS
     (cd "$signer" && sudo "$MM" members apply "$upgrade_id") | jq -e '.applied==true' >/dev/null
     [[ "$(job_pid)" == "$active" ]] || exit 1
     ok 'real system service rollback restored its plist and hardware signer; public candidate upgraded once and preserved its paired role'
+    phase="discover the installed receipt and preview uninstall"
+    sudo "$MM" members uninstall-hq --list | jq -e --arg id "$upgrade_id" --arg old "$repair_id"         '(.matching_plan_ids|index($id))!=null and (.matching_plan_ids|index($old))==null' >/dev/null
+    sudo "$MM" members uninstall-hq "$upgrade_id" --dry-run | jq -e '.result=="would-uninstall"' >/dev/null
+    [[ "$(job_pid)" == "$active" ]] || fail 'uninstall preview disturbed the running service'
+    phase="remove the reviewed system service and verify retained role"
+    sudo "$MM" members uninstall-hq "$upgrade_id" | jq -e '.result=="uninstalled"' >/dev/null
+    if sudo launchctl print "system/$label" >/dev/null 2>&1; then
+        fail 'uninstall left the HQ job registered'
+    else
+        [[ "$?" == 113 ]] || fail 'launchd did not confirm the HQ job was absent'
+    fi
+    [[ ! -e "$plist" && ! -L "$plist" && ! -e "$socket" && ! -L "$socket" ]] || fail 'uninstall left the HQ plist or socket'
+    [[ -d "$runtime_dir" && -d "$next_dir/hq" && -x "$stage/node" &&
+       "$(sudo stat -f '%d:%i:%u:%g:%Lp' "$role_home")" == "$home_id" ]] || fail 'uninstall changed retained service data'
+    paired_status
+    [[ "$(hq_machine identity | jq -er '.public_key')" == "$hq_key" ]] || fail 'uninstall changed the paired HQ identity'
+    sudo "$MM" members uninstall-hq "$upgrade_id" | jq -e '.result=="already-uninstalled"' >/dev/null
+    ok 'receipt-bound HQ uninstall removed the running job, plist and endpoint and retained paired identity and release files'
+
 )
 upgrade_case

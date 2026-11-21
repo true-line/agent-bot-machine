@@ -1,0 +1,12 @@
+{
+  "plan_id": "plan-20261020T010203Z-cafe",
+  "plan_digest": "c46b45fb98ab38b93fa5dd69cf429845316a6c4af530c409b0fa33250c116143",
+  "owner": "operator",
+  "hq_account": "_agent-bot-hq",
+  "dir": "none",
+  "members": [],
+  "changes": 2,
+  "started_at": "2026-10-20T01:02:03Z",
+  "finished_at": "2026-10-20T01:02:05Z",
+  "result": "applied"
+}

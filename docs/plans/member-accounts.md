@@ -313,6 +313,65 @@ receipt permits a read-only verification when the previous terminal result
 was lost. Retain the old release, its saved plan and the shared Node binary
 through completion.
 
+### Removing the receipt-managed macOS HQ service
+
+Use the administrator account that installed the dedicated HQ service. These
+local commands work with Machine stopped and with HQ offline. List the completed
+root receipts whose retained canonical plan matches the installed plist.
+
+```sh
+sudo managed-machine members uninstall-hq --list
+sudo managed-machine members uninstall-hq PLAN_ID --dry-run
+sudo managed-machine members uninstall-hq PLAN_ID
+```
+
+After an upgrade use the completed upgrade's plan ID. Several reapplications
+of identical service bytes may match. Compare the displayed IDs with the
+administrator's saved plans and the original completed root receipts before
+choosing one. An outstanding removal reports `resume_plan_id` even after the
+service plist is gone. Repeat removal with that ID. Missing plans, invalid receipts, and plans for an older plist
+are excluded from discovery. Preserve both the saved plan and its root
+receipt until removal finishes. This explicit local invocation is the
+administrator's new decision to unload the service.
+
+The command removes the fixed system launchd job, its verified plist and any
+endpoint observed for the identified job. On macOS 15, if launchd leaves the socket behind, Machine rechecks
+the recorded job and process are gone and probes both Unix socket types
+at the recorded filesystem entry. It removes the entry only when both
+report a detached socket and the protected parent and entry still match.
+If Machine cannot establish that the socket is unused, it preserves the
+journal and endpoint for a later retry. A running or
+unidentified replacement, or an occupied endpoint without job provenance,
+requires administrator reconciliation. Repeat the same command to resume an
+interrupted removal or confirm a completed one. If the reviewed job, plist
+and endpoint are already absent, an explicit uninstall records completion for
+that plan. Repeating its removal leaves a later installation of the same release intact.
+A dry run leaves the receipt unchanged.
+
+Retire any installed harness launch grant through the paired HQ before removing
+HQ or its Machine package. Both operations preserve the launcher, sandbox
+profile, launch policy and sudoers rule. If the service is already absent,
+an outstanding grant still prevents completion of a new uninstall receipt.
+An administrator must reconcile partial or changed grant files. If the prefix
+owner cannot inspect sudoers.d, package uninstall can continue only when all
+three public grant files and their recognized staging names are absent. A staging name from an interrupted grant transition also
+preserves the original plan for recovery. Unrelated dotfiles and retained audit
+receipts do not block removal.
+
+If a crash occurs after the job, process, socket and plist are gone, only
+the root audit record may still need its final directory sync and rename.
+Package removal can proceed once those public service resources are gone.
+The package operation preserves the saved plan and root journal. If the CLI
+was removed in that interval, reinstall a compatible Machine binary, run
+`members uninstall-hq --list` as above, and resume the displayed plan. This
+finishes the audit record without starting HQ or pairing again.
+
+The dedicated account and its home, HQ data, pairing, Keychain custody,
+externally staged release archives, extracted HQ and Node binaries, and audit
+receipts remain. Machine retains the runtime directory even when empty.
+Standalone declarations and irreversible retirement records can use that
+directory. Remove the HQ service before removing the Machine package.
+
 ### How root is obtained
 
 The owner runs `sudo managed-machine members apply <plan-id>` in their own
