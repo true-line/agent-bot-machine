@@ -19,6 +19,7 @@ pub(crate) const SERVICE: &str = "agent-bot.keyd.device.v1";
 const ITEM: &str = "managed-device";
 const WINDOW: u64 = 30;
 const MAX_RECENT: usize = 256;
+const HOST_REPORT_PURPOSE: &str = "agent-bot/qualification-host-report/v1";
 
 use crate::store::{keychain_read_interaction_denied, Items};
 
@@ -64,6 +65,12 @@ pub(crate) struct Request {
     receipt_kid: Option<String>,
     #[serde(default, deserialize_with = "optional_text")]
     receipt_signature: Option<String>,
+    #[serde(default, deserialize_with = "optional_text")]
+    report_base64url: Option<String>,
+    #[serde(default, deserialize_with = "optional_text")]
+    host_id: Option<String>,
+    #[serde(default, deserialize_with = "optional_text")]
+    signer_id: Option<String>,
     signature: String,
 }
 
@@ -88,6 +95,7 @@ impl Request {
                     | "access-assertion"
                     | "bind-access"
                     | "whoami"
+                    | "qualification-host-report"
             )
         {
             return Err(UNAVAILABLE);
@@ -134,6 +142,28 @@ impl Request {
                 ("bind-enrollment" | "bind-access", _) | (_, Some(_)) => return Err(UNAVAILABLE),
                 _ => (),
             }
+        }
+        match self.option.as_str() {
+            "qualification-host-report" => {
+                for (label, value) in [
+                    ("report_base64url", &self.report_base64url),
+                    ("host_id", &self.host_id),
+                    ("signer_id", &self.signer_id),
+                ] {
+                    let value = value.as_ref().ok_or(UNAVAILABLE)?;
+                    if value.is_empty() || !value.bytes().all(|b| b.is_ascii_graphic()) {
+                        return Err(UNAVAILABLE);
+                    }
+                    transcript.push_str(&format!("\n{label}\n{value}"));
+                }
+            }
+            _ if self.report_base64url.is_some()
+                || self.host_id.is_some()
+                || self.signer_id.is_some() =>
+            {
+                return Err(UNAVAILABLE)
+            }
+            _ => (),
         }
         public
             .verify_strict(transcript.as_bytes(), &signature)
@@ -194,6 +224,98 @@ fn add_binding(result: &mut Value, bound: &Bound) {
 
 fn digest(input: &[u8]) -> String {
     format!("{:x}", Sha256::digest(input))
+}
+
+fn fixed_host_report(request: &Request) -> Result<Vec<u8>, &'static str> {
+    let encoded = request.report_base64url.as_ref().ok_or(UNAVAILABLE)?;
+    let raw = URL.decode(encoded).map_err(|_| UNAVAILABLE)?;
+    if raw.is_empty() || raw.len() > 1024 * 1024 || URL.encode(&raw) != *encoded || !raw.is_ascii()
+    {
+        return Err(UNAVAILABLE);
+    }
+    let report: Value = serde_json::from_slice(&raw).map_err(|_| UNAVAILABLE)?;
+    if serde_json::to_vec(&report).map_err(|_| UNAVAILABLE)? != raw {
+        return Err(UNAVAILABLE);
+    }
+    let keys = [
+        "adapter",
+        "checks",
+        "cost_bound",
+        "evaluation_cells",
+        "gates",
+        "harness",
+        "host",
+        "launch",
+        "outcome",
+        "profile_in_force",
+        "recorded_at",
+        "renders",
+        "run_id",
+        "runner",
+        "schema_version",
+        "soul_start",
+        "suite_revision",
+    ];
+    let fields = report.as_object().ok_or(UNAVAILABLE)?;
+    if fields.len() != keys.len()
+        || keys.iter().any(|key| !fields.contains_key(*key))
+        || report["schema_version"] != 1
+        || report["outcome"] != "pass"
+        || report["host"]["os"] != "darwin"
+        || report["host"]["id"] != request.host_id.as_deref().ok_or(UNAVAILABLE)?
+        || report["soul_start"]["initiator"] != "hq"
+        || !report["soul_start"]["machine_observation"].is_object()
+        || !report["soul_start"]["hq_launch_receipt"].is_object()
+        || !report["runner"]["binary_path"].is_string()
+        || !report["runner"]["binary_sha256"].is_string()
+        || !matches!(
+            report["profile_in_force"].as_str(),
+            Some("managed-protected" | "managed-cooperative")
+        )
+    {
+        return Err(UNAVAILABLE);
+    }
+    for evidence in [
+        &report["soul_start"]["machine_observation"],
+        &report["soul_start"]["hq_launch_receipt"],
+    ] {
+        if evidence["uri"].as_str().is_none_or(str::is_empty)
+            || evidence["sha256"]
+                .as_str()
+                .is_none_or(|s| !s.starts_with("sha256:") || s.len() != 71)
+        {
+            return Err(UNAVAILABLE);
+        }
+    }
+    if report["profile_in_force"] == "managed-protected" {
+        let checks = &report["checks"];
+        for name in [
+            "egress",
+            "credentials",
+            "state_redirect",
+            "safe_interrupt_resume",
+            "session_reuse",
+            "cost_bound",
+            "render_coverage",
+        ] {
+            if checks[name]["outcome"] != "pass" {
+                return Err(UNAVAILABLE);
+            }
+        }
+    }
+    let gates = report["gates"].as_object().ok_or(UNAVAILABLE)?;
+    if gates.is_empty()
+        || gates.len() > 3
+        || gates.iter().any(|(name, gate)| {
+            !matches!(name.as_str(), "T01" | "T02" | "T03" | "T21") || gate["outcome"] != "pass"
+        })
+        || (report["profile_in_force"] == "managed-protected" && gates.contains_key("T21"))
+        || (report["profile_in_force"] == "managed-cooperative"
+            && (gates.len() != 1 || !gates.contains_key("T21")))
+    {
+        return Err(UNAVAILABLE);
+    }
+    Ok(raw)
 }
 fn nonce() -> Result<String, &'static str> {
     let mut buf = [0; 16];
@@ -635,6 +757,22 @@ fn execute(
             result = json!({"session":session.thumbprint,"expires_at":expires_at});
         }
         "whoami" => return whoami_proof(&record, &request, provider, now),
+        "qualification-host-report" => {
+            let raw = fixed_host_report(&request)?;
+            let mut message = HOST_REPORT_PURPOSE.as_bytes().to_vec();
+            message.push(0);
+            message.extend_from_slice(&raw);
+            let signature = provider.sign(&reference, &message)?;
+            result = json!({
+                "schema_version": 1,
+                "purpose": HOST_REPORT_PURPOSE,
+                "host_id": request.host_id.as_ref().ok_or(UNAVAILABLE)?,
+                "signer_id": request.signer_id.as_ref().ok_or(UNAVAILABLE)?,
+                "report_sha256": format!("sha256:{}", digest(&raw)),
+                "report_base64url": URL.encode(&raw),
+                "signature_base64url": URL.encode(signature),
+            });
+        }
         _ => return Err(UNAVAILABLE),
     }
     if request.option == "bind-enrollment" {
