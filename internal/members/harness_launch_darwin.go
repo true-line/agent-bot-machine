@@ -105,6 +105,10 @@ func retirementRequest(live installedHarness, priorID string) (*HarnessPolicyRec
 }
 
 func verifyHarnessExecutable(path, digest string) error {
+	return verifyHarnessExecutableLimit(path, digest, maxReleaseBytes)
+}
+
+func verifyHarnessExecutableLimit(path, digest string, limit int64) error {
 	h := OSHost{}
 	if e := trustedPath(h, path, false); e != nil {
 		return e
@@ -116,7 +120,7 @@ func verifyHarnessExecutable(path, digest string) error {
 	if e != nil || !ok || entry.Mode&0111 != 0111 {
 		return errors.New("reviewed native executable is not executable by its target account")
 	}
-	f, e := openPinnedFile(path, digest)
+	f, e := openPinnedFileLimit(path, digest, limit)
 	if e != nil {
 		return e
 	}

@@ -92,6 +92,24 @@ the original completed receipt, recorded file identities, current pairing and
 fresh retirement approval. It removes the sudoers rule first and preserves
 the accounts, homes, pairing and audit records.
 
+## Review a one-use qualification run
+
+On a designated Darwin test Mac, `managed-machine members plan
+--harness-qualification <request.json>` creates an ordinary saved plan with
+the exact request digest, selected candidate and harness files, ordered
+arguments, runner and provider pins, target role and UID, host description,
+definition and suite revisions, and the fixed T01/T02/T03 protected plus T21
+cooperative assignments. The request is structured data; it cannot supply a
+command to execute. Large code closures may be represented by one pinned
+manifest artifact. The eventual runner must verify the installed tree against
+that manifest before executing it.
+
+This command only reviews and saves inputs. It does not run tests, issue a
+qualification, authorize installation, or open a persistent launch grant.
+`members apply` rejects this purpose before any host or approval work. The
+host designation and review fields are not Machine trust decisions; production
+verification and the designated fixed runner remain unavailable.
+
 ## Target
 
 On macOS, `members plan` without an account list retains the HQ-only plan.

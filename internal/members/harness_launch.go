@@ -302,6 +302,33 @@ func (s Saved) CanonicalForReview() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.QualificationRun != nil {
+		if s.HarnessLaunch != nil || s.HQService != nil || s.UpgradeFrom != nil || s.Plan.Purpose != HarnessQualificationPurpose || len(s.Plan.Steps) != 1 || s.Plan.Steps[0].Kind != "qualification-run" || s.Plan.Steps[0].Action != ActionNone || !qualificationDigest.MatchString(s.QualificationRun.RequestSHA256) || s.QualificationRun.MemberState != "disposable" || !s.QualificationRun.OneUse {
+			return nil, errors.New("invalid saved qualification review plan")
+		}
+		if err := validateQualificationRequest(s.QualificationRun.Request); err != nil {
+			return nil, err
+		}
+		want, err := json.Marshal(s.QualificationRun)
+		if err != nil || string(want) != s.Plan.Steps[0].Content {
+			return nil, errors.New("saved qualification inputs differ from their canonical plan")
+		}
+		if !sameQualificationGates(s.QualificationRun.Gates) {
+			return nil, errors.New("saved qualification gates differ from the fixed plan")
+		}
+		expected, expectedErr := qualificationPlan(s.QualificationRun)
+		if expectedErr != nil {
+			return nil, expectedErr
+		}
+		expectedBytes, expectedErr := expected.Canonical()
+		if expectedErr != nil || !bytes.Equal(raw, expectedBytes) {
+			return nil, errors.New("saved qualification plan differs from its canonical review request")
+		}
+		return raw, nil
+	}
+	if s.Plan.Purpose == HarnessQualificationPurpose {
+		return nil, errors.New("saved qualification plan requires its exact request")
+	}
 	if s.HarnessLaunch == nil {
 		if s.isHarnessLaunchPlan() {
 			return nil, errors.New("saved harness launch files require their exact request")
@@ -320,4 +347,17 @@ func (s Saved) CanonicalForReview() ([]byte, error) {
 		return nil, errors.New("saved harness launch request differs from its canonical plan")
 	}
 	return raw, nil
+}
+
+func sameQualificationGates(gates []qualificationGate) bool {
+	want := fixedQualificationGates()
+	if len(gates) != len(want) {
+		return false
+	}
+	for i := range want {
+		if gates[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
