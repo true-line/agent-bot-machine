@@ -2,7 +2,7 @@
 // setup; role requests themselves pass through the signed UNIX socket.
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout as pause } from 'node:timers/promises';
@@ -39,7 +39,18 @@ function startPackagedController(stage, role, thumb) {
   };
 }
 
-export async function exerciseNativeChannel(stage, machine, hq, epoch, expectedThumb) {
+async function startIndependentObserver(stage, role, roleUid) {
+  const root = join(stage, 't02-observer');
+  const conformanceCommit = readFileSync(join(root, 'conformance-commit'), 'ascii').trim();
+  const hqCommit = JSON.parse(readFileSync(join(root, 'governance/archives.json'), 'utf8')).archives['t02-hq'].commit;
+  const { superviseT02 } = await import('./hosted-t02-observer.mjs');
+  const child = spawn('/usr/bin/sudo', ['-n', '-H', '-u', role, '--', '/usr/bin/env', '-i',
+    'PATH=/usr/bin:/bin', join(stage, 'node'), join(root, 'suites/T02-key-boundary/paired-proof.mjs'),
+    '--verified-cache', join(root, 'cache'), '--disposable', '--checkpoints'], { cwd: '/', stdio: ['ignore', 'pipe', 'pipe'] });
+  return { conformanceCommit, ...superviseT02(child, { hqCommit, roleUid, machineUid: process.getuid() }) };
+}
+
+export async function exerciseNativeChannel(stage, machine, hq, epoch, expectedThumb, roleUid) {
   const socket = '/opt/homebrew/var/agent-machine/daemon.sock';
   const role = '_agent-bot-hq';
   const adminSeed = Buffer.from(machine.privateKey.export({ format: 'jwk' }).d, 'base64url');
@@ -73,7 +84,7 @@ export async function exerciseNativeChannel(stage, machine, hq, epoch, expectedT
     const closed=once(child,'exit'); child.kill('SIGTERM'); await closed;
     requireCheck(!existsSync(socket));
   };
-  let server, outstanding, packaged;
+  let server, outstanding, packaged, observer;
   try {
     if (process.env.MM_NATIVE_WHOAMI_TEST === '1') {
       server = await start();
@@ -105,10 +116,20 @@ export async function exerciseNativeChannel(stage, machine, hq, epoch, expectedT
     packaged = startPackagedController(stage, role, expectedThumb);
     await packaged.ready();
     await packaged.step('prove');
+    if (existsSync(join(stage, 't02-observer'))) {
+      observer = await startIndependentObserver(stage, role, roleUid);
+      await observer.before();
+    }
     await stop(server);server=undefined;
     check('outage');
     await packaged.step('outage');
+    await observer?.offline();
     server=await start();
+    if (observer) {
+      const report = await observer.result();
+      console.log(JSON.stringify({ conformance_commit: observer.conformanceCommit, hardware_probe: 'available', observer: report }));
+      observer = undefined;
+    }
     requireCheck(check('identity')===expectedThumb);
     const proofIdAfter = check('prove');
     requireCheck(/^[0-9a-f]{64}$/.test(proofIdAfter) && proofIdAfter !== proofIdBefore);
@@ -130,10 +151,13 @@ export async function exerciseNativeChannel(stage, machine, hq, epoch, expectedT
     packaged = undefined;
     console.log('PASS packaged dedicated HQ on the native Machine channel: fresh hardware proofs, outage, recovery and denial after revocation and HQ restart');
   } finally {
-    await packaged?.abort();
-    if(outstanding)outstanding.kill();
-    if(server && server.exitCode===null)await stop(server);
-    adminSeed.fill(0);
+    try { await observer?.abort(); }
+    finally {
+      await packaged?.abort();
+      if(outstanding)outstanding.kill();
+      if(server && server.exitCode===null)await stop(server);
+      adminSeed.fill(0);
+    }
   }
   console.log('PASS dedicated HQ native custody, Machine outage, restart, and queued and new request refusal after revoke');
 }
