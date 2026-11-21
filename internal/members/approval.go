@@ -21,10 +21,13 @@ const approvalTime = "2006-01-02T15:04:05Z"
 // it in its own state directory when it accepts a signed approve-members
 // request; the root apply reads it. It holds no secret.
 type Approval struct {
-	PlanID     string `json:"plan_id"`
-	PlanDigest string `json:"plan_digest"`
-	ApprovedAt string `json:"approved_at"`
-	ExpiresAt  string `json:"expires_at"`
+	PairCommitment     string `json:"pair_commitment,omitempty"`
+	MachineFingerprint string `json:"machine_fingerprint,omitempty"`
+	Purpose            string `json:"purpose,omitempty"`
+	PlanID             string `json:"plan_id"`
+	PlanDigest         string `json:"plan_digest"`
+	ApprovedAt         string `json:"approved_at"`
+	ExpiresAt          string `json:"expires_at"`
 }
 
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -52,6 +55,18 @@ func ApprovalPath(state, planID string) string {
 // and removes approvals that have expired. The directory is private to the
 // account that runs it.
 func RecordApproval(state, planID, digest string, now time.Time) (Approval, error) {
+	return recordApproval(state, planID, digest, "", "", "", now)
+}
+func RecordUpgradeApproval(state, planID, digest, fingerprint, pair string, now time.Time) (Approval, error) {
+	return RecordPairedPlanApproval(UpgradePurpose, state, planID, digest, fingerprint, pair, now)
+}
+func RecordPairedPlanApproval(purpose, state, planID, digest, fingerprint, pair string, now time.Time) (Approval, error) {
+	if (purpose != UpgradePurpose && purpose != HarnessInstall && purpose != HarnessRetire && purpose != HarnessAccountsPurpose) || !digestPattern.MatchString(fingerprint) || !digestPattern.MatchString(pair) {
+		return Approval{}, ErrApprovalMalformed
+	}
+	return recordApproval(state, planID, digest, purpose, fingerprint, pair, now)
+}
+func recordApproval(state, planID, digest, purpose, fingerprint, pair string, now time.Time) (Approval, error) {
 	if !ValidApproval(planID, digest) {
 		return Approval{}, ErrApprovalMalformed
 	}
@@ -60,7 +75,7 @@ func RecordApproval(state, planID, digest string, now time.Time) (Approval, erro
 		return Approval{}, err
 	}
 	pruneApprovals(dir, now)
-	a := Approval{
+	a := Approval{Purpose: purpose, MachineFingerprint: fingerprint, PairCommitment: pair,
 		PlanID:     planID,
 		PlanDigest: digest,
 		ApprovedAt: now.UTC().Format(approvalTime),

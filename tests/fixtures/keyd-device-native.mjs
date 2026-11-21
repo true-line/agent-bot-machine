@@ -25,6 +25,10 @@ async function exercise() {
   // mkdir is exclusive and fails on any pre-existing directory or symlink.
   mkdirSync(state, { mode: 0o700 });
   try {
+    // Starting keyd also records Machine use in the prefix owner's registered
+    // home. Run it only after this fixture has exclusively acquired that state.
+    const stage = dirname(helper);
+    requireCheck(spawnSync('python3', [join(stage, 'mcp-handshake.py'), helper, stage], { stdio: 'inherit' }).status === 0);
     const machine = generateKeyPairSync('ed25519');
     const hq = generateKeyPairSync('ed25519');
     const owner = generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' });

@@ -27,7 +27,7 @@ On macOS 15 or later on Apple Silicon, use the public Machine installer. For the
 )
 ```
 
-The installer taps `true-line/agent-bot-machine` and installs its public formula. If an existing Homebrew installation belongs to another administrator, macOS requests authorization to run Homebrew as its owner. The installer reports the installed version. Use `managed-machine --update` for public Machine updates. Organization bootstrap is a separate operation that requires the owner's configuration.
+The installer taps `true-line/agent-bot-machine` and installs its public formula. If an existing Homebrew installation belongs to another administrator, macOS requests authorization to run Homebrew as its owner. The installer reports the installed version. Rerun this installer to upgrade the public Machine package. Organization bootstrap is a separate operation that requires the owner's configuration.
 
 ## If the install fails
 
@@ -52,7 +52,7 @@ managed-machine --help       # also -h, help, setup -h/--help, or no command; ch
 managed-machine --bootstrap  # full bootstrap; terminal mode is auto-detected
 managed-machine --bootstrap --interactive
 managed-machine --bootstrap --non-interactive
-managed-machine --update     # brew update/upgrade + safe setup re-runs
+managed-machine --update     # reapply the default daemon catalog flavor (legacy fallback on macOS)
 managed-machine status --section bootstrap|update [--json]  # last bootstrap or update manifest outcome (read-only)
 managed-machine setup --list [--json]                       # list available setup names and install state
 managed-machine catalog list [--json] [--no-refresh]        # introspect catalog apps, scripts, aliases, kinds, status

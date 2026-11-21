@@ -1,11 +1,15 @@
 package members
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +24,7 @@ import (
 
 // ApplyDeps is what apply reads the world through beyond Deps.
 type ApplyDeps struct {
+	CheckUpgradePair func(dir, account, commitment string, run func() error) error
 	// Euid is the effective uid. When nil, os.Geteuid.
 	Euid func() int
 	// ProcessEnv is this process's environment. When nil, os.Environ.
@@ -81,43 +86,9 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return failure(diag.MembersUnsupported, "account provisioning supports Linux and macOS; this host is %s", host.Target)
 	}
 
-	// The caller: root, through sudo, from a human's own session.
-	environ := os.Environ
-	if deps.ProcessEnv != nil {
-		environ = deps.ProcessEnv
-	}
-	env := envMap(environ())
-	euid := os.Geteuid
-	if deps.Euid != nil {
-		euid = deps.Euid
-	}
-	again := "run: sudo managed-machine members apply " + planID
-	if euid() != 0 {
-		return failure(diag.MembersRootRequired, "apply changes accounts and /etc and needs root; %s", again)
-	}
-	sudoUID := env["SUDO_UID"]
-	if sudoUID == "" || sudoUID == "0" {
-		return failure(diag.MembersRootRequired, "apply is started with sudo from the owner's account, not from a root login; %s", again)
-	}
-	lookup := lookupUID
-	if deps.LookupUID != nil {
-		lookup = deps.LookupUID
-	}
-	owner, home, err := lookup(sudoUID)
-	if err != nil || owner == "" || home == "" {
-		return failure(diag.MembersRootRequired, "the account that ran sudo (uid %s) could not be found", sudoUID)
-	}
-	if agentenv.Account(owner) || agentenv.Account(env["AGENT_BOT_ACCOUNT"]) {
-		return failure(diag.MembersCallerRefused, "an agent account cannot apply member accounts")
-	}
-	ancestors := AncestorEnvs
-	if deps.Ancestors != nil {
-		ancestors = deps.Ancestors
-	}
-	for _, e := range append([]map[string]string{env}, ancestors()...) {
-		if marker := agentenv.Marker(e); marker != "" {
-			return failure(diag.MembersCallerRefused, "an agent session cannot apply member accounts (%s); the owner runs it in their own terminal", marker)
-		}
+	owner, home, dg := membersSudoOwner(deps, "apply "+planID)
+	if dg != nil {
+		return cli.Result{Diagnostic: dg}
 	}
 
 	var h Host = OSHost{}
@@ -145,6 +116,16 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return failure(diag.MembersPlanFailed, "the saved plan %s cannot be read", planID)
 	}
 
+	if saved.isHarnessLaunchPlan() {
+		if platform != PlatformDarwin || saved.HarnessLaunch == nil || saved.HQService != nil || saved.UpgradeFrom != nil {
+			return failure(diag.MembersNotApproved, "a harness rule requires its own exact Darwin plan")
+		}
+		canonical, err := saved.CanonicalForReview()
+		if err != nil || !ValidApproval(saved.PlanID, saved.PlanDigest) || fmt.Sprintf("%x", sha256.Sum256(canonical)) != saved.PlanDigest {
+			return failure(diag.MembersNotApproved, "invalid saved harness launch policy")
+		}
+	}
+
 	// The approval agent-machine recorded.
 	if deps.DaemonState == nil {
 		return failure(diag.MembersNotApproved, "agent-machine's state directory is not known")
@@ -153,13 +134,73 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if err != nil || daemonDir == "" || daemonAccount == "" {
 		return failure(diag.MembersNotApproved, "agent-machine's state directory could not be located")
 	}
+	pairCheck := func(a Approval, run func() error) error {
+		if deps.CheckUpgradePair == nil {
+			return errors.New("cannot verify the original protected HQ pairing")
+		}
+		return deps.CheckUpgradePair(daemonDir, daemonAccount, a.PairCommitment, run)
+	}
+	realUpgrade := saved.UpgradeFrom != nil && platform == PlatformDarwin && deps.Root == nil
+	if realUpgrade {
+		handled, e := resumeServiceUpgrade(saved, owner, pairCheck)
+		if handled {
+			if e != nil {
+				return failure(diag.MembersApplyFailed, "reconciling earlier approved HQ transition: %v", e)
+			}
+			return cli.Result{Records: []*output.Record{output.New().Set("plan_id", planID).Set("plan_digest", saved.PlanDigest).Set("applied", true).Set("receipt", ReceiptPath(planID))}}
+		}
+	}
+
+	if r := saved.HarnessLaunch; r != nil && r.Action == "install" && deps.Root == nil {
+		complete, err := completedHarnessInstall(saved, owner, daemonAccount, pairCheck)
+		if err != nil {
+			return failure(diag.MembersApplyFailed, "checking prior harness installation: %v", err)
+		}
+		if complete {
+			return cli.Result{Records: []*output.Record{output.New().Set("plan_id", planID).Set("plan_digest", saved.PlanDigest).Set("result", "already-applied").Set("receipt", ReceiptPath(planID))}}
+		}
+	}
+	if r := saved.HarnessLaunch; r != nil && r.Action == "retire" && deps.Root == nil {
+		result, err := finishAbsentHarnessRetirement(saved, owner, daemonAccount, pairCheck)
+		if err != nil {
+			return failure(diag.MembersApplyFailed, "reconciling harness retirement: %v", err)
+		}
+		if result != "" {
+			row := output.New().Set("plan_id", planID).Set("plan_digest", saved.PlanDigest).Set("receipt", ReceiptPath(planID))
+			if result == "applied" {
+				row.Set("applied", true)
+			} else {
+				row.Set("result", result)
+			}
+			return cli.Result{Records: []*output.Record{row}}
+		}
+	}
 	approval, why := loadApproval(h, daemonDir, daemonAccount, planID, platform, deps.Time())
 	if why != "" {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: %s", planID, why)
 	}
 
+	if saved.Plan.Purpose != "" || approval.Purpose == HarnessAccountsPurpose {
+		return runHarnessAccountApply(saved, approval, platform, owner, h, deps, pairCheck)
+	}
+	if r := saved.HarnessLaunch; r != nil {
+		if approval.Purpose != HarnessPurpose(r.Action) || !digestPattern.MatchString(approval.PairCommitment) || !digestPattern.MatchString(approval.MachineFingerprint) || approval.PlanDigest != saved.PlanDigest {
+			return failure(diag.MembersNotApproved, "harness rule requires its own paired owner approval")
+		}
+		if err := applyHarnessGrant(saved, approval, owner, daemonAccount, pairCheck); err != nil {
+			return failure(diag.MembersApplyFailed, "could not apply the reviewed harness rule: %v", err)
+		}
+		return cli.Result{Records: []*output.Record{output.New().Set("plan_id", planID).Set("plan_digest", saved.PlanDigest).Set("applied", true).Set("receipt", ReceiptPath(planID))}}
+	}
+	if saved.UpgradeFrom == nil && (approval.Purpose != "" || approval.MachineFingerprint != "" || approval.PairCommitment != "") {
+		return failure(diag.MembersNotApproved, "a paired purpose-specific approval cannot authorize this operation")
+	}
+	if saved.UpgradeFrom != nil && (approval.Purpose != UpgradePurpose || !digestPattern.MatchString(approval.MachineFingerprint)) {
+		return failure(diag.MembersNotApproved, "upgrade requires the paired HQ service upgrade owner approval")
+	}
+
 	// The host as it is now.
-	p, err := Build(Input{HQService: saved.HQService, HQAccount: saved.Plan.HQAccount, Dir: saved.Plan.Dir, Members: saved.Plan.Members, Invoker: owner, Platform: platform}, h)
+	p, err := Build(Input{UpgradeFrom: saved.UpgradeFrom, HQService: saved.HQService, HQAccount: saved.Plan.HQAccount, Dir: saved.Plan.Dir, Members: saved.Plan.Members, Invoker: owner, Platform: platform}, h)
 	if err != nil {
 		return mapRefusal(err, diag.MembersPlanFailed, "cannot read the host")
 	}
@@ -170,7 +211,16 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if digest != approval.PlanDigest {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: the host or the request changed after the approval; plan and approve again", planID)
 	}
-	var r Root = OSRoot{}
+	if prior := saved.UpgradeFrom; prior != nil {
+		priorDigest, err := prior.Plan.Digest()
+		if err != nil {
+			return failure(diag.MembersPlanFailed, "cannot digest the prior HQ plan: %v", err)
+		}
+		if err := receiptForUpgrade(h, prior.ID, priorDigest, owner, checkDarwinACLs); err != nil {
+			return failure(diag.MembersApplyFailed, "cannot verify prior HQ apply receipt: %v", err)
+		}
+	}
+	var r Root = OSRoot{upgradeApproval: approval, checkUpgradePair: pairCheck}
 	if deps.Root != nil {
 		r = deps.Root()
 	}
@@ -185,14 +235,28 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if err != nil {
 		return failure(diag.MembersApplyFailed, "cannot write the receipt: %v", err)
 	}
+	if !claimed && realUpgrade {
+		// A process may exit between consuming this exact approval and publishing
+		// its transaction record. The live-only plan just rebuilt, unexpired fresh
+		// approval, and matching started receipt allow that one start to finish.
+		prior, e := currentUpgradeReceipt(approval, owner)
+		claimed = e == nil && prior.Result == "started"
+	}
 	if !claimed {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: its approval was already used (%s)", planID, ReceiptPath(planID))
 	}
 
-	finish := func(result, failedAt string) {
+	finish := func(result, failedAt string) error {
 		receipt.Result, receipt.FailedAt = result, failedAt
 		receipt.FinishedAt = deps.Time().UTC().Format(approvalTime)
-		_ = r.Finish(planID, encodeReceipt(receipt))
+		return r.Finish(planID, encodeReceipt(receipt))
+	}
+	if realUpgrade {
+		// Completion is recorded under the same lock as verification and rollback.
+		if err := r.ActivateHQ(p.Steps[1]); err != nil {
+			return failure(diag.MembersApplyFailed, "HQ service upgrade: %v", err)
+		}
+		return cli.Result{Records: []*output.Record{output.New().Set("plan_id", planID).Set("plan_digest", digest).Set("applied", true).Set("receipt", ReceiptPath(planID))}}
 	}
 	if err := Apply(p, h, r); err != nil {
 		at := ""
@@ -212,7 +276,9 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		finish("failed", "verification")
 		return failure(diag.MembersApplyFailed, "the host is not as planned after the apply: %d steps remain", n)
 	}
-	finish("applied", "")
+	if err := finish("applied", ""); err != nil {
+		return failure(diag.MembersApplyFailed, "applied host changes but could not finish the root receipt: %v", err)
+	}
 
 	records := []*output.Record{output.New().
 		Set("plan_id", planID).
@@ -282,4 +348,125 @@ func loadApproval(h Host, daemonDir, account, planID, platform string, now time.
 		return Approval{}, "the approval expired at " + a.ExpiresAt + "; approve it again"
 	}
 	return a, ""
+}
+
+func readPriorServicePlan(state, id string) (*priorServicePlan, error) {
+	if !plan.ValidID(id) {
+		return nil, errors.New("invalid prior members plan id")
+	}
+	f, err := os.Open(filepath.Join(state, "members", "plans", id+".json"))
+	if err != nil {
+		return nil, errors.New("cannot open prior saved members plan")
+	}
+	defer f.Close()
+	const limit = 256 << 10
+	raw, err := io.ReadAll(io.LimitReader(f, limit+1))
+	var saved Saved
+	if err != nil || len(raw) > limit || json.Unmarshal(raw, &saved) != nil || saved.PlanID != id {
+		return nil, errors.New("cannot read the prior saved members plan")
+	}
+	return &priorServicePlan{ID: id, Plan: saved.Plan}, nil
+}
+
+func membersSudoOwner(deps Deps, action string) (string, string, *diag.Diagnostic) {
+	// The caller: root, through sudo, from a human's own session.
+	environ := os.Environ
+	if deps.ProcessEnv != nil {
+		environ = deps.ProcessEnv
+	}
+	env := envMap(environ())
+	euid := os.Geteuid
+	if deps.Euid != nil {
+		euid = deps.Euid
+	}
+	again := "run: sudo managed-machine members " + action
+	if euid() != 0 {
+		return "", "", failure(diag.MembersRootRequired, "this operation needs root; %s", again).Diagnostic
+	}
+	sudoUID := env["SUDO_UID"]
+	if sudoUID == "" || sudoUID == "0" {
+		return "", "", failure(diag.MembersRootRequired, "this operation is started with sudo from the owner's account, not from a root login; %s", again).Diagnostic
+	}
+	lookup := lookupUID
+	if deps.LookupUID != nil {
+		lookup = deps.LookupUID
+	}
+	owner, home, err := lookup(sudoUID)
+	if err != nil || owner == "" || home == "" {
+		return "", "", failure(diag.MembersRootRequired, "the account that ran sudo (uid %s) could not be found", sudoUID).Diagnostic
+	}
+	if agentenv.Account(owner) || agentenv.Account(env["AGENT_BOT_ACCOUNT"]) {
+		return "", "", failure(diag.MembersCallerRefused, "an agent account cannot change managed service or member resources").Diagnostic
+	}
+	ancestors := AncestorEnvs
+	if deps.Ancestors != nil {
+		ancestors = deps.Ancestors
+	}
+	for _, e := range append([]map[string]string{env}, ancestors()...) {
+		if marker := agentenv.Marker(e); marker != "" {
+			return "", "", failure(diag.MembersCallerRefused, "an agent session cannot change managed service or member resources (%s); the owner runs it in their own terminal", marker).Diagnostic
+		}
+	}
+	return owner, home, nil
+}
+
+// Uninstall is an explicit local administrator decision. It is deliberately
+// absent from the daemon protocol and can run when HQ or Machine is stopped.
+func runUninstallHQ(deps Deps, ctx cli.Context, args []string) cli.Result {
+	list := len(args) == 1 && args[0] == "--list"
+	preview := len(args) == 2 && args[1] == "--dry-run"
+	if (len(args) != 1 && !preview) || (!list && !plan.ValidID(args[0])) {
+		return cli.Result{Diagnostic: command.UsageErr("members uninstall-hq takes the completed HQ service plan ID and optionally --dry-run")}
+	}
+	host, dg := command.DetectHost(ctx)
+	if dg != nil {
+		return cli.Result{Diagnostic: dg}
+	}
+	platform, ok := platformOf(string(host.Target))
+	if !ok || platform != PlatformDarwin {
+		return failure(diag.MembersUnsupported, "HQ service uninstall requires macOS")
+	}
+	owner, home, dg := membersSudoOwner(deps, "uninstall-hq "+args[0])
+	if dg != nil {
+		return cli.Result{Diagnostic: dg}
+	}
+	state, err := statedir.Path(usernameOS(platform), func(k string) string {
+		if k == "HOME" {
+			return home
+		}
+		return ""
+	})
+	if err != nil {
+		return failure(diag.MembersPlanFailed, "cannot locate the original administrator's saved plan")
+	}
+	if list {
+		ids, resume, e := listHQUninstallPlans(owner, state)
+		if e != nil {
+			return failure(diag.MembersPlanFailed, "checking HQ install receipts: %v", e)
+		}
+		record := output.New().Set("service", launchLabel).Set("matching_plan_ids", ids)
+		if resume != "" {
+			record.Set("resume_plan_id", resume)
+		}
+		return cli.Result{Records: []*output.Record{record}}
+	}
+	result, err := uninstallDarwinHQ(owner, state, args[0], preview)
+	if err != nil {
+		return failure(diag.MembersApplyFailed, "HQ service uninstall: %v", err)
+	}
+	return cli.Result{Records: []*output.Record{output.New().Set("plan_id", args[0]).Set("result", result).Set("service", launchLabel).Set("retained", []string{"dedicated HQ account and home", "pairing and keys", "externally staged releases and Node", "HQ runtime directory and standalone retirement records", "plans and audit receipts"})}}
+}
+
+func validUninstallID(id string) bool { return plan.ValidID(id) }
+
+func lockHQPackage(owner string) (*os.File, error) {
+	u, err := user.Lookup(owner)
+	if err != nil {
+		return nil, err
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil || uid <= 0 {
+		return nil, errors.New("invalid HQ administrator UID")
+	}
+	return statedir.LockMacPackage(u.HomeDir, uid)
 }

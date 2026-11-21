@@ -33,8 +33,34 @@ jobs:
     name: gates
     uses: ./.github/workflows/go-core.yml
 
+  public-homebrew:
+    name: Install and qualify the published macOS release
+    needs: publish
+    runs-on: macos-15
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify the released package and service lifecycle
+        env:
+          MM_HQ_TAP_REVISION: ${{ needs.publish.outputs.source_commit }}
+          MM_HQ_DEVICE_VERSION: ${{ needs.publish.outputs.version }}
+          MM_HQ_DEVICE_SHA256: ${{ needs.publish.outputs.archive_digest }}
+          MM_HQ_FORMULA_SHA256: ${{ needs.publish.outputs.formula_digest }}
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_ANALYTICS: '1'
+        run: bash tests/fixtures/public-homebrew-darwin-hq-device.sh --published-formula
+
   publish:
     name: publish
+    outputs:
+      source_commit: ${{ steps.render.outputs.source_commit }}
+      version: ${{ steps.render.outputs.version }}
+      archive_digest: ${{ steps.render.outputs.archive_digest }}
+      formula_digest: ${{ steps.render.outputs.formula_digest }}
     needs: gates
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish)
     runs-on: ubuntu-24.04
@@ -108,11 +134,17 @@ jobs:
           fi
           gh release download "$TAG" --dir signed --pattern 'managed-machine_*' --pattern SHA256SUMS
       - name: Render the Homebrew pin from the verified signed archive
+        id: render
         run: |
           git worktree add --quiet --detach "$RUNNER_TEMP/formula" HEAD
           (cd "$RUNNER_TEMP/formula" &&
             "$GITHUB_WORKSPACE/scripts/release" render "v$(cat VERSION)" "$GITHUB_WORKSPACE/dist" "$GITHUB_WORKSPACE/signed")
           cp "$RUNNER_TEMP/formula/Formula/managed-machine.rb" Formula/managed-machine.rb
+          version="$(cat VERSION)"
+          echo "source_commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "archive_digest=$(shasum -a 256 "signed/managed-machine_${version}_darwin_arm64.tar.gz" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "formula_digest=$(shasum -a 256 Formula/managed-machine.rb | awk '{print $1}')" >> "$GITHUB_OUTPUT"
       - name: Verify the signed dist against the deterministic build and the formula pin
         run: go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -require-keyd -formula Formula/managed-machine.rb -require-pin
       - name: Publish the signed draft

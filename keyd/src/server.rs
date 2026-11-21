@@ -130,15 +130,21 @@ impl Keyd {
         let method = message.get("method").and_then(Value::as_str).unwrap_or("");
         let params = message.get("params").cloned().unwrap_or(Value::Null);
         Some(match method {
-            "initialize" => reply(
-                &id,
-                json!({
-                    "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOL_VERSION),
-                    "capabilities": { "tools": { "listChanged": false } },
-                    "serverInfo": { "name": "agent-bot-keyd", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "GitHub App installation tokens for this soul. The App key never leaves agent-bot-keyd.",
-                }),
-            ),
+            "initialize" => {
+                let version = match params.get("protocolVersion").and_then(Value::as_str) {
+                    Some("2025-03-26") => "2025-03-26",
+                    _ => PROTOCOL_VERSION,
+                };
+                reply(
+                    &id,
+                    json!({
+                        "protocolVersion": version,
+                        "capabilities": { "tools": { "listChanged": false } },
+                        "serverInfo": { "name": "agent-bot-keyd", "version": env!("CARGO_PKG_VERSION") },
+                        "instructions": "GitHub App installation tokens for this soul. The App key never leaves agent-bot-keyd.",
+                    }),
+                )
+            }
             "ping" => reply(&id, json!({})),
             "tools/list" => reply(&id, json!({ "tools": tools() })),
             "tools/call" => reply(&id, self.call_tool(&params)),
@@ -937,10 +943,31 @@ mod tests {
     }
 
     #[test]
+    fn negotiates_mcp_protocol_versions() {
+        let keyd = keyd(true);
+        for (params, expected) in [
+            (json!({ "protocolVersion": "2025-03-26" }), "2025-03-26"),
+            (json!({ "protocolVersion": "2025-06-18" }), "2025-06-18"),
+            (json!({ "protocolVersion": "2099-01-01" }), "2025-06-18"),
+            (json!({}), "2025-06-18"),
+            (json!({ "protocolVersion": 1 }), "2025-06-18"),
+        ] {
+            let init = keyd
+                .handle_soul(&json!({
+                    "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": params,
+                }))
+                .unwrap();
+            assert_eq!(init["result"]["protocolVersion"], expected, "{params}");
+            assert_eq!(
+                init["result"]["serverInfo"]["version"],
+                env!("CARGO_PKG_VERSION")
+            );
+        }
+    }
+
+    #[test]
     fn speaks_mcp() {
         let keyd = keyd(true);
-        let init = keyd.handle_soul(&json!({ "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": { "protocolVersion": "2025-03-26" } })).unwrap();
-        assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
         assert!(keyd
             .handle_soul(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
             .is_none());

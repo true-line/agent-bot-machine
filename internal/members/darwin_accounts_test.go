@@ -52,6 +52,22 @@ func TestDarwinIDsAndGroups(t *testing.T) {
 	}
 }
 
+func TestDarwinPrivilegedGroupsRemainVisible(t *testing.T) {
+	for _, harnessHome := range []bool{true, false} {
+		for _, name := range []string{"admin", "wheel", "sudo", DarwinHQAccount} {
+			if !darwinReportGroup(name, harnessHome, true) {
+				t.Errorf("omitted %s from account privacy check", name)
+			}
+		}
+		if darwinReportGroup("localaccounts", harnessHome, true) {
+			t.Error("reported ordinary inherited localaccounts membership")
+		}
+		if !darwinReportGroup("custom-team", harnessHome, false) {
+			t.Error("omitted non-inherited group")
+		}
+	}
+}
+
 func TestDarwinRoleRespectsDirectorySearchPolicy(t *testing.T) {
 	old := runOutput
 	t.Cleanup(func() { runOutput = old })
@@ -121,5 +137,20 @@ func TestParsePsEnv(t *testing.T) {
 	}
 	if _, ok := env["words"]; ok {
 		t.Fatalf("a bare word became a variable: %v", env)
+	}
+}
+
+func TestProtectedDarwinIDReservedByPrimaryUser(t *testing.T) {
+	old := runOutput
+	t.Cleanup(func() { runOutput = old })
+	runOutput = func(_ string, args ...string) (string, error) {
+		if strings.Join(args, " ") == "/Search -search /Users PrimaryGroupID 302" {
+			return "existing-user 302", nil
+		}
+		return "", nil
+	}
+	used, err := protectedDarwinIDUsed("302")
+	if err != nil || !used {
+		t.Fatal("would share proposed private group", used, err)
 	}
 }

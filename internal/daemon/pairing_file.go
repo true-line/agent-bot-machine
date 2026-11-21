@@ -71,6 +71,9 @@ func PairTerminal(root string) (string, error) {
 	if err := checkChannelIdentity(root); err != nil {
 		return "", err
 	}
+	if err := prepareMachineLifecycle(root); err != nil {
+		return "", err
+	}
 	dir := stateDir(root)
 	if err := purgeLegacySharedState(dir, defaultLegacySharedDir(root), defaultKeyStore(filepath.Join(dir, "daemon.key"))); err != nil {
 		return "", err

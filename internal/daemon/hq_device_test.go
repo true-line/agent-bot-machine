@@ -99,7 +99,7 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 	}
 	now := time.Now().Truncate(time.Second)
 	calls := 0
-	_, ephemeral := fixtureDeviceKey(t)
+	sessionKey, ephemeral := fixtureDeviceKey(t)
 	tokenJTI, err := newNonce()
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +124,12 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 			result.ReceiptSHA = hex.EncodeToString(sum[:])
 		case "access-assertion":
 			result.Assertion = fixtureDeviceJWS(t, dev, map[string]any{"alg": "ES256", "typ": "JWT"}, map[string]any{"iss": "device_fixture", "sub": "device_fixture", "aud": "https://agents.true-line.ai/oauth/token", "iat": now.Unix(), "exp": now.Unix() + 120, "jti": tokenJTI, "cnf": map[string]any{"jwk": ephemeral.JWK}})
+		case "whoami":
+			if d.Session != ephemeral.Thumbprint {
+				return nil, errHQDevice
+			}
+			proof := fixtureDeviceJWS(t, sessionKey, map[string]any{"alg": "ES256", "typ": "dpop+jwt", "jwk": ephemeral.JWK}, map[string]any{"htm": "GET", "htu": deviceWhoamiURL, "ath": base64.RawURLEncoding.EncodeToString(make([]byte, 32)), "iat": now.Unix(), "jti": tokenJTI})
+			return json.Marshal(map[string]string{"session": d.Session, "proof": proof})
 		case "bind-access":
 			return json.Marshal(map[string]any{"expires_at": now.Unix() + 60, "session": ephemeral.Thumbprint})
 		case "enrollment-proof":
@@ -159,6 +165,9 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 			t.Fatal(err)
 		}
 		r := Request{Verb: deviceVerb, Option: option, Nonce: n, Timestamp: now.Unix()}
+		if option == "whoami" {
+			r.DeviceSession = ephemeral.Thumbprint
+		}
 		if option != "identity" {
 			r.HQEpoch = "legacy"
 		}
@@ -176,7 +185,7 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 	}
 	// The fake admin provider supplies only the production public result shape.
 	// Signature/pending-receipt acceptance is the provider's separate boundary.
-	for _, step := range []struct{ option, state string }{{"bind-enrollment", "bound"}, {"access-assertion", "asserted"}, {"bind-access", "access-bound"}} {
+	for _, step := range []struct{ option, state string }{{"bind-enrollment", "bound"}, {"access-assertion", "asserted"}, {"bind-access", "access-bound"}, {"whoami", "whoami-proved"}} {
 		q := fresh(step.option)
 		if strings.HasPrefix(q.Option, "bind-") {
 			receipt := map[string]any{"token_type": "DPoP", "access_token": "disposable-token", "expires_in": 60}
@@ -207,6 +216,11 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 			t.Fatal("undeclared purpose accepted")
 		}
 	}
+	q := fresh("whoami")
+	q.Target = "destination"
+	if exchange(q, caller, 331).OK || exchange(fresh("whoami"), caller, 332).OK {
+		t.Fatal("out-of-contract lookup accepted")
+	}
 	access := fresh("access-assertion")
 	access.Target = "caller-controlled-key"
 	if exchange(access, caller, 331).OK {
@@ -219,7 +233,7 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 	deps.Caller = func() (Caller, error) {
 		return Caller{Username: "admin", UID: 501, Home: root, RegisteredHome: root, PrefixOwner: "admin", DarwinAdmin: true}, nil
 	}
-	queued, code, _ := g.verify(331, signed(t, caller, fresh("enrollment-proof")))
+	queued, code, _ := g.verify(331, signed(t, caller, fresh("whoami")))
 	if code != "" {
 		t.Fatal(code)
 	}
@@ -285,7 +299,7 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 	if r := h.HQDevice(queued); r.OK {
 		t.Fatal("queued work reached provider after revocation")
 	}
-	deferredReq := fresh("identity")
+	deferredReq := fresh("whoami")
 	if err := open.SetDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +317,7 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 	if r := run(deps, cli.Context{}, []string{"revoke-hq"}); r.Diagnostic != nil {
 		t.Fatal("repeat revocation failed", r.Diagnostic)
 	}
-	if exchange(fresh("identity"), caller, 331).OK || calls != 6 {
+	if exchange(fresh("whoami"), caller, 331).OK || calls != 7 {
 		t.Fatalf("unexpected custody calls %d", calls)
 	}
 }
@@ -358,5 +372,55 @@ func TestHQDeviceMissingStateIsReadOnly(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) != 1 || entries[0].Name() != "peer.pub" {
 		t.Fatal("device lookup modified unprovisioned state")
+	}
+}
+
+func TestWhoamiPurposeAndSessionBoundResult(t *testing.T) {
+	now := time.Unix(100, 0)
+	key, id := fixtureDeviceKey(t)
+	_, other := fixtureDeviceKey(t)
+	req := Request{Verb: deviceVerb, Option: "whoami", HQEpoch: "legacy", DeviceSession: id.Thumbprint, Timestamp: now.Unix(), Nonce: "abcdefghijklmnop"}
+	_, role := keyPair(t)
+	wire := signed(t, role, req)
+	if code, _ := deviceFields(req, wire); code != "" {
+		t.Fatal("valid selector refused")
+	}
+	for _, extra := range []string{"device_id", "url", "method", "body", "ath", "jti", "jwk", "proof_nonce"} {
+		raw := append(bytes.Clone(wire[:len(wire)-1]), []byte(`,"`+extra+`":"fixture"}`)...)
+		if code, _ := deviceFields(req, raw); code == "" {
+			t.Errorf("accepted extra field %s", extra)
+		}
+	}
+	want := "\nhq_epoch\nlegacy\nsession\n" + id.Thumbprint
+	if !strings.HasSuffix(string(canonical(req)), want) || !strings.HasSuffix(string((deviceDelegation{Option: "whoami", Epoch: "legacy", Session: id.Thumbprint}).transcript()), want) {
+		t.Fatal("selector and epoch must be bound on both hops")
+	}
+	header := map[string]any{"alg": "ES256", "typ": "dpop+jwt", "jwk": id.JWK}
+	claims := map[string]any{"htm": "GET", "htu": deviceWhoamiURL, "ath": base64.RawURLEncoding.EncodeToString(make([]byte, 32)), "jti": base64.RawURLEncoding.EncodeToString(make([]byte, 16)), "iat": now.Unix()}
+	verify := func(request Request, replySelector string) bool {
+		t.Helper()
+		data, _ := json.Marshal(map[string]string{"session": replySelector, "proof": fixtureDeviceJWS(t, key, header, claims)})
+		_, state, err := deviceResult(request, data, now, "legacy")
+		return err == nil && state == "whoami-proved"
+	}
+	if !verify(req, id.Thumbprint) || verify(req, other.Thumbprint) {
+		t.Fatal("response selector mismatch")
+	}
+	otherReq := req
+	otherReq.DeviceSession = other.Thumbprint
+	if verify(otherReq, other.Thumbprint) {
+		t.Fatal("proof key does not match bound session")
+	}
+	for field, value := range map[string]any{"htm": "HEAD", "htu": deviceWhoamiURL + "?format=json", "ath": "bad", "iat": now.Unix() - 31, "jti": "bad", "extra": "field"} {
+		previous, exists := claims[field]
+		claims[field] = value
+		if verify(req, id.Thumbprint) {
+			t.Errorf("accepted invalid %s claim", field)
+		}
+		if exists {
+			claims[field] = previous
+		} else {
+			delete(claims, field)
+		}
 	}
 }

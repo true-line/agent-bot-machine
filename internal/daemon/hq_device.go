@@ -71,7 +71,7 @@ func deviceKeys(fields map[string]json.RawMessage, keys ...string) bool {
 
 func deviceFields(r Request, raw []byte) (string, string) {
 	if r.Verb != deviceVerb {
-		if r.HQEpoch != "" || r.ReceiptBody != "" || r.ReceiptJTI != "" || r.ReceiptKID != "" || r.ReceiptSignature != "" || hasRawField(raw, "hq_epoch", "receipt_body", "receipt_jti", "receipt_kid", "receipt_signature") {
+		if r.DeviceSession != "" || r.HQEpoch != "" || r.ReceiptBody != "" || r.ReceiptJTI != "" || r.ReceiptKID != "" || r.ReceiptSignature != "" || hasRawField(raw, "session", "hq_epoch", "receipt_body", "receipt_jti", "receipt_kid", "receipt_signature") {
 			return diag.DaemonUndeclared, "HQ device fields are not declared on this verb"
 		}
 		return "", ""
@@ -86,6 +86,9 @@ func deviceFields(r Request, raw []byte) (string, string) {
 		switch r.Option {
 		case "identity", "enrollment-proof", "access-assertion":
 			ok = deviceKeys(fields, keys...)
+		case "whoami":
+			selector, valid := deviceSegment(r.DeviceSession)
+			ok = deviceKeys(fields, append(keys, "session")...) && valid && len(selector) == sha256.Size
 		case "bind-enrollment", "bind-access":
 			keys = append(keys, "receipt_body", "receipt_jti", "receipt_kid", "receipt_signature")
 			body, bodyOK := deviceSegment(r.ReceiptBody)
@@ -137,6 +140,7 @@ func (j deviceJWK) thumbprint() string {
 }
 
 type deviceDelegation struct {
+	Session          string `json:"session,omitempty"`
 	Epoch            string `json:"hq_epoch"`
 	Machine          string `json:"machine_pub"`
 	HQ               string `json:"hq_pub"`
@@ -153,6 +157,9 @@ type deviceDelegation struct {
 
 func (d deviceDelegation) transcript() []byte {
 	parts := []string{deviceDomain, d.Machine, d.HQ, strconv.Itoa(d.UID), d.Nonce, strconv.FormatInt(d.Timestamp, 10), d.Option, "", "", "", "hq_epoch", d.Epoch}
+	if d.Option == "whoami" {
+		parts = append(parts, "session", d.Session)
+	}
 	if d.Option == "bind-enrollment" || d.Option == "bind-access" {
 		parts = append(parts, "receipt_body", d.ReceiptBody, "receipt_jti", d.ReceiptJTI, "receipt_kid", d.ReceiptKID, "receipt_signature", d.ReceiptSignature)
 	}
@@ -209,7 +216,7 @@ type deviceProvider func(context.Context, string, deviceDelegation) ([]byte, err
 
 func requestHQDevice(ctx context.Context, root string, machine ed25519.PrivateKey, req Request, now func() time.Time, provider deviceProvider) Response {
 	switch req.Option {
-	case "identity", "enrollment-proof", "bind-enrollment", "access-assertion", "bind-access":
+	case "identity", "enrollment-proof", "bind-enrollment", "access-assertion", "bind-access", "whoami":
 	default:
 		return deviceUnavailable()
 	}
@@ -240,7 +247,7 @@ func requestHQDevice(ctx context.Context, root string, machine ed25519.PrivateKe
 		return deviceUnavailable()
 	}
 	d := deviceDelegation{Epoch: epoch, Machine: base64.StdEncoding.EncodeToString(machine.Public().(ed25519.PublicKey)), HQ: req.PublicKey, UID: req.peerUID, Nonce: req.Nonce,
-		Timestamp: t.Unix(), Option: req.Option, ReceiptBody: req.ReceiptBody, ReceiptJTI: req.ReceiptJTI, ReceiptKID: req.ReceiptKID, ReceiptSignature: req.ReceiptSignature}
+		Timestamp: t.Unix(), Option: req.Option, Session: req.DeviceSession, ReceiptBody: req.ReceiptBody, ReceiptJTI: req.ReceiptJTI, ReceiptKID: req.ReceiptKID, ReceiptSignature: req.ReceiptSignature}
 	d.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(machine, d.transcript()))
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()

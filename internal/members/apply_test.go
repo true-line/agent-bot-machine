@@ -319,6 +319,29 @@ func TestApplyRunsAnApprovedPlanOnce(t *testing.T) {
 	}
 }
 
+type unavailableFinalReceipt struct{ Root }
+
+func (unavailableFinalReceipt) Finish(string, []byte) error {
+	return errors.New("receipt storage unavailable")
+}
+
+func TestApplyRequiresFinalReceipt(t *testing.T) {
+	w := newWorld(bare())
+	p := w.planned(t, applyID)
+	w.approved(t, applyID, p)
+	w.deps.Root = func() Root { return unavailableFinalReceipt{w.r} }
+
+	result := w.apply(applyID)
+	if result.Diagnostic == nil || result.Diagnostic.ID != diag.MembersApplyFailed || len(result.Records) != 0 {
+		t.Fatalf("expected a final receipt failure, got %+v", result)
+	}
+	if len(w.r.log) == 0 || w.r.receipts[applyID].Result != "started" {
+		t.Fatalf("expected completed host changes with a pending receipt: %v, %+v", w.r.log, w.r.receipts)
+	}
+	w.r.log = nil
+	wantRefused(t, w, w.apply(applyID), diag.MembersNotApproved)
+}
+
 func TestApplyRefusesTheWrongCaller(t *testing.T) {
 	cases := []struct {
 		name string
@@ -383,6 +406,9 @@ func TestApplyNeedsAMatchingUnexpiredApproval(t *testing.T) {
 			e.Mode = 0o777
 			w.h.entries[ApprovalsDir(machineDir)] = e
 		}, diag.MembersNotApproved},
+		{"harness consent cannot authorize generic apply", func(w *world) {
+			w.h.files[approval] = strings.Replace(w.h.files[approval], `"plan_id":`, `"purpose":"harness-launch-install","plan_id":`, 1)
+		}, diag.MembersNotApproved},
 		{"approval for another digest", func(w *world) {
 			w.h.files[approval] = strings.Replace(w.h.files[approval], `"plan_digest":"`, `"plan_digest":"0000`, 1)
 		}, diag.MembersNotApproved},
@@ -402,6 +428,51 @@ func TestApplyNeedsAMatchingUnexpiredApproval(t *testing.T) {
 			wantRefused(t, w, w.apply(applyID), tc.want)
 			if len(w.r.receipts) != 0 {
 				t.Fatal("a refused apply used the approval")
+			}
+		})
+	}
+}
+
+// The shared approval reader must allow typed service-upgrade consent through
+// to the upgrade's existing host checks, while refusing consent for a harness.
+func TestUpgradeApplyDispatchKeepsDistinctPairedPurposes(t *testing.T) {
+	for _, purpose := range []string{UpgradePurpose, HarnessInstall, HarnessRetire} {
+		t.Run(purpose, func(t *testing.T) {
+			w := newWorld(bare())
+			p := w.planned(t, applyID)
+			w.approved(t, applyID, p)
+			// This host has no predecessor service. An accepted upgrade purpose
+			// must reach that validation without changing the host.
+			saved := Saved{PlanID: applyID, Plan: Plan{HQAccount: DarwinHQAccount}, UpgradeFrom: &priorServicePlan{ID: "plan-20261110T030000Z-abcd"}}
+			raw, err := json.Marshal(saved)
+			if err != nil {
+				t.Fatal(err)
+			}
+			planPath := filepath.Join("/home/owner", "Library", "Application Support", "managed-machine", "members", "plans", applyID+".json")
+			w.h.files[planPath] = string(raw)
+			ap := ApprovalPath(machineDir, applyID)
+			var approval Approval
+			if err := json.Unmarshal([]byte(w.h.files[ap]), &approval); err != nil {
+				t.Fatal(err)
+			}
+			approval.Purpose = purpose
+			approval.MachineFingerprint = strings.Repeat("1", 64)
+			approval.PairCommitment = strings.Repeat("2", 64)
+			raw, err = json.Marshal(approval)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.h.files[ap] = string(raw)
+			res := Command(w.deps).Run(on(target.DarwinARM64), []string{"apply", applyID})
+			if purpose == UpgradePurpose {
+				if res.Diagnostic == nil || res.Diagnostic.ID != diag.MembersListInvalid || !strings.Contains(res.Diagnostic.Message, "dedicated macOS service-only plan") {
+					t.Fatalf("service upgrade did not reach host validation: %+v", res.Diagnostic)
+				}
+			} else {
+				wantRefused(t, w, res, diag.MembersNotApproved)
+			}
+			if len(w.r.receipts) != 0 || len(w.r.log) != 0 {
+				t.Fatal("changed host or consumed approval")
 			}
 		})
 	}
