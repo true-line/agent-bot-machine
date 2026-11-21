@@ -30,30 +30,35 @@ fi
 # MANAGED_MACHINE_ELEVATION_DECLINED_FILE (inherited across the re-exec and
 # by every setup step), so no later step asks again.
 if [[ -z "${MANAGED_MACHINE_UPDATE_REEXECED:-}" ]]; then
-    fleet_selected=false
-    if managed_machine_config_selected; then fleet_selected=true; fi
+    if ! managed_machine_config_selected; then
+        # Remember the brew the public installer will use, including the
+        # standard path it bootstraps if Homebrew is absent. The installer
+        # validates its active keg before mutation. Only query the prefix
+        # after the installer has passed its platform check and succeeded.
+        resume_brew=""
+        if [[ -f "$ROOT/../RELEASE_COMMIT" ]]; then
+            resume_brew=/opt/homebrew/bin/brew
+            if [[ ! -x "$resume_brew" ]] && command -v brew >/dev/null; then
+                resume_brew="$(command -v brew)"
+            fi
+        fi
+        export MANAGED_MACHINE_UPDATE_REEXECED=1
+        /bin/bash "$ROOT/../install.sh" --update || exit $?
+        if [[ -n "$resume_brew" ]]; then
+            prefix="$("$resume_brew" --prefix)"
+            exec "$prefix/opt/managed-machine/libexec/legacy/scripts/update" "$@"
+        fi
+        exec "$ROOT/scripts/update" "$@"
+    fi
     update_entry="$ROOT/scripts/update"
     brew_bin="$(command -v brew || true)"
-    # The public installer prefers the standard Homebrew; fleet updates use PATH.
-    if [[ "$fleet_selected" == false && -x /opt/homebrew/bin/brew ]]; then
-        brew_bin=/opt/homebrew/bin/brew
-    fi
-    if [[ -f "$ROOT/../RELEASE_COMMIT" && ( -n "$brew_bin" || "$fleet_selected" == false ) ]]; then
-        # The public installer bootstraps /opt/homebrew if brew is missing.
-        prefix=/opt/homebrew
-        if [[ -n "$brew_bin" ]]; then prefix="$("$brew_bin" --prefix)"; fi
+    if [[ -f "$ROOT/../RELEASE_COMMIT" && -n "$brew_bin" ]]; then
+        prefix="$("$brew_bin" --prefix)"
         update_entry="$prefix/opt/managed-machine/libexec/legacy/scripts/update"
         if [[ ! "$update_entry" -ef "$ROOT/scripts/update" ]]; then
             echo "This updater is outside Homebrew's current Machine keg. Run the public installer." >&2
             exit 1
         fi
-    fi
-    if [[ "$fleet_selected" == false ]]; then
-        # Source and installed layouts both place the public installer beside
-        # the legacy tree. It refreshes this tap only, including across UIDs.
-        /bin/bash "$ROOT/../install.sh" --update || exit $?
-        export MANAGED_MACHINE_UPDATE_REEXECED=1
-        exec "$update_entry" "$@"
     fi
     MANAGED_MACHINE_DECLINED_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/mm-update-declined.XXXXXX")"
     MANAGED_MACHINE_ELEVATION_DECLINED_FILE="$MANAGED_MACHINE_DECLINED_TMPDIR/declined"

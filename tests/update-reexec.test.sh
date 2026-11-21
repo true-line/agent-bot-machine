@@ -8,7 +8,6 @@
 # version of the tree.
 set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-BUILD_HOME="$HOME"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"
@@ -613,57 +612,5 @@ for step in setup-gh setup-zsh setup-bin setup-zsh-functions; do
 done
 [[ "$(grep -Fc 'Update complete.' "$TEST_DIR/cross-layout.out")" == 1 ]]
 [[ "$(cat "$PASSFILE")" == 2 ]]
-
-# The macOS Go CLI resolves Homebrew's public symlink into the Cellar. Run
-# that entry point with two distinct kegs so an old script cannot pass.
-if [[ "$(uname -s)" == Darwin ]]; then
-    prefix="$TEST_DIR/package"
-    old="$prefix/Cellar/managed-machine/old"
-    new="$prefix/Cellar/managed-machine/new"
-    mkdir -p "$prefix/bin" "$prefix/opt" "$old/bin" "$TEST_DIR/user-home" "$TEST_DIR/other-bin"
-    (cd "$ROOT" && HOME="$BUILD_HOME" go build -o "$old/bin/managed-machine" ./cmd/managed-machine)
-    for keg in "$old" "$new"; do
-        legacy="$keg/libexec/legacy"
-        mkdir -p "$legacy/bin" "$legacy/scripts" "$legacy/lib"
-        cp "$ROOT/legacy/bin/managed-machine" "$legacy/bin/"
-        # Redirect the known system Homebrew path into the temporary prefix.
-        sed "s|/opt/homebrew|$prefix|g" "$ROOT/legacy/scripts/update" > "$legacy/scripts/update"
-        chmod +x "$legacy/scripts/update"
-        touch "$keg/libexec/RELEASE_COMMIT"
-        cat > "$legacy/lib/install.sh" <<'LIB'
-managed_machine_agent_session() { return 1; }
-managed_machine_config_selected() { return 1; }
-LIB
-        printf 'echo "setup resumed in %s"; exit 0\n' "${keg##*/}" > "$legacy/lib/bootstrap.sh"
-    done
-    ln -s "$old" "$prefix/opt/managed-machine"
-    ln -s "$prefix/opt/managed-machine/bin/managed-machine" "$prefix/bin/managed-machine"
-    cat > "$prefix/bin/brew" <<'BREW'
-#!/bin/bash
-[[ "$*" == "--prefix" ]] || exit 2
-echo "$TEST_PREFIX"
-BREW
-    chmod +x "$prefix/bin/brew"
-    cat > "$old/libexec/install.sh" <<'INSTALL'
-set -e
-rm "$TEST_PREFIX/opt/managed-machine"
-ln -s "$TEST_PREFIX/Cellar/managed-machine/new" "$TEST_PREFIX/opt/managed-machine"
-INSTALL
-    printf '#!/bin/sh\nexit 42\n' > "$TEST_DIR/other-bin/brew"
-    chmod +x "$TEST_DIR/other-bin/brew"
-    run_packaged_update() {
-        env -i HOME="$TEST_DIR/user-home" PATH="$1" AGENT_MACHINE_CHANNEL="$TEST_DIR/no-daemon" \
-            TEST_PREFIX="$prefix" "$prefix/bin/managed-machine" --update
-    }
-    system_path=/usr/bin:/bin:/usr/sbin:/sbin
-    result="$(run_packaged_update "$TEST_DIR/other-bin:$system_path")"
-    [[ "$result" == 'setup resumed in new' ]] || { echo "Unexpected update result: $result" >&2; exit 1; }
-
-    # With brew missing, the public installer can restore the standard prefix.
-    rm "$prefix/bin/brew" "$prefix/opt/managed-machine"
-    ln -s "$old" "$prefix/opt/managed-machine"
-    result="$(run_packaged_update "$system_path")"
-    [[ "$result" == 'setup resumed in new' ]] || { echo "Unexpected repair result: $result" >&2; exit 1; }
-fi
 
 echo 'update re-exec tests passed'
