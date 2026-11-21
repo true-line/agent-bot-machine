@@ -202,4 +202,7 @@ func main() {
 	if read.Err() != nil {
 		os.Exit(1)
 	}
+	// Remain alive after ACP EOF. The launcher must stop this process group;
+	// a natural fixture exit cannot count as cutoff evidence.
+	time.Sleep(20 * time.Second)
 }

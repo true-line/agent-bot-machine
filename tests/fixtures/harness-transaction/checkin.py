@@ -161,10 +161,10 @@ def check_one(digest, adapter, account):
         process.stdin.close()
         if process.wait(10) != 0:
             raise RuntimeError("Machine did not confirm supervised closure")
-        events = [json.loads(line)["kind"] for line in process.stderr if line.strip()]
-        if events != ["started","closed"]:
-            raise RuntimeError("missing supervisor lifecycle records")
-        print(f"PASS {adapter} entered its assigned account, denied direct IPv4/IPv6 and sibling socket, completed member + broker check-in and closed")
+        events = [json.loads(line) for line in process.stderr if line.strip()]
+        if [event["kind"] for event in events] != ["started", "closed"] or events[1].get("exit_code") != -1:
+            raise RuntimeError("supervisor did not terminate the live adapter group on stop")
+        print(f"PASS {adapter} entered its assigned account, denied direct IPv4/IPv6 and sibling socket, completed member + broker check-in and was stopped")
 
 
 if __name__ == "__main__":
