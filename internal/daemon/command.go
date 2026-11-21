@@ -9,6 +9,7 @@ import (
 	"io"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/command"
@@ -250,7 +251,19 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		if handled, res, rpcErr := signedRPC(caller, sock, key, "status", ""); handled && rpcErr == nil && res.OK {
 			rec.Set("channel", "signed").Set("daemon", res.State)
 		}
-		return cli.Result{Records: []*output.Record{rec}}
+		result := cli.Result{Records: []*output.Record{rec}}
+		if ctx.Mode == output.Human && goos == "darwin" && caller.DarwinAdmin && caller.PrefixOwner != "" && caller.Refuse() == "" {
+			if executable, err := deps.executable(ctx); err == nil {
+				if issue := deviceKeydPathIssue(executable); issue != "" {
+					var report strings.Builder
+					if output.Write(&report, output.Human, result.Records) == nil {
+						fmt.Fprintf(&report, "\nBundled keyd custody path refused: %s\n", issue)
+						result.Human = report.String()
+					}
+				}
+			}
+		}
+		return result
 	case "receipts":
 		sock := ChannelSocket()
 		on, _ := Installed(goos, root)

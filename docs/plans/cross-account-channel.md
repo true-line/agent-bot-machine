@@ -220,6 +220,26 @@ agent-daemon once P7 exists. `--update` falls back to the legacy script
 only when no daemon is installed, or when the daemon is paired but has
 no catalog (`MM_DAEMON_NOT_IN_CATALOG`).
 
+Before macOS HQ enrollment, the Homebrew prefix administrator can run
+`managed-machine daemon status --human` from the registered login account.
+If the bundled `agent-bot-keyd` path fails Machine's custody check, the
+human report identifies the path component and the condition that failed.
+The status record and exit code retain their existing behavior. This check
+covers the path only. Signature, Keychain and device checks still happen
+during their normal operations, and a paired HQ caller receives the
+bounded custody refusal.
+
+The path uses the symlink-resolved Machine package executable and its
+bundled keyd sibling. Directory components belong to root or the Homebrew
+administrator and have no world write. Group write is supported only at
+`/opt/homebrew` and `/opt/homebrew/Cellar` when the Homebrew administrator
+owns the directory and its group is macOS `admin` (GID 80). Package
+directories beyond the Cellar require owner-only write. ACLs must preserve
+those restrictions. The bundled keyd must be a regular file owned by the
+Homebrew administrator with mode `0700`. Review a reported directory with
+the administrator before changing it. Removing group write from a shared
+Homebrew directory can affect other authorized Homebrew users and services.
+
 ### S5 — agent-bot is the control plane (other repos; P7/P8)
 
 P7: the `agent-daemon` client is part of HQ core in agent-bot-daemon
