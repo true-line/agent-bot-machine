@@ -81,8 +81,8 @@ After a failed or interrupted apply, plan and approve the remaining steps again.
 A Darwin harness launch plan records exact adapter, Machine and sandbox digests
 for review. Enrolled dedicated HQ can export and submit the matching owner
 proof with machine harness-launch-install or machine harness-launch-retire.
-Root apply still refuses both actions. Regenerate the plan under the eventual
-apply-capable build and obtain a fresh proof for its digest.
+Installation and launch also require a qualified adapter. This build has no
+production Darwin adapter qualification verifier.
 The prefix administrator then runs apply with sudo in their own terminal within
 ten minutes. apply builds the plan again from the host and runs only when
 its digest is the approved one. It takes a plan id and nothing else; no
@@ -361,7 +361,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		records[0].Set("purpose", HarnessAccountsPurpose)
 	}
 	if in.HarnessLaunch != nil {
-		records[0].Set("advice", "Dedicated paired HQ can request an owner proof for this digest. Apply is disabled. Regenerate the plan and request a fresh owner proof with the release that will apply it.")
+		records[0].Set("advice", "Dedicated paired HQ can request an owner proof for this digest. Production install requires a qualified adapter. Regenerate and approve the plan if the Machine executable changes.")
 	}
 	for _, s := range plan.Steps {
 		if platform == PlatformDarwin && s.Kind == KindHQAccount && s.Target == DarwinHQAccount && s.Action == ActionCreate {
