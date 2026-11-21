@@ -171,6 +171,9 @@ func reportShape(raw []byte) error {
 			return ErrUnqualified
 		}
 	}
+	if r.ProfileInForce == "managed-protected" && (len(r.Gates) != 3 || r.Gates["T01"].Outcome != "pass" || r.Gates["T02"].Outcome != "pass" || r.Gates["T03"].Outcome != "pass") {
+		return ErrUnqualified
+	}
 	if r.ProfileInForce == "managed-cooperative" && len(r.Gates) != 1 {
 		return ErrUnqualified
 	}

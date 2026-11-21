@@ -54,7 +54,7 @@ pub(crate) struct Request {
     hq_epoch: String,
     req_nonce: String,
     timestamp: u64,
-    option: String,
+    pub(crate) option: String,
     #[serde(default, deserialize_with = "optional_text")]
     session: Option<String>,
     #[serde(default, deserialize_with = "optional_text")]
@@ -436,7 +436,11 @@ fn fixed_host_report(request: &Request) -> Result<Vec<u8>, &'static str> {
                 || gate["outcome"] != "pass"
                 || !report_evidence(&gate["evidence"])
         })
-        || (report["profile_in_force"] == "managed-protected" && gates.contains_key("T21"))
+        || (report["profile_in_force"] == "managed-protected"
+            && (gates.len() != 3
+                || !["T01", "T02", "T03"]
+                    .iter()
+                    .all(|name| gates.contains_key(*name))))
         || (report["profile_in_force"] == "managed-cooperative"
             && (gates.len() != 1 || !gates.contains_key("T21")))
     {

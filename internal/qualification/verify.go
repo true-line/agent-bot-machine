@@ -423,6 +423,9 @@ func VerifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time) (
 			return nil, ErrUnqualified
 		}
 	}
+	if report.Profile == "managed-protected" && (len(report.Gates) != 3 || report.Gates["T01"].Outcome != "pass" || report.Gates["T02"].Outcome != "pass" || report.Gates["T03"].Outcome != "pass") {
+		return nil, ErrUnqualified
+	}
 	if report.Profile == "managed-cooperative" && len(report.Gates) != 1 {
 		return nil, ErrUnqualified
 	}

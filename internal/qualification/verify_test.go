@@ -131,7 +131,7 @@ func TestHostSignatureDesignatedAndBound(t *testing.T) {
 		"host":             map[string]any{"id": "fixture-host", "os": "darwin", "os_version": "27.0", "architecture": "arm64", "profile": "fixture-profile", "evidence": []any{evidence}},
 		"profile_in_force": "managed-protected", "renders": []any{"text"}, "cost_bound": "estimate",
 		"evaluation_cells": []any{map[string]any{"role": "assistant", "model": "fixture-model", "provider": "fixture-provider", "revision": "fixture-revision", "evidence": evidence}},
-		"suite_revision":   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "run_id": "fixture-run", "outcome": "pass", "checks": checks, "gates": map[string]any{"T01": map[string]any{"outcome": "pass", "evidence": evidence}}, "recorded_at": "2026-11-21T00:00:00Z",
+		"suite_revision":   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "run_id": "fixture-run", "outcome": "pass", "checks": checks, "gates": map[string]any{"T01": map[string]any{"outcome": "pass", "evidence": evidence}, "T02": map[string]any{"outcome": "pass", "evidence": evidence}, "T03": map[string]any{"outcome": "pass", "evidence": evidence}}, "recorded_at": "2026-11-21T00:00:00Z",
 	}
 	raw, err := json.Marshal(report)
 	if err != nil {
@@ -157,7 +157,8 @@ func TestHostSignatureDesignatedAndBound(t *testing.T) {
 	// adapter or claims a passing gate without an evidence reference.
 	for _, broken := range []map[string]any{
 		{"adapter": map[string]any{}},
-		{"gates": map[string]any{"T01": map[string]any{"outcome": "pass"}}},
+		{"gates": map[string]any{"T01": map[string]any{"outcome": "pass", "evidence": evidence}}},
+		{"gates": map[string]any{"T01": map[string]any{"outcome": "pass", "evidence": evidence}, "T02": map[string]any{"outcome": "pass", "evidence": evidence}}},
 	} {
 		copy := make(map[string]any, len(report))
 		for k, v := range report {

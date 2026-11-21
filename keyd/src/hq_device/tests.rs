@@ -152,7 +152,7 @@ fn host_report_signing_is_fixed_and_pair_bound() {
         "checks":{"egress":check,"credentials":check,"state_redirect":check,
             "safe_interrupt_resume":check,"session_reuse":check,"cost_bound":check,"render_coverage":check},
         "cost_bound":"estimate", "evaluation_cells":[{"role":"assistant","model":"fixture-model","provider":"fixture-provider","revision":"fixture-revision","evidence":evidence}],
-        "gates":{"T01":{"outcome":"pass","evidence":evidence}},
+        "gates":{"T01":{"outcome":"pass","evidence":evidence},"T02":{"outcome":"pass","evidence":evidence},"T03":{"outcome":"pass","evidence":evidence}},
         "harness":{"name":"fixture-harness","version":"1.0.0","binary_path":"/fixture/harness","binary_sha256":sha},
         "host":{"id":"fixture-host","os":"darwin","os_version":"27.0","architecture":"arm64","profile":"fixture-profile","evidence":[evidence]},
         "launch":{"executable":"/fixture/adapter","executable_sha256":sha,"argv":["run"],"code_inputs":[]},
@@ -179,6 +179,11 @@ fn host_report_signing_is_fixed_and_pair_bound() {
     let mut invalid = raw.clone();
     invalid.push(b'\n');
     assert!(fixed_host_report(&host_report_request(&p, &invalid)).is_err());
+    let incomplete_gates = String::from_utf8(raw.clone()).unwrap().replace(
+        "\"T03\":{\"evidence\":{\"sha256\":",
+        "\"missing-gate\":{\"evidence\":{\"sha256\":",
+    );
+    assert!(fixed_host_report(&host_report_request(&p, incomplete_gates.as_bytes())).is_err());
     let missing_adapter = String::from_utf8(raw.clone()).unwrap().replace(
         &format!("\"package_sha256\":\"{sha}\""),
         "\"package_sha256\":\"sha256:fixture\"",

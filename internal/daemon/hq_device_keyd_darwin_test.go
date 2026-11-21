@@ -14,6 +14,31 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// The report is returned inside the keyd response, so its base64 encoding
+// crosses both stdin and stdout; ordinary device operations keep small caps.
+func TestDeviceKeydReportTransportLimits(t *testing.T) {
+	for _, tc := range []struct {
+		option string
+		input  int
+		output int
+	}{
+		{"whoami", 16384, 8192},
+		{"qualification-host-report", 2 * 1024 * 1024, 2 * 1024 * 1024},
+	} {
+		input, output := deviceKeydLimits(tc.option)
+		if input != tc.input || output != tc.output {
+			t.Fatalf("%s: input=%d output=%d", tc.option, input, output)
+		}
+		b := keydOutput{limit: output}
+		if _, err := b.Write(make([]byte, output)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := b.Write([]byte{0}); err == nil {
+			t.Fatal("accepted output over limit")
+		}
+	}
+}
+
 func TestHQDeviceDarwinCodeRequirement(t *testing.T) {
 	dir, err := os.Open("/bin")
 	if err != nil {
