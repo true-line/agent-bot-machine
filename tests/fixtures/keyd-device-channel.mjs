@@ -117,7 +117,11 @@ export async function exerciseNativeChannel(stage, machine, hq, epoch, expectedT
         cwd: '/', stdio: 'ignore', timeout: 5000,
       });
       requireCheck(revoke.status === 0);
+      // A verified signed refusal confirms this is revocation, not a lost
+      // Machine socket, on both sides of the warmed client's request.
+      check('refused');
       await warm.revoke();
+      check('refused');
       warm = undefined;
       console.log('PASS enrolled HQ warmed one native Machine session; admin revoke cleared its token and blocked issuer calls');
       return;
