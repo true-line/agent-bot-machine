@@ -1,20 +1,24 @@
 # Sourced only inside the existing throwaway enrolled HQ fixture. All local
 # review keys belong to this CI job. Use the real foreground Machine daemon.
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
-   "${MM_MEMBERS_REAL_ACCOUNTS:-}" == 1 && ( "${MM_HQ_UPGRADE_TEST:-}" == legacy || "${MM_HQ_UPGRADE_TEST:-}" == paired ) &&
+   "${MM_MEMBERS_REAL_ACCOUNTS:-}" == 1 && ( "${MM_HQ_UPGRADE_TEST:-}" == legacy || "${MM_HQ_UPGRADE_TEST:-}" == paired || "${MM_HARNESS_TRANSACTION:-}" == 1 ) &&
    -z "${MM_HQ_DEVICE_ARCHIVE:-}" && "$role" == _agent-bot-hq ]] || exit 1
 
 hosted_harness_accounts() (
     set -euo pipefail
+    # Provisioning never uses the test-qualified launch executor. The paired
+    # fixture daemon remains the same executable for its entire lifetime.
+    if [[ "${MM_HARNESS_TRANSACTION:-}" == 1 ]]; then MM="$WORK/managed-machine"; fi
     # The EXIT trap needs these subshell variables even if Bash unwinds function
     # locals after an error. The subshell keeps them private to this fixture.
     left=_abh-ci-proof-a right=_abh-ci-proof-b
+    if [[ "${MM_HARNESS_TRANSACTION:-}" == 1 ]]; then left=_abm-ci-a right=_abm-ci-b; fi
     local account p output row plan_id digest role_uid
     transfer="$signer/account-proof" files="$stage/account-review-handoff"
     local client="$stage/account-review-hq"
     broker=none
     local changes=2
-    if [[ "$MM_HQ_UPGRADE_TEST" == paired ]]; then
+    if [[ "${MM_HQ_UPGRADE_TEST:-}" == paired || "${MM_HARNESS_TRANSACTION:-}" == 1 ]]; then
         broker="$runtime_dir/ipc"
         [[ "$runtime_dir" == '/Library/Application Support/ai.true-line.agent-bot-hq' && -d "$runtime_dir" &&
            ! -e "$broker" && ! -L "$broker" ]] || fail 'an empty broker layout is required'
@@ -31,7 +35,7 @@ hosted_harness_accounts() (
     cleanup_account_handoff() {
         sudo rm -f "$files/challenge" "$files/proof"
         rm -f "$transfer/proof"
-        if [[ "$broker" != none && -d "$broker" && ! -L "$broker" ]]; then
+        if [[ "$broker" != none && "${retain_harness_broker:-false}" != true && -d "$broker" && ! -L "$broker" ]]; then
             # The fixture required this layout to be absent. Only empty test
             # directories may be removed, including after a partial apply.
             sudo rmdir "$broker/$left" "$broker/$right" "$broker" 2>/dev/null || :
@@ -155,8 +159,13 @@ sys.exit(0 if isinstance(record, dict) and record and
         local broker_state="$stage/account-broker-state"
         sudo install -d -o "$role" -g "$role" -m 0700 "$broker_state"
         (cd / && "$stage/node" "$client/tests/packaged-darwin-harness-bind.mjs" "$client" "$broker_state" "$left" "$right")
-        # The existing service rollback test requires its runtime directory empty.
-        sudo rmdir "$broker/$left" "$broker/$right" "$broker"
+        if [[ "${MM_HARNESS_TRANSACTION:-}" == 1 ]]; then
+            # The launch transaction consumes these Machine-provisioned paths.
+            retain_harness_broker=true
+        else
+            # The existing service rollback test requires an empty runtime directory.
+            sudo rmdir "$broker/$left" "$broker/$right" "$broker"
+        fi
     fi
     paired_status
     ok 'paired Machine created two reviewed harness roles with private homes and retained a one-use receipt'

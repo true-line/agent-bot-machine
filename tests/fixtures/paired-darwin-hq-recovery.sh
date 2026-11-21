@@ -13,6 +13,13 @@ checkout_review_source() {
     git -C "$subjects/$name" checkout -q --detach FETCH_HEAD
     [[ "$(git -C "$subjects/$name" rev-parse HEAD)" == "$sha" ]] || exit 1
 }
+if [[ "${MM_HARNESS_TRANSACTION:-}" == 1 ]]; then
+    checkout_review_source identity agent-bot-identity a1ebed03d36336a52f9c9432e925cd216c1613e4
+    presence="$subjects/identity/owner-presence-macos"
+    xcrun --sdk macosx swiftc -swift-version 5 -parse-as-library \
+        "$presence/PairingChallenge.swift" "$presence/HarnessLaunchPlan.swift" \
+        "$ROOT/tests/fixtures/harness-transaction/review.swift" -o "$signer/check-harness-plan"
+else
 checkout_review_source conformance soul-conformance e41baba741bab974fee19acb09b5edb446a3d1f0
 suite="$subjects/conformance/suites/paired-hq-recovery"
 # This pinned Identity version recognizes both legacy plans and the v2
@@ -21,8 +28,9 @@ checkout_review_source identity agent-bot-identity 3d6bf1cd756bdadad1772fa74f7e4
 presence="$subjects/identity/owner-presence-macos"
 xcrun --sdk macosx swiftc -swift-version 5 -parse-as-library \
     "$presence/PairingChallenge.swift" "$presence/FirstHQChallenge.swift" "$suite/owner.swift" -o "$signer/review-owner"
+fi
 # Supply the same one-run P-256 key used for the original owner pin in the
-# raw encoding that the public conformance fixture accepts.
+# raw encoding that the public conformance and account fixtures accept.
 "$stage/node" --input-type=module - "$signer/key.pem" "$signer/owner.raw" <<'JS'
 import { createPrivateKey } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -50,7 +58,15 @@ stop_fixture_machine() {
     fi
     machine_socket_id=
 }
-trap stop_fixture_machine EXIT
+cleanup_recovery() {
+    stop_fixture_machine
+    if [[ "${harness_accounts_ready:-false}" == true ]]; then
+        # Only empty, job-created broker directories are removed here. A
+        # live or unrecognized artifact remains for the runner to discard.
+        sudo rmdir "$runtime_dir/ipc/_abm-ci-a" "$runtime_dir/ipc/_abm-ci-b" "$runtime_dir/ipc" 2>/dev/null || :
+    fi
+}
+trap cleanup_recovery EXIT
 start_fixture_machine() {
     [[ ! -e "$channel" && ! -L "$channel" ]] || fail 'Machine channel already exists'
     if [[ -n "${upgrade_test_daemon:-}" ]]; then
@@ -93,6 +109,15 @@ paired_status() {
 }
 start_fixture_machine --require-identity "$machine_pin"
 paired_status --daemon-key "$machine_key"
+
+if [[ "${MM_HARNESS_TRANSACTION:-}" == 1 ]]; then
+    # The account fixture uses ordinary Machine for plan and apply, while the
+    # daemon remains the originally paired test build for launch plan review.
+    source "$ROOT/tests/fixtures/paired-darwin-hq-accounts.sh"
+    harness_accounts_ready=true
+    source "$ROOT/tests/fixtures/harness-transaction/run.sh"
+    return 0
+fi
 
 case "${MM_HQ_UPGRADE_TEST:-}" in
     legacy|paired) source "$ROOT/tests/fixtures/paired-darwin-hq-accounts.sh" ;;
