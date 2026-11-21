@@ -83,6 +83,41 @@ func TestDarwinHarnessAccounts(t *testing.T) {
 	}
 }
 
+func TestDarwinReservedHarnessNames(t *testing.T) {
+	for _, name := range []string{"admin", "wheel", "sudo", DarwinHQAccount} {
+		t.Run(name, func(t *testing.T) {
+			// Use a different HQ name so the ordinary HQ/member collision check
+			// cannot account for the refusal.
+			in := Input{Platform: PlatformDarwin, HQAccount: "_hq", Members: []string{name}}
+			_, err := Build(in, emptyHost())
+			var refusal *Refusal
+			if !errors.As(err, &refusal) || refusal.Code != RefusedList || !strings.Contains(refusal.Message, name) {
+				t.Fatalf("expected a list refusal naming %s, got %v", name, err)
+			}
+		})
+	}
+}
+
+func TestDarwinGroupReservationsArePlatformSpecific(t *testing.T) {
+	in := Input{HQAccount: DefaultHQAccount, Members: []string{"wheel", "sudo", DarwinHQAccount}}
+	if _, err := Normalize(in); err != nil {
+		t.Fatalf("macOS group reservations changed Linux plan validation: %v", err)
+	}
+}
+
+func TestDarwinDedicatedHQKeepsItsPrimaryGroup(t *testing.T) {
+	h := emptyHost()
+	role := Account{Name: DarwinHQAccount, UID: 310, GID: 310, Group: DarwinHQAccount, Groups: []string{DarwinHQAccount},
+		Home: HQHome(PlatformDarwin, DarwinHQAccount), Shell: DarwinNoLoginShell, DarwinRole: darwinHQRoleName}
+	h.accounts[role.Name] = role
+	h.entries[role.Home] = Entry{Dir: true, Owner: role.Name, Group: role.Name, Mode: 0700}
+	in := Input{Platform: PlatformDarwin, HQAccount: role.Name, Members: []string{"_harness"}}
+	p, err := Build(in, h)
+	if err != nil || p.Steps[0].Action != ActionNone || p.SharedHQAdvice() != "" {
+		t.Fatalf("dedicated HQ with its own primary group: %+v, %v", p, err)
+	}
+}
+
 func TestDarwinPlanNamesASharedAccountAndTheDedicatedOne(t *testing.T) {
 	h := emptyHost()
 	h.accounts["owner"] = Account{Name: "owner", UID: 501, GID: 20, Group: "staff", PrimaryUsers: []string{"admin", "owner"}, Groups: []string{"staff"}, Home: "/Users/owner"}
