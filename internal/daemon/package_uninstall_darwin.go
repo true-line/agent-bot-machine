@@ -82,7 +82,7 @@ func removeMacPackage(deps Deps, executable string, prefixes []string, observe p
 	if !errors.Is(err, os.ErrNotExist) && (err != nil || len(kegs) != 0) {
 		return errors.New("Homebrew retained Machine kegs; inspect them before removing anything else")
 	}
-	return nil
+	return lock.Close()
 }
 
 func activeMachinePackage(executable string, prefixes []string) (string, error) {

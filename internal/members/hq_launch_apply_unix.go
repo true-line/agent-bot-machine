@@ -90,12 +90,16 @@ func approvedLaunchPID(out []byte, s HQService, owner string) (string, bool) {
 
 const uninstallJournalName = ".hq-service-uninstall.json"
 
-func withLaunchLock(owner string, mode int, run func() error) error {
+func withLaunchLock(owner string, mode int, run func() error) (err error) {
 	outer, err := lockHQPackage(owner)
 	if err != nil {
 		return err
 	}
-	defer outer.Close()
+	defer func() {
+		if closeErr := outer.Close(); err == nil {
+			err = closeErr
+		}
+	}()
 	return withHQResourceLock(receiptsDir(), mode, func() error {
 		if _, err := os.Lstat(filepath.Join(receiptsDir(), uninstallJournalName)); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("an interrupted HQ uninstall requires reconciliation with members uninstall-hq")
