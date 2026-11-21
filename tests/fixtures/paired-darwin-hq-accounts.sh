@@ -6,6 +6,9 @@
 
 hosted_harness_accounts() (
     set -euo pipefail
+    # Provisioning never uses the test-qualified launch executor. The paired
+    # fixture daemon remains the same executable for its entire lifetime.
+    if [[ "${MM_HARNESS_TRANSACTION:-}" == 1 ]]; then MM="$WORK/managed-machine"; fi
     # The EXIT trap needs these subshell variables even if Bash unwinds function
     # locals after an error. The subshell keeps them private to this fixture.
     left=_abh-ci-proof-a right=_abh-ci-proof-b

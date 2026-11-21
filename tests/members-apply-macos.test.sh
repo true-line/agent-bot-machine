@@ -63,6 +63,7 @@ if [[ "${MM_HARNESS_TRANSACTION:-}" == 1 ]]; then
     python3 "$qualification/prepare-test-overlay.py" "$ROOT" "$WORK/qualification" "$WORK/member-adapter"
     (cd "$ROOT" && go test -overlay "$WORK/qualification/overlay.json" -count=1 -run '^TestHostedFixtureScope$' ./internal/members &&
         go build -overlay "$WORK/qualification/overlay.json" -o "$WORK/fixture-machine" ./cmd/managed-machine)
+    MM="$WORK/fixture-machine"
 fi
 
 HQ=_abhq-ci
