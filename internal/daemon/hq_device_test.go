@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -99,6 +100,7 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 	}
 	now := time.Now().Truncate(time.Second)
 	calls := 0
+	var localPathIssue error
 	sessionKey, ephemeral := fixtureDeviceKey(t)
 	tokenJTI, err := newNonce()
 	if err != nil {
@@ -113,6 +115,9 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 		}
 		if _, ok := ctx.Deadline(); !ok {
 			t.Error("unbounded provider call")
+		}
+		if localPathIssue != nil {
+			return nil, localPathIssue
 		}
 		result := id
 		switch d.Option {
@@ -180,6 +185,12 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 	if r := exchange(req, caller, 331); r.OK {
 		t.Fatal("repeated identity request accepted")
 	}
+	localPathIssue = errors.New("directory /fixture/Cellar mode 0775 allows group 0 to write")
+	if r, want := exchange(fresh("identity"), caller, 331), deviceUnavailable(); r.OK ||
+		r.Diagnostic != want.Diagnostic || r.Message != want.Message || len(r.Body) != 0 {
+		t.Fatal("paired reply did not retain the bounded custody refusal")
+	}
+	localPathIssue = nil
 	if r := exchange(fresh("enrollment-proof"), caller, 331); !r.OK || r.State != "proved" {
 		t.Fatal("enrollment proof failed")
 	}
@@ -317,7 +328,7 @@ func TestHQDeviceSignedChannel(t *testing.T) {
 	if r := run(deps, cli.Context{}, []string{"revoke-hq"}); r.Diagnostic != nil {
 		t.Fatal("repeat revocation failed", r.Diagnostic)
 	}
-	if exchange(fresh("whoami"), caller, 331).OK || calls != 7 {
+	if exchange(fresh("whoami"), caller, 331).OK || calls != 8 {
 		t.Fatalf("unexpected custody calls %d", calls)
 	}
 }

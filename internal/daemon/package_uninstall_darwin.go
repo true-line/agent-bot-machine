@@ -20,12 +20,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var macPackagePrefixes = [...]string{"/opt/homebrew", "/usr/local"}
+
 func uninstallMacPackage(deps Deps) error {
 	executable, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	return removeMacPackage(deps, executable, []string{"/opt/homebrew", "/usr/local"}, packageObservers{noSystemHQ: noSystemHQ, grantAbsent: checkPackageLaunchGrant, job: readMachineUserJob, processes: darwinCustodyPIDs})
+	return removeMacPackage(deps, executable, macPackagePrefixes[:], packageObservers{noSystemHQ: noSystemHQ, grantAbsent: checkPackageLaunchGrant, job: readMachineUserJob, processes: darwinCustodyPIDs})
 }
 
 func removeMacPackage(deps Deps, executable string, prefixes []string, observe packageObservers) error {
@@ -280,6 +282,10 @@ func isPackageProgram(prefix, program string, keyd bool) bool {
 	if dir == filepath.Join(prefix, "bin") || dir == filepath.Join(prefix, "opt", "managed-machine", "bin") {
 		return true
 	}
+	return isPackageKegBin(prefix, dir)
+}
+
+func isPackageKegBin(prefix, dir string) bool {
 	version := filepath.Dir(dir)
 	return filepath.Base(dir) == "bin" && filepath.Dir(version) == filepath.Join(prefix, "Cellar", "managed-machine") && homebrewKegVersion.MatchString(filepath.Base(version))
 }
@@ -350,7 +356,7 @@ func inspectServiceLifecycle(caller Caller, root, executable, verb string, readJ
 		if isKeyd && program == keyd || !isKeyd && program == executable {
 			return true
 		}
-		for _, prefix := range []string{"/opt/homebrew", "/usr/local"} {
+		for _, prefix := range macPackagePrefixes {
 			if isPackageProgram(prefix, executable, false) && isPackageProgram(prefix, program, isKeyd) {
 				return true
 			}

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,69 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+// Explain the same directory modes and owners used for delegation.
+func deviceKeydDirectoryIssue(path string, st unix.Stat_t, administrator int, ancestor bool) error {
+	uid := int(st.Uid)
+	if uid != 0 && uid != administrator {
+		return fmt.Errorf("directory %q is owned by UID %d, expected root or the Homebrew administrator", path, uid)
+	}
+	mode := st.Mode & 07777
+	if mode&0002 != 0 {
+		return fmt.Errorf("directory %q mode %04o allows other users to write", path, mode)
+	}
+	if mode&0020 == 0 {
+		return nil
+	}
+	// Darwin's local admin group is 80. The release bin itself and every
+	// component after the Cellar must be writable only by its owner.
+	if ancestor && (path == "/opt/homebrew" || path == "/opt/homebrew/Cellar") {
+		if uid == administrator && st.Gid == 80 {
+			return nil
+		}
+		return fmt.Errorf("directory %q mode %04o allows group %d to write; group write here requires the Homebrew administrator and macOS admin group (80)", path, mode, st.Gid)
+	}
+	return fmt.Errorf("directory %q mode %04o allows group %d to write", path, mode, st.Gid)
+}
+
+func deviceKeydPackagePath(executable string) (keyd, machine string, err error) {
+	machine, err = filepath.EvalSymlinks(executable)
+	if err != nil {
+		return "", "", err
+	}
+	keyd, err = KeydBinary(machine)
+	return keyd, machine, err
+}
+
+// The local administrator's status check only inspects the custody path.
+func deviceKeydPathIssue(executable string) string {
+	return inspectDeviceKeydPath(executable, macPackagePrefixes[:])
+}
+
+func inspectDeviceKeydPath(executable string, prefixes []string) string {
+	path, machine, err := deviceKeydPackagePath(executable)
+	if err != nil {
+		return ""
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		parent, _, err := openDeviceKeydParent(path)
+		if err == nil {
+			_ = parent.Close()
+			return ""
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return err.Error()
+		}
+	}
+	// A recognized Homebrew package includes keyd. Manual Machine-only
+	// installations have no bundled helper to check.
+	for _, prefix := range prefixes {
+		if isPackageKegBin(prefix, filepath.Dir(machine)) && isPackageProgram(prefix, machine, false) {
+			return fmt.Sprintf("bundled keyd %q is missing; verify the Machine Homebrew package", path)
+		}
+	}
+	return ""
+}
 
 // Hold the opened parent through signature verification and exec. Homebrew's
 // Cellar itself can be admin-group writable. Its name can move, while an
@@ -35,42 +99,47 @@ func openDeviceKeydParent(path string) (*os.File, string, error) {
 	current := "/"
 	for i := 0; ; i++ {
 		var st unix.Stat_t
-		if unix.Fstat(fd, &st) != nil || !safeMembersPlanACL(fd, true) {
-			return nil, "", errHQDevice
+		if err := unix.Fstat(fd, &st); err != nil {
+			return nil, "", fmt.Errorf("inspect directory %q: %w", current, err)
 		}
-		uid := int(st.Uid)
-		// Darwin's local admin group is 80. The release bin itself and every
-		// component after the Cellar must be writable only by its owner.
-		brewGroup := (current == "/opt/homebrew" || current == "/opt/homebrew/Cellar") && uid == os.Geteuid() && st.Gid == 80 && i < len(parts)
-		if uid != 0 && uid != os.Geteuid() || st.Mode&0002 != 0 || st.Mode&0020 != 0 && !brewGroup {
-			return nil, "", errHQDevice
+		if !safeMembersPlanACL(fd, true) {
+			return nil, "", fmt.Errorf("directory %q has an unsupported or unreadable ACL", current)
+		}
+		if err := deviceKeydDirectoryIssue(current, st, os.Geteuid(), i < len(parts)); err != nil {
+			return nil, "", err
 		}
 		if i == len(parts) {
 			break
 		}
 		next, e := unix.Openat(fd, parts[i], unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		current = filepath.Join(current, parts[i])
 		if e != nil {
-			return nil, "", errHQDevice
+			return nil, "", fmt.Errorf("open directory %q: %w", current, e)
 		}
 		_ = unix.Close(fd)
 		fd = next
-		current = filepath.Join(current, parts[i])
 	}
 	leaf, e := unix.Openat(fd, "agent-bot-keyd", unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if e != nil {
-		return nil, "", errHQDevice
+		return nil, "", fmt.Errorf("open bundled keyd %q: %w", path, e)
 	}
 	defer unix.Close(leaf)
 	var info unix.Stat_t
-	if unix.Fstat(leaf, &info) != nil || int(info.Uid) != os.Geteuid() || info.Mode&unix.S_IFMT != unix.S_IFREG || info.Mode&07777 != 0700 || !safeMembersPlanACL(leaf, false) {
-		return nil, "", errHQDevice
+	if err := unix.Fstat(leaf, &info); err != nil {
+		return nil, "", fmt.Errorf("inspect bundled keyd %q: %w", path, err)
+	}
+	if int(info.Uid) != os.Geteuid() || info.Mode&unix.S_IFMT != unix.S_IFREG || info.Mode&07777 != 0700 {
+		return nil, "", fmt.Errorf("bundled keyd %q must be a regular file owned by the Homebrew administrator with mode 0700 (observed UID %d and mode %04o)", path, info.Uid, info.Mode&07777)
+	}
+	if !safeMembersPlanACL(leaf, false) {
+		return nil, "", fmt.Errorf("bundled keyd %q has an unsupported or unreadable ACL", path)
 	}
 	parent := os.NewFile(uintptr(fd), filepath.Dir(path))
 	fd = -1
 	cwd, err := deviceDirectoryReference(parent)
 	if err != nil {
 		_ = parent.Close()
-		return nil, "", errHQDevice
+		return nil, "", fmt.Errorf("cannot verify the opened directory %q for bundled keyd", filepath.Dir(path))
 	}
 	return parent, cwd, nil
 }
@@ -114,11 +183,7 @@ func runDeviceKeyd(ctx context.Context, home string, envelope deviceDelegation) 
 	if err != nil {
 		return nil, errHQDevice
 	}
-	executable, err = filepath.EvalSymlinks(executable)
-	if err != nil {
-		return nil, errHQDevice
-	}
-	path, err := KeydBinary(executable)
+	path, _, err := deviceKeydPackagePath(executable)
 	if err != nil {
 		return nil, errHQDevice
 	}
