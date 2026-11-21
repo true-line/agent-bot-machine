@@ -22,9 +22,20 @@ func CheckDarwinHarnessQualification(saved Saved, owner string, uid int) error {
 	}
 	h := OSHost{}
 	hq, found, err := h.Account(DarwinHQAccount)
+	others, extra := sharing(hq)
 	if err != nil || !found || hq.UID != uid || uid < 300 || uid > 399 ||
-		hq.GID != uid || hq.DarwinRole != darwinHQRoleName {
+		hq.GID != uid || hq.DarwinRole != darwinHQRoleName ||
+		hq.Group != DarwinHQAccount || hq.Home != HQHome(PlatformDarwin, DarwinHQAccount) ||
+		hq.Shell != DarwinNoLoginShell || len(others) != 0 || len(extra) != 0 {
 		return errors.New("qualification owner challenge requires the paired dedicated HQ role")
+	}
+	private, err := h.PrivateDarwinRoleGroup(DarwinHQAccount, uid)
+	if err != nil || !private {
+		return errors.New("qualification owner challenge requires a private HQ role group")
+	}
+	home, found, err := h.Lstat(hq.Home)
+	if err != nil || !found || !home.Dir || home.Owner != DarwinHQAccount || home.Group != DarwinHQAccount || home.Mode&0o7777 != 0o700 {
+		return errors.New("qualification owner challenge requires the private HQ home")
 	}
 	if err := checkQualificationRole(run.Request.Target.Account, run.Request.Target.UID, h); err != nil {
 		return err
