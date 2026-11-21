@@ -60,6 +60,15 @@ def socket_at(resources, path):
     return sock
 
 
+def reachable(server, address, family):
+    """Prove the target is live before asking the confined adapter to try it."""
+    with socket.socket(family, socket.SOCK_STREAM) as client:
+        client.settimeout(2)
+        client.connect(address)
+        conn, _ = server.accept()
+        conn.close()
+
+
 def member_path(root, launch):
     path = root / ("member-" + launch + ".sock")
     if len(bytes(path)) <= 103:
@@ -90,6 +99,20 @@ def check_one(digest, adapter, account):
     with ExitStack() as resources:
         member = socket_at(resources, member_path(root, launch))
         broker = socket_at(resources, root / "broker.sock")
+        sibling_path = member_path(root, secrets.token_hex(12))
+        sibling = socket_at(resources, sibling_path)
+        ipv4 = resources.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+        ipv4.bind(("127.0.0.1", 0))
+        ipv4.listen(1)
+        ipv4.settimeout(2)
+        ipv6 = resources.enter_context(socket.socket(socket.AF_INET6, socket.SOCK_STREAM))
+        ipv6.bind(("::1", 0))
+        ipv6.listen(1)
+        ipv6.settimeout(2)
+        for server, address, family in ((sibling, str(sibling_path), socket.AF_UNIX),
+                                        (ipv4, ipv4.getsockname(), socket.AF_INET),
+                                        (ipv6, ipv6.getsockname(), socket.AF_INET6)):
+            reachable(server, address, family)
         cli = ["/usr/bin/sudo", "-n", "-u", account, "--", str(BASE / "harness-launch"), "harness-run"]
         process = subprocess.Popen(cli, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd="/")
 
@@ -107,7 +130,10 @@ def check_one(digest, adapter, account):
         resources.callback(stop)
         send(process.stdin, dict(plan_digest=digest, adapter_id=adapter, launch_id="ln_" + launch,
                                  soul_id=SOUL, role="member", member_id=member_id, member_token=token))
-        requests = [("initialize", {}), ("session/new", {}), ("session/prompt", {"sessionId":"fixture-session","prompt":[]})]
+        probes = {"ipv4_port": ipv4.getsockname()[1], "ipv6_port": ipv6.getsockname()[1],
+                  "sibling": str(sibling_path)}
+        requests = [("initialize", {}), ("session/new", {}),
+                    ("session/prompt", {"sessionId":"fixture-session","prompt":[], "probe":probes})]
         for i, (method, params) in enumerate(requests, 1):
             send(process.stdin, dict(jsonrpc="2.0", id=i, method=method, params=params))
         m = peer(member, target.pw_uid, target.pw_gid, resources)
@@ -138,7 +164,7 @@ def check_one(digest, adapter, account):
         events = [json.loads(line)["kind"] for line in process.stderr if line.strip()]
         if events != ["started","closed"]:
             raise RuntimeError("missing supervisor lifecycle records")
-        print(f"PASS {adapter} entered its assigned account, completed member + broker check-in and closed")
+        print(f"PASS {adapter} entered its assigned account, denied direct IPv4/IPv6 and sibling socket, completed member + broker check-in and closed")
 
 
 if __name__ == "__main__":
