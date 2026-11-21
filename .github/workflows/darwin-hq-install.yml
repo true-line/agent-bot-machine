@@ -59,6 +59,30 @@ on:
 permissions:
   contents: read
 jobs:
+  uninstall-hq-macos-15:
+    name: Uninstall the dedicated HQ service on macOS 15
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Remove the dedicated system HQ service using its signed first-install receipt
+        shell: bash
+        env:
+          MM_MEMBERS_REAL_ACCOUNTS: '1'
+          MM_MEMBERS_RUNNER: ${{ runner.environment }}
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          CGO_ENABLED: '0'
+          GOTOOLCHAIN: local
+        run: |
+          command -v gtar >/dev/null || brew install gnu-tar
+          bash tests/members-apply-macos.test.sh --real-hq-uninstall
   install:
     name: ${{ matrix.predecessor == 'paired' && 'Running paired HQ upgrades and rolls back on macOS 27' || 'Machine installs the pinned HQ release on macOS 27' }}
     strategy:

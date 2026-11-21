@@ -76,6 +76,40 @@ Bare `managed-machine status [--json|--human]` is served by the portable Go core
 
 ---
 
+## Uninstall on macOS
+
+Before removal, run `managed-machine uninstall --help` as an ordinary user and look for a line containing only `managed-machine uninstall`. If Machine installed a dedicated HQ service, also check that `managed-machine members --help` lists `members uninstall-hq --list`. The v0.12.4 release prints general help and exits successfully even when the requested uninstall command is unavailable. To use the receipt-based removal procedure below, upgrade to a release that lists the required commands and retain the existing receipts through that upgrade.
+
+Open a login Terminal as the administrator who owns Homebrew. If Machine installed a dedicated HQ service, use its matching applied plan ID to remove that service first. The preview shows what will be removed. The list and preview work with HQ offline.
+
+```sh
+sudo managed-machine members uninstall-hq --list
+sudo managed-machine members uninstall-hq PLAN_ID --dry-run
+sudo managed-machine members uninstall-hq PLAN_ID
+```
+
+If first enrollment stopped before an HQ service was installed, there is no HQ plan to remove. If you installed the flat owner CLI separately, use [Identity’s owner CLI removal procedure](https://github.com/true-line/agent-bot-identity/blob/a0b21c227b38d72e445106ba660e172ff115d164/owner-presence-macos/FIRST-ENROLLMENT.md#remove-the-owner-cli) with the approved publisher and signed release digest. You can remove that helper before creating an account or pairing Machine.
+
+For a Machine-only install, start here. Run this command as the Homebrew owner without `sudo`.
+
+```sh
+managed-machine uninstall
+```
+
+Machine unloads its two user services, removes their LaunchAgents and stale sockets, and invokes Homebrew to remove the formula and its command links. The dedicated HQ account and its home, the administrator’s keys, pairing and revocation history, and install receipts are retained. A retired standalone-signing authorization stays retired across uninstall and reinstall. Archives and Node runtimes staged separately by an operator remain at their original locations. Applications and accounts previously provisioned with Machine have their own lifecycles.
+
+If Identity installed its own keyd LaunchAgent, the Homebrew uninstall can report `preserving a customized or unrelated Machine LaunchAgent`. It stops before unloading either job or removing the formula. Use `agent-bot keyd status` in the account that installed Identity to check its registration. If you also intend to retire that Identity service, use [Identity’s keyd uninstall procedure](https://github.com/true-line/agent-bot-identity/blob/c38360696ba82e7ca2b6d542d53aed4a9596bcec/docs/soul-credentials.md#L233-L237), then retry Machine removal. If Identity still needs the job, keep the formula installed.
+
+For a manually installed Machine executable with no bundled `agent-bot-keyd` beside it, run the manual executable by its full path as the Machine service owner. Replace the path below with the installed executable.
+
+```sh
+/path/to/managed-machine daemon uninstall
+```
+
+This removes the Machine user service and keeps a separately registered Identity keyd running when its installation record, LaunchAgent and loaded job agree. The manual executable remains on disk.
+
+If you started HQ directly in a Terminal, press Control-C in its Terminal to let it shut down. For an HQ process registered by another supervisor, stop and disable that registration through the same supervisor. You can then remove the separately staged HQ program. Keep its data directory if you intend to reinstall. A Node runtime shared with another installation should stay in place.
+
 ## Setup scripts
 
 All setup scripts are safe to re-run.

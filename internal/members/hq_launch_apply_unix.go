@@ -88,10 +88,44 @@ func approvedLaunchPID(out []byte, s HQService, owner string) (string, bool) {
 	return pid, source == launchPlist && program == want[0] && slices.Equal(args, want)
 }
 
-func withLaunchLock(mode int, run func() error) error {
-	// Different approved plans can race for the same service. Hold this
-	// receipt-directory lock through bootstrap, verification and rollback.
-	lock, err := os.OpenFile(filepath.Join(receiptsDir(), ".hq-launchd.lock"), os.O_CREATE|os.O_RDONLY|syscall.O_NOFOLLOW, 0600)
+const uninstallJournalName = ".hq-service-uninstall.json"
+
+func withLaunchLock(owner string, mode int, run func() error) error {
+	outer, err := lockHQPackage(owner)
+	if err != nil {
+		return err
+	}
+	defer outer.Close()
+	return withHQResourceLock(receiptsDir(), mode, func() error {
+		if _, err := os.Lstat(filepath.Join(receiptsDir(), uninstallJournalName)); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("an interrupted HQ uninstall requires reconciliation with members uninstall-hq")
+		}
+		return run()
+	})
+}
+
+func withHQResourceLock(dir string, mode int, run func() error) error {
+	// Older releases wrote root receipts without a lock file. Writers always
+	// open or create the permanent inode; nobody rotates or removes it.
+	path := filepath.Join(dir, ".hq-launchd.lock")
+	flags := os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+	if mode&syscall.LOCK_EX != 0 {
+		flags |= os.O_CREATE
+	}
+	lock, err := os.OpenFile(path, flags, 0600)
+	if errors.Is(err, os.ErrNotExist) && mode&syscall.LOCK_SH != 0 {
+		// A legacy preview/list has no side effects. Discard the snapshot if
+		// a modern writer created the lock while we were reading.
+		if err := run(); err != nil {
+			return err
+		}
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		return errors.New("HQ service coordination changed during inspection; retry")
+	}
 	if err != nil {
 		return err
 	}
@@ -99,12 +133,11 @@ func withLaunchLock(mode int, run func() error) error {
 	if err := syscall.Flock(int(lock.Fd()), mode); err != nil {
 		return err
 	}
-
 	return run()
 }
 
 func activateLaunchDaemon(step Step) error {
-	return withLaunchLock(syscall.LOCK_EX, func() error {
+	return withLaunchLock(step.Owner, syscall.LOCK_EX, func() error {
 		if _, err := os.Lstat(filepath.Join(receiptsDir(), upgradeJournalName)); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("an interrupted HQ release transition needs reconciliation")
 		}

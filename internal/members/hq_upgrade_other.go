@@ -18,3 +18,11 @@ func currentUpgradeReceipt(Approval, string) (Receipt, error) {
 }
 
 func claimUpgradeReceipt(string, []byte) error { return errors.New("HQ upgrade requires macOS") }
+
+func uninstallDarwinHQ(owner, state, id string, preview bool) (string, error) {
+	return "", errors.New("HQ service uninstall requires macOS")
+}
+
+func listHQUninstallPlans(owner, state string) ([]string, string, error) {
+	return nil, "", errors.New("HQ service uninstall requires macOS")
+}

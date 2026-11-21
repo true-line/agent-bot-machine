@@ -443,6 +443,15 @@ Acceptance: install and uninstall are idempotent, run from the owner's account,
 and refuse agent accounts, root/SYSTEM, foreign-HOME callers, and a caller
 that does not own the shared prefix when that prefix exists; the AGENTS.md
 changes above land; `.github/workflows/go-core.yml` runs on all three OSes.
+On macOS, service removal by a manual Machine binary without a sibling keyd
+preserves a separately registered Identity keyd when its job and plist match
+the owner's installation record. Package removal checks both LaunchAgents
+before stopping either. It recognizes the exact Machine keyd registration from
+both before and after background login support, including the original state
+directory and executable in the verified package. An independently managed keyd
+makes that check refuse.
+The [macOS uninstall procedure](../../README.md#uninstall-on-macos) covers both cases.
+
 On Linux, a brew, an npm and a uv row each install from inside the unit's
 sandbox: with only `~/.local` and the state directory writable, brew refused
 the read-only prefix, npm failed with EROFS on `~/.npm`, and uv could not take

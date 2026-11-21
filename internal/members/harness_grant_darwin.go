@@ -341,7 +341,7 @@ func harnessGrantFiles(installed installedHarness, manager []byte, rule string) 
 
 // A prior success can be reported without fetching a new approval. This path
 // only observes the four final files and never publishes a staged policy.
-func completedHarnessInstall(s Saved, owner string, guard upgradePairGuard) (bool, error) {
+func completedHarnessInstall(s Saved, owner, packageOwner string, guard upgradePairGuard) (bool, error) {
 	if _, err := os.Lstat(HarnessPolicy); errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	} else if err != nil {
@@ -350,7 +350,7 @@ func completedHarnessInstall(s Saved, owner string, guard upgradePairGuard) (boo
 	if os.Geteuid() != 0 || guard == nil {
 		return false, errors.New("cannot verify prior harness installation")
 	}
-	err := withLaunchLock(syscall.LOCK_SH|syscall.LOCK_NB, func() error {
+	err := withLaunchLock(packageOwner, syscall.LOCK_SH|syscall.LOCK_NB, func() error {
 		handle, current, err := readInstalledHarness()
 		if err != nil {
 			return err
@@ -408,7 +408,7 @@ func observeCompletedHarnessFiles(files []grantFile, ledger harnessLedger, a App
 	return guard(a, nil)
 }
 
-func applyHarnessGrant(s Saved, a Approval, owner string, guard upgradePairGuard) error {
+func applyHarnessGrant(s Saved, a Approval, owner, packageOwner string, guard upgradePairGuard) error {
 	r := s.HarnessLaunch
 	if r == nil || a.Purpose != HarnessPurpose(r.Action) || !ValidApproval(a.PlanID, a.PlanDigest) || a.PlanID != s.PlanID || a.PlanDigest != s.PlanDigest || !digestPattern.MatchString(a.PairCommitment) || os.Geteuid() != 0 || guard == nil {
 		return errors.New("invalid protected harness grant approval")
@@ -430,7 +430,7 @@ func applyHarnessGrant(s Saved, a Approval, owner string, guard upgradePairGuard
 			return e
 		}
 	}
-	return withLaunchLock(syscall.LOCK_EX|syscall.LOCK_NB, func() error {
+	return withLaunchLock(packageOwner, syscall.LOCK_EX|syscall.LOCK_NB, func() error {
 		authorize := harnessAuthority(a, guard, time.Now)
 		if err := authorize(nil); err != nil {
 			return err
@@ -541,7 +541,7 @@ func applyHarnessGrant(s Saved, a Approval, owner string, guard upgradePairGuard
 
 // A crash after unlinking the last file can leave a started receipt. Verify the
 // exact previously authorized intent and complete only its audit record.
-func finishAbsentHarnessRetirement(s Saved, owner string, guard upgradePairGuard) (string, error) {
+func finishAbsentHarnessRetirement(s Saved, owner, packageOwner string, guard upgradePairGuard) (string, error) {
 	r := s.HarnessLaunch
 	if r == nil || r.Action != "retire" {
 		return "", nil
@@ -574,7 +574,7 @@ func finishAbsentHarnessRetirement(s Saved, owner string, guard upgradePairGuard
 	}
 	original := r.InstalledDigest // r.plan verified this against the complete original installation.
 	var result string
-	err := withLaunchLock(syscall.LOCK_EX|syscall.LOCK_NB, func() error {
+	err := withLaunchLock(packageOwner, syscall.LOCK_EX|syscall.LOCK_NB, func() error {
 		for _, path := range []string{HarnessLauncher, HarnessSandbox, HarnessPolicy, HarnessRule} {
 			parent := filepath.Dir(path)
 			if e := trustedPath(OSHost{}, parent, true); e != nil {

@@ -12,7 +12,7 @@
 set -euo pipefail
 
 if [ "${MM_MEMBERS_REAL_ACCOUNTS:-}" != "1" ]; then
-    if [[ "${1:-}" == --real-hq ]]; then echo "real HQ install requires the hosted fixture opt-in" >&2; exit 1; fi
+    if [[ -n "${1:-}" ]]; then echo "real HQ install requires the hosted fixture opt-in" >&2; exit 1; fi
     echo "members-apply-macos: skipped (needs MM_MEMBERS_REAL_ACCOUNTS=1 on a GitHub-hosted macOS runner)"
     exit 0
 fi
@@ -25,7 +25,9 @@ fi
 # native fixture and the helper's generic account/approval cases independent.
 case "${1:-}" in
     "") ;;
-    --real-hq)
+    --real-hq|--real-hq-uninstall)
+        expected_major=27
+        if [[ "$1" == --real-hq-uninstall ]]; then expected_major=15; fi
         sw_vers
         /bin/launchctl version
         sip_status="$(LC_ALL=C /usr/bin/csrutil status)"
@@ -34,8 +36,8 @@ case "${1:-}" in
             echo 'SIP qualification requires a fully enabled runner' >&2; exit 1
         fi
         printf 'Architecture: %s\n' "$(uname -m)"
-        [[ "$#" == 1 && "${RUNNER_ENVIRONMENT:-}" == github-hosted && "$(uname -m)" == arm64 && "$(sw_vers -productVersion)" == 27.* ]] || {
-            echo 'real HQ install requires a disposable GitHub-hosted Apple Silicon macOS 27 runner' >&2; exit 1;
+        [[ "$#" == 1 && "${RUNNER_ENVIRONMENT:-}" == github-hosted && "$(uname -m)" == arm64 && "$(sw_vers -productVersion)" == "$expected_major".* ]] || {
+            echo "real HQ install requires a disposable GitHub-hosted Apple Silicon macOS $expected_major runner" >&2; exit 1;
         } ;;
     *) echo 'unknown macOS fixture' >&2; exit 2 ;;
 esac
@@ -116,7 +118,7 @@ untouched() {
     sudo test ! -e "$HQ_HOME" || fail "$HQ_HOME exists after a refused apply"
 }
 
-if [[ "${1:-}" == --real-hq ]]; then
+if [[ -n "${1:-}" ]]; then
     source "$ROOT/tests/fixtures/hq-launchd-install.sh"
     exit 0
 fi
