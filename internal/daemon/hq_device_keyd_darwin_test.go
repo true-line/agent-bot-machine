@@ -164,3 +164,45 @@ func TestDaemonStatusOnlyShowsKeydPathIssueInAdministratorHumanOutput(t *testing
 		t.Fatalf("manual installation received a bundled-keyd warning: %s", got)
 	}
 }
+
+func TestMissingDeviceKeydDiagnosticDistinguishesPackageFromManualInstall(t *testing.T) {
+	root := t.TempDir()
+	prefix := filepath.Join(root, "homebrew")
+	machine := filepath.Join(prefix, "Cellar", "managed-machine", "1.2.3", "bin", "managed-machine")
+	manual := filepath.Join(root, "manual", "bin", "managed-machine")
+	manualInPrefix := filepath.Join(prefix, "bin", "managed-machine")
+	for _, path := range []string{machine, manual, manualInPrefix} {
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(prefix, "bin", "agent-machine")
+	if err := os.Symlink(machine, link); err != nil {
+		t.Fatal(err)
+	}
+
+	canonical, err := filepath.EvalSymlinks(machine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalPrefix, err := filepath.EvalSymlinks(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyd := filepath.Join(filepath.Dir(canonical), "agent-bot-keyd")
+	prefixes := []string{canonicalPrefix}
+	for _, executable := range []string{machine, link} {
+		if got := inspectDeviceKeydPath(executable, prefixes); !strings.Contains(got, keyd) ||
+			!strings.Contains(got, "is missing") || !strings.Contains(got, "Homebrew package") {
+			t.Fatalf("missing Homebrew helper diagnostic: %q", got)
+		}
+	}
+	for _, executable := range []string{manual, manualInPrefix} {
+		if got := inspectDeviceKeydPath(executable, prefixes); got != "" {
+			t.Fatalf("manual Machine-only install was refused: %q", got)
+		}
+	}
+}

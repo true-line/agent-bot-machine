@@ -40,33 +40,43 @@ func deviceKeydDirectoryIssue(path string, st unix.Stat_t, administrator int, an
 	return fmt.Errorf("directory %q mode %04o allows group %d to write", path, mode, st.Gid)
 }
 
-func deviceKeydPackagePath(executable string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(executable)
+func deviceKeydPackagePath(executable string) (keyd, machine string, err error) {
+	machine, err = filepath.EvalSymlinks(executable)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return KeydBinary(resolved)
+	keyd, err = KeydBinary(machine)
+	return keyd, machine, err
 }
 
 // The local administrator's status check only inspects the custody path.
 func deviceKeydPathIssue(executable string) string {
-	path, err := deviceKeydPackagePath(executable)
+	return inspectDeviceKeydPath(executable, macPackagePrefixes[:])
+}
+
+func inspectDeviceKeydPath(executable string, prefixes []string) string {
+	path, machine, err := deviceKeydPackagePath(executable)
 	if err != nil {
 		return ""
 	}
-	// A manual Machine-only install may have no bundled keyd.
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-		return ""
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		parent, _, err := openDeviceKeydParent(path)
+		if err == nil {
+			_ = parent.Close()
+			return ""
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return err.Error()
+		}
 	}
-	parent, _, err := openDeviceKeydParent(path)
-	if err == nil {
-		_ = parent.Close()
-		return ""
+	// A recognized Homebrew package includes keyd. Manual Machine-only
+	// installations have no bundled helper to check.
+	for _, prefix := range prefixes {
+		if isPackageKegBin(prefix, filepath.Dir(machine)) && isPackageProgram(prefix, machine, false) {
+			return fmt.Sprintf("bundled keyd %q is missing; verify the Machine Homebrew package", path)
+		}
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		return ""
-	}
-	return err.Error()
+	return ""
 }
 
 // Hold the opened parent through signature verification and exec. Homebrew's
@@ -173,7 +183,7 @@ func runDeviceKeyd(ctx context.Context, home string, envelope deviceDelegation) 
 	if err != nil {
 		return nil, errHQDevice
 	}
-	path, err := deviceKeydPackagePath(executable)
+	path, _, err := deviceKeydPackagePath(executable)
 	if err != nil {
 		return nil, errHQDevice
 	}

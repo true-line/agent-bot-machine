@@ -224,6 +224,8 @@ Before macOS HQ enrollment, the Homebrew prefix administrator can run
 `managed-machine daemon status --human` from the registered login account.
 If the bundled `agent-bot-keyd` path fails Machine's custody check, the
 human report identifies the path component and the condition that failed.
+It also reports a missing bundled helper for a recognized Homebrew package.
+A manual Machine-only installation can omit the helper.
 The status record and exit code retain their existing behavior. This check
 covers the path only. Signature, Keychain and device checks still happen
 during their normal operations, and a paired HQ caller receives the
