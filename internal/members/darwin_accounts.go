@@ -122,11 +122,7 @@ func darwinAutomaticGroup(name string) bool {
 // Keep administrative and HQ memberships visible to the account privacy check,
 // even on hosts with customized directory-service group inheritance.
 func darwinReportGroup(name string, harnessHome, sharedWithNobody bool) bool {
-	switch name {
-	case "admin", "wheel", "sudo", DarwinHQAccount:
-		return true
-	}
-	return !sharedWithNobody && (harnessHome || !darwinAutomaticGroup(name))
+	return darwinProtectedGroup(name) || (!sharedWithNobody && (harnessHome || !darwinAutomaticGroup(name)))
 }
 
 // darwinSharing fills in who shares an account's primary group, which

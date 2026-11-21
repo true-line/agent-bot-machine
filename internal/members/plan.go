@@ -215,6 +215,16 @@ func refuse(code, format string, args ...any) error {
 	return &Refusal{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
+// A harness gets a primary group of the same name. Reserve the groups that
+// also make an existing macOS account ineligible as a harness.
+func darwinProtectedGroup(name string) bool {
+	switch name {
+	case "admin", "wheel", "sudo", DarwinHQAccount:
+		return true
+	}
+	return false
+}
+
 // Normalize validates an input and returns it with the members sorted.
 func Normalize(in Input) (Input, error) {
 	if !accountName.MatchString(in.HQAccount) {
@@ -251,7 +261,7 @@ func Normalize(in Input) (Input, error) {
 			return in, refuse(RefusedList, "member account %q is the HQ account; a member needs a separate one", m)
 		case in.Platform == PlatformDarwin && darwinHarnessHome(m) == HQHome(in.Platform, in.HQAccount):
 			return in, refuse(RefusedList, "member account %q would share the HQ home", m)
-		case m == "root" || m == "admin":
+		case m == "root" || m == "admin" || (in.Platform == PlatformDarwin && darwinProtectedGroup(m)):
 			return in, refuse(RefusedList, "%s cannot be a member account", m)
 		case in.Invoker != "" && m == in.Invoker:
 			return in, refuse(RefusedList, "member account %q is the account running this command", m)
