@@ -1,5 +1,5 @@
 """Create a private Go overlay for the disposable hosted transaction only."""
-import hashlib, json, os
+import hashlib, json
 from pathlib import Path
 import sys
 
