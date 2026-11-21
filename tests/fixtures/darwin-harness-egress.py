@@ -179,7 +179,17 @@ class DarwinHarnessEgress(unittest.TestCase):
                 if not Path(assigned).exists():
                     stdout, stderr = process.communicate(timeout=5)
                     raise AssertionError(f"sidecar listener not ready: {process.returncode}: {stdout!r} {stderr!r}")
-                self.assertEqual(exchange(socket.AF_UNIX, assigned), REPLY)
+                # bind publishes the pathname before listen accepts. A busy
+                # hosted runner can expose that short interval to this probe.
+                while True:
+                    try:
+                        response = exchange(socket.AF_UNIX, assigned)
+                        break
+                    except (ConnectionRefusedError, FileNotFoundError):
+                        if time.monotonic() >= deadline or process.poll() is not None:
+                            raise
+                        time.sleep(0.02)
+                self.assertEqual(response, REPLY)
                 stdout, stderr = process.communicate(timeout=10)
                 self.assertEqual(process.returncode, 0, (stdout, stderr))
             self.assertEqual(broker.received, [REQUEST])
