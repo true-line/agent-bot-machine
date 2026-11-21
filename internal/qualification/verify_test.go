@@ -117,14 +117,21 @@ func TestHostSignatureDesignatedAndBound(t *testing.T) {
 	verified := VerifiedPolicy{value: p, verified: true, at: now}
 	sha := "sha256:" + strings.Repeat("a", 64)
 	checks := map[string]any{}
+	evidence := map[string]any{"uri": "fixture:evidence", "sha256": sha}
 	for _, name := range []string{"egress", "credentials", "state_redirect", "safe_interrupt_resume", "session_reuse", "cost_bound", "render_coverage"} {
-		checks[name] = map[string]any{"outcome": "pass"}
+		checks[name] = map[string]any{"outcome": "pass", "evidence": []any{evidence}}
 	}
 	report := map[string]any{
-		"schema_version": 1, "adapter": map[string]any{}, "launch": map[string]any{}, "harness": map[string]any{}, "runner": map[string]any{"binary_path": "/fixture/runner", "binary_sha256": sha},
-		"soul_start": map[string]any{"initiator": "hq", "hq_launch_receipt": map[string]any{"uri": "fixture:hq", "sha256": sha}, "machine_observation": map[string]any{"uri": "fixture:machine", "sha256": sha}},
-		"host":       map[string]any{"id": "fixture-host", "os": "darwin"}, "profile_in_force": "managed-protected", "renders": []any{}, "cost_bound": "estimate", "evaluation_cells": []any{},
-		"suite_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "run_id": "fixture-run", "outcome": "pass", "checks": checks, "gates": map[string]any{"T01": map[string]any{"outcome": "pass"}}, "recorded_at": "2026-11-21T00:00:00Z",
+		"schema_version":   1,
+		"adapter":          map[string]any{"id": "fixture-adapter", "version": "1.0.0", "package_sha256": sha},
+		"launch":           map[string]any{"executable": "/fixture/adapter", "executable_sha256": sha, "argv": []any{"run"}, "code_inputs": []any{}},
+		"harness":          map[string]any{"name": "fixture-harness", "version": "1.0.0", "binary_path": "/fixture/harness", "binary_sha256": sha},
+		"runner":           map[string]any{"binary_path": "/fixture/runner", "binary_sha256": sha},
+		"soul_start":       map[string]any{"initiator": "hq", "hq_launch_receipt": map[string]any{"uri": "fixture:hq", "sha256": sha}, "machine_observation": map[string]any{"uri": "fixture:machine", "sha256": sha}},
+		"host":             map[string]any{"id": "fixture-host", "os": "darwin", "os_version": "27.0", "architecture": "arm64", "profile": "fixture-profile", "evidence": []any{evidence}},
+		"profile_in_force": "managed-protected", "renders": []any{"text"}, "cost_bound": "estimate",
+		"evaluation_cells": []any{map[string]any{"role": "assistant", "model": "fixture-model", "provider": "fixture-provider", "revision": "fixture-revision", "evidence": evidence}},
+		"suite_revision":   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "run_id": "fixture-run", "outcome": "pass", "checks": checks, "gates": map[string]any{"T01": map[string]any{"outcome": "pass", "evidence": evidence}}, "recorded_at": "2026-11-21T00:00:00Z",
 	}
 	raw, err := json.Marshal(report)
 	if err != nil {
@@ -145,6 +152,39 @@ func TestHostSignatureDesignatedAndBound(t *testing.T) {
 	}
 	if _, err := VerifyHostReport(envelope, verified, now); err != nil {
 		t.Fatal(err)
+	}
+	// A valid host signature cannot elevate a report that omits the measured
+	// adapter or claims a passing gate without an evidence reference.
+	for _, broken := range []map[string]any{
+		{"adapter": map[string]any{}},
+		{"gates": map[string]any{"T01": map[string]any{"outcome": "pass"}}},
+	} {
+		copy := make(map[string]any, len(report))
+		for k, v := range report {
+			copy[k] = v
+		}
+		for k, v := range broken {
+			copy[k] = v
+		}
+		badReport, err := json.Marshal(copy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(preimage(HostPurpose, badReport))
+		r, s, err := ecdsa.Sign(rand.Reader, key, sum[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		sig := make([]byte, 64)
+		r.FillBytes(sig[:32])
+		s.FillBytes(sig[32:])
+		badEnvelope, err := json.Marshal(Envelope{SchemaVersion: 1, Purpose: HostPurpose, HostID: "fixture-host", SignerID: "fixture-signer", ReportSHA256: digest(badReport), ReportBase64URL: base64.RawURLEncoding.EncodeToString(badReport), SignatureBase64URL: base64.RawURLEncoding.EncodeToString(sig)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := VerifyHostReport(badEnvelope, verified, now); err == nil {
+			t.Fatal("signed incomplete report accepted")
+		}
 	}
 	p.RevocationSnapshot.RevokedEvidenceSignerIDs = []string{"fixture-signer"}
 	verified.value = p

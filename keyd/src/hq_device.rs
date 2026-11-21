@@ -226,6 +226,50 @@ fn digest(input: &[u8]) -> String {
     format!("{:x}", Sha256::digest(input))
 }
 
+fn exact_fields(value: &Value, keys: &[&str]) -> bool {
+    value.as_object().is_some_and(|object| {
+        object.len() == keys.len() && keys.iter().all(|key| object.contains_key(*key))
+    })
+}
+
+fn report_sha(value: &Value) -> bool {
+    value.as_str().is_some_and(|s| {
+        s.strip_prefix("sha256:").is_some_and(|hex| {
+            hex.len() == 64
+                && hex
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+    })
+}
+
+fn report_path(value: &Value) -> bool {
+    value.as_str().is_some_and(|s| {
+        s.len() >= 2
+            && s.len() <= 4096
+            && s.starts_with('/')
+            && !s.bytes().any(|b| b < 0x20 || b == 0x7f)
+            && !s.split('/').any(|part| part == "." || part == "..")
+            && !s.contains("//")
+            && !s.ends_with('/')
+    })
+}
+
+fn report_evidence(value: &Value) -> bool {
+    exact_fields(value, &["uri", "sha256"])
+        && value["uri"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty() && s.len() <= 1024)
+        && report_sha(&value["sha256"])
+}
+
+fn report_artifacts(value: &Value) -> bool {
+    exact_fields(value, &["id", "version", "package_sha256"])
+        && value["id"].as_str().is_some_and(|s| !s.is_empty())
+        && value["version"].as_str().is_some_and(|s| !s.is_empty())
+        && report_sha(&value["package_sha256"])
+}
+
 fn fixed_host_report(request: &Request) -> Result<Vec<u8>, &'static str> {
     let encoded = request.report_base64url.as_ref().ok_or(UNAVAILABLE)?;
     let raw = URL.decode(encoded).map_err(|_| UNAVAILABLE)?;
@@ -261,13 +305,87 @@ fn fixed_host_report(request: &Request) -> Result<Vec<u8>, &'static str> {
         || keys.iter().any(|key| !fields.contains_key(*key))
         || report["schema_version"] != 1
         || report["outcome"] != "pass"
+        || !report_artifacts(&report["adapter"])
+        || !exact_fields(
+            &report["launch"],
+            &["executable", "executable_sha256", "argv", "code_inputs"],
+        )
+        || !report_path(&report["launch"]["executable"])
+        || !report_sha(&report["launch"]["executable_sha256"])
+        || !report["launch"]["argv"].as_array().is_some_and(|argv| {
+            argv.len() <= 128
+                && argv
+                    .iter()
+                    .all(|arg| arg.as_str().is_some_and(|s| s.len() <= 4096))
+        })
+        || !report["launch"]["code_inputs"]
+            .as_array()
+            .is_some_and(|inputs| {
+                inputs.iter().all(|input| {
+                    exact_fields(input, &["path", "sha256"])
+                        && report_path(&input["path"])
+                        && report_sha(&input["sha256"])
+                })
+            })
+        || !exact_fields(
+            &report["harness"],
+            &["name", "version", "binary_path", "binary_sha256"],
+        )
+        || report["harness"]["name"].as_str().is_none_or(str::is_empty)
+        || report["harness"]["version"]
+            .as_str()
+            .is_none_or(str::is_empty)
+        || !report_path(&report["harness"]["binary_path"])
+        || !report_sha(&report["harness"]["binary_sha256"])
+        || !exact_fields(&report["runner"], &["binary_path", "binary_sha256"])
+        || !report_path(&report["runner"]["binary_path"])
+        || !report_sha(&report["runner"]["binary_sha256"])
+        || !exact_fields(
+            &report["soul_start"],
+            &["initiator", "hq_launch_receipt", "machine_observation"],
+        )
         || report["host"]["os"] != "darwin"
+        || !exact_fields(
+            &report["host"],
+            &[
+                "os",
+                "os_version",
+                "architecture",
+                "profile",
+                "evidence",
+                "id",
+            ],
+        )
+        || report["host"]["os_version"]
+            .as_str()
+            .is_none_or(str::is_empty)
+        || report["host"]["architecture"]
+            .as_str()
+            .is_none_or(str::is_empty)
+        || report["host"]["profile"].as_str().is_none_or(str::is_empty)
+        || !report["host"]["evidence"]
+            .as_array()
+            .is_some_and(|evidence| !evidence.is_empty() && evidence.iter().all(report_evidence))
         || report["host"]["id"] != request.host_id.as_deref().ok_or(UNAVAILABLE)?
         || report["soul_start"]["initiator"] != "hq"
         || !report["soul_start"]["machine_observation"].is_object()
         || !report["soul_start"]["hq_launch_receipt"].is_object()
-        || !report["runner"]["binary_path"].is_string()
-        || !report["runner"]["binary_sha256"].is_string()
+        || !report["renders"].is_array()
+        || !report["evaluation_cells"].as_array().is_some_and(|cells| {
+            !cells.is_empty()
+                && cells.iter().all(|cell| {
+                    exact_fields(cell, &["role", "model", "provider", "revision", "evidence"])
+                        && report_evidence(&cell["evidence"])
+                })
+        })
+        || report["run_id"].as_str().is_none_or(str::is_empty)
+        || report["suite_revision"].as_str().is_none_or(|s| {
+            s.len() != 40
+                || !s
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+        || report["recorded_at"].as_str().is_none_or(str::is_empty)
         || !matches!(
             report["profile_in_force"].as_str(),
             Some("managed-protected" | "managed-cooperative")
@@ -279,35 +397,44 @@ fn fixed_host_report(request: &Request) -> Result<Vec<u8>, &'static str> {
         &report["soul_start"]["machine_observation"],
         &report["soul_start"]["hq_launch_receipt"],
     ] {
-        if evidence["uri"].as_str().is_none_or(str::is_empty)
-            || evidence["sha256"]
-                .as_str()
-                .is_none_or(|s| !s.starts_with("sha256:") || s.len() != 71)
-        {
+        if !report_evidence(evidence) {
             return Err(UNAVAILABLE);
         }
     }
-    if report["profile_in_force"] == "managed-protected" {
-        let checks = &report["checks"];
-        for name in [
-            "egress",
-            "credentials",
-            "state_redirect",
-            "safe_interrupt_resume",
-            "session_reuse",
-            "cost_bound",
-            "render_coverage",
-        ] {
-            if checks[name]["outcome"] != "pass" {
-                return Err(UNAVAILABLE);
-            }
-        }
+    let checks = report["checks"].as_object().ok_or(UNAVAILABLE)?;
+    let required_checks = [
+        "egress",
+        "credentials",
+        "state_redirect",
+        "safe_interrupt_resume",
+        "session_reuse",
+        "cost_bound",
+        "render_coverage",
+    ];
+    if checks.len() != required_checks.len()
+        || required_checks.iter().any(|name| {
+            let check = &report["checks"][*name];
+            !exact_fields(check, &["outcome", "evidence"])
+                || !matches!(
+                    check["outcome"].as_str(),
+                    Some("pass" | "fail" | "unenforced" | "not-run")
+                )
+                || !check["evidence"]
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty() && items.iter().all(report_evidence))
+                || (report["profile_in_force"] == "managed-protected" && check["outcome"] != "pass")
+        })
+    {
+        return Err(UNAVAILABLE);
     }
     let gates = report["gates"].as_object().ok_or(UNAVAILABLE)?;
     if gates.is_empty()
         || gates.len() > 3
         || gates.iter().any(|(name, gate)| {
-            !matches!(name.as_str(), "T01" | "T02" | "T03" | "T21") || gate["outcome"] != "pass"
+            !matches!(name.as_str(), "T01" | "T02" | "T03" | "T21")
+                || !exact_fields(gate, &["outcome", "evidence"])
+                || gate["outcome"] != "pass"
+                || !report_evidence(&gate["evidence"])
         })
         || (report["profile_in_force"] == "managed-protected" && gates.contains_key("T21"))
         || (report["profile_in_force"] == "managed-cooperative"

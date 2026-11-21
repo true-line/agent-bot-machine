@@ -143,21 +143,25 @@ fn host_report_request(p: &Pair, raw: &[u8]) -> Request {
 fn host_report_signing_is_fixed_and_pair_bound() {
     let (items, native, p) = (Memory::default(), Fake::default(), pair());
     initialize(&items, &native, p.clone()).unwrap();
-    let check = json!({"outcome":"pass"});
     let evidence =
         json!({"uri":"fixture:observation","sha256":format!("sha256:{}", "a".repeat(64))});
+    let check = json!({"outcome":"pass","evidence":[evidence]});
+    let sha = format!("sha256:{}", "a".repeat(64));
     let raw = serde_json::to_vec(&json!({
-        "adapter":{}, "checks":{"egress":check,"credentials":check,"state_redirect":check,
+        "adapter":{"id":"fixture-adapter","version":"1.0.0","package_sha256":sha},
+        "checks":{"egress":check,"credentials":check,"state_redirect":check,
             "safe_interrupt_resume":check,"session_reuse":check,"cost_bound":check,"render_coverage":check},
-        "cost_bound":"estimate", "evaluation_cells":[],
-        "gates":{"T01":{"outcome":"pass"}}, "harness":{},
-        "host":{"id":"fixture-host","os":"darwin"}, "launch":{},
+        "cost_bound":"estimate", "evaluation_cells":[{"role":"assistant","model":"fixture-model","provider":"fixture-provider","revision":"fixture-revision","evidence":evidence}],
+        "gates":{"T01":{"outcome":"pass","evidence":evidence}},
+        "harness":{"name":"fixture-harness","version":"1.0.0","binary_path":"/fixture/harness","binary_sha256":sha},
+        "host":{"id":"fixture-host","os":"darwin","os_version":"27.0","architecture":"arm64","profile":"fixture-profile","evidence":[evidence]},
+        "launch":{"executable":"/fixture/adapter","executable_sha256":sha,"argv":["run"],"code_inputs":[]},
         "outcome":"pass", "profile_in_force":"managed-protected",
-        "recorded_at":"2026-11-21T00:00:00Z", "renders":[], "run_id":"run",
-        "runner":{"binary_path":"/fixture/runner","binary_sha256":"sha256:fixture"},
+        "recorded_at":"2026-11-21T00:00:00Z", "renders":["text"], "run_id":"run",
+        "runner":{"binary_path":"/fixture/runner","binary_sha256":sha},
         "schema_version":1,
         "soul_start":{"initiator":"hq","hq_launch_receipt":evidence,"machine_observation":evidence},
-        "suite_revision":"revision"
+        "suite_revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }))
     .unwrap();
     let req = host_report_request(&p, &raw);
@@ -175,6 +179,11 @@ fn host_report_signing_is_fixed_and_pair_bound() {
     let mut invalid = raw.clone();
     invalid.push(b'\n');
     assert!(fixed_host_report(&host_report_request(&p, &invalid)).is_err());
+    let missing_adapter = String::from_utf8(raw.clone()).unwrap().replace(
+        &format!("\"package_sha256\":\"{sha}\""),
+        "\"package_sha256\":\"sha256:fixture\"",
+    );
+    assert!(fixed_host_report(&host_report_request(&p, missing_adapter.as_bytes())).is_err());
 }
 #[test]
 fn initialization_preserves_creation_failure_and_leaves_custody_absent() {

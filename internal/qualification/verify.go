@@ -364,6 +364,9 @@ func VerifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time) (
 	if err != nil {
 		return nil, err
 	}
+	if err := reportShape(raw); err != nil {
+		return nil, err
+	}
 	required := []string{"adapter", "checks", "cost_bound", "evaluation_cells", "gates", "harness", "host", "launch", "outcome", "profile_in_force", "recorded_at", "renders", "run_id", "runner", "schema_version", "soul_start", "suite_revision"}
 	if len(fields) != len(required) {
 		return nil, ErrUnqualified
