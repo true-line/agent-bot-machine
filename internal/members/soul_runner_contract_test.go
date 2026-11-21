@@ -26,6 +26,8 @@ func TestSoulRunnerMappingRequiresOnePrincipalPerInstallation(t *testing.T) {
 		"harness uid":    func(r []SoulRunner) { r[1].UID, r[1].GID = 330, 330 },
 		"hq uid":         func(r []SoulRunner) { r[1].UID, r[1].GID = 309, 309 },
 		"parent path":    func(r []SoulRunner) { r[1].PackageRoot = "/Library/x/../agent-bot" },
+		"shared package": func(r []SoulRunner) { r[1].PackageRoot = r[0].PackageRoot },
+		"nested package": func(r []SoulRunner) { r[1].PackageRoot = r[0].PackageRoot + "/nested" },
 		"digest":         func(r []SoulRunner) { r[1].PackageSHA256 = "unreviewed" },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -63,6 +65,15 @@ func TestSoulStartSelectsOnlyReviewedInstallationAndKernelUID(t *testing.T) {
 	}
 	if _, err := SelectSoulRunner(runners, strings.Repeat("e", 64), r, 332); err == nil {
 		t.Fatal("changed installed policy accepted")
+	}
+	legacy := runnerFixture()
+	legacy[1].InstallationID = "inst_existing"
+	if err := ValidateSoulRunners(legacy, 309, nil); err != nil {
+		t.Fatalf("released installation ID refused: %v", err)
+	}
+	r.InstallationID = "inst_existing"
+	if _, err := SelectSoulRunner(legacy, r.PlanDigest, r, 332); err != nil {
+		t.Fatalf("released installation ID could not launch: %v", err)
 	}
 }
 
