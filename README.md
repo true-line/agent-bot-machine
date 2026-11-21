@@ -406,6 +406,14 @@ Bump the pin by editing `managed-machine-config/local-bin.ref` and committing it
 
 To upgrade the Machine package, rerun the [public installer](#install-on-a-fresh-mac) from a human Terminal. It refreshes the Machine tap and runs Homebrew as the prefix owner.
 
+If Machine and its bundled keyd were already running as LaunchAgents installed by `managed-machine daemon install`, the package upgrade leaves both processes on the old version until they restart. When ready for a brief interruption, run `managed-machine daemon stop` from the Homebrew administrator's login Terminal, without `sudo`. Use the `managed-machine` path printed by the installer if it is outside your PATH. After the old processes exit, start both services and check Machine’s status.
+
+```sh
+managed-machine daemon start && managed-machine daemon status
+```
+
+Look for `"state":"running"`. This restart uses the existing Machine identity and HQ pairing. A package-only installation needs no service restart. If a different supervisor runs Machine or Identity manages keyd separately, use that installation's own service procedure.
+
 Run this command to reapply the daemon's default catalog flavor.
 
 ```bash
