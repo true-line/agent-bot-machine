@@ -15,7 +15,7 @@ pub(crate) const UNAVAILABLE: &str = "device custody unavailable";
 pub(crate) const READ_INTERACTION_DENIED: &str =
     "macOS denied user interaction while reading existing device custody from Keychain";
 const ORIGIN: &str = "https://agents.true-line.ai";
-const SERVICE: &str = "agent-bot.keyd.device.v1";
+pub(crate) const SERVICE: &str = "agent-bot.keyd.device.v1";
 const ITEM: &str = "managed-device";
 const WINDOW: u64 = 30;
 const MAX_RECENT: usize = 256;

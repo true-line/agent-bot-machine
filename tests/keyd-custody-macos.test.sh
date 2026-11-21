@@ -29,6 +29,11 @@ enrollment)
 *) exit 1 ;;
 esac
 owner="$(stat -f %Su /opt/homebrew)"
+# The no-argument enrollment lane uses the exact reproducible release build.
+# The self-lookup fixture keeps its independently built, test-issuer helper.
+if (( $# == 0 )); then
+    bash "$root/tests/keyd-release-paths.test.sh" "$helper"
+fi
 sudo -n chown "$owner" "$helper"
 sudo -n -u "$owner" "$helper" --version | grep -E '^agent-bot-keyd [0-9]+\.[0-9]+\.[0-9]+$'
 
