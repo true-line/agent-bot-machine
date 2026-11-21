@@ -1,12 +1,12 @@
-//go:build !unix
+//go:build !darwin
 
 package statedir
 
 import (
 	"errors"
-	"os"
+	"io"
 )
 
-func LockMacPackage(string, int) (*os.File, error) {
+func LockMacPackage(string, int) (io.Closer, error) {
 	return nil, errors.New("macOS package lifecycle locking is unavailable")
 }
