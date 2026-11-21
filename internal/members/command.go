@@ -39,6 +39,8 @@ func Command(deps Deps) cli.Command {
 
 const usage = `Usage: managed-machine members plan [--hq-account <account>] (--hq-config <path> | --members <a,b,...>) [--dir <path>]
        managed-machine members plan [--hq-service <record.json>]  (macOS dedicated HQ only)
+       sudo managed-machine members uninstall-hq --list
+       sudo managed-machine members uninstall-hq <applied-plan-id> [--dry-run]
        managed-machine members plan --hq-service <record.json> --upgrade-from <prior-plan-id>
        managed-machine members plan --harness-account-provision (--members <a,b,...> | --hq-config <path>) [--dir <path>]
        managed-machine members plan --harness-launch-install <adapters.json>
@@ -87,6 +89,12 @@ The prefix administrator then runs apply with sudo in their own terminal within
 ten minutes. apply builds the plan again from the host and runs only when
 its digest is the approved one. It takes a plan id and nothing else; no
 option skips the approval. An agent account or session is refused.
+
+On macOS, uninstall-hq --list shows completed plans matching the installed HQ
+plist. After an upgrade, choose the matching completed upgrade plan. Preview
+with --dry-run before removing the system job, its exact plist and its verified
+endpoint. The dedicated account, home, keys, pairing, release files, runtime
+directory and audit receipts remain available. Run this before package removal.
 
 Options
 --harness-launch-install <file>  Review a dedicated Darwin adapter mapping and launch rule
@@ -185,11 +193,14 @@ func fromConfig(raw []byte) (dir string, members []string, err error) {
 }
 
 func run(deps Deps, ctx cli.Context, args []string) cli.Result {
+	if len(args) > 0 && args[0] == "uninstall-hq" {
+		return runUninstallHQ(deps, ctx, args[1:])
+	}
 	if len(args) > 0 && args[0] == "apply" {
 		return runApply(deps, ctx, args[1:])
 	}
 	if len(args) == 0 || args[0] != "plan" {
-		return cli.Result{Diagnostic: command.UsageErr("members takes one action: plan or apply")}
+		return cli.Result{Diagnostic: command.UsageErr("members takes one action: plan, apply or uninstall-hq")}
 	}
 	var hqAccount, hqConfigPath, list, dir, serviceRecord, priorID string
 	var installFile, retireID string
