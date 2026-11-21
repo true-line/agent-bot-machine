@@ -198,6 +198,52 @@ purpose, and the prefix administrator applies the exact approved digest with
 its receipt; plan and review only the remaining changes. This operation does
 not install a launch route or authorize any package to run.
 
+### Dedicated credential bridge for protected Soul launch
+
+The stock-client route needs a credential-sidecar principal in addition to
+the separate untrusted Soul runner. The current shared harness credential UID
+cannot protect a sidecar's broad member token or listener from another process
+with that UID: on macOS 27.0.1, a same-UID process under the network-only
+sidecar fixture read synthetic 0600 token state and unlinked a live 0660 Unix
+listener. [Probe and limits](https://github.com/true-line/agent-bot-machine/pull/638#issuecomment-7069309766).
+
+The protected mapping requires one deterministic `_abm-br-*` bridge
+account and private UID/GID for **each Soul installation**. Its future 0700
+home is under `/var/agent-bot-soul-bridge-*`. The bridge is separate
+from that installation's `_abm-sr-*` package runner, dedicated HQ, Machine and
+keyd, and every shared harness credential account. Two installations cannot
+share either bridge or runner kernel principal. The bridge alone receives the
+HQ broker credential. The runner gets only start-bound relay authority. A
+bridge cannot be reused as a general harness account. This typed contract
+does not create an account or grant a launch; Machine must recheck Directory
+Services aliases and the installed role at every privileged boundary.
+
+The fixed endpoint assignment derives a 96-bit directory name from the
+installation ID and HQ start ID. No request may choose a socket path. The
+broker remains in the HQ-owned `ipc/<bridge>` directory. The per-start member
+directory is runner-owned with the bridge group; the relay directory is
+bridge-owned with the runner group; the admission directory is HQ-owned with
+the runner group. Each is 2750, with a 0660 socket and an exact kernel peer UID:
+
+| Channel | Listener owner | Group and admitted peer | Purpose |
+| --- | --- | --- | --- |
+| HQ broker | HQ | bridge | Broad authenticated broker access for the bridge only |
+| Souls member | runner | bridge | One launch's member operations |
+| HTTP relay | bridge | runner | Narrow, start-bound stock-client relay |
+| HQ admission | HQ | runner | Entry-point control before vendor confinement |
+
+The vendor client may connect only to the member and HTTP relay sockets. The
+bridge may connect only to the HQ broker and member sockets and may bind only
+its assigned HTTP listener. Direct IP and sibling Unix paths remain denied.
+The runner's admission happens before vendor confinement or in a separately
+reviewed control process, never as a third vendor-client outbound path.
+Machine must prove the reviewed package/code closure, signed one-use HQ start,
+exact kernel UIDs, live HMAC broker bind, token lifetime, stop containment and
+safe retirement before installing a production grant. The pending Platform
+amendment must approve replacing #111's shared harness credential principal
+with this dedicated bridge. Until then, this contract remains grant-free and
+does not establish physical T03.
+
 ### What is created
 
 For an HQ account `H` and each listed harness credential account `M`:
