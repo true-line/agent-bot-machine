@@ -184,3 +184,41 @@ func TestQualificationClaimRequiresLivePairAndFreshArtifactReview(t *testing.T) 
 		t.Fatalf("same approval launched twice: %v", err)
 	}
 }
+
+func TestQualificationFailureResultHasOneWinner(t *testing.T) {
+	path, attempt, now := qualificationClaimFixture(t)
+	if err := claimQualificationAttemptFile(path, attempt); err != nil {
+		t.Fatal(err)
+	}
+	const contenders = 12
+	results := make(chan error, contenders)
+	var wg sync.WaitGroup
+	for i := 0; i < contenders; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- finishQualificationAttemptFile(path, attempt, "incomplete", "interrupted before signed report", now.Add(time.Second), os.ReadFile)
+		}()
+	}
+	wg.Wait()
+	close(results)
+	won := 0
+	for err := range results {
+		if err == nil {
+			won++
+		} else if !errors.Is(err, fs.ErrExist) {
+			t.Fatalf("unexpected concurrent finish result: %v", err)
+		}
+	}
+	if won != 1 {
+		t.Fatalf("%d result writers succeeded; expected one", won)
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(path), attempt.PlanID+".qualification-result.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result QualificationAttempt
+	if json.Unmarshal(raw, &result) != nil || result.Result != "incomplete" || result.Reason != "interrupted before signed report" {
+		t.Fatalf("incomplete result is not inspectable: %s", raw)
+	}
+}
