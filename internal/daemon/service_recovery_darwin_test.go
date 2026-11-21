@@ -120,6 +120,41 @@ func (f *recoveryFixture) proof(t *testing.T, c recoveryChallenge) string {
 	return base64.StdEncoding.EncodeToString(sig)
 }
 
+func TestQualificationOwnerProofRecordsPurposeWithoutLaunching(t *testing.T) {
+	f := newRecoveryFixture(t)
+	request := f.request("challenge", recoveryChallenge{}, "")
+	request.Verb = harnessQualificationVerb
+	challenged := f.run(t, 331, request, f.client)
+	if !challenged.OK || challenged.State != "challenged" {
+		t.Fatalf("qualification challenge: %+v", challenged)
+	}
+	var c recoveryChallenge
+	if err := json.Unmarshal(challenged.Body, &c); err != nil || c.Action != harnessQualificationVerb {
+		t.Fatalf("wrong qualification challenge: %+v, %v", c, err)
+	}
+	request = f.request("approve", c, f.proof(t, c))
+	request.Verb = harnessQualificationVerb
+	approved := f.run(t, 331, request, f.client)
+	if !approved.OK || approved.State != "approved" {
+		t.Fatalf("qualification approval: %+v", approved)
+	}
+	var public map[string]any
+	if err := json.Unmarshal(approved.Body, &public); err != nil || len(public) != 4 {
+		t.Fatalf("approval acknowledgment must expose only four fields: %v, %v", public, err)
+	}
+	raw, err := os.ReadFile(members.ApprovalPath(f.dir, approvePlanID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored members.Approval
+	if err := json.Unmarshal(raw, &stored); err != nil || stored.Purpose != harnessQualificationVerb || stored.PairCommitment == "" || stored.MachineFingerprint == "" {
+		t.Fatalf("qualification was not bound to the paired owner proof: %+v, %v", stored, err)
+	}
+	if again := f.run(t, 331, request, f.client); again.OK {
+		t.Fatal("replayed owner proof accepted")
+	}
+}
+
 func TestHQServiceRecoveryOneUse(t *testing.T) {
 	f := newRecoveryFixture(t)
 	first := f.issue(t)

@@ -107,8 +107,16 @@ that manifest before executing it.
 This command only reviews and saves inputs. It does not run tests, issue a
 qualification, authorize installation, or open a persistent launch grant.
 `members apply` rejects this purpose before any host or approval work. The
-host designation and review fields are not Machine trust decisions; production
-verification and the designated fixed runner remain unavailable.
+host designation and review fields are not Machine trust decisions. The paired
+dedicated HQ may now export a `harness-qualification-run` challenge for that
+saved plan, obtain an exact-plan owner proof, or cancel the pending challenge.
+Machine rechecks the paired HQ role, candidate role and every pinned local
+artifact before challenge and approval. The approval is held in Machine's
+private state for ten minutes, carries the qualification purpose and pairing
+commitment, and has the established four-field public acknowledgment. It is
+not accepted by ordinary `members apply` and creates no reusable launch rule.
+Approval consumption, physical host designation, the independent fixed runner,
+and a signed qualification result remain separate work under [#620](https://github.com/true-line/agent-bot-machine/issues/620).
 
 ## Target
 

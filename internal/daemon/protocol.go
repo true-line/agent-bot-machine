@@ -256,7 +256,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, harnessInstallVerb, harnessRetireVerb, deviceVerb, approveMembersVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, deviceVerb, approveMembersVerb, "bootstrap":
 		return true
 	default:
 		return false
