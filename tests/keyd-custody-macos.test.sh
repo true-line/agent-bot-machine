@@ -10,10 +10,19 @@ temp="$(mktemp -d /private/tmp/mm-custody.XXXXXXXX)"
 trap 'rm -rf "$temp"' EXIT
 chmod 0755 "$temp"
 helper="$temp/agent-bot-keyd"
+t02_source=
 case "${1:-enrollment}" in
-enrollment)
+enrollment|--t02-observer)
     whoami_test=0
-    [[ "$#" == 0 ]] || exit 1
+    case "$#" in
+    0) ;;
+    3) [[ "$1" == --t02-observer && "$2" == /* && -d "$2" && "$3" =~ ^[0-9a-f]{40}$ ]] || exit 1
+        t02_source="$2"
+        t02_commit="$3"
+        [[ "$(git -C "$t02_source" rev-parse HEAD)" == "$t02_commit" ]] || exit 1
+        ;;
+    *) exit 1 ;;
+    esac
     (cd "$root/keyd" && cargo build --release --locked)
     install -m 0700 "$root/keyd/target/release/agent-bot-keyd" "$helper"
     ;;
@@ -29,9 +38,9 @@ enrollment)
 *) exit 1 ;;
 esac
 owner="$(stat -f %Su /opt/homebrew)"
-# The no-argument enrollment lane uses the exact reproducible release build.
+# The enrollment lane uses the exact reproducible release build.
 # The self-lookup fixture keeps its independently built, test-issuer helper.
-if (( $# == 0 )); then
+if (( whoami_test == 0 )); then
     bash "$root/tests/keyd-release-paths.test.sh" "$helper"
 fi
 sudo -n chown "$owner" "$helper"
@@ -70,11 +79,31 @@ refused root hq-device
 
 # A missing hardware capability is a distinct failed native gate. This
 # probe only queries availability; the real key and proof are made by keyd.
-if ! /usr/bin/xcrun swift -e 'import CryptoKit; import Darwin; exit(SecureEnclave.isAvailable ? 0 : 1)' >/dev/null 2>&1; then
+if [[ -n "$t02_source" ]]; then
+    probe=0
+    /usr/bin/xcrun swift -e 'import CryptoKit; import Darwin; exit(SecureEnclave.isAvailable ? 0 : 77)' >/dev/null 2>&1 || probe=$?
+    case "$probe" in
+    0) ;;
+    77) echo 'T02 observer blocked: hosted Secure Enclave unavailable'; exit 1 ;;
+    *) echo 'T02 observer blocked: hosted Secure Enclave probe failed'; exit 1 ;;
+    esac
+elif ! /usr/bin/xcrun swift -e 'import CryptoKit; import Darwin; exit(SecureEnclave.isAvailable ? 0 : 1)' >/dev/null 2>&1; then
     echo 'FAIL hosted Secure Enclave unavailable' >&2
     exit 1
 fi
 echo 'Hosted Secure Enclave available'
+if [[ -n "$t02_source" ]]; then
+    (
+        umask 022
+        observer="$temp/t02-observer"
+        for file in governance/archives.json scripts/archive.py suites/T02-key-boundary/paired-proof.mjs; do
+            mkdir -p "$observer/$(dirname "$file")"
+            git -C "$t02_source" show "$t02_commit:$file" > "$observer/$file"
+        done
+        printf '%s\n' "$t02_commit" > "$observer/conformance-commit"
+        python3 "$observer/scripts/archive.py" t02-hq "$observer/cache"
+    )
+fi
 bash "$root/tests/keyd-custody-cleanup.test.sh"
 role=_agent-bot-hq
 role_home=/private/var/agent-bot-hq

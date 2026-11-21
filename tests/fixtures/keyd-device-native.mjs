@@ -78,7 +78,7 @@ async function exercise() {
         dsaEncoding: 'ieee-p1363' }, Buffer.from(signature, 'base64url')));
     refused(child('hq-device', enroll));
     requireCheck(ok(request('identity')).thumbprint === thumb);
-    await exerciseNativeChannel(dirname(helper), machine, hq, epoch, thumb);
+    await exerciseNativeChannel(dirname(helper), machine, hq, epoch, thumb, uid);
     refused(child('hq-device', request('identity')));
   } finally {
     rmSync(state, { recursive: true, force: true });
