@@ -66,3 +66,10 @@ if MM_HQ_TAP_REVISION=wrong tap_homebrew_device_release fake_brew "$work/prefix"
 export MM_HQ_TAP_REVISION; MM_HQ_TAP_REVISION="$(printf '%040d' 0)"
 if FIXTURE_HEAD=other tap_homebrew_device_release fake_brew "$work/prefix"; then exit 1; fi
 FIXTURE_HEAD="$MM_HQ_TAP_REVISION" tap_homebrew_device_release fake_brew "$work/prefix" || exit 1
+
+# The hosted repair and upgrade jobs may publish only recognized classifications.
+filter="$root/tests/fixtures/darwin-hq-apply-diagnostic.jq"
+record='{"diagnostic":"MM_MEMBERS_APPLY_FAILED","message":"private-fixture: query launched HQ as approved owner: sudo exit status 3\nmode 0755, expected 0666, private-fixture"}'
+[[ "$(jq -Rsr -f "$filter" <<< "$record")" == 'Machine diagnostic MM_MEMBERS_APPLY_FAILED: query launched HQ as approved owner: sudo exit status 3 / mode 0755, expected 0666' ]]
+record='{"diagnostic":"private-fixture","message":"query launched HQ as approved owner: sudo exit status 41"}'
+[[ "$(jq -Rsr -f "$filter" <<< "$record")" == 'Machine diagnostic other: unclassified' ]]
