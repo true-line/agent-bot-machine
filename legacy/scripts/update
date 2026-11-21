@@ -18,9 +18,9 @@ fi
 # 1. Update Homebrew and upgrade Machine. A configured fleet checkout
 # stays in user-owned storage outside the Homebrew installation.
 #
-# ROOT resolves through $prefix/opt/managed-machine/libexec, the symlink brew
-# repoints during the upgrade. Sourcing on both sides of that swap would leave
-# this process holding libraries from two versions at once — the pre-upgrade
+# The Go CLI resolves command links to the current keg. Keep Homebrew's
+# stable opt path for re-exec so the new keg supplies the next phase.
+# Sourcing across the swap would leave two versions in one process: the pre-upgrade
 # ones already read, the rest read after — so any release that changes a
 # contract between two such libraries breaks the upgrading run, and only that
 # run. Re-exec instead, so everything past the upgrade is one version.
@@ -30,18 +30,35 @@ fi
 # MANAGED_MACHINE_ELEVATION_DECLINED_FILE (inherited across the re-exec and
 # by every setup step), so no later step asks again.
 if [[ -z "${MANAGED_MACHINE_UPDATE_REEXECED:-}" ]]; then
-    if ! managed_machine_config_selected; then
+    fleet_selected=false
+    if managed_machine_config_selected; then fleet_selected=true; fi
+    update_entry="$ROOT/scripts/update"
+    brew_bin="$(command -v brew || true)"
+    # The public installer prefers the standard Homebrew; fleet updates use PATH.
+    if [[ "$fleet_selected" == false && -x /opt/homebrew/bin/brew ]]; then
+        brew_bin=/opt/homebrew/bin/brew
+    fi
+    if [[ -f "$ROOT/../RELEASE_COMMIT" && ( -n "$brew_bin" || "$fleet_selected" == false ) ]]; then
+        # The public installer bootstraps /opt/homebrew if brew is missing.
+        prefix=/opt/homebrew
+        if [[ -n "$brew_bin" ]]; then prefix="$("$brew_bin" --prefix)"; fi
+        update_entry="$prefix/opt/managed-machine/libexec/legacy/scripts/update"
+        if [[ ! "$update_entry" -ef "$ROOT/scripts/update" ]]; then
+            echo "This updater is outside Homebrew's current Machine keg. Run the public installer." >&2
+            exit 1
+        fi
+    fi
+    if [[ "$fleet_selected" == false ]]; then
         # Source and installed layouts both place the public installer beside
         # the legacy tree. It refreshes this tap only, including across UIDs.
         /bin/bash "$ROOT/../install.sh" --update || exit $?
         export MANAGED_MACHINE_UPDATE_REEXECED=1
-        exec "$ROOT/scripts/update" "$@"
+        exec "$update_entry" "$@"
     fi
     MANAGED_MACHINE_DECLINED_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/mm-update-declined.XXXXXX")"
     MANAGED_MACHINE_ELEVATION_DECLINED_FILE="$MANAGED_MACHINE_DECLINED_TMPDIR/declined"
     export MANAGED_MACHINE_DECLINED_TMPDIR MANAGED_MACHINE_ELEVATION_DECLINED_FILE
-    if command -v brew >/dev/null 2>&1; then
-        brew_bin="$(command -v brew)"
+    if [[ -n "$brew_bin" ]]; then
         echo "==> Updating Homebrew and upgrading the Machine formula"
         brew_run_script "brew=$(printf '%q' "$brew_bin")"'
 set -e
@@ -64,7 +81,7 @@ fi
     fi
     # Re-exec by path, not $0: the upgrade may have replaced this very script.
     export MANAGED_MACHINE_UPDATE_REEXECED=1
-    exec "$ROOT/scripts/update" "$@"
+    exec "$update_entry" "$@"
 fi
 
 # shellcheck source=lib/bootstrap.sh
