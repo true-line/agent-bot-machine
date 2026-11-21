@@ -54,7 +54,11 @@ func rollbackLaunchDirectory(dir *os.File, service HQService, owner string) erro
 // cannot leave the reviewed name pointing to a half-configured directory.
 // Exclusive publication also protects an empty directory a concurrent
 // installer created after review.
-func createLaunchDirectory(path string, uid, gid int) (_ *os.File, result error) {
+func createLaunchDirectory(path string, uid, gid int) (*os.File, error) {
+	return createProtectedDirectory(path, uid, gid, 0755)
+}
+
+func createProtectedDirectory(path string, uid, gid int, mode os.FileMode) (_ *os.File, result error) {
 	temp, err := os.MkdirTemp(filepath.Dir(path), ".hq-runtime-*")
 	if err != nil {
 		return nil, err
@@ -76,8 +80,16 @@ func createLaunchDirectory(path string, uid, gid int) (_ *os.File, result error)
 	if err := dir.Chown(uid, gid); err != nil {
 		return nil, err
 	}
-	if err := dir.Chmod(0755); err != nil {
+	if err := dir.Chmod(mode); err != nil {
 		return nil, err
+	}
+	info, err := dir.Stat()
+	if err != nil {
+		return nil, err
+	}
+	stat := info.Sys().(*syscall.Stat_t)
+	if int(stat.Uid) != uid || int(stat.Gid) != gid || info.Mode()&(os.ModePerm|os.ModeSetgid|os.ModeSetuid|os.ModeSticky) != mode {
+		return nil, errors.New("prepared directory does not match the reviewed ownership and mode")
 	}
 	if err := checkDarwinACLs([]string{temp}); err != nil {
 		return nil, err
@@ -111,4 +123,40 @@ func removeLaunchDirectory(dir *os.File, path string) error {
 		return errors.New("preserving a changed HQ runtime directory")
 	}
 	return unix.Unlinkat(int(parent.Fd()), name, unix.AT_REMOVEDIR)
+}
+
+func createDarwinBrokerDirectory(p, owner, group string, mode uint32) error {
+	return createDarwinBrokerDirectoryForIDs(p, owner, group, mode, -1, -1)
+}
+
+func (OSRoot) CreateReviewedBrokerDirectory(p, owner, group string, mode uint32, uid, gid int) error {
+	return createDarwinBrokerDirectoryForIDs(p, owner, group, mode, uid, gid)
+}
+
+func createDarwinBrokerDirectoryForIDs(p, owner, group string, mode uint32, reviewedUID, reviewedGID int) error {
+	switch {
+	case p == DarwinBrokerDir && owner == "root" && group == "wheel" && mode == 0755:
+	case filepath.Dir(p) == DarwinBrokerDir && owner == DarwinHQAccount && accountName.MatchString(group) && filepath.Base(p) == group && mode == 02750:
+	default:
+		return errors.New("unexpected Darwin broker directory")
+	}
+	parent := filepath.Dir(p)
+	if err := checkBrokerParent(OSHost{}, parent); err != nil {
+		return err
+	}
+	if err := checkDarwinACLs(pathAncestry(parent)); err != nil {
+		return err
+	}
+	uid, gid, err := ids(owner, group)
+	if err != nil {
+		return err
+	}
+	if reviewedUID >= 0 && (uid != reviewedUID || gid != reviewedGID) {
+		return errors.New("reviewed broker directory ownership changed")
+	}
+	dir, err := createProtectedDirectory(p, uid, gid, fileMode(mode))
+	if err != nil {
+		return err
+	}
+	return dir.Close()
 }

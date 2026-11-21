@@ -3,6 +3,7 @@ package members
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -79,6 +80,41 @@ func TestDarwinHarnessAccounts(t *testing.T) {
 	delete(h.accounts, "_abm-a")
 	if _, err := Build(in, h); err == nil {
 		t.Fatal("accepted a pre-existing home without its role")
+	}
+}
+
+func TestDarwinReservedHarnessNames(t *testing.T) {
+	for _, name := range []string{"admin", "wheel", "sudo", DarwinHQAccount} {
+		t.Run(name, func(t *testing.T) {
+			// Use a different HQ name so the ordinary HQ/member collision check
+			// cannot account for the refusal.
+			in := Input{Platform: PlatformDarwin, HQAccount: "_hq", Members: []string{name}}
+			_, err := Build(in, emptyHost())
+			var refusal *Refusal
+			if !errors.As(err, &refusal) || refusal.Code != RefusedList || !strings.Contains(refusal.Message, name) {
+				t.Fatalf("expected a list refusal naming %s, got %v", name, err)
+			}
+		})
+	}
+}
+
+func TestDarwinGroupReservationsArePlatformSpecific(t *testing.T) {
+	in := Input{HQAccount: DefaultHQAccount, Members: []string{"wheel", "sudo", DarwinHQAccount}}
+	if _, err := Normalize(in); err != nil {
+		t.Fatalf("macOS group reservations changed Linux plan validation: %v", err)
+	}
+}
+
+func TestDarwinDedicatedHQKeepsItsPrimaryGroup(t *testing.T) {
+	h := emptyHost()
+	role := Account{Name: DarwinHQAccount, UID: 310, GID: 310, Group: DarwinHQAccount, Groups: []string{DarwinHQAccount},
+		Home: HQHome(PlatformDarwin, DarwinHQAccount), Shell: DarwinNoLoginShell, DarwinRole: darwinHQRoleName}
+	h.accounts[role.Name] = role
+	h.entries[role.Home] = Entry{Dir: true, Owner: role.Name, Group: role.Name, Mode: 0700}
+	in := Input{Platform: PlatformDarwin, HQAccount: role.Name, Members: []string{"_harness"}}
+	p, err := Build(in, h)
+	if err != nil || p.Steps[0].Action != ActionNone || p.SharedHQAdvice() != "" {
+		t.Fatalf("dedicated HQ with its own primary group: %+v, %v", p, err)
 	}
 }
 
@@ -176,6 +212,150 @@ func TestDarwinPlanGuidesFirstHQExport(t *testing.T) {
 				}
 			} else if !ok || !strings.Contains(value.(string), tc.want) {
 				t.Fatalf("wrong first-HQ advice: %v", value)
+			}
+		})
+	}
+}
+
+func TestDarwinBrokerConfigAndDigestApproval(t *testing.T) {
+	h, in := brokerFixture()
+	d, state := deps(t, h)
+	d.ReadFile = func(string) ([]byte, error) {
+		return json.Marshal(map[string]any{"harnesses": map[string]any{"dir": in.Dir,
+			"accounts": map[string]string{"adapter-a": "_lead", "adapter-b": "_spec", "shared": "_lead"}}})
+	}
+	ctx := on(target.DarwinARM64)
+	result := Command(d).Run(ctx, []string{"plan", "--hq-config", "fixture.json"})
+	if result.Diagnostic != nil {
+		t.Fatal(result.Diagnostic)
+	}
+	const id = "plan-20261110T040000Z-abcd"
+	raw, err := os.ReadFile(filepath.Join(state, "members", "plans", id+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Saved
+	if err = json.Unmarshal(raw, &saved); err != nil || saved.Plan.Dir != in.Dir || len(saved.Plan.Members) != 2 {
+		t.Fatal(saved, err)
+	}
+	w := newWorld(h.fakeHost)
+	w.deps.Host = func() Host { return h }
+	for n := range h.accounts {
+		w.r.shadow[n] = "*"
+	}
+	h.files[filepath.Join("/home/owner", "Library", "Application Support", "managed-machine", "members", "plans", id+".json")] = string(raw)
+	run := func() bool { return Command(w.deps).Run(ctx, []string{"apply", id}).Diagnostic == nil }
+	if run() || len(w.r.log) != 0 {
+		t.Fatal("applied without approval")
+	}
+	if _, _, err := FirstHQPlan("/home/owner", "owner", id, h); err == nil {
+		t.Fatal("accepted for first HQ")
+	}
+	w.approved(t, id, saved.Plan)
+	h.entries[in.Dir] = Entry{Dir: true, Owner: "root", Group: "wheel", Mode: 0755}
+	if run() || len(w.r.log) != 0 {
+		t.Fatal("accepted changed digest")
+	}
+	delete(h.entries, in.Dir)
+	if !run() || w.r.receipts[id].Result != "applied" || w.r.receipts[id].PlanDigest != saved.PlanDigest {
+		t.Fatal(w.r.log, w.r.receipts)
+	}
+	if run() {
+		t.Fatal("replayed a previously applied plan")
+	}
+}
+
+func TestDarwinSharedConfigPreservesAccountOnlyDigest(t *testing.T) {
+	h, _ := brokerFixture()
+	ctx := on(target.DarwinARM64)
+	var accountDigest string
+	for _, dir := range []string{"", "/var/run/agent-bot-hq/members", "/opt/custom-shared-brokers", DarwinBrokerDir} {
+		d, _ := deps(t, h)
+		d.ReadFile = func(string) ([]byte, error) {
+			config := map[string]any{"accounts": map[string]string{"fixture": "_lead"}}
+			if dir != "" {
+				config["dir"] = dir
+			}
+			return json.Marshal(map[string]any{"harnesses": config})
+		}
+		res := Command(d).Run(ctx, []string{"plan", "--hq-config", "shared.json"})
+		if res.Diagnostic != nil {
+			t.Fatal(dir, res.Diagnostic)
+		}
+		actualDir, _ := res.Records[0].Get("dir")
+		digest, _ := res.Records[0].Get("plan_digest")
+		if dir == DarwinBrokerDir {
+			if actualDir != DarwinBrokerDir || digest == accountDigest || len(res.Records) != 5 {
+				t.Fatal("fixed Darwin path did not select both broker directories")
+			}
+			continue
+		}
+		if actualDir != DarwinDir || len(res.Records) != 3 {
+			t.Fatal("shared config changed account-only plan", dir)
+		}
+		if dir == "" {
+			accountDigest = digest.(string)
+			continue
+		}
+		if digest != accountDigest {
+			t.Fatal("shared config changed account-only digest", dir)
+		}
+		if Command(d).Run(ctx, []string{"plan", "--members", "_lead", "--dir", dir}).Diagnostic == nil {
+			t.Fatal("explicit directory flag accepted unmanaged location", dir)
+		}
+	}
+}
+
+func TestIncompleteHarnessPlanRefusedBeforeApprovalLookup(t *testing.T) {
+	for _, targetPath := range []string{HarnessPolicy, HarnessRule} {
+		w := newWorld(emptyHost())
+		s := Saved{PlanID: applyID, Plan: Plan{Steps: []Step{{Kind: KindFile, Target: targetPath}}}}
+		raw, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.h.files[filepath.Join("/home/owner", "Library", "Application Support", "managed-machine", "members", "plans", applyID+".json")] = string(raw)
+		w.deps.DaemonState = func(string, string) (string, string, error) {
+			t.Fatal("read-only launch plan reached the approval store")
+			return "", "", nil
+		}
+		result := Command(w.deps).Run(on(target.DarwinARM64), []string{"apply", applyID})
+		wantRefused(t, w, result, diag.MembersNotApproved)
+		if len(w.r.receipts) != 0 {
+			t.Fatal("read-only launch plan acquired a root receipt")
+		}
+	}
+}
+
+func TestReadOnlyHarnessPlanCannotApply(t *testing.T) {
+	for _, action := range []string{"install", "retire"} {
+		t.Run(action, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata", "harness-launch-"+action+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := Saved{PlanID: applyID, HarnessLaunch: new(HarnessPolicyRecord)}
+			if err := json.Unmarshal(data, &s.Plan); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(s.Plan.Steps[0].Content), s.HarnessLaunch); err != nil {
+				t.Fatal(err)
+			}
+			s.PlanDigest, err = s.Plan.Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := newWorld(emptyHost())
+			w.h.files[filepath.Join("/home/owner", "Library", "Application Support", "managed-machine", "members", "plans", applyID+".json")] = string(raw)
+			w.approved(t, applyID, s.Plan)
+			res := Command(w.deps).Run(on(target.DarwinARM64), []string{"apply", applyID})
+			wantRefused(t, w, res, diag.MembersNotApproved)
+			if len(w.r.receipts) != 0 {
+				t.Fatal("refused apply created a receipt")
 			}
 		})
 	}

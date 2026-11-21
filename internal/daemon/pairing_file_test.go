@@ -35,6 +35,7 @@ func peerPath(t *testing.T, dir, client, suffix string) string {
 }
 
 func TestEnrollClientTakesHexAndFingerprint(t *testing.T) {
+	t.Setenv(channelEnv, t.TempDir())
 	userHome := t.TempDir()
 	adminHome := t.TempDir()
 	debugOn(t, stateDir(adminHome))

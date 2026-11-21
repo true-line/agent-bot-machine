@@ -89,8 +89,18 @@ pub const APP_SERVICE: &str = "agent-bot.keyd.app";
 /// Keychain lookup. The presence-key CLI preserves that distinction for Identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoreError {
-    Untrusted { account: String },
+    Untrusted {
+        account: String,
+    },
+    #[cfg(any(target_os = "macos", test))]
+    KeychainRead(i32),
     Failed(String),
+}
+
+// errSecInteractionNotAllowed is actionable only at the explicit admin entry point.
+#[cfg(any(target_os = "macos", test))]
+pub fn keychain_read_interaction_denied(error: &StoreError) -> bool {
+    matches!(error, StoreError::KeychainRead(-25308))
 }
 
 impl StoreError {
@@ -106,6 +116,8 @@ impl std::fmt::Display for StoreError {
                 f,
                 "the keychain item for {account} is not one agent-bot-keyd controls, so its value was refused"
             ),
+            #[cfg(any(target_os = "macos", test))]
+            Self::KeychainRead(status) => write!(f, "the keychain could not be read ({status})"),
             Self::Failed(message) => f.write_str(message),
         }
     }
@@ -1096,11 +1108,11 @@ pub mod keychain {
             keychain: &SecKeychain,
             service: &str,
             account: &str,
-        ) -> Result<Option<(SecKeychainItemPassword, SecKeychainItem)>, String> {
+        ) -> Result<Option<(SecKeychainItemPassword, SecKeychainItem)>, StoreError> {
             match find_generic_password(Some(std::slice::from_ref(keychain)), service, account) {
                 Ok(found) => Ok(Some(found)),
                 Err(error) if error.code() == NOT_FOUND => Ok(None),
-                Err(error) => Err(format!("the keychain could not be read ({})", error.code())),
+                Err(error) => Err(StoreError::KeychainRead(error.code())),
             }
         }
 

@@ -32,6 +32,20 @@ func deviceResult(r Request, raw []byte, now time.Time, epoch string) ([]byte, s
 	if len(raw) > 8192 {
 		return nil, "", errHQDevice
 	}
+	if r.Option == "whoami" {
+		fields, ok := deviceObject(raw)
+		var data struct {
+			Session string `json:"session"`
+			Proof   string `json:"proof"`
+			Epoch   string `json:"hq_epoch,omitempty"`
+		}
+		if !ok || !deviceKeys(fields, "session", "proof") || json.Unmarshal(raw, &data) != nil || data.Session != r.DeviceSession || !validWhoamiProof(data.Proof, data.Session, now) {
+			return nil, "", errHQDevice
+		}
+		data.Epoch = epoch
+		body, err := json.Marshal(data)
+		return body, "whoami-proved", err
+	}
 	if r.Option == "bind-access" {
 		fields, ok := deviceObject(raw)
 		var data struct {
@@ -159,9 +173,47 @@ func validDeviceJWS(value string, id keydIdentity, now time.Time, enrollment boo
 			return false
 		}
 	}
-	x, _ := deviceSegment(id.JWK.X)
-	y, _ := deviceSegment(id.JWK.Y)
+	return verifyDeviceSignature(id.JWK, parts, signature)
+}
+
+func verifyDeviceSignature(j deviceJWK, parts []string, signature []byte) bool {
+	x, _ := deviceSegment(j.X)
+	y, _ := deviceSegment(j.Y)
 	pub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}
 	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
 	return ecdsa.Verify(pub, digest[:], new(big.Int).SetBytes(signature[:32]), new(big.Int).SetBytes(signature[32:]))
+}
+
+const deviceWhoamiURL = "https://agents.true-line.ai/api/daemon/whoami"
+
+func validWhoamiProof(proof, session string, now time.Time) bool {
+	parts := strings.Split(proof, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	h, hOK := deviceSegment(parts[0])
+	c, cOK := deviceSegment(parts[1])
+	sig, sOK := deviceSegment(parts[2])
+	if !hOK || !cOK || !sOK || len(sig) != 64 {
+		return false
+	}
+	header, ok := deviceObject(h)
+	jwk, jOK := deviceObject(header["jwk"])
+	claims, okC := deviceObject(c)
+	var meta struct {
+		Alg, Typ string
+		JWK      deviceJWK
+	}
+	var payload struct {
+		Htm, Htu, Ath, Jti string
+		Iat                int64
+	}
+	if !ok || !jOK || !okC || !deviceKeys(header, "alg", "typ", "jwk") || !deviceKeys(jwk, "kty", "crv", "x", "y") || !deviceKeys(claims, "htm", "htu", "ath", "iat", "jti") ||
+		json.Unmarshal(h, &meta) != nil || json.Unmarshal(c, &payload) != nil || meta.Alg != "ES256" || meta.Typ != "dpop+jwt" || meta.JWK.Kty != "EC" || meta.JWK.Crv != "P-256" ||
+		!validDevicePoint(meta.JWK.X, meta.JWK.Y) || meta.JWK.thumbprint() != session || payload.Htm != "GET" || payload.Htu != deviceWhoamiURL || payload.Iat < now.Unix()-30 || payload.Iat > now.Unix()+30 {
+		return false
+	}
+	ath, validATH := deviceSegment(payload.Ath)
+	jti, validJTI := deviceSegment(payload.Jti)
+	return validATH && len(ath) == sha256.Size && validJTI && len(jti) == 16 && verifyDeviceSignature(meta.JWK, parts, sig)
 }

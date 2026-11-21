@@ -37,6 +37,8 @@ mod pins;
 mod presence;
 mod relay;
 mod server;
+#[cfg(target_os = "macos")]
+mod standalone;
 mod store;
 
 use std::path::PathBuf;
@@ -113,6 +115,7 @@ fn exit_status(error: &store::StoreError) -> u8 {
 
 #[cfg(target_os = "macos")]
 fn serve(options: &Options, paths: &paths::Paths) -> Result<(), String> {
+    standalone::begin_custody()?;
     let items = items(options);
     let listeners = server::listen(paths)?;
     let keyd = Arc::new(server::Keyd {
@@ -152,8 +155,13 @@ fn main() -> ExitCode {
         Some("hq-device" | "hq-device-init")
     ) {
         #[cfg(target_os = "macos")]
-        if args.len() == 1 && hq_device_darwin::command(args[0] == "hq-device-init").is_ok() {
-            return ExitCode::SUCCESS;
+        if args.len() == 1 {
+            let init = args[0] == "hq-device-init";
+            return hq_device_darwin::cli_result(
+                init,
+                hq_device_darwin::command(init),
+                &mut std::io::stderr().lock(),
+            );
         }
         eprintln!("agent-bot-keyd: device custody unavailable");
         return ExitCode::FAILURE;

@@ -1,0 +1,20 @@
+// Included only by the disposable hosted service-upgrade overlay.
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"MODULE_PATH/internal/daemon"
+)
+
+func init() {
+	if len(os.Args) != 3 || os.Args[1] != "hosted-upgrade-fixture" {
+		return
+	}
+	if err := daemon.RunHostedUpgradeFixture(os.Args[2]); err != nil {
+		fmt.Fprintln(os.Stderr, "disposable HQ upgrade fixture unavailable")
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
