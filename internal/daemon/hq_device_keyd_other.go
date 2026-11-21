@@ -8,3 +8,5 @@ import "context"
 func runDeviceKeyd(context.Context, string, deviceDelegation) ([]byte, error) {
 	return nil, errHQDevice
 }
+
+func deviceKeydPathIssue(string) string { return "" }
