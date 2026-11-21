@@ -15,7 +15,11 @@ public func keydDeviceEnclave(
     _ op: Int32, _ reference: UnsafePointer<UInt8>, _ nr: Int,
     _ message: UnsafePointer<UInt8>, _ nm: Int, _ output: UnsafeMutablePointer<UInt8>, _ cap: Int
 ) -> Int {
-    guard nr >= 0, nr <= 8192, nm >= 0, nm <= 8192, cap > 0, SecureEnclave.isAvailable else { return -1 }
+    let hostReportPrefix = Array("agent-bot/qualification-host-report/v1\u{0}".utf8)
+    let fixedHostReport = op == 2 && nm > 8192 && nm <= 1_048_576 + hostReportPrefix.count &&
+        Data(bytes: message, count: hostReportPrefix.count).elementsEqual(hostReportPrefix)
+    guard nr >= 0, nr <= 8192, nm >= 0, (nm <= 8192 || fixedHostReport),
+          cap > 0, SecureEnclave.isAvailable else { return -1 }
     let ctx = LAContext()
     ctx.interactionNotAllowed = true
     do {

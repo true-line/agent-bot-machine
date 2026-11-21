@@ -152,6 +152,9 @@ type deviceDelegation struct {
 	ReceiptJTI       string `json:"receipt_jti,omitempty"`
 	ReceiptKID       string `json:"receipt_kid,omitempty"`
 	ReceiptSignature string `json:"receipt_signature,omitempty"`
+	ReportBase64URL  string `json:"report_base64url,omitempty"`
+	HostID           string `json:"host_id,omitempty"`
+	SignerID         string `json:"signer_id,omitempty"`
 	Signature        string `json:"signature"`
 }
 
@@ -162,6 +165,9 @@ func (d deviceDelegation) transcript() []byte {
 	}
 	if d.Option == "bind-enrollment" || d.Option == "bind-access" {
 		parts = append(parts, "receipt_body", d.ReceiptBody, "receipt_jti", d.ReceiptJTI, "receipt_kid", d.ReceiptKID, "receipt_signature", d.ReceiptSignature)
+	}
+	if d.Option == "qualification-host-report" {
+		parts = append(parts, "report_base64url", d.ReportBase64URL, "host_id", d.HostID, "signer_id", d.SignerID)
 	}
 	return []byte(strings.Join(parts, "\n"))
 }
