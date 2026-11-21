@@ -20,12 +20,14 @@ class DraftTest(unittest.TestCase):
                 dist.append(f"managed-machine_1.2.3_{target}.{suffix}")
                 metadata.append("release-gate-" + target.replace("_", "-") + ".json")
 
+            bot = {"id": 41898282, "type": "Bot"}
             rows = []
             for i, path in enumerate([*("signed/" + f for f in dist), *metadata], 1):
                 f = root / path
                 f.parent.mkdir(parents=True, exist_ok=True)
                 f.write_bytes(f.name.encode())
-                rows.append(dict(id=i, name=f.name, state="uploaded", digest="sha256:" + hashlib.sha256(f.read_bytes()).hexdigest()))
+                rows.append(dict(id=i, name=f.name, state="uploaded", label=None, uploader=bot,
+                                 digest="sha256:" + hashlib.sha256(f.read_bytes()).hexdigest()))
 
             def run(phase, assets, ok, version="1.2.3"):
                 cmd = [sys.executable, str(SCRIPT), phase, version, str(root / "snapshot")]
@@ -34,7 +36,7 @@ class DraftTest(unittest.TestCase):
                 if not ok or phase == "downloaded":
                     self.assertEqual(r.stdout, "")
                 if not ok:
-                    self.assertEqual(r.stderr.strip(), "Public release draft inventory or digest mismatch")
+                    self.assertEqual(r.stderr.strip(), "Public release draft inventory, attribution or digest mismatch")
                 return r.stdout
 
             run("downloaded", rows[:len(dist)], True)
@@ -45,8 +47,20 @@ class DraftTest(unittest.TestCase):
                 self.assertIn("(" + url + ")", body)
             attribution = "Unreviewed change by @fixture-contributor"
             (root / "notes.md").write_text(attribution)
-            external = [dict(row, label=attribution, uploader={"login": "fixture-contributor"}) for row in rows]
-            self.assertEqual(run("publish", external, True), body)
+            self.assertEqual(run("publish", [dict(row, label="") for row in rows], True), body)
+            for change in ({"label": attribution}, {"uploader": {"id": 41898282, "type": "User"}},
+                           {"uploader": {"id": 1000, "type": "Bot"}}, {"uploader": None}, {"uploader": {}}):
+                # An initial download or a retry with metadata already present must
+                # refuse before the workflow uploads any replacement assets.
+                for i in (0, len(dist)):
+                    candidate = rows.copy()
+                    candidate[i] = dict(candidate[i], **change)
+                    run("downloaded", candidate, False)
+                    run("publish", candidate, False)
+            for missing in ("label", "uploader"):
+                row = rows[0].copy()
+                del row[missing]
+                run("publish", [row, *rows[1:]], False)
             self.assertNotIn("fixture-contributor", body)
             run("publish", rows, False, version="1.2.3\n" + attribution)
             run("downloaded", rows, True)  # retry with generated metadata already attached

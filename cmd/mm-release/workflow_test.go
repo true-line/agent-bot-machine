@@ -400,7 +400,7 @@ case "$*" in
 	*) exit 1 ;;
 esac
 `
-	const draft = `{"id":37,"draft":true,"tag_name":"v1.2.3","target_commitish":"reviewed-source"}`
+	const draft = `{"id":37,"draft":true,"tag_name":"v1.2.3","target_commitish":"reviewed-source","author":{"id":41898282,"type":"Bot"}}`
 	for _, tc := range []struct {
 		name, step, lookup, record, tagSHA string
 		valid, upload                      bool
@@ -410,6 +410,9 @@ esac
 		{"invalid release ID", lookup, "0", draft, "reviewed-source", false, false},
 		{"different release", lookup, "37", strings.Replace(draft, "37", "38", 1), "reviewed-source", false, false},
 		{"already published", lookup, "37", strings.Replace(draft, "true", "false", 1), "reviewed-source", false, false},
+		{"human draft author", lookup, "37", strings.Replace(draft, `"Bot"`, `"User"`, 1), "reviewed-source", false, false},
+		{"other bot author", lookup, "37", strings.Replace(draft, "41898282", "1000", 1), "reviewed-source", false, false},
+		{"absent author on retry", publish, "37", strings.Replace(draft, `"author"`, `"other"`, 1), "reviewed-source", false, false},
 		{"different tag", lookup, "37", strings.Replace(draft, "1.2.3", "1.2.4", 1), "reviewed-source", false, false},
 		{"different source", lookup, "37", strings.Replace(draft, "reviewed-source", "other-source", 1), "reviewed-source", false, false},
 		{"published before upload", publish, "37", strings.Replace(draft, "true", "false", 1), "reviewed-source", false, false},
