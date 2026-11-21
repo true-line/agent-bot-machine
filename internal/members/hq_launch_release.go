@@ -152,13 +152,17 @@ func darwinControlCapability(meta []byte) (string, error) {
 }
 
 func openPinnedFile(p, digest string) (*os.File, error) {
+	return openPinnedFileLimit(p, digest, maxReleaseBytes)
+}
+
+func openPinnedFileLimit(p, digest string, limit int64) (*os.File, error) {
 	f, err := os.Open(p)
 	if err != nil {
 		return nil, err
 	}
 	h := sha256.New()
-	n, err := io.Copy(h, io.LimitReader(f, maxReleaseBytes+1))
-	if err != nil || n > maxReleaseBytes || hex.EncodeToString(h.Sum(nil)) != digest {
+	n, err := io.Copy(h, io.LimitReader(f, limit+1))
+	if err != nil || n > limit || hex.EncodeToString(h.Sum(nil)) != digest {
 		f.Close()
 		return nil, refuse(RefusedPath, "%s does not match its approved SHA-256", p)
 	}

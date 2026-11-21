@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -45,6 +46,7 @@ const usage = `Usage: managed-machine members plan [--hq-account <account>] (--h
        managed-machine members plan --harness-account-provision (--members <a,b,...> | --hq-config <path>) [--dir <path>]
        managed-machine members plan --harness-launch-install <adapters.json>
        managed-machine members plan --harness-launch-retire <installed-plan-id>
+       managed-machine members plan --harness-qualification <request.json>
        sudo managed-machine members apply <plan-id>
 
 Plan the account HQ runs in, one OS account per harness credential, the broker
@@ -97,6 +99,7 @@ endpoint. The dedicated account, home, keys, pairing, release files, runtime
 directory and audit receipts remain available. Run this before package removal.
 
 Options
+--harness-qualification <file>  Review fixed, pinned, one-use qualification inputs (read-only)
 --harness-launch-install <file>  Review a dedicated Darwin adapter mapping and launch rule
 --harness-launch-retire <plan-id>  Review retirement of that exact installed rule
 -h, --help              Show this usage and read nothing
@@ -127,13 +130,14 @@ func failure(id, format string, args ...any) cli.Result {
 // Saved is the plan file apply reads: the request, so the plan can be built
 // again from the host, and the digest the owner is asked to approve.
 type Saved struct {
-	UpgradeFrom   *priorServicePlan    `json:"upgrade_from,omitempty"`
-	HarnessLaunch *HarnessPolicyRecord `json:"harness_launch,omitempty"`
-	HQService     *HQService           `json:"hq_service,omitempty"`
-	PlanID        string               `json:"plan_id"`
-	PlanDigest    string               `json:"plan_digest"`
-	CreatedAt     string               `json:"created_at"`
-	Plan          Plan                 `json:"plan"`
+	UpgradeFrom      *priorServicePlan    `json:"upgrade_from,omitempty"`
+	HarnessLaunch    *HarnessPolicyRecord `json:"harness_launch,omitempty"`
+	QualificationRun *QualificationRun    `json:"qualification_run,omitempty"`
+	HQService        *HQService           `json:"hq_service,omitempty"`
+	PlanID           string               `json:"plan_id"`
+	PlanDigest       string               `json:"plan_digest"`
+	CreatedAt        string               `json:"created_at"`
+	Plan             Plan                 `json:"plan"`
 }
 
 // HQ adapter IDs identify harness credentials (PDR-0053). Several adapters
@@ -202,20 +206,21 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	if len(args) == 0 || args[0] != "plan" {
 		return cli.Result{Diagnostic: command.UsageErr("members takes one action: plan, apply or uninstall-hq")}
 	}
-	var hqAccount, hqConfigPath, list, dir, serviceRecord, priorID string
+	var hqAccount, hqConfigPath, list, dir, serviceRecord, priorID, qualificationPath string
 	var installFile, retireID string
-	var launchFlags int
+	var launchFlags, qualificationFlags int
 	var harnessAccounts bool
-	var hasList, hasDir, hasUpgrade bool
+	var hasList, hasDir, hasUpgrade, hasQualification, hasHQConfig, hasService bool
 	if d := command.Parse(args[1:], command.Spec{
 		Bools: map[string]*bool{"--harness-account-provision": &harnessAccounts},
 		Values: map[string]command.Flag{
+			"--harness-qualification":  {Value: &qualificationPath, Set: &hasQualification, Count: &qualificationFlags},
 			"--harness-launch-install": {Value: &installFile, Count: &launchFlags},
 			"--harness-launch-retire":  {Value: &retireID, Count: &launchFlags},
 			"--upgrade-from":           {Value: &priorID, Set: &hasUpgrade},
-			"--hq-service":             {Value: &serviceRecord},
+			"--hq-service":             {Value: &serviceRecord, Set: &hasService},
 			"--hq-account":             {Value: &hqAccount},
-			"--hq-config":              {Value: &hqConfigPath},
+			"--hq-config":              {Value: &hqConfigPath, Set: &hasHQConfig},
 			"--members":                {Value: &list, Set: &hasList, Optional: true},
 			"--dir":                    {Value: &dir, Set: &hasDir},
 		},
@@ -232,6 +237,35 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 	if hqAccount == "" {
 		hqAccount = DefaultHQAccountFor(platform)
+	}
+	if hasQualification {
+		if qualificationPath == "" {
+			return failure(diag.MembersListInvalid, "harness qualification request path is empty")
+		}
+		if qualificationFlags != 1 || platform != PlatformDarwin || hqAccount != DarwinHQAccount || hasHQConfig || hasList || hasDir || hasService || hasUpgrade || launchFlags != 0 || harnessAccounts {
+			return failure(diag.MembersListInvalid, "harness qualification planning requires a dedicated Darwin host and no other plan purpose")
+		}
+		read := deps.ReadFile
+		if read == nil {
+			read = readQualificationInput
+		}
+		raw, err := read(qualificationPath)
+		if err != nil {
+			return failure(diag.MembersListInvalid, "cannot read qualification request: %v", err)
+		}
+		r, err := decodeQualificationRequest(raw)
+		if err != nil {
+			return failure(diag.MembersListInvalid, "%v", err)
+		}
+		var hostReader Host = OSHost{}
+		if deps.Host != nil {
+			hostReader = deps.Host()
+		}
+		plan, runRecord, err := qualificationRunPlan(raw, r, hostReader)
+		if err != nil {
+			return failure(diag.MembersPlanFailed, "%v", err)
+		}
+		return saveQualificationPlan(deps, plan, runRecord)
 	}
 	if launchFlags != 0 {
 		if launchFlags != 1 || hasUpgrade || (installFile == "" && retireID == "") || platform != PlatformDarwin || hasList || hasDir || hqConfigPath != "" || serviceRecord != "" || hqAccount != DarwinHQAccount {
@@ -394,6 +428,62 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		if s.UID != 0 {
 			records[len(records)-1].Set("uid", s.UID).Set("gid", s.GID)
 		}
+	}
+	return cli.Result{Records: records}
+}
+
+func readQualificationInput(name string) ([]byte, error) {
+	info, err := os.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() < 1 || info.Size() > 4*1024*1024 {
+		return nil, errors.New("qualification request must be a regular file no larger than 4 MiB")
+	}
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) || opened.Size() < 1 || opened.Size() > 4*1024*1024 {
+		return nil, errors.New("qualification request changed or is not a bounded regular file")
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, 4*1024*1024+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) != opened.Size() {
+		return nil, errors.New("qualification request size changed while reading")
+	}
+	return raw, nil
+}
+
+func saveQualificationPlan(deps Deps, plan Plan, runRecord *QualificationRun) cli.Result {
+	digest, err := plan.Digest()
+	if err != nil {
+		return failure(diag.MembersPlanFailed, "cannot digest the plan: %v", err)
+	}
+	now := deps.Time()
+	planID, err := deps.PlanID(now)
+	if err != nil {
+		return failure(diag.MembersPlanFailed, "cannot make a plan id: %v", err)
+	}
+	state, err := deps.ResolveStateDir("darwin")
+	if err != nil {
+		return failure(diag.MembersPlanFailed, "cannot locate the state directory: %v", err)
+	}
+	saved := Saved{QualificationRun: runRecord, PlanID: planID, PlanDigest: digest, CreatedAt: now.UTC().Format("2006-01-02T15:04:05Z"), Plan: plan}
+	if err := save(filepath.Join(state, "members", "plans"), saved); err != nil {
+		return failure(diag.MembersPlanFailed, "cannot save the plan: %v", err)
+	}
+	canonical, _ := plan.Canonical()
+	row := output.New().Set("plan_id", planID).Set("plan_digest", digest).Set("purpose", HarnessQualificationPurpose).
+		Set("host", runRecord.Request.Host.ID).Set("adapter", runRecord.Request.Adapter.ID).Set("changes", 0).Set("applied", false).
+		Set("request_sha256", runRecord.RequestSHA256).Set("plan", string(canonical))
+	records := []*output.Record{row}
+	for _, s := range plan.Steps {
+		records = append(records, output.New().Set("kind", s.Kind).Set("target", s.Target).Set("action", s.Action).Set("detail", s.Detail).Set("content", s.Content))
 	}
 	return cli.Result{Records: records}
 }
