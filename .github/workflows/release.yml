@@ -98,8 +98,7 @@ jobs:
         run: |
           TAG="v$(cat VERSION)"
           gh release download "$TAG" --dir signed --pattern 'managed-machine_*' --pattern SHA256SUMS
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
-            --jq 'add' |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" |
             python3 scripts/verify-public-draft.py downloaded "${TAG#v}" "$RUNNER_TEMP/public-assets.json"
       - name: Render the Homebrew pin from the verified signed archive
         run: |
@@ -123,7 +122,6 @@ jobs:
           check_draft
           gh release upload "$TAG" support-matrix.md release-gate-*.json Formula/managed-machine.rb --clobber
           check_draft
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
-            --jq 'add' |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" |
             python3 scripts/verify-public-draft.py publish "${TAG#v}" "$RUNNER_TEMP/public-assets.json" > "$RUNNER_TEMP/public-release-notes.md"
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -f name="$TAG" -F "body=@$RUNNER_TEMP/public-release-notes.md" --silent

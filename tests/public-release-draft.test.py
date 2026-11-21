@@ -1,15 +1,61 @@
 import hashlib
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from urllib.parse import parse_qs, urlsplit
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/verify-public-draft.py"
 
 
 class DraftTest(unittest.TestCase):
+    def test_workflow_reads_all_asset_pages(self):
+        pages = [[{"name": name, "label": None, "uploader": {"id": 41898282, "type": "Bot"}}]
+                 for name in ("first", "second")]
+
+        class Assets(BaseHTTPRequestHandler):
+            def do_GET(self):
+                second = parse_qs(urlsplit(self.path).query).get("page") == ["2"]
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                if not second:
+                    self.send_header("Link", f'<http://127.0.0.1:{self.server.server_port}/assets?page=2>; rel="next"')
+                self.end_headers()
+                self.wfile.write(json.dumps(pages[int(second)]).encode())
+
+            def log_message(self, *args):
+                pass
+
+        with HTTPServer(("127.0.0.1", 0), Assets) as server, tempfile.TemporaryDirectory() as home:
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            try:
+                endpoint = "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100"
+                workflow = (SCRIPT.parents[1] / ".github/workflows/release.yml").read_text().replace("\\\n", "")
+                reads = [line.strip() for line in workflow.splitlines() if endpoint in line]
+                self.assertEqual(len(reads), 2)
+                for line in reads:
+                    args = shlex.split(line)
+                    self.assertEqual(args[:2], ["gh", "api"])
+                    self.assertEqual(args.pop(), "|")
+                    # Substitute only the API endpoint. Exercise the workflow's real gh flags and page handling.
+                    args[args.index(endpoint)] = f"http://127.0.0.1:{server.server_port}/assets?per_page=100"
+                    args[0] = shutil.which("gh")
+                    self.assertIsNotNone(args[0], "the release workflow requires GitHub CLI")
+                    got = subprocess.run(args, check=True, capture_output=True, text=True, timeout=10,
+                                         env={"HOME": home, "GH_CONFIG_DIR": home, "GH_TOKEN": "fixture",
+                                              "GH_NO_UPDATE_NOTIFIER": "1"})
+                    self.assertEqual(json.loads(got.stdout), pages[0] + pages[1])
+            finally:
+                server.shutdown()
+                thread.join()
+
     def test_all_published_bytes_and_original_ids(self):
         with tempfile.TemporaryDirectory() as work:
             root = Path(work)
