@@ -40,6 +40,30 @@ The same plan creates the HQ account when it does not exist. That is S6 in
 [cross-account-channel.md](cross-account-channel.md), issue
 [#475](https://github.com/true-line/agent-bot-machine/issues/475).
 
+## Provision macOS harness accounts through paired HQ
+
+The prefix administrator saves the account plan with
+`managed-machine members plan --harness-account-provision --members <accounts>`.
+Use `--hq-config <file>` to obtain the member list from HQ configuration.
+With an explicit list, add `--dir "/Library/Application Support/ai.true-line.agent-bot-hq/ipc"`
+to include the broker directories. The plan names the existing dedicated HQ
+role, the UID and private GID of each harness, its home, and each requested
+directory. An existing managed harness home can be repaired to mode 0700.
+
+An accounts-only plan can run as soon as the dedicated HQ role is paired.
+The broker plan requires the HQ service’s runtime directory at
+`/Library/Application Support/ai.true-line.agent-bot-hq`, owned by `root:wheel`
+at mode `0755`. Machine creates that parent through the approved HQ service
+plan. If the harness accounts already exist, planning again with the broker
+directory retains the matching accounts and proposes the missing directories.
+
+The dedicated paired HQ exports the saved plan with the
+`harness-account-provision` operation and submits the owner's fresh proof.
+The prefix administrator runs `sudo managed-machine members apply <plan-id>`
+while that approval is valid. An apply claims one receipt. After an interrupted
+or partial apply, save a new plan from the current host and approve the
+remaining changes.
+
 ## Review a macOS harness launch rule
 
 After the dedicated HQ account, harness accounts and broker directories exist,

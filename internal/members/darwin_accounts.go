@@ -187,29 +187,41 @@ func darwinSharing(a *Account) error {
 	if !harnessHome || label != darwinHarnessRoleName {
 		return nil
 	}
+	private, err := privateDarwinRoleGroup(a.Name, a.Group, a.GID)
+	if err == nil && private {
+		a.DarwinRole = label
+	}
+	return err
+}
+
+func (OSHost) PrivateDarwinRoleGroup(account string, id int) (bool, error) {
+	return privateDarwinRoleGroup(account, account, id)
+}
+
+func privateDarwinRoleGroup(account, group string, id int) (bool, error) {
+	gid := strconv.Itoa(id)
 	// A private group we create contains only the implicit primary member.
 	for _, attr := range []string{"NestedGroups", "GroupMembers"} {
-		members, _, err := dsclAttr("/Groups/"+a.Group, attr)
+		members, _, err := dsclAttr("/Groups/"+group, attr)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if members != "" {
-			return nil
+			return false, nil
 		}
 	}
 	for _, pair := range [][2]string{{"/Users", "UniqueID"}, {"/Groups", "PrimaryGroupID"}} {
 		records, err := dsclList(pair[0], pair[1])
 		if err != nil {
-			return err
+			return false, err
 		}
 		for name, id := range records {
-			if id == gid && name != a.Name {
-				return nil
+			if id == gid && name != account {
+				return false, nil
 			}
 		}
 	}
-	a.DarwinRole = label
-	return nil
+	return true, nil
 }
 
 // darwinPasswordField returns "*" for an account nobody can log in to: its
@@ -253,10 +265,16 @@ func refuseVisibleDarwinName(name string) error {
 	return nil
 }
 
-func darwinDirectoryIDUsed(id string) (bool, error) {
+func darwinDirectoryIDUsed(id string) (bool, error) { return darwinIDReserved(id, false) }
+func protectedDarwinIDUsed(id string) (bool, error) { return darwinIDReserved(id, true) }
+func darwinIDReserved(id string, checkPrimaryUsers bool) (bool, error) {
 	// Search by number too. A directory-backed user or group can reserve an
 	// ID without appearing in the local Directory Services node.
-	for _, field := range [][2]string{{"/Users", "UniqueID"}, {"/Groups", "PrimaryGroupID"}} {
+	fields := [][2]string{{"/Users", "UniqueID"}, {"/Groups", "PrimaryGroupID"}}
+	if checkPrimaryUsers {
+		fields = append(fields, [2]string{"/Users", "PrimaryGroupID"})
+	}
+	for _, field := range fields {
 		out, err := runOutput(dsclPath, "/Search", "-search", field[0], field[1], id)
 		if err != nil {
 			return false, fmt.Errorf("Directory Services search for %s %s: %w: %s", field[1], id, err, strings.TrimSpace(out))
@@ -296,7 +314,7 @@ func freeDarwinID(users, groups map[string]string, directoryUsed func(string) (b
 
 // Serialize Directory Services changes made by approved plans. The lock
 // is private to root, inside the receipt directory created at claim time.
-func darwinCreateRoleAccount(name, home, label string) (result error) {
+func darwinCreateRoleAccount(name, home, label string, expectedID int) (result error) {
 	lock, err := os.OpenFile(filepath.Join(receiptsDir(), ".role-account.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
@@ -322,9 +340,16 @@ func darwinCreateRoleAccount(name, home, label string) (result error) {
 	if err := refuseVisibleDarwinName(name); err != nil {
 		return err
 	}
-	id, err := freeDarwinID(users, groups, darwinDirectoryIDUsed)
+	checkID := darwinDirectoryIDUsed
+	if expectedID != 0 {
+		checkID = protectedDarwinIDUsed
+	}
+	id, err := freeDarwinID(users, groups, checkID)
 	if err != nil {
 		return err
+	}
+	if expectedID != 0 && id != expectedID {
+		return errors.New("reviewed role ID is no longer the next available ID")
 	}
 	num := strconv.Itoa(id)
 	if err := os.Mkdir(home, 0o700); err != nil {
@@ -413,4 +438,59 @@ func darwinAncestorEnvs() []map[string]string {
 		pid = next
 	}
 	return out
+}
+
+// PlanHarnessIDs reserves names and IDs only within this read-only snapshot.
+func (OSHost) PlanHarnessIDs(names []string) (map[string]int, error) {
+	users, err := dsclList("/Users", "UniqueID")
+	if err != nil {
+		return nil, err
+	}
+	groups, err := dsclList("/Groups", "PrimaryGroupID")
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]int, len(names))
+	for _, name := range names {
+		if err := refuseVisibleDarwinName(name); err != nil {
+			return nil, err
+		}
+		if _, ok := users[name]; ok {
+			return nil, fmt.Errorf("local account %s already exists", name)
+		}
+		if _, ok := groups[name]; ok {
+			return nil, fmt.Errorf("local group %s already exists", name)
+		}
+		id, err := freeDarwinID(users, groups, protectedDarwinIDUsed)
+		if err != nil {
+			return nil, err
+		}
+		result[name] = id
+		users[name] = strconv.Itoa(id)
+	}
+	return result, nil
+}
+
+func (OSRoot) CreateReviewedHarness(name string, id int) error {
+	if id < darwinIDFirst || id > darwinIDLast {
+		return errors.New("unexpected reviewed Darwin role ID")
+	}
+	return darwinCreateRoleAccount(name, darwinHarnessHome(name), darwinHarnessRoleName, id)
+}
+
+func (OSRoot) RepairReviewedHarnessHome(name string, id int, before uint32) error {
+	f, err := os.OpenFile(darwinHarnessHome(name), os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	sys := st.Sys().(*syscall.Stat_t)
+	if sys.Uid != uint32(id) || sys.Gid != uint32(id) || uint32(sys.Mode)&07777 != before {
+		return errors.New("reviewed harness home identity or permissions changed")
+	}
+	return f.Chmod(0700)
 }

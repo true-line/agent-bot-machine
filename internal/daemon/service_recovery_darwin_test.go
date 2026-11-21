@@ -420,11 +420,15 @@ func TestHQUpgradeRevocationDuringBootstrapPreflight(t *testing.T) {
 	}
 }
 
-func TestHarnessLaunchOwnerProofCannotAuthorizeAnotherAction(t *testing.T) {
-	for _, verb := range []string{harnessInstallVerb, harnessRetireVerb} {
+func TestHarnessOwnerProofCannotAuthorizeAnotherAction(t *testing.T) {
+	for _, verb := range []string{harnessInstallVerb, harnessRetireVerb, harnessAccountsVerb} {
 		t.Run(verb, func(t *testing.T) {
 			f := newRecoveryFixture(t)
-			canonical, err := os.ReadFile(filepath.Join("..", "members", "testdata", verb+".json"))
+			fixture := verb
+			if verb == harnessAccountsVerb {
+				fixture += "-accounts-and-broker"
+			}
+			canonical, err := os.ReadFile(filepath.Join("..", "members", "testdata", fixture+".json"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -434,21 +438,25 @@ func TestHarnessLaunchOwnerProofCannotAuthorizeAnotherAction(t *testing.T) {
 			if err = json.Unmarshal(canonical, &plan); err != nil {
 				t.Fatal(err)
 			}
-			var policy members.HarnessPolicyRecord
-			if err = json.Unmarshal([]byte(plan.Steps[0].Content), &policy); err != nil {
-				t.Fatal(err)
+			pairedUID := plan.Steps[0].UID
+			if verb != harnessAccountsVerb {
+				var policy members.HarnessPolicyRecord
+				if err = json.Unmarshal([]byte(plan.Steps[0].Content), &policy); err != nil {
+					t.Fatal(err)
+				}
+				pairedUID = policy.HQUID
 			}
 			pair, err := readOwnerPairState(f.dir)
 			if err != nil {
 				t.Fatal(err)
 			}
-			pair.UID = policy.HQUID
+			pair.UID = pairedUID
 			if err = pair.save(f.dir); err != nil {
 				t.Fatal(err)
 			}
-			testPlanRole(t, fmt.Sprint(policy.HQUID))
+			testPlanRole(t, fmt.Sprint(pairedUID))
 			f.check = func(id, got string, uid int) (string, error) {
-				if uid != policy.HQUID || id != approvePlanID || got != digest {
+				if uid != pairedUID || id != approvePlanID || got != digest {
 					return "", errRecoveryPlan
 				}
 				return string(canonical), nil
@@ -456,11 +464,11 @@ func TestHarnessLaunchOwnerProofCannotAuthorizeAnotherAction(t *testing.T) {
 			send := func(op string, c recoveryChallenge, signature string) Response {
 				req := f.request(op, c, signature)
 				req.Verb, req.PlanDigest = verb, digest
-				return f.run(t, policy.HQUID, req, f.client)
+				return f.run(t, pairedUID, req, f.client)
 			}
 			wrongUID := f.request("challenge", recoveryChallenge{}, "")
 			wrongUID.Verb, wrongUID.PlanDigest = verb, digest
-			if f.run(t, policy.HQUID+1, wrongUID, f.client).OK {
+			if f.run(t, pairedUID+1, wrongUID, f.client).OK {
 				t.Fatal("another UID used the dedicated pairing")
 			}
 			issued := send("challenge", recoveryChallenge{}, "")
@@ -474,7 +482,7 @@ func TestHarnessLaunchOwnerProofCannotAuthorizeAnotherAction(t *testing.T) {
 			if json.Unmarshal(issued.Body, &handoff) != nil || handoff.Canonical != string(canonical) || c.Digest != digest {
 				t.Fatal("handoff did not bind the exact published canonical bytes")
 			}
-			for _, old := range []string{recoveryVerb, "hq-service-upgrade", "first-hq-provision", harnessInstallVerb, harnessRetireVerb} {
+			for _, old := range []string{recoveryVerb, "hq-service-upgrade", "first-hq-provision", harnessInstallVerb, harnessRetireVerb, harnessAccountsVerb} {
 				if old == verb {
 					continue
 				}
@@ -490,7 +498,7 @@ func TestHarnessLaunchOwnerProofCannotAuthorizeAnotherAction(t *testing.T) {
 			}
 			cancelOther := f.request("cancel", c, "")
 			cancelOther.Verb, cancelOther.PlanDigest = otherVerb, digest
-			if f.run(t, policy.HQUID, cancelOther, f.client).OK {
+			if f.run(t, pairedUID, cancelOther, f.client).OK {
 				t.Fatal("another action cancelled the pending approval")
 			}
 			if !send("approve", c, f.proof(t, c)).OK {
