@@ -303,12 +303,12 @@ The macOS pull-request job also runs the
 at the revision pinned by `T02_CONFORMANCE_REVISION` in
 [`go-core.yml`](../../.github/workflows/go-core.yml). To repeat the check,
 rerun the Darwin arm64 job for the reviewed Machine revision. It runs the
-observer under the dedicated HQ account against the job’s disposable Machine.
-The fixture stops Machine after the first verified ES256 proof and waits for
-a `credential_unavailable` refusal before restarting it. A passing report
-identifies a fresh nonce and proof from the same device key, pairing epoch
-and custody generation. The log records the observer revision, hardware
-probe result and continuity checks. The report omits keys, nonces and proof
+observer under the dedicated HQ account. The test launcher serves the native
+Machine channel in this disposable fixture. After the first verified ES256
+proof, the fixture stops its channel and waits for a `credential_unavailable`
+refusal before restarting it. The observer verifies nonce and proof freshness
+and continuity of the device key, pairing epoch and custody generation. The log
+records the observer revision, hardware probe result and boolean outcomes. The report omits keys, nonces and proof
 contents. A missing Secure Enclave or an unsuccessful probe fails this check.
 The declared operator Mac still requires its own qualification.
 
