@@ -98,6 +98,8 @@ binds the exact canonical report bytes, host ID and signer ID; HQ cannot call
 this option through the ordinary device request. The offline qualification
 package verifies an owner Ed25519 policy envelope against a release-pinned
 root, a 3,600-second revocation snapshot, and designated P-256 host signatures.
+This first verifier accepts only ASCII canonical JSON and refuses non-ASCII
+reports or policies rather than reserializing them into different signed bytes.
 These are components of the production verifier, not permission to install.
 The one-use `started` receipt is never a completed physical run. A separate
 Machine-authored completion and HQ-start process observation, released adapter
