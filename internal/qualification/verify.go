@@ -78,9 +78,8 @@ type Policy struct {
 type VerifiedPolicy struct {
 	value    Policy
 	verified bool
+	at       time.Time
 }
-
-func (p VerifiedPolicy) Payload() Policy { return p.value }
 
 func digest(raw []byte) string {
 	sum := sha256.Sum256(raw)
@@ -305,7 +304,12 @@ func VerifyOwnerPolicy(envelope []byte, ownerKeyID string, root ed25519.PublicKe
 			return VerifiedPolicy{}, ErrUnqualified
 		}
 	}
-	return VerifiedPolicy{value: zero, verified: true}, nil
+	for _, revoked := range zero.RevocationSnapshot.RevokedReleaseWorkflowIDs {
+		if revoked == workflow.ID {
+			return VerifiedPolicy{}, ErrUnqualified
+		}
+	}
+	return VerifiedPolicy{value: zero, verified: true, at: now}, nil
 }
 
 func validHex(s string, n int) bool {
@@ -322,8 +326,8 @@ func httpsURL(s string) bool {
 
 // VerifyHostReport checks exact canonical report bytes and its designated
 // Secure Enclave signature under the already verified owner policy.
-func VerifyHostReport(envelope []byte, verified VerifiedPolicy) ([]byte, error) {
-	if !verified.verified {
+func VerifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time) ([]byte, error) {
+	if !verified.verified || !verified.at.Equal(now) || now.IsZero() {
 		return nil, ErrUnqualified
 	}
 	policy := verified.value
@@ -353,6 +357,7 @@ func VerifyHostReport(envelope []byte, verified VerifiedPolicy) ([]byte, error) 
 		Outcome       string `json:"outcome"`
 		Profile       string `json:"profile_in_force"`
 		RunID         string `json:"run_id"`
+		RecordedAt    string `json:"recorded_at"`
 		SuiteRevision string `json:"suite_revision"`
 		Runner        struct {
 			BinaryPath   string `json:"binary_path"`
@@ -377,6 +382,10 @@ func VerifyHostReport(envelope []byte, verified VerifiedPolicy) ([]byte, error) 
 		} `json:"gates"`
 	}
 	if json.Unmarshal(raw, &report) != nil || report.SchemaVersion != 1 || report.Outcome != "pass" || report.RunID == "" || len(report.SuiteRevision) != 40 || report.Runner.BinaryPath == "" || !validSHA(report.Runner.BinarySHA256) || report.SoulStart.Initiator != "hq" || report.SoulStart.HQLaunchReceipt.URI == "" || !validSHA(report.SoulStart.HQLaunchReceipt.SHA256) || report.SoulStart.MachineObservation.URI == "" || !validSHA(report.SoulStart.MachineObservation.SHA256) {
+		return nil, ErrUnqualified
+	}
+	recorded, err := parseTime(report.RecordedAt)
+	if err != nil || recorded.After(now) {
 		return nil, ErrUnqualified
 	}
 	if report.Profile != "managed-protected" && report.Profile != "managed-cooperative" {

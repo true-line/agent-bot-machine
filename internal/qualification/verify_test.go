@@ -111,7 +111,7 @@ func TestHostSignatureDesignatedAndBound(t *testing.T) {
 	}
 	p.EvidenceSigners[0].PublicKeySPKIDERBase64 = base64.StdEncoding.EncodeToString(spki)
 	// This package-only fixture represents an already verified owner policy.
-	verified := VerifiedPolicy{value: p, verified: true}
+	verified := VerifiedPolicy{value: p, verified: true, at: now}
 	sha := "sha256:" + strings.Repeat("a", 64)
 	checks := map[string]any{}
 	for _, name := range []string{"egress", "credentials", "state_redirect", "safe_interrupt_resume", "session_reuse", "cost_bound", "render_coverage"} {
@@ -137,22 +137,22 @@ func TestHostSignatureDesignatedAndBound(t *testing.T) {
 	s.FillBytes(sig[32:])
 	e := Envelope{SchemaVersion: 1, Purpose: HostPurpose, HostID: "fixture-host", SignerID: "fixture-signer", ReportSHA256: digest(raw), ReportBase64URL: base64.RawURLEncoding.EncodeToString(raw), SignatureBase64URL: base64.RawURLEncoding.EncodeToString(sig)}
 	envelope, _ := json.Marshal(e)
-	if _, err := VerifyHostReport(envelope, VerifiedPolicy{}); err == nil {
+	if _, err := VerifyHostReport(envelope, VerifiedPolicy{}, now); err == nil {
 		t.Fatal("unverified policy")
 	}
-	if _, err := VerifyHostReport(envelope, verified); err != nil {
+	if _, err := VerifyHostReport(envelope, verified, now); err != nil {
 		t.Fatal(err)
 	}
 	p.RevocationSnapshot.RevokedEvidenceSignerIDs = []string{"fixture-signer"}
 	verified.value = p
-	if _, err := VerifyHostReport(envelope, verified); err == nil {
+	if _, err := VerifyHostReport(envelope, verified, now); err == nil {
 		t.Fatal("revoked signer")
 	}
 	p.RevocationSnapshot.RevokedEvidenceSignerIDs = nil
 	verified.value = p
 	e.HostID = "other-host"
 	bad, _ := json.Marshal(e)
-	if _, err := VerifyHostReport(bad, verified); err == nil {
+	if _, err := VerifyHostReport(bad, verified, now); err == nil {
 		t.Fatal("wrong host")
 	}
 	if _, err := canonicalBytes(append([]byte(`{"a":1,"a":2}`), 0x0a), MaxReportBytes); err == nil {
