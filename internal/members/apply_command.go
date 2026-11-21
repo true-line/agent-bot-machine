@@ -459,7 +459,7 @@ func runUninstallHQ(deps Deps, ctx cli.Context, args []string) cli.Result {
 
 func validUninstallID(id string) bool { return plan.ValidID(id) }
 
-func lockHQPackage(owner string) (*os.File, error) {
+func lockHQPackage(owner string) (io.Closer, error) {
 	u, err := user.Lookup(owner)
 	if err != nil {
 		return nil, err
