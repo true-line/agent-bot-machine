@@ -141,7 +141,7 @@ func readValue(d *json.Decoder) (any, error) {
 		}
 		return seen, nil
 	case json.Delim('['):
-		var values []any
+		values := []any{}
 		for d.More() {
 			value, err := readValue(d)
 			if err != nil {
@@ -263,8 +263,16 @@ func VerifyOwnerPolicy(envelope []byte, ownerKeyID string, root ed25519.PublicKe
 	if err != nil || digest(raw) != e.PolicySHA256 {
 		return VerifiedPolicy{}, ErrUnqualified
 	}
-	if _, err = canonicalBytes(raw, MaxReportBytes); err != nil {
+	fields, err := canonicalBytes(raw, MaxReportBytes)
+	if err != nil {
 		return VerifiedPolicy{}, err
+	}
+	if !hasFields(fields, "contract", "kind", "policy_revision", "owner_key_id", "issued_at", "expires_at", "release_workflow", "evidence_signers", "revocation_snapshot", "max_revocation_age_seconds") {
+		return VerifiedPolicy{}, ErrUnqualified
+	}
+	var snapshotFields map[string]json.RawMessage
+	if json.Unmarshal(fields["revocation_snapshot"], &snapshotFields) != nil || !hasFields(snapshotFields, "updated_at", "revoked_attestation_sha256", "revoked_evidence_signer_ids", "revoked_release_workflow_ids") {
+		return VerifiedPolicy{}, ErrUnqualified
 	}
 	sig, err := decode(e.SignatureBase64URL, ed25519.SignatureSize)
 	if err != nil || len(sig) != ed25519.SignatureSize || !ed25519.Verify(root, preimage(PolicyPurpose, raw), sig) {
@@ -318,6 +326,19 @@ func validHex(s string, n int) bool {
 	}
 	_, err := hex.DecodeString(s)
 	return err == nil
+}
+
+func hasFields(fields map[string]json.RawMessage, names ...string) bool {
+	if len(fields) != len(names) {
+		return false
+	}
+	for _, name := range names {
+		value, ok := fields[name]
+		if !ok || bytes.Equal(value, []byte("null")) {
+			return false
+		}
+	}
+	return true
 }
 func httpsURL(s string) bool {
 	u, err := url.Parse(s)

@@ -22,6 +22,9 @@ func fixturePolicy(t *testing.T, now time.Time) (Policy, []byte, ed25519.PublicK
 	}
 	p := Policy{Contract: "control/v1", Kind: "qualification-trust-policy", PolicyRevision: 2, OwnerKeyID: "fixture-root", IssuedAt: now.Add(-2 * time.Hour).Format(time.RFC3339), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339), MaxRevocationAgeSeconds: 3600}
 	p.RevocationSnapshot.UpdatedAt = now.Add(-time.Hour).Format(time.RFC3339)
+	p.RevocationSnapshot.RevokedAttestationSHA256 = []string{}
+	p.RevocationSnapshot.RevokedEvidenceSignerIDs = []string{}
+	p.RevocationSnapshot.RevokedReleaseWorkflowIDs = []string{}
 	p.ReleaseWorkflow.ID = "fixture-workflow"
 	p.ReleaseWorkflow.Repository = "true-line/soul-adapters"
 	p.ReleaseWorkflow.WorkflowPath = ".github/workflows/qualify.yml"
