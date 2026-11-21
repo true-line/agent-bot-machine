@@ -103,6 +103,79 @@ fn request_for_session(
     }
     serde_json::from_value(wire).unwrap()
 }
+
+fn host_report_request(p: &Pair, raw: &[u8]) -> Request {
+    let mut req = request(p, "qualification-host-report", 100);
+    req.report_base64url = Some(URL.encode(raw));
+    req.host_id = Some("fixture-host".into());
+    req.signer_id = Some("fixture-signer".into());
+    let mut msg = [
+        "agent-bot-machine/keyd-hq-device/v1",
+        &p.machine_pub,
+        &p.hq_pub,
+        &p.hq_uid.to_string(),
+        &req.req_nonce,
+        "100",
+        "qualification-host-report",
+        "",
+        "",
+        "",
+        "hq_epoch",
+        &p.hq_epoch,
+    ]
+    .join("\n");
+    for (label, value) in [
+        ("report_base64url", req.report_base64url.as_deref().unwrap()),
+        ("host_id", req.host_id.as_deref().unwrap()),
+        ("signer_id", req.signer_id.as_deref().unwrap()),
+    ] {
+        msg.push_str(&format!("\n{label}\n{value}"));
+    }
+    req.signature = STANDARD.encode(
+        SigningKey::from_bytes(&[1; 32])
+            .sign(msg.as_bytes())
+            .to_bytes(),
+    );
+    req
+}
+
+#[test]
+fn host_report_signing_is_fixed_and_pair_bound() {
+    let (items, native, p) = (Memory::default(), Fake::default(), pair());
+    initialize(&items, &native, p.clone()).unwrap();
+    let check = json!({"outcome":"pass"});
+    let evidence =
+        json!({"uri":"fixture:observation","sha256":format!("sha256:{}", "a".repeat(64))});
+    let raw = serde_json::to_vec(&json!({
+        "adapter":{}, "checks":{"egress":check,"credentials":check,"state_redirect":check,
+            "safe_interrupt_resume":check,"session_reuse":check,"cost_bound":check,"render_coverage":check},
+        "cost_bound":"estimate", "evaluation_cells":[],
+        "gates":{"T01":{"outcome":"pass"}}, "harness":{},
+        "host":{"id":"fixture-host","os":"darwin"}, "launch":{},
+        "outcome":"pass", "profile_in_force":"managed-protected",
+        "recorded_at":"2026-11-21T00:00:00Z", "renders":[], "run_id":"run",
+        "runner":{"binary_path":"/fixture/runner","binary_sha256":"sha256:fixture"},
+        "schema_version":1,
+        "soul_start":{"initiator":"hq","hq_launch_receipt":evidence,"machine_observation":evidence},
+        "suite_revision":"revision"
+    }))
+    .unwrap();
+    let req = host_report_request(&p, &raw);
+    let result = run(&items, &native, &p, req, seconds(100)).unwrap();
+    assert_eq!(result["purpose"], HOST_REPORT_PURPOSE);
+    assert_eq!(result["host_id"], "fixture-host");
+    assert_eq!(result["report_sha256"], format!("sha256:{}", digest(&raw)));
+    assert_eq!(
+        native.signed.borrow().last().unwrap(),
+        &[HOST_REPORT_PURPOSE.as_bytes(), &[0], raw.as_slice()].concat()
+    );
+    let mut changed = host_report_request(&p, &raw);
+    changed.host_id = Some("other-host".into());
+    assert!(run(&items, &native, &p, changed, seconds(100)).is_err());
+    let mut invalid = raw.clone();
+    invalid.push(b'\n');
+    assert!(fixed_host_report(&host_report_request(&p, &invalid)).is_err());
+}
 #[test]
 fn initialization_preserves_creation_failure_and_leaves_custody_absent() {
     let items = Memory::default();
