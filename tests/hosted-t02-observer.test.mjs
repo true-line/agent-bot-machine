@@ -3,10 +3,14 @@ import { spawn } from 'node:child_process';
 import { test } from 'node:test';
 import { superviseT02 } from './fixtures/hosted-t02-observer.mjs';
 
-const expected = { hqCommit: 'a'.repeat(40), roleUid: 309, machineUid: 501 };
+const expected = {
+  hqCommit: 'a'.repeat(40), archiveSha256: 'b'.repeat(64), hardwareModel: 'Mac14,10',
+  nodeVersion: 'v24.19.0', roleUid: 309, machineUid: 501,
+};
 const report = {
   scope: 'T02 paired positive signing observation', outcome: 'observed', host_qualification: 'not_assessed',
-  platform: 'darwin', arch: 'arm64',
+  platform: 'darwin', arch: 'arm64', hardware_model: expected.hardwareModel,
+  hq_archive_sha256: expected.archiveSha256, node_version: expected.nodeVersion,
   hq_commit: expected.hqCommit, hq_uid: expected.roleUid, machine_socket_uid: expected.machineUid, signed_status_state: 'idle',
   verified_es256: true, offline_refusal: 'credential_unavailable', same_pairing_and_generation: true, fresh_proof: true,
   scratch_signer_paths_absent: ['signer/device-key.pem', 'signer/pin.json'],
@@ -42,14 +46,17 @@ test('supervisor refuses a skipped outage and a mismatched host claim', async ()
   try { await assert.rejects(skipped.before(), /did not reach the before checkpoint/); }
   finally { await skipped.abort(); }
 
-  const changed = { ...report, host_qualification: 'physical' };
-  const child = stub(`console.error('T02:before'); console.error('T02:offline'); console.log(${JSON.stringify(JSON.stringify(changed))});`);
-  const observer = superviseT02(child, expected, 5_000);
-  try {
-    await observer.before();
-    await observer.offline();
-    await assert.rejects(observer.result(), /unexpected T02 observer report/);
-  } finally { await observer.abort(); }
+  for (const change of [{ host_qualification: 'physical' }, { hardware_model: 'VirtualMac2,1' },
+    { hq_archive_sha256: 'c'.repeat(64) }, { node_version: 'v22.0.0' }]) {
+    const changed = { ...report, ...change };
+    const child = stub(`console.error('T02:before'); console.error('T02:offline'); console.log(${JSON.stringify(JSON.stringify(changed))});`);
+    const observer = superviseT02(child, expected, 5_000);
+    try {
+      await observer.before();
+      await observer.offline();
+      await assert.rejects(observer.result(), /unexpected T02 observer report/);
+    } finally { await observer.abort(); }
+  }
 });
 
 test('supervisor cancellation waits for a live observer to handle SIGTERM and close', async () => {
