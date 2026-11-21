@@ -50,6 +50,13 @@ to include the broker directories. The plan names the existing dedicated HQ
 role, the UID and private GID of each harness, its home, and each requested
 directory. An existing managed harness home can be repaired to mode 0700.
 
+An accounts-only plan can run as soon as the dedicated HQ role is paired.
+The broker plan requires the HQ service’s runtime directory at
+`/Library/Application Support/ai.true-line.agent-bot-hq`, owned by `root:wheel`
+at mode `0755`. Machine creates that parent through the approved HQ service
+plan. If the harness accounts already exist, planning again with the broker
+directory retains the matching accounts and proposes the missing directories.
+
 The dedicated paired HQ exports the saved plan with the
 `harness-account-provision` operation and submits the owner's fresh proof.
 The prefix administrator runs `sudo managed-machine members apply <plan-id>`
