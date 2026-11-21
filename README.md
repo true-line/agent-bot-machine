@@ -80,13 +80,15 @@ Bare `managed-machine status [--json|--human]` is served by the portable Go core
 
 Before removal, run `managed-machine uninstall --help` as an ordinary user and look for a line containing only `managed-machine uninstall`. If Machine installed a dedicated HQ service, also check that `managed-machine members --help` lists `members uninstall-hq --list`. The v0.12.4 release prints general help and exits successfully even when the requested uninstall command is unavailable. To use the receipt-based removal procedure below, upgrade to a release that lists the required commands and retain the existing receipts through that upgrade.
 
-Open a login Terminal as the administrator who owns Homebrew. If Machine installed a dedicated HQ service, use its matching applied plan ID to remove that service first. The preview shows what will be removed. The list and preview work with HQ offline.
+Open a login Terminal as the administrator who owns Homebrew. If a harness launch grant is installed, retire it through the paired HQ before removing HQ or Machine. See the [launch rule review procedure](docs/plans/member-accounts.md#review-a-macos-harness-launch-rule). If Machine installed a dedicated HQ service, use its matching applied plan ID to remove that service first. The preview shows what will be removed. The list and preview work with HQ offline.
 
 ```sh
 sudo managed-machine members uninstall-hq --list
 sudo managed-machine members uninstall-hq PLAN_ID --dry-run
 sudo managed-machine members uninstall-hq PLAN_ID
 ```
+
+If HQ removal is interrupted, retry with the same plan ID. An outstanding removal appears as `resume_plan_id` in `--list`, even after the plist is gone. Retrying a completed removal preserves any later installation. See [HQ service removal and recovery](docs/plans/member-accounts.md#removing-the-receipt-managed-macos-hq-service).
 
 If first enrollment stopped before an HQ service was installed, there is no HQ plan to remove. If you installed the flat owner CLI separately, use [Identity’s owner CLI removal procedure](https://github.com/true-line/agent-bot-identity/blob/a0b21c227b38d72e445106ba660e172ff115d164/owner-presence-macos/FIRST-ENROLLMENT.md#remove-the-owner-cli) with the approved publisher and signed release digest. You can remove that helper before creating an account or pairing Machine.
 
