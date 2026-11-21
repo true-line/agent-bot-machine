@@ -127,6 +127,8 @@ jobs:
     if: needs.changes.outputs.go == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      T02_CONFORMANCE_REVISION: 137d22b6d1df1051fab2f1146cec8f5819b5ab13
     strategy:
       fail-fast: false
       matrix:
@@ -218,11 +220,30 @@ jobs:
       - name: Exercise the Darwin harness process egress profile
         if: matrix.os == 'darwin'
         run: python3 -I tests/fixtures/darwin-harness-egress.py
+      - name: Check out the reviewed T02 observer
+        if: matrix.os == 'darwin' && github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: true-line/soul-conformance
+          ref: ${{ env.T02_CONFORMANCE_REVISION }}
+          path: .t02-conformance
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /governance/archives.json
+            /scripts/archive.py
+            /suites/T02-key-boundary/paired-proof.mjs
       - name: Check custody helper access across macOS accounts
         if: matrix.os == 'darwin'
         env:
           MM_KEYD_CUSTODY_TEST: '1'
-        run: bash tests/keyd-custody-macos.test.sh
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            node --test tests/hosted-t02-observer.test.mjs
+            bash tests/keyd-custody-macos.test.sh --t02-observer "$GITHUB_WORKSPACE/.t02-conformance" "$T02_CONFORMANCE_REVISION"
+          else
+            bash tests/keyd-custody-macos.test.sh
+          fi
       - name: Verify the fixed self-lookup using native admin custody and a disposable role
         if: matrix.os == 'darwin'
         env:
