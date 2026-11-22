@@ -275,8 +275,7 @@ func parseEnvelope(raw []byte, expected string) (Envelope, error) {
 }
 
 func preimage(purpose string, raw []byte) []byte {
-	b := make([]byte, 0, len(purpose)+1+len(raw))
-	b = append(b, purpose...)
+	b := []byte(purpose)
 	b = append(b, 0)
 	return append(b, raw...)
 }

@@ -15,6 +15,14 @@ and the owner's decisions of 2026-11-10 recorded there.
 
 ## Intent
 
+The Stage 2a qualification-acceptance witness is a separate, fixed signed
+contract, not an HQ request or a host-report signer. Its offline preflight
+checks a Machine-owned witness against independently authenticated host,
+pairing, owner-policy and one-use challenge state. The witness cannot supply
+its own trusted state, consume a challenge, install a rule, start a runner or
+close a physical test. The secure-admin admission path and release evidence
+must perform those later operations independently.
+
 [PDR-0053](https://github.com/true-line/agent-bot-platform/blob/main/docs/04-decisions/PDR-0053-soul-life-and-agent-replace-member.md)
 sets the unit to one OS account per harness credential, shared by the agents
 of every Soul using that credential. HQ is not root and creates none of this.
@@ -306,6 +314,27 @@ Machine/keyd evidence signature are still required before candidate execution
 or any protected certification can be enabled.
 
 ## Target
+
+The `agent-bot/qualification-policy-acceptance-witness/v1` envelope contains
+`schema_version`, `purpose`, `witness_key_id`, `payload_sha256`, the exact
+base64url payload and its P-256 signature. Its bounded payload names the host,
+Machine and HQ public identities, HQ UID and pairing epoch, pair-owner public
+key, distinct witness key, 32-byte challenge, accepted owner-policy version,
+revision and digest, owner key ID, and issuance/expiry times. The verifier
+checks those signed bytes against a release-pinned Ed25519 owner root, the
+greatest accepted policy tuple, the live pair, an outstanding challenge and a
+trusted clock. The witness key must be active, pinned from reviewed state and
+distinct from the policy's evidence signers and pair-owner key. None of these
+comparison values may come from the presented envelope or an HQ request.
+
+`internal/qualification.VerifyAcceptanceWitnessPreflight` is portable and
+read-only. It accepts the v1 or v2 owner policy matching the independently
+accepted tuple, enforces the one-hour revocation freshness limit, and returns
+only success or `ErrUnqualified`. It does not persist rollback state or spend
+the challenge. Before a protected decision, secure-admin Machine must reread
+the policy and pairing under its admission lock and atomically consume that
+challenge. The current source has no positive installed admission from this
+preflight alone.
 
 On macOS, `members plan` without an account list retains the HQ-only plan.
 Pass `--hq-config` to plan one role for each distinct credential account in
@@ -995,6 +1024,17 @@ fixture do not claim a complete live-host UI-to-root provisioning rehearsal.
 
 ## Acceptance
 
+For the qualification witness slice, use a real signed test envelope and
+independent context inputs. A matching policy, live pair, active distinct
+witness key, fresh revocations, trusted time and outstanding challenge pass
+offline preflight. Mutating the host, public identities, UID, epoch, witness
+key, policy revision or digest, challenge, expiry or signed bytes refuses.
+Revoked evidence signers, stale revocations, reused key purposes and policy
+version rollback refuse. The same envelope may be inspected repeatedly by
+this read-only function; no test may count that as challenge consumption or
+as a protected launch. Installed acceptance still requires the separate
+atomic challenge claim and physical host evidence.
+
 On real accounts in CI (Linux), as in agent-bot-hq's member accounts step:
 
 - `plan` changes nothing and its digest is stable across two runs.
@@ -1026,6 +1066,13 @@ On real accounts in CI (Linux), as in agent-bot-hq's member accounts step:
   a plan ID it has no plan for runs nothing.
 
 ## Replay
+
+For this witness change, run `go test ./internal/qualification -run
+'TestAcceptanceWitness' -count=1`, then the repository Go gate below. Review
+the exact wire purpose, payload fields, independent `WitnessContext` values
+and one-hour freshness boundary with the matching owner policy before moving
+the verifier into an admission path. Keep the one-use claim and signed
+completed-run/report producer out of this portable preflight.
 
 1. Read this plan, [machine-daemon.md](machine-daemon.md),
    [cross-account-channel.md](cross-account-channel.md) and `AGENTS.md`.
