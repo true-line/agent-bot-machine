@@ -65,6 +65,7 @@ func runStage2aRunner(ctx context.Context, request SoulRunRequest, start SoulSta
 	if launchInputs.SandboxPolicyDigest != "sha256:"+harnessSHA(soulRunnerProfile) ||
 		launchInputs.SelectedCommand != node ||
 		launchInputs.EffectiveConfig["profile"] != binding.ProfileInForce ||
+		stage2aAdapterChildEnv(launchInputs, nil, root.RootPath) != nil ||
 		!stage2aSystemImageSelected(launchInputs, "/usr/bin/sandbox-exec") {
 		return harnessRefused
 	}

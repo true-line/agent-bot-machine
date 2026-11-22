@@ -181,7 +181,8 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 	}
 	launchDigest, _, err := Stage2aLaunchInputDigest(policy.LaunchInputs)
 	if err != nil || launchDigest != policy.Binding.LaunchInputMeasurement ||
-		policy.LaunchInputs.EffectiveConfig["profile"] != "managed-protected" {
+		stage2aAdapterChildEnv(policy.LaunchInputs, &policy.BridgeQualification,
+			policy.Binding.Snapshots.LaunchInputs.RootPath) != nil {
 		return Plan{}, invalid
 	}
 	if err := ValidateSoulBridges([]SoulRunner{policy.Runner}, []SoulBridge{policy.Bridge}, policy.HQUID, nil); err != nil {

@@ -792,6 +792,21 @@ active claim and role processes still match. The local `stage2a-provider`
 fixture reveals its reviewed response only once after finalization and a
 durable spend. It does not establish physical T03.
 
+The owner-approved launch inputs also contain a bounded
+`effective_config.adapter_child_env` object for the stock Claude ACP child.
+The install plan compares its model, HTTP host, exact Messages query and test
+key digest to the reviewed B qualification. The selected adapter route must
+be one `claude-agent-acp` executable inside A's frozen runtime inventory; its
+measured file digest must equal the named adapter component digest, with no
+adapter route environment or extra argv. R checks these inputs against
+its signed launch-input digest before entering Souls. The object cannot name
+a Unix socket or temp directory: those must be derived from the verified
+per-start B assignment and R-private state. R's own environment remains the
+fixed three-variable launcher environment. This measured object alone does
+not start the stock client. The reviewed R-owned child argv, B-ready gate,
+HQ ACP stream and stop observation must be connected before a protected T03
+run can be claimed; the generic shared-account C launcher is ineligible.
+
 `stage2a-stop` waits for both dedicated role UIDs to be kernel idle, revokes
 the B proof, retires the active claim, then signs and atomically publishes a
 cutoff receipt. Stop remains available after launch approval expiry. A

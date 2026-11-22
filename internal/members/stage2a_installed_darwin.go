@@ -180,7 +180,9 @@ func loadStage2aInstalledPolicyWithLease(key ed25519.PublicKey, hqUID int, epoch
 	canonicalPlan, err := approvedPlan.Canonical()
 	if err != nil || !bytes.Equal(p.Plan, bytes.TrimSuffix(canonicalPlan, []byte{'\n'})) ||
 		p.Binding.InstalledPlanDigest != strings.TrimPrefix(stage2aReservationSHA256(canonicalPlan), "sha256:") ||
-		!stage2aInstalledPolicyMatchesPlan(p, approvedPlan, key) {
+		!stage2aInstalledPolicyMatchesPlan(p, approvedPlan, key) ||
+		stage2aAdapterChildEnv(p.LaunchInputs, &p.BridgeQualification,
+			p.Binding.Snapshots.LaunchInputs.RootPath) != nil {
 		return p, nil, errStage2aReservationAuthority
 	}
 	expiry, err := time.Parse(time.RFC3339Nano, p.ApprovedUntil)
