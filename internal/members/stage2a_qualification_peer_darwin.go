@@ -16,6 +16,7 @@ type stage2aQualificationPeerV1 struct {
 	pid, uid, gid int
 	executable    string
 	argv          []string
+	socketPath    string
 	kernel        soulKernelProcessSnapshot
 }
 

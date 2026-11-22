@@ -104,6 +104,7 @@ func (l *stage2aQualificationListenerV1) accept(ctx context.Context, pid, uid, g
 		conn.Close()
 		return nil, refused, errStage2aReservationAuthority
 	}
+	peer.socketPath = l.path
 	if conn.SetDeadline(time.Now().Add(60*time.Second)) != nil {
 		conn.Close()
 		return nil, refused, errStage2aReservationAuthority

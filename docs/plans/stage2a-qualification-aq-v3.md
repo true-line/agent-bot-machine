@@ -71,6 +71,21 @@ refuses a changed Q observation with stale transcript digests. A coherent
 replacement transcript is not yet bound by the host signature. That test
 grants no physical gate.
 
+The source-only pre-sign issuer verifies the paired framed Q session, distinct
+Q and Machine launch challenges, recorded kernel Q PID/UID/GID, process start,
+executable/argv, and the exact one-use socket path. It signs an index with the
+independently enrolled A Ed25519 key over the raw wire object's digest, the
+ordered interleaving of both directions, per-direction hashes and count,
+source/test-plan pins, and run selectors. A separate signature binds the
+finished frame, index envelope, and A-observed clean EOF with no trailing
+bytes. The A-owned sink checks the signed reservation already in its private
+claim store and publishes wire, index, then EOF receipt as three immutable
+files; the EOF receipt is the final marker. A replay of the same Q session is
+refused. Synthetic tests verify the exact stored bytes and both signatures.
+This source helper has no production caller, report reference, or physical
+verdict; the future A caller must finish this publication before asking keyd
+to sign the host report.
+
 The separate `mm-qualification-verify-release --host-v3` command parses the
 supplied owner root, policy, trusted Sigstore roots, exact release and Souls
 bundles, two host envelopes, two A pre-sign completion records, two A post-sign
@@ -82,18 +97,21 @@ check is only a diagnostic component. Machine's live acceptance path must
 also prevent policy rollback and remeasure installed adapter, runner, Soul,
 host, and Q inputs before launch.
 
+The v3 producer `mm-qualification-preflight --host-v3` path also refuses after
+its signed-chain diagnostic check and emits no success receipt. A successful
+chain and Souls build alone cannot authorize the release workflow to sign a
+qualification. The producer needs the same authenticated physical traversal
+and installed-byte binding before a v3 preflight result can be enabled.
+
 ## Open acceptance work
 
 There is no production Q account installation or A spawn/call site in this
 source slice. The composite A bundle is written after the host report and
 post-sign commitment, so it cannot be a pre-sign gate-manifest reference.
-The exact Q session bytes, clean-EOF fact, and A identity assertions still need
-a separate A-authenticated, durably sealed pre-sign index and a distinct
-finished-plus-clean-EOF receipt before the host report is signed. The index
-must bind the exact begin, ready, request, response, finish-request, and
-finished bytes, paired transcript digests, observed Q PID and
-kernel start identity, sequence and count, and A-observed EOF without trailing
-bytes. A must independently corroborate Q's raw
+The pre-sign index and EOF receipt now have source issuers and a private sink,
+but their exact digests are not yet bound into a segment attestation or signed
+host report, and no production order enforces their publication before keyd.
+A must independently corroborate Q's raw
 observations with kernel, filesystem, receipt, and ACP capture facts. The exact per-gate
 A-corroborated artifact format must bind T01, T02, T03, and the distinct
 cooperative T21 run to the signed report `gates` references and be checked by

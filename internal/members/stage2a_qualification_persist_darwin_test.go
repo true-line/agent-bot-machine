@@ -152,6 +152,7 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 	reservation, err := signStage2aEnvelope(stage2aReservationPayload{
 		Assignment: stage2aReservationAssignment{SoulStartAssignment: SoulStartAssignment{
 			InstallationID: q.InstallationID, StartID: q.StartID, LaunchID: q.LaunchID,
+			SoulID: binding.SoulID,
 			PlanID: q.PlanID, PlanDigest: q.PlanDigest, HQEpoch: q.HQEpoch}},
 		MeasurementBinding: binding,
 	}, 2, stage2aAdminReservationPurpose, machinePub, sign)
@@ -243,7 +244,7 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 		DeadlineAt: "2026-11-22T07:30:00Z",
 	}, peer: stage2aQualificationPeerV1{pid: 42, uid: 650, gid: 651},
 		sourceSHA256: sourceSHA, count: 1, validated: true,
-		cleanEOFObserved: true, eofObservedAt: now.Add(-time.Minute)}
+		cleanEOFObserved: true, eofObservedAt: now.Add(-time.Second)}
 	var stream bytes.Buffer
 	session.beginFrame, err = writeStage2aQualificationFrame(&stream, session.begin)
 	if err != nil {
@@ -286,6 +287,93 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 		"challenge_sha256": session.challengeSHA256, "sequence": 2, "observation_count": 1,
 		"observations_sha256": session.observationsSHA256, "captured_at": "2026-11-22T06:00:00.120Z",
 	})
+	session.peer.socketPath = "/private/tmp/q-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock"
+	session.peer.executable = "/usr/local/bin/node"
+	session.peer.argv = []string{session.peer.executable, "/opt/q/qualification-runner.mjs", "--once"}
+	session.peer.kernel = soulKernelProcessSnapshot{
+		PID: 42, ParentPID: 40, ProcessGroupID: 42, StartSeconds: 1795327200,
+		RealUID: 650, EffectiveUID: 650, SavedUID: 650,
+		RealGID: 651, PrimaryGroupGID: 651, SavedGID: 651,
+	}
+	launchChallengeSHA := "sha256:" + strings.Repeat("f", 64)
+	wire, index, eofReceipt, err := issueStage2aQualificationPreSignV1(session,
+		launchChallengeSHA, now, machinePub, sign)
+	if err != nil {
+		t.Fatalf("synthetic Q pre-sign source refused: %v", err)
+	}
+	indexPayload, err := verifyStage2aStoredARecordV3(index, stage2aQualificationIndexPurposeV1, 1, machinePub)
+	if err != nil {
+		t.Fatalf("A-signed Q index refused: %v", err)
+	}
+	eofPayload, err := verifyStage2aStoredARecordV3(eofReceipt, stage2aQualificationEOFPurposeV1, 1, machinePub)
+	if err != nil {
+		t.Fatalf("distinct A-signed Q EOF receipt refused: %v", err)
+	}
+	var indexed stage2aQualificationPreSignIndexV1
+	var finalized stage2aQualificationEOFReceiptV1
+	var framed stage2aQualificationWireV1
+	if json.Unmarshal(indexPayload, &indexed) != nil || json.Unmarshal(eofPayload, &finalized) != nil ||
+		json.Unmarshal(wire, &framed) != nil ||
+		indexed.WireSHA256 != stage2aQualificationSHA256(wire) ||
+		indexed.OrderedFramesSHA256 != stage2aQualificationSHA256(bytes.Join([][]byte{
+			session.beginFrame, session.readyFrame, session.requestFrames, session.observationFrames,
+			session.finishRequestFrame, session.finishedFrame,
+		}, nil)) ||
+		indexed.QChallengeSHA256 == indexed.LaunchChallengeSHA256 ||
+		indexed.QPID != 42 || indexed.QStartSeconds != session.peer.kernel.StartSeconds ||
+		indexed.QSocketPath != session.peer.socketPath ||
+		indexed.ObservationCount != 1 ||
+		framed.ReadyFrameBase64URL != base64.RawURLEncoding.EncodeToString(session.readyFrame) ||
+		framed.RequestFramesBase64URL != base64.RawURLEncoding.EncodeToString(session.requestFrames) ||
+		framed.ObservationFramesBase64URL != base64.RawURLEncoding.EncodeToString(session.observationFrames) ||
+		framed.FinishedFrameBase64URL != base64.RawURLEncoding.EncodeToString(session.finishedFrame) ||
+		finalized.IndexEnvelopeSHA256 != stage2aQualificationSHA256(index) ||
+		finalized.WireSHA256 != indexed.WireSHA256 ||
+		!finalized.CleanEOFObserved || !finalized.NoTrailingBytes ||
+		finalized.EOFObservedAt != session.eofObservedAt.Format(time.RFC3339Nano) {
+		t.Fatal("A pre-sign index or distinct EOF receipt lost exact Q provenance")
+	}
+	if _, _, _, err := issueStage2aQualificationPreSignV1(session,
+		session.challengeSHA256, now, machinePub, sign); err == nil {
+		t.Fatal("Q challenge reused Machine launch challenge")
+	}
+	missingEOF := session
+	missingEOF.cleanEOFObserved = false
+	if _, _, _, err := issueStage2aQualificationPreSignV1(missingEOF,
+		launchChallengeSHA, now, machinePub, sign); err == nil {
+		t.Fatal("Q pre-sign evidence issued without A-observed EOF")
+	}
+	wrongStart := session
+	wrongStart.peer.kernel.StartSeconds = 0
+	if _, _, _, err := issueStage2aQualificationPreSignV1(wrongStart,
+		launchChallengeSHA, now, machinePub, sign); err == nil {
+		t.Fatal("Q pre-sign evidence issued without kernel start identity")
+	}
+	wrongSocket := session
+	wrongSocket.peer.socketPath = ""
+	if _, _, _, err := issueStage2aQualificationPreSignV1(wrongSocket,
+		launchChallengeSHA, now, machinePub, sign); err == nil {
+		t.Fatal("Q pre-sign evidence issued without one-use socket path")
+	}
+	preSign, err := persistStage2aQualificationPreSignV1(store, session, reservation,
+		launchChallengeSHA, now, machinePub, sign)
+	if err != nil {
+		t.Fatalf("A-owned Q pre-sign objects were not published: %v", err)
+	}
+	for path, digest := range map[string]string{
+		preSign.WirePath:       preSign.WireSHA256,
+		preSign.IndexPath:      preSign.IndexSHA256,
+		preSign.EOFReceiptPath: preSign.EOFReceiptSHA256,
+	} {
+		stored, readErr := os.ReadFile(path)
+		if readErr != nil || stage2aQualificationSHA256(stored) != digest {
+			t.Fatalf("A-owned Q pre-sign object mismatch: %s: %v", path, readErr)
+		}
+	}
+	if _, err := persistStage2aQualificationPreSignV1(store, session, reservation,
+		launchChallengeSHA, now, machinePub, sign); err == nil {
+		t.Fatal("spent Q pre-sign session was published twice")
+	}
 	path, digest, err := persistStage2aQualificationBundleV3(store, q, binding, session,
 		sourceSHA, testPlanSHA, "reviewed-cohort", []string{"/private/tmp"}, 650, 651,
 		reservation, finalization, stop, pre, host, post, policy, machinePub, now)
