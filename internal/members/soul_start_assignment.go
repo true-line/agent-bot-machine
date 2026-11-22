@@ -59,8 +59,10 @@ func startEndpoint(e SoulEndpoint) SoulStartEndpoint {
 var soulLaunchID = regexp.MustCompile(`^ln_[0-9a-f]{24}$`)
 
 // PrepareSoulStartAssignment binds a short-lived start to the two reviewed
-// principals and Machine-derived endpoint names. The caller must first load
-// the installed plan and verify its root receipt and live roles; the eventual
+// principals and Machine-derived endpoint names. PackageSHA256 is copied from
+// a proposed review field, not measured from a canonical .soul artifact.
+// The caller must first load the installed plan and verify its root receipt,
+// accepted owner policy and live roles; the eventual
 // reservation operation must additionally consume this start durably before
 // returning a Machine-signed response. No such operation exists yet.
 func PrepareSoulStartAssignment(r SoulRunner, b SoulBridge, hqUID, machineUID int,
