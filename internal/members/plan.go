@@ -41,10 +41,11 @@ const (
 	DarwinHQAccount = "_agent-bot-hq"
 	// DarwinHQHomeBase holds the HQ account's home on macOS, named without
 	// the underscore: /var/agent-bot-hq.
-	DarwinHQHomeBase      = "/var"
-	DarwinNoLoginShell    = "/usr/bin/false"
-	darwinHarnessRoleName = "Agent Bot Harness"
-	darwinHQRoleName      = "Agent Bot HQ"
+	DarwinHQHomeBase         = "/var"
+	DarwinNoLoginShell       = "/usr/bin/false"
+	darwinHarnessRoleName    = "Agent Bot Harness"
+	darwinSoulRunnerRoleName = "Agent Bot Soul Runner"
+	darwinHQRoleName         = "Agent Bot HQ"
 	// DarwinDir preserves account-only macOS plans and their existing digests.
 	DarwinDir       = "none"
 	DarwinBrokerDir = launchRuntimeDir + "/ipc"
@@ -93,6 +94,7 @@ const (
 // Input is what the owner asked for.
 type Input struct {
 	HarnessAccounts    bool
+	SoulRunnerAccounts []SoulRunnerAccount
 	upgradeObservation *upgradeObservation
 	UpgradeFrom        *priorServicePlan
 	HarnessLaunch      *HarnessPolicyRecord
@@ -191,12 +193,13 @@ type Step struct {
 
 // Plan is the exact request the owner approves.
 type Plan struct {
-	Version   int      `json:"version"`
-	HQAccount string   `json:"hq_account"`
-	Dir       string   `json:"dir"`
-	Members   []string `json:"members"`
-	Steps     []Step   `json:"steps"`
-	Purpose   string   `json:"purpose,omitempty"`
+	Version     int                 `json:"version"`
+	HQAccount   string              `json:"hq_account"`
+	Dir         string              `json:"dir"`
+	Members     []string            `json:"members"`
+	Steps       []Step              `json:"steps"`
+	Purpose     string              `json:"purpose,omitempty"`
+	SoulRunners []SoulRunnerAccount `json:"soul_runners,omitempty"`
 }
 
 // Refusal is a host or request the plan will not touch. Code is one of the
@@ -277,6 +280,9 @@ func Normalize(in Input) (Input, error) {
 
 // Build reads the host and returns the plan for in. It changes nothing.
 func Build(in Input, h Host) (Plan, error) {
+	if in.SoulRunnerAccounts != nil {
+		return buildSoulRunnerAccounts(in, h)
+	}
 	in, err := Normalize(in)
 	if err != nil {
 		return Plan{}, err

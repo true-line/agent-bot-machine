@@ -169,6 +169,11 @@ func (h Hooks) reply(req Request) Response {
 			return deviceUnavailable()
 		}
 		return h.HQDevice(req)
+	case soulRunnerAccountsVerb:
+		if h.ServiceRecovery == nil {
+			return refused(diag.DaemonUnimplemented, "service recovery is unavailable")
+		}
+		return h.ServiceRecovery(req)
 	case recoveryVerb, upgradeVerb, harnessAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb:
 		if h.ServiceRecovery == nil {
 			return refused(diag.DaemonUnimplemented, "service recovery is unavailable")
