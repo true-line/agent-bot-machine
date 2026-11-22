@@ -102,7 +102,7 @@ func claimSoulStartOnceFile(path string, claim soulStartClaim) error {
 // until the installed authority and active-installation lock are implemented.
 // The root-only directory must be created by a separate owner-reviewed grant.
 func claimSoulStartOnce(claim soulStartClaim) error {
-	if os.Geteuid() != 0 {
+	if os.Getuid() != 0 || os.Geteuid() != 0 || os.Getgid() != 0 || os.Getegid() != 0 {
 		return errors.New("Soul start claims require Machine administrator custody")
 	}
 	if err := trustedPath(OSHost{}, soulStartClaimsDir, true); err != nil {
