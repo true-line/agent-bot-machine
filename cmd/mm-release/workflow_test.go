@@ -166,11 +166,18 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	if rgJob.Needs != "build" {
 		t.Errorf("release-gate.needs = %v, want build", rgJob.Needs)
 	}
-	if len(rgJob.Steps) == 0 || !strings.HasPrefix(rgJob.Steps[0].Uses, "actions/checkout@") || rgJob.Steps[0].With["fetch-depth"] != "${{ matrix.os == 'darwin' && 0 || 1 }}" {
-		t.Error("release-gate must fetch full history and tags on Darwin during checkout")
+	if len(rgJob.Steps) == 0 || !strings.HasPrefix(rgJob.Steps[0].Uses, "actions/checkout@") ||
+		rgJob.Steps[0].With["fetch-depth"] != "${{ matrix.os == 'darwin' && '0' || '1' }}" ||
+		rgJob.Steps[0].With["fetch-tags"] != true {
+		t.Error("release-gate must fetch full history and tags on Darwin during checkout; numeric 0 would fall through to depth 1")
 	}
-	var sawDistDL, sawRGUpload bool
+	var sawDistDL, sawRGUpload, sawHistoricalCheckout bool
 	for _, step := range rgJob.Steps {
+		if step.Name == "Verify historical release checkout (macOS)" && step.If == "matrix.os == 'darwin'" &&
+			strings.Contains(step.Run, "git show v0.9.0:Formula/managed-machine.rb") &&
+			strings.Contains(step.Run, "git rev-list --count HEAD -- Formula/managed-machine.rb") {
+			sawHistoricalCheckout = true
+		}
 		if strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.With["name"] == "dist" {
 			sawDistDL = true
 		}
@@ -178,8 +185,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 			sawRGUpload = true
 		}
 	}
-	if !sawDistDL || !sawRGUpload {
-		t.Errorf("release-gate artifacts: dist download=%v, release-gate upload=%v", sawDistDL, sawRGUpload)
+	if !sawDistDL || !sawRGUpload || !sawHistoricalCheckout {
+		t.Errorf("release-gate preparation: dist download=%v, release-gate upload=%v, historical checkout=%v", sawDistDL, sawRGUpload, sawHistoricalCheckout)
 	}
 	s6Job, ok := goCore.Jobs["s6-gate"]
 	if !ok {

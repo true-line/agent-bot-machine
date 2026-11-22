@@ -602,7 +602,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: ${{ matrix.os == 'darwin' && 0 || 1 }}
+          # Numeric 0 is falsy in Actions expressions; quoted '0' preserves
+          # the full-history Darwin checkout needed by upgrade-from-bash.
+          fetch-depth: ${{ matrix.os == 'darwin' && '0' || '1' }}
+          fetch-tags: true
+      - name: Verify historical release checkout (macOS)
+        if: matrix.os == 'darwin'
+        run: |
+          git show v0.9.0:Formula/managed-machine.rb >/dev/null
+          test "$(git rev-list --count HEAD -- Formula/managed-machine.rb)" -gt 1
       - name: Install the pinned Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
