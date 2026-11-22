@@ -16,13 +16,16 @@ import (
 	"io"
 	"math/big"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
 	HostPurpose      = "agent-bot/qualification-host-report/v1"
+	HostPurposeV2    = "agent-bot/qualification-host-report/v2"
 	PolicyPurpose    = "agent-bot/qualification-policy/v1"
+	PolicyPurposeV2  = "agent-bot/qualification-policy/v2"
 	MaxRevocationAge = 3600 * time.Second
 	MaxReportBytes   = 1 << 20
 )
@@ -58,6 +61,21 @@ type Policy struct {
 		CertificateIdentity string `json:"certificate_identity"`
 		TrustRootSHA256     string `json:"trust_root_sha256"`
 	} `json:"release_workflow"`
+	SoulsBuildWorkflow *struct {
+		ID                   string `json:"id"`
+		Repository           string `json:"repository"`
+		WorkflowPath         string `json:"workflow_path"`
+		SourceCommit         string `json:"source_commit"`
+		SourceTree           string `json:"source_tree"`
+		OIDCIssuer           string `json:"oidc_issuer"`
+		CertificateIdentity  string `json:"certificate_identity"`
+		TrustRootSHA256      string `json:"trust_root_sha256"`
+		BuilderSHA256        string `json:"builder_sha256"`
+		ToolchainSHA256      string `json:"toolchain_sha256"`
+		ReceiptPredicateType string `json:"receipt_predicate_type"`
+		BundleMediaType      string `json:"bundle_media_type"`
+		DSSEPayloadType      string `json:"dsse_payload_type"`
+	} `json:"souls_build_workflow,omitempty"`
 	EvidenceSigners []struct {
 		ID                     string `json:"id"`
 		HostID                 string `json:"host_id"`
@@ -65,10 +83,12 @@ type Policy struct {
 		PublicKeySPKIDERBase64 string `json:"public_key_spki_der_base64"`
 	} `json:"evidence_signers"`
 	RevocationSnapshot struct {
-		UpdatedAt                 string   `json:"updated_at"`
-		RevokedAttestationSHA256  []string `json:"revoked_attestation_sha256"`
-		RevokedEvidenceSignerIDs  []string `json:"revoked_evidence_signer_ids"`
-		RevokedReleaseWorkflowIDs []string `json:"revoked_release_workflow_ids"`
+		UpdatedAt                      string   `json:"updated_at"`
+		RevokedAttestationSHA256       []string `json:"revoked_attestation_sha256"`
+		RevokedEvidenceSignerIDs       []string `json:"revoked_evidence_signer_ids"`
+		RevokedReleaseWorkflowIDs      []string `json:"revoked_release_workflow_ids"`
+		RevokedSoulsBuildWorkflowIDs   []string `json:"revoked_souls_build_workflow_ids,omitempty"`
+		RevokedSoulsBuildReceiptSHA256 []string `json:"revoked_souls_build_receipt_sha256,omitempty"`
 	} `json:"revocation_snapshot"`
 	MaxRevocationAgeSeconds int `json:"max_revocation_age_seconds"`
 }
@@ -76,9 +96,27 @@ type Policy struct {
 // VerifiedPolicy can only be obtained by verifying an owner signature against
 // a root supplied by the reviewed Machine release.
 type VerifiedPolicy struct {
-	value    Policy
-	verified bool
-	at       time.Time
+	value         Policy
+	verified      bool
+	at            time.Time
+	version       int
+	payloadSHA256 string
+}
+
+// RevisionDigest is the accepted rollback checkpoint to persist atomically
+// before a protected launch. Both policy versions share this revision space.
+func (p VerifiedPolicy) RevisionDigest() (uint64, string, error) {
+	if !p.verified || p.value.PolicyRevision == 0 || !validSHA(p.payloadSHA256) {
+		return 0, "", ErrUnqualified
+	}
+	return p.value.PolicyRevision, p.payloadSHA256, nil
+}
+
+func (p VerifiedPolicy) SoulsSourceTree() string {
+	if !p.verified || p.version != 2 || p.value.SoulsBuildWorkflow == nil {
+		return ""
+	}
+	return p.value.SoulsBuildWorkflow.SourceTree
 }
 
 func digest(raw []byte) string {
@@ -212,7 +250,7 @@ func parseEnvelope(raw []byte, expected string) (Envelope, error) {
 		return Envelope{}, err
 	}
 	keys := []string{"schema_version", "purpose", "signature_base64url"}
-	if expected == PolicyPurpose {
+	if expected == PolicyPurpose || expected == PolicyPurposeV2 {
 		keys = append(keys, "owner_key_id", "policy_sha256", "policy_base64url")
 	} else {
 		keys = append(keys, "host_id", "signer_id", "report_sha256", "report_base64url")
@@ -226,7 +264,11 @@ func parseEnvelope(raw []byte, expected string) (Envelope, error) {
 		}
 	}
 	var e Envelope
-	if json.Unmarshal(raw, &e) != nil || e.SchemaVersion != 1 || e.Purpose != expected {
+	version := 1
+	if expected == HostPurposeV2 || expected == PolicyPurposeV2 {
+		version = 2
+	}
+	if json.Unmarshal(raw, &e) != nil || e.SchemaVersion != version || e.Purpose != expected {
 		return Envelope{}, ErrUnqualified
 	}
 	return e, nil
@@ -251,11 +293,26 @@ func parseTime(s string) (time.Time, error) {
 // highest and acceptedDigest come from the protected persisted policy state.
 // Equal revisions may be reused only with exactly the previously accepted bytes.
 func VerifyOwnerPolicy(envelope []byte, ownerKeyID string, root ed25519.PublicKey, highest uint64, acceptedDigest string, now time.Time) (VerifiedPolicy, error) {
+	return verifyOwnerPolicyVersion(envelope, ownerKeyID, root, highest, acceptedDigest, now, 1)
+}
+
+// VerifyOwnerPolicyV2 authenticates the distinct bridge-aware owner policy,
+// including its separate Souls build root and approved source tree.
+func VerifyOwnerPolicyV2(envelope []byte, ownerKeyID string, root ed25519.PublicKey, highest uint64, acceptedDigest string, now time.Time) (VerifiedPolicy, error) {
+	return verifyOwnerPolicyVersion(envelope, ownerKeyID, root, highest, acceptedDigest, now, 2)
+}
+
+func verifyOwnerPolicyVersion(envelope []byte, ownerKeyID string, root ed25519.PublicKey, highest uint64, acceptedDigest string, now time.Time, version int) (VerifiedPolicy, error) {
 	var zero Policy
-	if len(root) != ed25519.PublicKeySize || now.IsZero() {
+	if len(root) != ed25519.PublicKeySize || now.IsZero() ||
+		(highest == 0 && acceptedDigest != "") || (highest > 0 && !validSHA(acceptedDigest)) {
 		return VerifiedPolicy{}, ErrUnqualified
 	}
-	e, err := parseEnvelope(envelope, PolicyPurpose)
+	purpose := PolicyPurpose
+	if version == 2 {
+		purpose = PolicyPurposeV2
+	}
+	e, err := parseEnvelope(envelope, purpose)
 	if err != nil || e.OwnerKeyID != ownerKeyID {
 		return VerifiedPolicy{}, ErrUnqualified
 	}
@@ -267,20 +324,28 @@ func VerifyOwnerPolicy(envelope []byte, ownerKeyID string, root ed25519.PublicKe
 	if err != nil {
 		return VerifiedPolicy{}, err
 	}
-	if !hasFields(fields, "contract", "kind", "policy_revision", "owner_key_id", "issued_at", "expires_at", "release_workflow", "evidence_signers", "revocation_snapshot", "max_revocation_age_seconds") {
+	policyFields := []string{"contract", "kind", "policy_revision", "owner_key_id", "issued_at", "expires_at", "release_workflow", "evidence_signers", "revocation_snapshot", "max_revocation_age_seconds"}
+	if version == 2 {
+		policyFields = append(policyFields, "souls_build_workflow")
+	}
+	if !hasFields(fields, policyFields...) {
 		return VerifiedPolicy{}, ErrUnqualified
 	}
 	var snapshotFields map[string]json.RawMessage
-	if json.Unmarshal(fields["revocation_snapshot"], &snapshotFields) != nil || !hasFields(snapshotFields, "updated_at", "revoked_attestation_sha256", "revoked_evidence_signer_ids", "revoked_release_workflow_ids") {
+	snapshotNames := []string{"updated_at", "revoked_attestation_sha256", "revoked_evidence_signer_ids", "revoked_release_workflow_ids"}
+	if version == 2 {
+		snapshotNames = append(snapshotNames, "revoked_souls_build_workflow_ids", "revoked_souls_build_receipt_sha256")
+	}
+	if json.Unmarshal(fields["revocation_snapshot"], &snapshotFields) != nil || !hasFields(snapshotFields, snapshotNames...) {
 		return VerifiedPolicy{}, ErrUnqualified
 	}
 	sig, err := decode(e.SignatureBase64URL, ed25519.SignatureSize)
-	if err != nil || len(sig) != ed25519.SignatureSize || !ed25519.Verify(root, preimage(PolicyPurpose, raw), sig) {
+	if err != nil || len(sig) != ed25519.SignatureSize || !ed25519.Verify(root, preimage(purpose, raw), sig) {
 		return VerifiedPolicy{}, ErrUnqualified
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&zero) != nil || zero.Contract != "control/v1" || zero.Kind != "qualification-trust-policy" || zero.OwnerKeyID != ownerKeyID || zero.PolicyRevision < highest || zero.PolicyRevision == 0 || zero.MaxRevocationAgeSeconds != 3600 {
+	if decoder.Decode(&zero) != nil || zero.Contract != "control/v"+strconv.Itoa(version) || zero.Kind != "qualification-trust-policy" || zero.OwnerKeyID != ownerKeyID || zero.PolicyRevision < highest || zero.PolicyRevision == 0 || zero.MaxRevocationAgeSeconds != 3600 {
 		return VerifiedPolicy{}, ErrUnqualified
 	}
 	if highest > 0 && zero.PolicyRevision == highest && digest(raw) != acceptedDigest {
@@ -317,7 +382,26 @@ func VerifyOwnerPolicy(envelope []byte, ownerKeyID string, root ed25519.PublicKe
 			return VerifiedPolicy{}, ErrUnqualified
 		}
 	}
-	return VerifiedPolicy{value: zero, verified: true, at: now}, nil
+	if version == 2 {
+		build := zero.SoulsBuildWorkflow
+		if build == nil || build.ID == "" || build.Repository != "true-line/agent-bot-souls" ||
+			!validWorkflowPath(build.WorkflowPath) || !validHex(build.SourceCommit, 40) || !validHex(build.SourceTree, 40) ||
+			!httpsURL(build.OIDCIssuer) || !httpsURL(build.CertificateIdentity) ||
+			!validSHA(build.TrustRootSHA256) || !validSHA(build.BuilderSHA256) || !validSHA(build.ToolchainSHA256) ||
+			build.ReceiptPredicateType != "https://true-line.ai/soul-contracts/adapter/v2/souls-build" ||
+			build.BundleMediaType != bundleMediaType || build.DSSEPayloadType != DSSEPayloadType {
+			return VerifiedPolicy{}, ErrUnqualified
+		}
+		for _, revoked := range zero.RevocationSnapshot.RevokedSoulsBuildWorkflowIDs {
+			if revoked == build.ID {
+				return VerifiedPolicy{}, ErrUnqualified
+			}
+		}
+		if !validRevocationLists(zero) {
+			return VerifiedPolicy{}, ErrUnqualified
+		}
+	}
+	return VerifiedPolicy{value: zero, verified: true, at: now, version: version, payloadSHA256: digest(raw)}, nil
 }
 
 func validHex(s string, n int) bool {
@@ -326,6 +410,47 @@ func validHex(s string, n int) bool {
 	}
 	_, err := hex.DecodeString(s)
 	return err == nil
+}
+
+func validWorkflowPath(value string) bool {
+	if !strings.HasPrefix(value, ".github/workflows/") {
+		return false
+	}
+	name := strings.TrimPrefix(value, ".github/workflows/")
+	if name == "" || strings.Contains(name, "..") || !(strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml")) {
+		return false
+	}
+	for _, c := range name {
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+			(c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func validRevocationLists(policy Policy) bool {
+	digests := [][]string{policy.RevocationSnapshot.RevokedAttestationSHA256, policy.RevocationSnapshot.RevokedSoulsBuildReceiptSHA256}
+	ids := [][]string{policy.RevocationSnapshot.RevokedEvidenceSignerIDs, policy.RevocationSnapshot.RevokedReleaseWorkflowIDs, policy.RevocationSnapshot.RevokedSoulsBuildWorkflowIDs}
+	for _, list := range digests {
+		seen := map[string]bool{}
+		for _, item := range list {
+			if !validSHA(item) || seen[item] {
+				return false
+			}
+			seen[item] = true
+		}
+	}
+	for _, list := range ids {
+		seen := map[string]bool{}
+		for _, item := range list {
+			if !reportID.MatchString(item) || seen[item] {
+				return false
+			}
+			seen[item] = true
+		}
+	}
+	return true
 }
 
 func hasFields(fields map[string]json.RawMessage, names ...string) bool {
@@ -348,11 +473,25 @@ func httpsURL(s string) bool {
 // VerifyHostReport checks exact canonical report bytes and its designated
 // Secure Enclave signature under the already verified owner policy.
 func VerifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time) ([]byte, error) {
+	return verifyHostReport(envelope, verified, now, HostPurpose, 1, reportShape)
+}
+
+// VerifyHostReportV2 authenticates the distinct bridge-aware protected report.
+// It validates the signed claims; a live Machine observation and release
+// attestation are still required before a protected launch.
+func VerifyHostReportV2(envelope []byte, verified VerifiedPolicy, now time.Time) ([]byte, error) {
+	if verified.version != 2 {
+		return nil, ErrUnqualified
+	}
+	return verifyHostReport(envelope, verified, now, HostPurposeV2, 2, reportShapeV2)
+}
+
+func verifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time, purpose string, version int, shape func([]byte) error) ([]byte, error) {
 	if !verified.verified || !verified.at.Equal(now) || now.IsZero() {
 		return nil, ErrUnqualified
 	}
 	policy := verified.value
-	e, err := parseEnvelope(envelope, HostPurpose)
+	e, err := parseEnvelope(envelope, purpose)
 	if err != nil {
 		return nil, err
 	}
@@ -364,10 +503,13 @@ func VerifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time) (
 	if err != nil {
 		return nil, err
 	}
-	if err := reportShape(raw); err != nil {
+	if err := shape(raw); err != nil {
 		return nil, err
 	}
 	required := []string{"adapter", "checks", "cost_bound", "evaluation_cells", "gates", "harness", "host", "launch", "outcome", "profile_in_force", "recorded_at", "renders", "run_id", "runner", "schema_version", "soul_start", "suite_revision"}
+	if version == 2 {
+		required = append(required, "bridge")
+	}
 	if len(fields) != len(required) {
 		return nil, ErrUnqualified
 	}
@@ -405,7 +547,7 @@ func VerifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time) (
 			Outcome string `json:"outcome"`
 		} `json:"gates"`
 	}
-	if json.Unmarshal(raw, &report) != nil || report.SchemaVersion != 1 || report.Outcome != "pass" || report.RunID == "" || len(report.SuiteRevision) != 40 || report.Runner.BinaryPath == "" || !validSHA(report.Runner.BinarySHA256) || report.SoulStart.Initiator != "hq" || report.SoulStart.HQLaunchReceipt.URI == "" || !validSHA(report.SoulStart.HQLaunchReceipt.SHA256) || report.SoulStart.MachineObservation.URI == "" || !validSHA(report.SoulStart.MachineObservation.SHA256) {
+	if json.Unmarshal(raw, &report) != nil || report.SchemaVersion != version || report.Outcome != "pass" || report.RunID == "" || len(report.SuiteRevision) != 40 || report.Runner.BinaryPath == "" || !validSHA(report.Runner.BinarySHA256) || report.SoulStart.Initiator != "hq" || report.SoulStart.HQLaunchReceipt.URI == "" || !validSHA(report.SoulStart.HQLaunchReceipt.SHA256) || report.SoulStart.MachineObservation.URI == "" || !validSHA(report.SoulStart.MachineObservation.SHA256) {
 		return nil, ErrUnqualified
 	}
 	recorded, err := parseTime(report.RecordedAt)
@@ -474,7 +616,7 @@ func VerifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time) (
 	if err != nil || len(sig) != 64 {
 		return nil, ErrUnqualified
 	}
-	message := sha256.Sum256(preimage(HostPurpose, raw))
+	message := sha256.Sum256(preimage(purpose, raw))
 	if !ecdsa.Verify(key, message[:], new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:])) {
 		return nil, ErrUnqualified
 	}

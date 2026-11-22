@@ -137,6 +137,40 @@ past preflight success cannot be replayed as a Machine acceptance decision.
 Machine independently rechecks policy rollback state, the signed final bundle,
 installed bytes and live physical evidence before any qualification can count.
 
+The bridge-aware v2 contract uses a distinct fixed host-report purpose,
+`agent-bot/qualification-host-report/v2`, for a protected report that names
+the per-installation B/R/C principals, three endpoint custody observations,
+B-only inherited-FD handoff, actual HQ broker HMAC bind and stop/replay
+results. The v1 report remains a separate cooperative T21 input and cannot
+qualify protected T03. The optional `-bridge-v2` flag selects the v2
+qualification and Statement shape in both read-only tools; it must fail until
+Machine can verify an owner-pinned v2 policy and the separately signed Souls
+build receipt against the approved source tree. A matching bundle digest or
+schema-valid fixture is insufficient. The current v1 policy has no Souls
+build trust anchor, and the v2 tools do not authorize launch or act as an HQ
+readiness oracle.
+The reviewed Machine release must carry the separate Souls build Sigstore
+root at `trust/qualification/souls-trusted-root.json`, with its exact SHA-256
+in the owner-signed v2 policy. The `-bridge-v2` preflight and offline verify
+commands require `-souls-build-bundle`, `-souls-package` and
+`-souls-trusted-root` local files; the package is hashed with a 256 MiB limit.
+No production root or signed Souls receipt is present in this worktree.
+Private R2 storage, if used, transports release evidence before installation;
+it is not an HQ, Soul or Machine runtime dependency. Installed protected
+admission must verify the pinned roots, signed policy, release bundle, Souls
+receipt, exact installed bytes and retained physical observations from local
+inputs with no R2 or network fetch. An unavailable evidence store does not
+invalidate otherwise current installed inputs. A missing revocation snapshot
+or one more than 3,600 seconds old independently refuses protected admission;
+it is not an HQ or cooperative-profile cloud outage. The current tools verify
+local policy and report bindings. The installed admission and evidence
+resolver remain unimplemented, and protected launch stays closed.
+Before live protected admission, Machine must load the protected highest
+accepted policy revision and canonical payload digest shared across v1/v2,
+pass them to `VerifyOwnerPolicyV2`, and atomically persist its authenticated
+`RevisionDigest` checkpoint. The standalone CLI uses no installed rollback
+state and is archival evidence only.
+
 The separate `mm-qualification-verify-release` diagnostic command accepts
 those same owner root, key ID, policy, qualification and two host-envelope
 files, plus `-trusted-root` for the exact local Sigstore root JSON, `-bundle`
