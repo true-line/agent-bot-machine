@@ -331,6 +331,25 @@ start record, exact kernel UID and process group closure before the protected
 route can open. The two-account fixture remains component evidence; protected
 T03 requires the separately qualified physical host run.
 
+To review runner principals, provide `managed-machine members plan
+--soul-runner-provision <installations.json>` with a `runners` array. Each row
+contains `soul_id`, `installation_id` and `account`; Machine derives the exact
+account name from the installation ID and refuses a different name. It accepts
+the existing HQ/Souls installation ID format, including IDs created before
+this command. The plan names every Soul and installation, the chosen numeric
+UID/GID, and a distinct 0700 home under `/var/agent-bot-soul-runner-*`.
+For an existing managed role, Machine also searches the effective Directory
+Services node for the numeric UID, private GID and primary-group users. Any
+alias, missing record or unavailable search refuses the plan, since a second
+name for that UID would be the same kernel principal.
+The paired HQ exports this plan with the `soul-runner-provision` owner-proof
+purpose, and the prefix administrator applies the exact approved digest with
+`sudo managed-machine members apply <plan-id>`. An interrupted apply consumes
+its receipt; plan and review only the remaining changes. An affirmative
+`applied` receipt is finalized only while that pairing and approval are still
+live; revocation before finalization leaves a spent `started` claim. This
+operation does not install a launch route or authorize any package to run.
+
 ### What is created
 
 For an HQ account `H` and each listed harness credential account `M`:

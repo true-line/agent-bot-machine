@@ -22,6 +22,8 @@ func currentPairedServicePlan(verb, home, owner, id, digest string, uid int) (st
 	switch verb {
 	case harnessAccountsVerb:
 		err = members.CheckDarwinHarnessAccounts(saved, owner, uid)
+	case soulRunnerAccountsVerb:
+		err = members.CheckDarwinSoulRunnerAccounts(saved, owner, uid)
 	case harnessInstallVerb, harnessRetireVerb:
 		err = members.CheckDarwinHarnessLaunch(saved, verb, owner, uid)
 	case harnessQualificationVerb:
