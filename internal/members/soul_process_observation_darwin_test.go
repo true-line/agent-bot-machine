@@ -6,21 +6,16 @@ import (
 	"encoding/binary"
 	"os"
 	"os/exec"
-	"reflect"
 	"testing"
 )
 
-func TestSoulProcessArgumentsObservedWithoutEnvironment(t *testing.T) {
-	process, err := observeSoulProcess(os.Getpid())
+func TestSoulProcessArgumentsMatchApprovedLaunchWithoutReturningStrings(t *testing.T) {
+	process, err := observeSoulProcess(os.Getpid(), os.Args[0], os.Args)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if process.Kernel.PID != os.Getpid() || process.Kernel.EffectiveUID != uint32(os.Geteuid()) {
 		t.Fatalf("current process kernel identity differs: %+v", process.Kernel)
-	}
-	observed := process.Arguments
-	if observed.ExecPath == "" || !reflect.DeepEqual(observed.Argv, os.Args) {
-		t.Fatalf("current process arguments differ: path=%q argv=%q want=%q", observed.ExecPath, observed.Argv, os.Args)
 	}
 	child := exec.Command("/bin/sleep", "5")
 	if err := child.Start(); err != nil {
@@ -30,16 +25,18 @@ func TestSoulProcessArgumentsObservedWithoutEnvironment(t *testing.T) {
 		_ = child.Process.Kill()
 		_ = child.Wait()
 	}()
-	process, err = observeSoulProcess(child.Process.Pid)
+	process, err = observeSoulProcess(child.Process.Pid, "/bin/sleep", []string{"/bin/sleep", "5"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if process.Kernel.ParentPID != os.Getpid() {
 		t.Fatalf("child process parent differs: %+v", process.Kernel)
 	}
-	observed = process.Arguments
-	if observed.ExecPath != "/bin/sleep" || !reflect.DeepEqual(observed.Argv, []string{"/bin/sleep", "5"}) {
-		t.Fatalf("child process arguments differ: %+v", observed)
+	if err := observeSoulProcessArguments(child.Process.Pid, "/bin/sleep", []string{"/bin/sleep", "6"}); err == nil {
+		t.Fatal("unexpected argv accepted")
+	}
+	if err := observeSoulProcessArguments(child.Process.Pid, "/bin/echo", []string{"/bin/sleep", "5"}); err == nil {
+		t.Fatal("unexpected exec path accepted")
 	}
 }
 
@@ -47,9 +44,8 @@ func TestSoulProcessArgumentsRejectsMalformedArea(t *testing.T) {
 	valid := make([]byte, 4)
 	binary.NativeEndian.PutUint32(valid, 2)
 	valid = append(valid, []byte("/bin/sleep\x00\x00\x00\x00\x00\x00/bin/sleep\x005\x00SECRET=value\x00")...)
-	got, err := parseSoulProcessArguments(valid)
-	if err != nil || got.ExecPath != "/bin/sleep" || !reflect.DeepEqual(got.Argv, []string{"/bin/sleep", "5"}) {
-		t.Fatalf("valid area refused: %+v: %v", got, err)
+	if err := matchSoulProcessArguments(valid, "/bin/sleep", []string{"/bin/sleep", "5"}); err != nil {
+		t.Fatalf("valid area refused: %v", err)
 	}
 	for name, mutate := range map[string]func([]byte) []byte{
 		"short":      func([]byte) []byte { return []byte{1, 2, 3} },
@@ -72,7 +68,7 @@ func TestSoulProcessArgumentsRejectsMalformedArea(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			copyOfValid := append([]byte(nil), valid...)
-			if _, err := parseSoulProcessArguments(mutate(copyOfValid)); err == nil {
+			if err := matchSoulProcessArguments(mutate(copyOfValid), "/bin/sleep", []string{"/bin/sleep", "5"}); err == nil {
 				t.Fatal("malformed process arguments accepted")
 			}
 		})
@@ -102,10 +98,28 @@ func TestSoulProcessArgumentsRefusesLiveEmptyArgv(t *testing.T) {
 			if _, err := observeSoulKernelProcess(child.Process.Pid); err != nil {
 				t.Fatalf("child was not live before argv check: %v", err)
 			}
-			if _, err := observeSoulProcessArguments(child.Process.Pid); err == nil {
-				t.Fatal("empty argv was accepted")
+			if _, err := observeSoulProcess(child.Process.Pid, example.path, example.args); err == nil {
+				t.Fatal("empty approved argv accepted")
 			}
 		})
+	}
+}
+
+func TestSoulProcessArgumentsEnvironmentBoundaryLimitation(t *testing.T) {
+	// A Darwin snapshot can omit the empty final argv delimiter. The bytes
+	// after argv[0] may then start with an environment string. This observer
+	// must refuse ordinary expected argv and never return those bytes.
+	raw := make([]byte, 4)
+	binary.NativeEndian.PutUint32(raw, 2)
+	raw = append(raw, []byte("/bin/sleep\x00\x00\x00\x00\x00\x00/bin/sleep\x00ABM_SECRET_TEST=not-for-output\x00")...)
+	if err := matchSoulProcessArguments(raw, "/bin/sleep", []string{"/bin/sleep", "5"}); err == nil {
+		t.Fatal("environment bytes accepted as ordinary expected argv")
+	}
+	// Exact equality is structurally ambiguous in kern.procargs2. This
+	// successful comparison cannot authorize a launch; the signed launcher
+	// and independently measured exec inputs remain mandatory.
+	if err := matchSoulProcessArguments(raw, "/bin/sleep", []string{"/bin/sleep", "ABM_SECRET_TEST=not-for-output"}); err != nil {
+		t.Fatalf("boundary ambiguity changed; review admission proof: %v", err)
 	}
 }
 
