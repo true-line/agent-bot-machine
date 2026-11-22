@@ -88,6 +88,16 @@ This source helper has no production caller, report reference, or physical
 verdict; the future A caller must finish this publication before asking keyd
 to sign the host report.
 
+The portable `VerifyQPreSignV3` offline component accepts exact local wire,
+index, EOF receipt, and reservation envelope bytes plus an independently
+enrolled A Ed25519 key. It verifies both distinct signature purposes, canonical
+bounded payloads, the reservation's launch challenge, the A-signed one-use Q
+socket and kernel identity fields, all length-prefixed frames and ordered transcript hashes,
+request/observation pairing, and a signed clean EOF. It returns selectors and
+digests for later joins, without a gate verdict. The caller must still bind
+these digests to an A-signed physical segment and the host report, then verify
+installed inputs, raw ACP/OS evidence, and physical results before acceptance.
+
 The separate `mm-qualification-verify-release --host-v3` command parses the
 supplied owner root, policy, trusted Sigstore roots, exact release and Souls
 bundles, two host envelopes, two A pre-sign completion records, two A post-sign
