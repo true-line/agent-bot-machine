@@ -18,6 +18,16 @@ unsafe extern "C" {
 }
 
 fn valid_p256_spki(der: &[u8]) -> bool {
+    // RFC 5480 P-256 SPKI with an uncompressed SEC1 point. Requiring the
+    // fixed DER wrapper excludes extra attributes and trailing bytes; the
+    // native check below validates that the point is actually on the curve.
+    const PREFIX: [u8; 27] = [
+        0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08,
+        0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04,
+    ];
+    if der.len() != 91 || !der.starts_with(&PREFIX) {
+        return false;
+    }
     #[cfg(target_os = "macos")]
     {
         der.len() <= 8192
@@ -210,14 +220,40 @@ fn https_url(value: &str) -> bool {
     let Some(rest) = value.strip_prefix("https://") else {
         return false;
     };
-    if value.contains('#') || value.bytes().any(|b| b <= 0x20 || b == 0x7f) {
+    // The release identity is a DNS URL. Reject ambiguous authority syntax
+    // and encodings before spending a signed revision; Go's net/url consumer
+    // is the final verifier and accepts this deliberately narrower form.
+    if value
+        .bytes()
+        .any(|b| b <= 0x20 || b >= 0x7f || matches!(b, b'#' | b'%' | b'\\'))
+    {
         return false;
     }
     let authority = rest.split(['/', '?']).next().unwrap_or("");
-    !authority.is_empty()
-        && !authority.contains('@')
-        && authority != ":"
-        && !authority.starts_with(':')
+    let (host, port) = authority
+        .split_once(':')
+        .map_or((authority, None), |(host, port)| (host, Some(port)));
+    if authority.contains('@') {
+        return false;
+    }
+    if let Some(port) = port {
+        if port.is_empty()
+            || !port.bytes().all(|b| b.is_ascii_digit())
+            || port.parse::<u16>().ok().filter(|p| *p > 0).is_none()
+        {
+            return false;
+        }
+    }
+    !host.is_empty()
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label.as_bytes()[0].is_ascii_alphanumeric()
+                && label.as_bytes()[label.len() - 1].is_ascii_alphanumeric()
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
 }
 
 fn validate(
@@ -385,11 +421,11 @@ pub fn sign<F: Fn() -> SystemTime>(
     seed.fill(0);
     let id = key_id(&key);
     let revision = validate(policy, revocations, &id, clock_time(clock())?)?;
-    let prior = store
+    let prior_raw = store
         .qualification_policy_state()?
         .ok_or("qualification policy state is missing")?;
     let prior: Value =
-        serde_json::from_slice(&prior).map_err(|_| "malformed qualification policy state")?;
+        serde_json::from_slice(&prior_raw).map_err(|_| "malformed qualification policy state")?;
     let state = fields(&prior, &["revision", "policy_sha256"])?;
     let prior_revision = state["revision"]
         .as_u64()
@@ -413,6 +449,11 @@ pub fn sign<F: Fn() -> SystemTime>(
     // An owner prompt can wait for two minutes. Recheck both expiry and the
     // 3,600-second snapshot limit with a fresh clock before using the key.
     validate(policy, revocations, &id, clock_time(clock())?)?;
+    if store.qualification_policy_state()?.as_deref() != Some(prior_raw.as_slice())
+        || public_root(store)?.1 != id
+    {
+        return Err("qualification key or revision state changed during owner approval".into());
+    }
     // The caller serializes this operation with the secure-admin lock. State
     // is advanced before returning signature bytes, so a failed output write
     // consumes a revision instead of allowing an unattended replay.
@@ -652,6 +693,10 @@ mod tests {
         for (field, invalid) in [
             ("workflow_path", ".github/workflows/../release.yml"),
             ("oidc_issuer", "https://"),
+            ("oidc_issuer", "https://host:bad/path"),
+            ("oidc_issuer", "https://host%2fpath"),
+            ("oidc_issuer", "https://[::1]x"),
+            ("oidc_issuer", "https://host\\evil"),
             (
                 "certificate_identity",
                 "https://user@github.com/release#fragment",
@@ -672,6 +717,25 @@ mod tests {
         }
         let mut value: Value = serde_json::from_slice(&policy).unwrap();
         value["evidence_signers"][0]["public_key_spki_der_base64"] = Value::String("AQID".into());
+        assert!(sign(
+            &store,
+            &Scripted::new(true),
+            &serde_json::to_vec(&value).unwrap(),
+            &ledger,
+            || now
+        )
+        .is_err());
+        let mut value: Value = serde_json::from_slice(&policy).unwrap();
+        let mut spki = base64::engine::general_purpose::STANDARD
+            .decode(
+                value["evidence_signers"][0]["public_key_spki_der_base64"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+        spki.push(0);
+        value["evidence_signers"][0]["public_key_spki_der_base64"] =
+            Value::String(base64::engine::general_purpose::STANDARD.encode(spki));
         assert!(sign(
             &store,
             &Scripted::new(true),
@@ -704,6 +768,25 @@ mod tests {
                 .unwrap()["revision"],
             0
         );
+    }
+
+    #[test]
+    fn state_removed_during_owner_prompt_refuses_signature() {
+        use crate::consent::{Consent, Refusal};
+        struct RemoveState(Memory);
+        impl Consent for RemoveState {
+            fn ask(&self, _: &str) -> Result<(), Refusal> {
+                self.0
+                    .remove(PIN_SERVICE, QUALIFICATION_POLICY_STATE_ACCOUNT)
+                    .unwrap();
+                Ok(())
+            }
+        }
+        let memory = Memory::default();
+        let store = Store::new(Box::new(memory.clone()));
+        let (_, id) = init_root(&store, &Scripted::new(true)).unwrap();
+        let (policy, ledger, now) = fixture(&id, "2026-11-21T21:00:00Z");
+        assert!(sign(&store, &RemoveState(memory), &policy, &ledger, || now).is_err());
     }
 
     #[cfg(target_os = "macos")]
