@@ -197,9 +197,10 @@ protected launch stops when the owner has not supplied a new authenticated
 snapshot in time. Any automated owner-authorized refresh would need a separate
 decision and review.
 
-The reviewed Machine release must include the public root, key ID, exact local
-Sigstore trusted-root JSON and `initial-policy-envelope.json` in
-`trust/qualification/`, with the latter signed by that root and pinning the
+The reviewed Machine release must include the public root, key ID,
+`trust/qualification/sigstore-trusted-root.json` as exact local Sigstore
+trusted-root bytes, and `trust/qualification/initial-policy-envelope.json`,
+with the latter signed by that root and pinning the
 trusted-root byte digest, one `true-line/soul-adapters` source commit/workflow
 identity, and the designated physical host's exported P-256 SPKI and host ID.
 The initial policy can become stale while the release is distributed; that
