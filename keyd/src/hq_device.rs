@@ -24,6 +24,11 @@ const HOST_REPORT_PURPOSE_V2: &str = "agent-bot/qualification-host-report/v2";
 
 use crate::store::{keychain_read_interaction_denied, Items};
 
+// Kept off the paired request allowlist until the notice authority and wire
+// contract are approved. Component tests exercise the custody transaction.
+#[cfg(test)]
+mod notice_custody;
+
 pub(crate) trait Enclave {
     fn check_live(&self) -> Result<(), &'static str>;
     fn proof_time(&self) -> Result<u64, &'static str> {
@@ -814,23 +819,38 @@ fn verify_receipt(
         return Err(UNAVAILABLE);
     }
     let sha = digest(&raw);
-    let key = release_key(
+    verify_signed_response(
         manifest,
-        req.receipt_kid.as_deref().ok_or(UNAVAILABLE)?,
         instant,
+        req.receipt_kid.as_deref().ok_or(UNAVAILABLE)?,
+        req.receipt_signature.as_deref().ok_or(UNAVAILABLE)?,
+        200,
+        &sha,
+        jti,
     )?;
-    let encoded = req.receipt_signature.as_deref().ok_or(UNAVAILABLE)?;
+    Ok((raw, sha, jti.into()))
+}
+
+fn verify_signed_response(
+    manifest: &str,
+    instant: Duration,
+    kid: &str,
+    encoded: &str,
+    status: u16,
+    sha: &str,
+    jti: &str,
+) -> Result<(), &'static str> {
+    let key = release_key(manifest, kid, instant)?;
     let bytes = URL.decode(encoded).map_err(|_| UNAVAILABLE)?;
     if URL.encode(&bytes) != encoded {
         return Err(UNAVAILABLE);
     }
     let sig = Signature::from_slice(&bytes).map_err(|_| UNAVAILABLE)?;
     key.verify_strict(
-        format!("agent-bot-sig-v1\n200\n{sha}\n{jti}").as_bytes(),
+        format!("agent-bot-sig-v1\n{status}\n{sha}\n{jti}").as_bytes(),
         &sig,
     )
-    .map_err(|_| UNAVAILABLE)?;
-    Ok((raw, sha, jti.into()))
+    .map_err(|_| UNAVAILABLE)
 }
 
 fn binding(
