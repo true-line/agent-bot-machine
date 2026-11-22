@@ -197,10 +197,13 @@ snapshot, and the contract's fixed fields. Keyd signs
 `ASCII("agent-bot/qualification-policy/v1") || 0x00 || policy_bytes` and emits
 the `control/v1` envelope with exact `policy_sha256`, unpadded base64url policy
 bytes and raw 64-byte Ed25519 signature encoded unpadded base64url. The
-greatest signed revision is held in a separate keyd-only Keychain item; a
+greatest signed revision is held in a separate keyd-only Keychain item, which
+is initialized to revision zero with the root. A missing item refuses all
+signing, including revision one. A
 secure-admin lock serializes signing and the revision is consumed before
 writing the create-only output file. There is no HQ signing socket. A failed
-or unattended owner prompt cannot sign or refresh a policy.
+or unattended owner prompt cannot sign or refresh a policy. Keyd rechecks
+expiry and revocation freshness against the clock after the prompt returns.
 
 The revocation source is a complete owner-reviewed ledger at
 the registered secure admin home at
