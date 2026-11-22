@@ -86,7 +86,22 @@ func runSoulRunnerAccountApply(s Saved, a Approval, owner string, h Host, deps D
 		receipt.Result, receipt.FailedAt = "failed", failedAt
 	}
 	receipt.FinishedAt = deps.Time().UTC().Format(approvalTime)
-	if err = errors.Join(err, root.Finish(s.PlanID, encodeReceipt(receipt))); err != nil {
+	finish := func() error { return root.Finish(s.PlanID, encodeReceipt(receipt)) }
+	if err == nil {
+		// An applied receipt is future launch authority. Finalize it only
+		// while the exact pairing and approval remain live.
+		err = paired(a, func() error {
+			expires, parseErr := time.Parse(approvalTime, a.ExpiresAt)
+			if parseErr != nil || !deps.Time().UTC().Before(expires) {
+				return errors.New("Soul runner approval expired before its applied receipt")
+			}
+			return finish()
+		})
+	} else {
+		// A failed receipt is diagnostic and grants no authority.
+		err = errors.Join(err, finish())
+	}
+	if err != nil {
 		return failure(diag.MembersApplyFailed, "Soul runner provisioning stopped; replan remaining work: %v", err)
 	}
 	return cli.Result{Records: []*output.Record{output.New().Set("plan_id", s.PlanID).Set("plan_digest", s.PlanDigest).

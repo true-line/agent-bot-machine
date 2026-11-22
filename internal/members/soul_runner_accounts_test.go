@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/qwts/managed-machine/internal/target"
@@ -136,6 +137,44 @@ func TestSoulRunnerAccountApplyUsesPairedExactPlan(t *testing.T) {
 		if h.accounts[runner.Account].DarwinRole != darwinSoulRunnerRoleName {
 			t.Fatal("runner role not created")
 		}
+	}
+}
+
+func TestSoulRunnerApplyRevokedBeforeAppliedReceiptKeepsSpentClaim(t *testing.T) {
+	h, runners := soulAccountFixture()
+	w := newWorld(h.fakeHost)
+	r := &soulAccountRoot{fakeRoot: w.r}
+	for name := range h.accounts {
+		r.shadow[name] = "*"
+	}
+	w.deps.Host = func() Host { return h }
+	w.deps.Root = func() Root { return r }
+	p, err := Build(Input{SoulRunnerAccounts: runners, HQAccount: DarwinHQAccount, Dir: DarwinDir, Platform: PlatformDarwin, Invoker: "owner"}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, _ := p.Digest()
+	const id = "plan-20261121T140002Z-abcd"
+	s := Saved{SoulRunnerAccounts: runners, PlanID: id, PlanDigest: digest, Plan: p}
+	a := Approval{Purpose: SoulRunnerAccountsPurpose, PlanID: id, PlanDigest: digest,
+		PairCommitment: strings.Repeat("a", 64), MachineFingerprint: strings.Repeat("a", 64),
+		ApprovedAt: w.now.Format(approvalTime), ExpiresAt: w.now.Add(ApprovalTTL).Format(approvalTime)}
+	postSteps := 0
+	paired := func(_ Approval, run func() error) error {
+		if run == nil {
+			return nil
+		}
+		if len(r.log) == 2 {
+			postSteps++
+			if postSteps == 2 {
+				return errors.New("pair revoked before applied receipt")
+			}
+		}
+		return run()
+	}
+	result := runSoulRunnerAccountApply(s, a, "owner", h, w.deps, paired)
+	if result.Diagnostic == nil || postSteps != 2 || r.receipts[id].Result != "started" {
+		t.Fatalf("revoked pair published affirmative receipt: %+v; post-step checks %d; receipt %+v", result.Diagnostic, postSteps, r.receipts[id])
 	}
 }
 

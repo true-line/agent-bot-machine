@@ -195,8 +195,10 @@ name for that UID would be the same kernel principal.
 The paired HQ exports this plan with the `soul-runner-provision` owner-proof
 purpose, and the prefix administrator applies the exact approved digest with
 `sudo managed-machine members apply <plan-id>`. An interrupted apply consumes
-its receipt; plan and review only the remaining changes. This operation does
-not install a launch route or authorize any package to run.
+its receipt; plan and review only the remaining changes. An affirmative
+`applied` receipt is finalized only while that pairing and approval are still
+live; revocation before finalization leaves a spent `started` claim. This
+operation does not install a launch route or authorize any package to run.
 
 ### What is created
 
