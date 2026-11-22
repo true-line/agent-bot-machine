@@ -11,6 +11,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const PURPOSE: &str = "agent-bot/qualification-policy/v1";
 const PURPOSE_V2: &str = "agent-bot/qualification-policy/v2";
+const PURPOSE_V3: &str = "agent-bot/qualification-policy/v3";
 const MAX_BYTES: usize = 1 << 20;
 
 #[cfg(target_os = "macos")]
@@ -217,6 +218,18 @@ fn sha(s: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+fn hex_digest(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn git_oid(s: &str) -> bool {
+    s.len() == 40
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 fn https_url(value: &str) -> bool {
     let Some(rest) = value.strip_prefix("https://") else {
         return false;
@@ -266,6 +279,106 @@ fn validate(
     validate_version(raw, revocations, expected_id, now, 1)
 }
 
+fn validate_frozen_soul_policy(p: &serde_json::Map<String, Value>) -> Result<(), String> {
+    let build = fields(
+        &p["frozen_soul_build_workflow"],
+        &[
+            "id",
+            "repository",
+            "workflow_path",
+            "source_commit",
+            "source_tree",
+            "oidc_issuer",
+            "certificate_identity",
+            "trust_root_sha256",
+            "builder_sha256",
+            "toolchain_sha256",
+            "receipt_predicate_type",
+            "bundle_media_type",
+            "dsse_payload_type",
+            "artifact_format",
+            "subject_name_template",
+            "rekor_entry_kind",
+            "rekor_entry_version",
+            "transparency_log_id",
+            "template",
+        ],
+    )?;
+    let kind = string(build, "rekor_entry_kind")?;
+    let entry_version = string(build, "rekor_entry_version")?;
+    if !identifier(string(build, "id")?)
+        || string(build, "repository")? != "true-line/soul-package"
+        || string(build, "workflow_path")? != ".github/workflows/stage2a-frozen-soul-receipt.yml"
+        || !git_oid(string(build, "source_commit")?)
+        || !git_oid(string(build, "source_tree")?)
+        || !https_url(string(build, "oidc_issuer")?)
+        || !https_url(string(build, "certificate_identity")?)
+        || !sha(string(build, "trust_root_sha256")?)
+        || !sha(string(build, "builder_sha256")?)
+        || !sha(string(build, "toolchain_sha256")?)
+        || string(build, "receipt_predicate_type")?
+            != "https://true-line.ai/soul-contracts/package/v1/frozen-soul-build"
+        || string(build, "bundle_media_type")? != "application/vnd.dev.sigstore.bundle.v0.3+json"
+        || string(build, "dsse_payload_type")? != "application/vnd.in-toto+json"
+        || string(build, "artifact_format")? != "stage2a-frozen-hello-ustar/v1"
+        || string(build, "subject_name_template")? != "sha256-{artifact_sha256}.soul"
+        || !matches!(
+            (kind, entry_version),
+            ("dsse", "0.0.1") | ("hashedrekord", "0.0.2")
+        )
+        || !hex_digest(string(build, "transparency_log_id")?)
+    {
+        return Err("frozen Soul build authority is invalid".into());
+    }
+    let template = fields(
+        &build["template"],
+        &[
+            "repository",
+            "source_commit",
+            "source_tree",
+            "path",
+            "template_tree",
+        ],
+    )?;
+    if string(template, "repository")? != "true-line/soul-conformance"
+        || !git_oid(string(template, "source_commit")?)
+        || !git_oid(string(template, "source_tree")?)
+        || string(template, "path")? != "templates/hello.soul"
+        || !git_oid(string(template, "template_tree")?)
+    {
+        return Err("frozen Soul template authority is invalid".into());
+    }
+    let mapping = fields(
+        &p["frozen_soul_mapping"],
+        &[
+            "soul_id",
+            "artifact_sha256",
+            "claimed_definition_digest",
+            "definition_measurement",
+        ],
+    )?;
+    let soul_id = string(mapping, "soul_id")?;
+    let parts: Vec<_> = soul_id
+        .strip_prefix("agent_")
+        .unwrap_or("")
+        .split('-')
+        .collect();
+    if parts.len() != 5
+        || parts.iter().zip([8, 4, 4, 4, 12]).any(|(part, len)| {
+            part.len() != len
+                || !part
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+        || !hex_digest(string(mapping, "artifact_sha256")?)
+        || !sha(string(mapping, "claimed_definition_digest")?)
+        || !sha(string(mapping, "definition_measurement")?)
+    {
+        return Err("frozen Soul artifact mapping is invalid".into());
+    }
+    Ok(())
+}
+
 fn validate_version(
     raw: &[u8],
     revocations: &[u8],
@@ -286,8 +399,11 @@ fn validate_version(
         "revocation_snapshot",
         "max_revocation_age_seconds",
     ];
-    if version == 2 {
+    if version >= 2 {
         names.push("souls_build_workflow");
+    }
+    if version == 3 {
+        names.extend(["frozen_soul_build_workflow", "frozen_soul_mapping"]);
     }
     let p = fields(&value, &names)?;
     if string(p, "contract")? != format!("control/v{version}")
@@ -344,7 +460,7 @@ fn validate_version(
     {
         return Err("release workflow identity is invalid".into());
     }
-    if version == 2 {
+    if version >= 2 {
         let build = fields(
             &p["souls_build_workflow"],
             &[
@@ -398,6 +514,9 @@ fn validate_version(
             return Err("Souls build workflow identity is invalid".into());
         }
     }
+    if version == 3 {
+        validate_frozen_soul_policy(p)?;
+    }
     let signers = p["evidence_signers"]
         .as_array()
         .filter(|v| !v.is_empty())
@@ -429,10 +548,17 @@ fn validate_version(
         "revoked_evidence_signer_ids",
         "revoked_release_workflow_ids",
     ];
-    if version == 2 {
+    if version >= 2 {
         snapshot_names.extend([
             "revoked_souls_build_workflow_ids",
             "revoked_souls_build_receipt_sha256",
+        ]);
+    }
+    if version == 3 {
+        snapshot_names.extend([
+            "revoked_frozen_soul_build_workflow_ids",
+            "revoked_frozen_soul_receipt_sha256",
+            "revoked_frozen_soul_artifact_sha256",
         ]);
     }
     let snapshot = fields(&source, &snapshot_names)?;
@@ -448,7 +574,7 @@ fn validate_version(
         ("revoked_evidence_signer_ids", identifier),
         ("revoked_release_workflow_ids", identifier),
     ];
-    if version == 2 {
+    if version >= 2 {
         revocation_lists.extend([
             (
                 "revoked_souls_build_workflow_ids",
@@ -457,6 +583,22 @@ fn validate_version(
             (
                 "revoked_souls_build_receipt_sha256",
                 sha as fn(&str) -> bool,
+            ),
+        ]);
+    }
+    if version == 3 {
+        revocation_lists.extend([
+            (
+                "revoked_frozen_soul_build_workflow_ids",
+                identifier as fn(&str) -> bool,
+            ),
+            (
+                "revoked_frozen_soul_receipt_sha256",
+                sha as fn(&str) -> bool,
+            ),
+            (
+                "revoked_frozen_soul_artifact_sha256",
+                hex_digest as fn(&str) -> bool,
             ),
         ]);
     }
@@ -478,7 +620,7 @@ fn validate_version(
     {
         return Err("release workflow is revoked".into());
     }
-    if version == 2
+    if version >= 2
         && snapshot["revoked_souls_build_workflow_ids"]
             .as_array()
             .unwrap()
@@ -486,6 +628,23 @@ fn validate_version(
             .any(|v| v.as_str() == Some(p["souls_build_workflow"]["id"].as_str().unwrap_or("")))
     {
         return Err("Souls build workflow is revoked".into());
+    }
+    if version == 3 {
+        let frozen = &p["frozen_soul_build_workflow"];
+        let mapping = &p["frozen_soul_mapping"];
+        if snapshot["revoked_frozen_soul_build_workflow_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == &frozen["id"])
+            || snapshot["revoked_frozen_soul_artifact_sha256"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == &mapping["artifact_sha256"])
+        {
+            return Err("frozen Soul workflow or artifact is revoked".into());
+        }
     }
     Ok(revision)
 }
@@ -523,7 +682,7 @@ fn sign_version<F: Fn() -> SystemTime, R: Fn() -> Result<Vec<u8>, String>>(
     version: u64,
     read_revocations: R,
 ) -> Result<Vec<u8>, String> {
-    if version != 1 && version != 2 {
+    if !(1..=3).contains(&version) {
         return Err("unsupported qualification policy version".into());
     }
     let mut seed = store.qualification_policy_seed().map_err(String::from)?;
@@ -540,16 +699,24 @@ fn sign_version<F: Fn() -> SystemTime, R: Fn() -> Result<Vec<u8>, String>>(
         .as_object()
         .is_some_and(|v| v.contains_key("policy_version"))
     {
-        2
+        prior["policy_version"]
+            .as_u64()
+            .ok_or("malformed qualification policy state")?
     } else {
         1
     };
-    let state = if prior_version == 2 {
+    let state = if prior_version >= 2 {
         fields(&prior, &["revision", "policy_sha256", "policy_version"])?
     } else {
         fields(&prior, &["revision", "policy_sha256"])?
     };
-    if prior_version == 2 && (state["policy_version"] != 2 || version != 2) {
+    if !(1..=3).contains(&prior_version)
+        || (prior_version == 1
+            && prior
+                .as_object()
+                .is_some_and(|v| v.contains_key("policy_version")))
+        || version < prior_version
+    {
         return Err("qualification policy version cannot roll back".into());
     }
     let prior_revision = state["revision"]
@@ -566,7 +733,7 @@ fn sign_version<F: Fn() -> SystemTime, R: Fn() -> Result<Vec<u8>, String>>(
         return Err("policy revision must increase".into());
     }
     let policy_digest = digest(policy);
-    let source_tree = if version == 2 {
+    let source_tree = if version >= 2 {
         let value: Value = serde_json::from_slice(policy).map_err(|_| "invalid policy JSON")?;
         format!(
             ", Souls tree {}",
@@ -577,8 +744,25 @@ fn sign_version<F: Fn() -> SystemTime, R: Fn() -> Result<Vec<u8>, String>>(
     } else {
         String::new()
     };
+    let frozen = if version == 3 {
+        let value: Value = serde_json::from_slice(policy).map_err(|_| "invalid policy JSON")?;
+        let build = &value["frozen_soul_build_workflow"];
+        let mapping = &value["frozen_soul_mapping"];
+        format!(
+            ", frozen Soul {}, artifact {}, definition {}, frozen builder {} at {}, root {}, Rekor log {}",
+            mapping["soul_id"].as_str().ok_or("missing Soul ID")?,
+            mapping["artifact_sha256"].as_str().ok_or("missing frozen artifact")?,
+            mapping["definition_measurement"].as_str().ok_or("missing frozen definition")?,
+            build["source_commit"].as_str().ok_or("missing frozen source commit")?,
+            build["source_tree"].as_str().ok_or("missing frozen source tree")?,
+            build["trust_root_sha256"].as_str().ok_or("missing frozen root digest")?,
+            build["transparency_log_id"].as_str().ok_or("missing Rekor log ID")?,
+        )
+    } else {
+        String::new()
+    };
     let prompt = format!(
-        "Sign qualification policy v{version} revision {revision}{source_tree}, {policy_digest}, ledger {}",
+        "Sign qualification policy v{version} revision {revision}{source_tree}{frozen}, {policy_digest}, ledger {}",
         digest(revocations)
     );
     owner.ask(&prompt).map_err(String::from)?;
@@ -600,13 +784,17 @@ fn sign_version<F: Fn() -> SystemTime, R: Fn() -> Result<Vec<u8>, String>>(
     // The caller serializes this operation with the secure-admin lock. State
     // is advanced before returning signature bytes, so a failed output write
     // consumes a revision instead of allowing an unattended replay.
-    let purpose = if version == 2 { PURPOSE_V2 } else { PURPOSE };
+    let purpose = match version {
+        3 => PURPOSE_V3,
+        2 => PURPOSE_V2,
+        _ => PURPOSE,
+    };
     let mut preimage = purpose.as_bytes().to_vec();
     preimage.push(0);
     preimage.extend_from_slice(policy);
     let signature = key.sign(&preimage);
-    let next_state = if version == 2 {
-        json!({"revision": revision, "policy_sha256": policy_digest, "policy_version": 2})
+    let next_state = if version >= 2 {
+        json!({"revision": revision, "policy_sha256": policy_digest, "policy_version": version})
     } else {
         json!({"revision": revision, "policy_sha256": policy_digest})
     };
@@ -651,7 +839,7 @@ pub fn command(args: &[String]) -> Result<(), String> {
             println!("owner-root.hex: {root}\nowner-key-id.txt: {id}");
         }
         [mode, a, policy_path, b, revocations_path, c, out_path]
-            if (mode == "sign" || mode == "sign-v2") && a == "--policy" && b == "--revocations" && c == "--out" =>
+            if (mode == "sign" || mode == "sign-v2" || mode == "sign-v3") && a == "--policy" && b == "--revocations" && c == "--out" =>
         {
             if Path::new(revocations_path) != dir.join("revocations.json") {
                 return Err("revocations must be the fixed secure-admin ledger".into());
@@ -675,14 +863,14 @@ pub fn command(args: &[String]) -> Result<(), String> {
             };
             let policy = read(Path::new(policy_path), false)?;
             let ledger = read(Path::new(revocations_path), true)?;
-            let version = if mode == "sign-v2" { 2 } else { 1 };
+            let version = match mode.as_str() { "sign-v3" => 3, "sign-v2" => 2, _ => 1 };
             let envelope = sign_version(&store, &DeviceOwner, &policy, &ledger, SystemTime::now, version,
                 || read(Path::new(revocations_path), true))?;
             let mut out = OpenOptions::new().write(true).create_new(true).mode(0o600).custom_flags(libc::O_NOFOLLOW).open(out_path).map_err(|_| "qualification output already exists or is unavailable")?;
             out.write_all(&envelope).and_then(|_| out.write_all(b"\n")).and_then(|_| out.sync_all()).map_err(|_| "qualification output write failed")?;
             println!("policy-envelope: {}", digest(&envelope));
         }
-        _ => return Err("usage: agent-bot-keyd qualification-policy init-root | public-root | sign|sign-v2 --policy FILE --revocations FILE --out FILE".into()),
+        _ => return Err("usage: agent-bot-keyd qualification-policy init-root | public-root | sign|sign-v2|sign-v3 --policy FILE --revocations FILE --out FILE".into()),
     }
     Ok(())
 }
@@ -816,6 +1004,168 @@ mod tests {
             || now,
             2,
             || Ok(ledger_raw.clone())
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn v3_signing_pins_frozen_soul_and_shares_revision_state() {
+        let store = Store::new(Box::<Memory>::default());
+        let (_, id) = init_root(&store, &Scripted::new(true)).unwrap();
+        let (v1, _, now) = fixture(&id, "2026-11-21T21:00:00Z");
+        let mut policy: Value = serde_json::from_slice(&v1).unwrap();
+        policy["contract"] = json!("control/v3");
+        policy["policy_revision"] = json!(3);
+        policy["souls_build_workflow"] = json!({
+            "id": "fixture-souls-build", "repository": "true-line/agent-bot-souls",
+            "workflow_path": ".github/workflows/release.yml",
+            "source_commit": "1111111111111111111111111111111111111111",
+            "source_tree": "2222222222222222222222222222222222222222",
+            "oidc_issuer": "https://token.actions.githubusercontent.com",
+            "certificate_identity": "https://github.com/true-line/agent-bot-souls/.github/workflows/release.yml@refs/heads/main",
+            "trust_root_sha256": format!("sha256:{}", "3".repeat(64)),
+            "builder_sha256": format!("sha256:{}", "4".repeat(64)),
+            "toolchain_sha256": format!("sha256:{}", "5".repeat(64)),
+            "receipt_predicate_type": "https://true-line.ai/soul-contracts/adapter/v2/souls-build",
+            "bundle_media_type": "application/vnd.dev.sigstore.bundle.v0.3+json",
+            "dsse_payload_type": "application/vnd.in-toto+json"
+        });
+        policy["frozen_soul_build_workflow"] = json!({
+            "id": "fixture-frozen-build", "repository": "true-line/soul-package",
+            "workflow_path": ".github/workflows/stage2a-frozen-soul-receipt.yml",
+            "source_commit": "6666666666666666666666666666666666666666",
+            "source_tree": "7777777777777777777777777777777777777777",
+            "oidc_issuer": "https://token.actions.githubusercontent.com",
+            "certificate_identity": "https://github.com/true-line/soul-package/.github/workflows/stage2a-frozen-soul-receipt.yml@refs/heads/main",
+            "trust_root_sha256": format!("sha256:{}", "8".repeat(64)),
+            "builder_sha256": format!("sha256:{}", "9".repeat(64)),
+            "toolchain_sha256": format!("sha256:{}", "a".repeat(64)),
+            "receipt_predicate_type": "https://true-line.ai/soul-contracts/package/v1/frozen-soul-build",
+            "bundle_media_type": "application/vnd.dev.sigstore.bundle.v0.3+json",
+            "dsse_payload_type": "application/vnd.in-toto+json",
+            "artifact_format": "stage2a-frozen-hello-ustar/v1",
+            "subject_name_template": "sha256-{artifact_sha256}.soul",
+            "rekor_entry_kind": "dsse", "rekor_entry_version": "0.0.1",
+            "transparency_log_id": "b".repeat(64),
+            "template": {
+                "repository": "true-line/soul-conformance",
+                "source_commit": "8e82f47781e583e4b09352cbfef5ca3bfefe45aa",
+                "source_tree": "5f3ab3acee16de02a38a51204fb9401c3566a6d0",
+                "path": "templates/hello.soul",
+                "template_tree": "e944d40e5f495f6de395619b254ed890e36b53ee"
+            }
+        });
+        policy["frozen_soul_mapping"] = json!({
+            "soul_id": "agent_00000000-0000-0000-0000-000000000000",
+            "artifact_sha256": "c".repeat(64),
+            "claimed_definition_digest": format!("sha256:{}", "d".repeat(64)),
+            "definition_measurement": format!("sha256:{}", "e".repeat(64))
+        });
+        let mut ledger = policy["revocation_snapshot"].clone();
+        for name in [
+            "revoked_souls_build_workflow_ids",
+            "revoked_souls_build_receipt_sha256",
+            "revoked_frozen_soul_build_workflow_ids",
+            "revoked_frozen_soul_receipt_sha256",
+            "revoked_frozen_soul_artifact_sha256",
+        ] {
+            ledger[name] = json!([]);
+        }
+        policy["revocation_snapshot"] = ledger.clone();
+        let raw = serde_json::to_vec(&policy).unwrap();
+        let ledger_raw = serde_json::to_vec(&ledger).unwrap();
+        let owner = Scripted::new(true);
+        let envelope = sign_version(
+            &store,
+            &owner,
+            &raw,
+            &ledger_raw,
+            || now,
+            3,
+            || Ok(ledger_raw.clone()),
+        )
+        .unwrap();
+        let prompt = owner.asked.lock().unwrap()[0].clone();
+        for expected in [
+            "agent_00000000-0000-0000-0000-000000000000",
+            &"c".repeat(64),
+            &format!("sha256:{}", "8".repeat(64)),
+            &"b".repeat(64),
+        ] {
+            assert!(prompt.contains(expected));
+        }
+        let signed: Value = serde_json::from_slice(&envelope).unwrap();
+        assert_eq!(signed["schema_version"], 3);
+        assert_eq!(signed["purpose"], PURPOSE_V3);
+        let sig = URL_SAFE_NO_PAD
+            .decode(signed["signature_base64url"].as_str().unwrap())
+            .unwrap();
+        let mut preimage = PURPOSE_V3.as_bytes().to_vec();
+        preimage.push(0);
+        preimage.extend_from_slice(&raw);
+        let mut seed = store.qualification_policy_seed().unwrap();
+        let verifying = SigningKey::from_bytes(&seed).verifying_key();
+        seed.fill(0);
+        verifying
+            .verify(&preimage, &Signature::from_slice(&sig).unwrap())
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&store.qualification_policy_state().unwrap().unwrap())
+                .unwrap()["policy_version"],
+            3
+        );
+        assert!(sign_version(
+            &store,
+            &Scripted::new(true),
+            &raw,
+            &ledger_raw,
+            || now,
+            2,
+            || Ok(ledger_raw.clone())
+        )
+        .is_err());
+        policy["policy_revision"] = json!(4);
+        policy["frozen_soul_build_workflow"]["rekor_entry_version"] = json!("0.0.2");
+        assert!(validate_version(
+            &serde_json::to_vec(&policy).unwrap(),
+            &ledger_raw,
+            &id,
+            OffsetDateTime::from(now),
+            3
+        )
+        .is_err());
+        policy["frozen_soul_build_workflow"]["rekor_entry_version"] = json!("0.0.1");
+        assert!(validate_version(
+            &serde_json::to_vec(&policy).unwrap(),
+            &ledger_raw,
+            &id,
+            OffsetDateTime::from(now + Duration::from_secs(3601)),
+            3
+        )
+        .is_err());
+        policy
+            .as_object_mut()
+            .unwrap()
+            .remove("frozen_soul_mapping");
+        assert!(validate_version(
+            &serde_json::to_vec(&policy).unwrap(),
+            &ledger_raw,
+            &id,
+            OffsetDateTime::from(now),
+            3
+        )
+        .is_err());
+        let mut revoked: Value = serde_json::from_slice(&raw).unwrap();
+        revoked["policy_revision"] = json!(4);
+        revoked["revocation_snapshot"]["revoked_frozen_soul_artifact_sha256"] =
+            json!(["c".repeat(64)]);
+        let revoked_ledger = serde_json::to_vec(&revoked["revocation_snapshot"]).unwrap();
+        assert!(validate_version(
+            &serde_json::to_vec(&revoked).unwrap(),
+            &revoked_ledger,
+            &id,
+            OffsetDateTime::from(now),
+            3
         )
         .is_err());
     }

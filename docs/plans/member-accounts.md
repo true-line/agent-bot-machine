@@ -212,6 +212,21 @@ parser verifies shape and designated-host signature only. It cannot resolve
 authenticated one-use artifacts, prove the physical result, or authorize
 installation or launch. v1/v2 substitution refuses.
 
+The separate `agent-bot-keyd qualification-policy sign-v3 --policy FILE
+--revocations FILE --out FILE` ceremony is a source-only extension of the
+secure administrator's owner-present signer. It requires the exact v3 frozen
+`.soul` workflow, template, Sigstore log kind/version and owner-approved
+Soul/artifact/definition mapping, plus all eight revocation sets. Keyd
+refuses malformed or stale input before the owner prompt, reopens the private
+ledger after the prompt and rechecks the 3,600-second limit. It signs
+`ASCII("agent-bot/qualification-policy/v3") || 0x00 || exact canonical
+policy bytes`, advances the same keychain revision checkpoint as v1/v2, and
+creates a v3 envelope. The prompt names the frozen Soul, artifact, definition,
+builder source, trust-root digest and Rekor log ID. This command does not
+provide a root, trusted Sigstore log, signed frozen receipt, measured archive,
+completed-run record or protected launch authority; those still require
+independent Machine verification and owner review.
+
 ### Owner policy root provisioning ceremony
 
 The keyd command path is implemented for review; no production root has been

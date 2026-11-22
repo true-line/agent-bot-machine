@@ -10,6 +10,14 @@ cannot select this purpose. Until Machine independently observes the physical
 run, binds a completed-run receipt and verifies owner-signed designation,
 there is no public route to this operation and protected launch stays closed.
 
+The local `qualification-policy sign-v3` command is a separate, owner-present
+policy ceremony under the secure admin account. It checks the frozen `.soul`
+workflow and exact artifact/definition mapping, all revocation sets, shared
+revision state and 3,600-second snapshot freshness before signing the fixed
+v3 policy purpose. It does not make the host-report signing route available:
+Machine must first authenticate an immutable completed run and the reviewed
+owner policy, release and installed-byte evidence.
+
 A native MCP server that holds souls' GitHub App keys
 ([agent-bot-identity #397](https://github.com/qwts/agent-bot-identity/issues/397)).
 agent-bot-machine builds it and signs it with the agent-machine Developer ID.
