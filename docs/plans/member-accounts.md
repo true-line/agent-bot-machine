@@ -772,6 +772,10 @@ installs the per-Soul sudo rule, and writes the final applied root receipt.
 A reopens that root receipt and compares the policy to the exact approved plan
 on each use. Owner-writable source files may be copied only when no source
 component is writable by group or others and all inventory hashes match.
+Root apply changes ownership only on newly created private staging descriptors
+from root to the reviewed nonroot A UID and runner GID, then rechecks their
+identity before publishing the sealed snapshots. An existing or foreign-owned
+descriptor cannot be repaired into this authority.
 The installed artifact is checked again at each reservation. One runner OS
 account and one bridge OS account belong to each Soul installation.
 

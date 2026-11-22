@@ -82,6 +82,53 @@ func TestStage2aFrozenSnapshotPublishesExactBytesOnce(t *testing.T) {
 	})
 }
 
+func TestStage2aRootApplyPublishesNonrootMachineSnapshot(t *testing.T) {
+	if os.Getuid() != 0 || os.Geteuid() != 0 {
+		t.Skip("root apply ownership transfer requires a disposable root test host")
+	}
+	const machineUID, runnerGID = 501, 20
+	source, approved := stage2aObservedFixture(t)
+	parent := t.TempDir()
+	if err := os.Chown(parent, machineUID, runnerGID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0750); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(parent, func(path string, entry os.DirEntry, err error) error {
+			if err == nil && entry.IsDir() {
+				_ = os.Chmod(path, 0700)
+			}
+			return nil
+		})
+	})
+	want, _, err := Stage2aDefinitionDigest(approved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, got, err := publishStage2aSourceAt(source, parent,
+		"snap_555555555555555555555555", 0, 0, machineUID, runnerGID, approved, false)
+	if err != nil || got != want || identity.OwnerUID != machineUID ||
+		identity.OwnerGID != runnerGID || identity.Mode != "0555" {
+		t.Fatalf("root-to-A snapshot publication: digest %q, identity %+v, error %v", got, identity, err)
+	}
+	if _, digest, err := observeStage2aFrozenAt(identity.RootPath, machineUID, runnerGID, approved); err != nil || digest != want {
+		t.Fatalf("published root-to-A snapshot recheck: digest %q, error %v", digest, err)
+	}
+	foreign, err := os.CreateTemp(t.TempDir(), "foreign-owned-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer foreign.Close()
+	if err := unix.Fchown(int(foreign.Fd()), machineUID+1, runnerGID); err != nil {
+		t.Fatal(err)
+	}
+	if err := stage2aChownNew(int(foreign.Fd()), machineUID, runnerGID); err == nil {
+		t.Fatal("foreign-owned descriptor transferred into Machine custody")
+	}
+}
+
 func TestStage2aMutableOwnerSourcePublishesFrozenBytes(t *testing.T) {
 	source, approved := stage2aObservedFixture(t)
 	for _, record := range approved {

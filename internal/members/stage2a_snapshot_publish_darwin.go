@@ -70,10 +70,21 @@ func stage2aChownNew(fd int, uid, gid uint32) error {
 		return err
 	}
 	if st.Uid != uid {
-		return errors.New("Stage 2a staging owner differs from custody UID")
+		// Root apply creates the private staging descriptors before handing
+		// them to the nonroot A account. Only a new, root-owned descriptor in
+		// its creation mode can cross that boundary; never repair an existing
+		// descriptor or take ownership from another nonroot account.
+		private := st.Mode == unix.S_IFDIR|0700 || st.Mode == unix.S_IFREG|0600
+		if os.Getuid() != 0 || os.Geteuid() != 0 || st.Uid != 0 || !private {
+			return errors.New("Stage 2a staging owner differs from custody UID")
+		}
 	}
-	if st.Gid != gid {
-		if err := unix.Fchown(fd, -1, int(gid)); err != nil {
+	if st.Uid != uid || st.Gid != gid {
+		owner := -1
+		if st.Uid != uid {
+			owner = int(uid)
+		}
+		if err := unix.Fchown(fd, owner, int(gid)); err != nil {
 			return err
 		}
 		if err := unix.Fstat(fd, &st); err != nil {
@@ -226,9 +237,15 @@ func publishStage2aSourceAt(sourceRoot, destinationParent, name string,
 		return empty, "", err
 	}
 	defer unix.Close(wrapperFD)
+	if err := checkDarwinACLs([]string{wrapperPath}); err != nil {
+		return empty, "", err
+	}
+	if err := stage2aChownNew(wrapperFD, snapshotUID, snapshotGID); err != nil {
+		return empty, "", err
+	}
 	var wrapper unix.Stat_t
 	if err := unix.Fstat(wrapperFD, &wrapper); err != nil || wrapper.Uid != snapshotUID ||
-		wrapper.Mode != unix.S_IFDIR|0700 {
+		wrapper.Gid != snapshotGID || wrapper.Mode != unix.S_IFDIR|0700 {
 		return empty, "", errors.New("Stage 2a staging wrapper is not private")
 	}
 	if err := checkDarwinACLs([]string{wrapperPath}); err != nil {
