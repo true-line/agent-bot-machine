@@ -27,6 +27,10 @@
 //!   (agent-bot-identity #753): service `agent-bot.keyd`, account
 //!   `owner-pins`, value JSON `{digest, generation}`, the digest of the key
 //!   set (pins.rs) and a count keyd raises on every approval.
+//! - the dedicated qualification policy root: service `agent-bot.keyd`,
+//!   account `qualification-policy-root-v1`, value base64 of a 32-byte
+//!   Ed25519 seed. Creation is explicit and create-only; it is never reused
+//!   as the presence key.
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -82,6 +86,8 @@ pub fn decode(text: &[u8]) -> Result<Credential, &'static str> {
 pub const PIN_SERVICE: &str = "agent-bot.keyd";
 pub const PIN_ACCOUNT: &str = "daemon-grant-key";
 pub const PRESENCE_ACCOUNT: &str = "presence-key";
+pub const QUALIFICATION_POLICY_ACCOUNT: &str = "qualification-policy-root-v1";
+pub const QUALIFICATION_POLICY_STATE_ACCOUNT: &str = "qualification-policy-state-v1";
 pub const OWNER_PINS_ACCOUNT: &str = "owner-pins";
 pub const APP_SERVICE: &str = "agent-bot.keyd.app";
 
@@ -305,6 +311,67 @@ impl Store {
         // A concurrent request won. Never replace its key or sign with ours.
         self.stored_presence_seed()?
             .ok_or_else(|| "presence key disappeared during initialization".into())
+    }
+
+    pub fn qualification_policy_seed(&self) -> Result<[u8; 32], StoreError> {
+        let Some(mut value) = self.items.read(PIN_SERVICE, QUALIFICATION_POLICY_ACCOUNT)? else {
+            return Err("qualification policy root is not initialized".into());
+        };
+        let decoded = STANDARD.decode(value.trim_ascii());
+        value.fill(0);
+        let mut raw = decoded.map_err(|_| "qualification policy root is malformed".to_owned())?;
+        let seed = raw.as_slice().try_into();
+        raw.fill(0);
+        seed.map_err(|_| "qualification policy root is malformed".into())
+    }
+
+    pub fn qualification_policy_root_exists(&self) -> Result<bool, StoreError> {
+        self.items
+            .read(PIN_SERVICE, QUALIFICATION_POLICY_ACCOUNT)
+            .map(|value| value.is_some())
+    }
+
+    pub fn init_qualification_policy_seed(&self) -> Result<[u8; 32], StoreError> {
+        // An unreadable or untrusted existing item must never be overwritten.
+        if self
+            .items
+            .read(PIN_SERVICE, QUALIFICATION_POLICY_ACCOUNT)?
+            .is_some()
+        {
+            return Err(
+                "qualification policy root already exists; rotation requires review".into(),
+            );
+        }
+        let mut seed = [0u8; 32];
+        getrandom::fill(&mut seed)
+            .map_err(|_| "no randomness for qualification policy root".to_owned())?;
+        let mut value = STANDARD.encode(seed).into_bytes();
+        let inserted = self
+            .items
+            .insert(PIN_SERVICE, QUALIFICATION_POLICY_ACCOUNT, &value);
+        value.fill(0);
+        match inserted {
+            Ok(true) => Ok(seed),
+            Ok(false) => {
+                seed.fill(0);
+                Err("qualification policy root already exists; rotation requires review".into())
+            }
+            Err(error) => {
+                seed.fill(0);
+                Err(error.into())
+            }
+        }
+    }
+
+    pub fn qualification_policy_state(&self) -> Result<Option<Vec<u8>>, StoreError> {
+        self.items
+            .read(PIN_SERVICE, QUALIFICATION_POLICY_STATE_ACCOUNT)
+    }
+
+    pub fn put_qualification_policy_state(&self, value: &[u8]) -> Result<(), StoreError> {
+        self.items
+            .write(PIN_SERVICE, QUALIFICATION_POLICY_STATE_ACCOUNT, value)
+            .map_err(Into::into)
     }
 
     /// The digest and generation of the key set the owner last approved;

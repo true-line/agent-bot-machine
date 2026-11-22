@@ -166,7 +166,7 @@ func (d deviceDelegation) transcript() []byte {
 	if d.Option == "bind-enrollment" || d.Option == "bind-access" {
 		parts = append(parts, "receipt_body", d.ReceiptBody, "receipt_jti", d.ReceiptJTI, "receipt_kid", d.ReceiptKID, "receipt_signature", d.ReceiptSignature)
 	}
-	if d.Option == "qualification-host-report" {
+	if d.Option == "qualification-host-report" || d.Option == "qualification-host-report-v2" {
 		parts = append(parts, "report_base64url", d.ReportBase64URL, "host_id", d.HostID, "signer_id", d.SignerID)
 	}
 	return []byte(strings.Join(parts, "\n"))

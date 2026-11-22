@@ -137,6 +137,40 @@ past preflight success cannot be replayed as a Machine acceptance decision.
 Machine independently rechecks policy rollback state, the signed final bundle,
 installed bytes and live physical evidence before any qualification can count.
 
+The bridge-aware v2 contract uses a distinct fixed host-report purpose,
+`agent-bot/qualification-host-report/v2`, for a protected report that names
+the per-installation B/R/C principals, three endpoint custody observations,
+B-only inherited-FD handoff, actual HQ broker HMAC bind and stop/replay
+results. The v1 report remains a separate cooperative T21 input and cannot
+qualify protected T03. The optional `-bridge-v2` flag selects the v2
+qualification and Statement shape in both read-only tools; it must fail until
+Machine can verify an owner-pinned v2 policy and the separately signed Souls
+build receipt against the approved source tree. A matching bundle digest or
+schema-valid fixture is insufficient. The current v1 policy has no Souls
+build trust anchor, and the v2 tools do not authorize launch or act as an HQ
+readiness oracle.
+The reviewed Machine release must carry the separate Souls build Sigstore
+root at `trust/qualification/souls-trusted-root.json`, with its exact SHA-256
+in the owner-signed v2 policy. The `-bridge-v2` preflight and offline verify
+commands require `-souls-build-bundle`, `-souls-package` and
+`-souls-trusted-root` local files; the package is hashed with a 256 MiB limit.
+No production root or signed Souls receipt is present in this worktree.
+Private R2 storage, if used, transports release evidence before installation;
+it is not an HQ, Soul or Machine runtime dependency. Installed protected
+admission must verify the pinned roots, signed policy, release bundle, Souls
+receipt, exact installed bytes and retained physical observations from local
+inputs with no R2 or network fetch. An unavailable evidence store does not
+invalidate otherwise current installed inputs. A missing revocation snapshot
+or one more than 3,600 seconds old independently refuses protected admission;
+it is not an HQ or cooperative-profile cloud outage. The current tools verify
+local policy and report bindings. The installed admission and evidence
+resolver remain unimplemented, and protected launch stays closed.
+Before live protected admission, Machine must load the protected highest
+accepted policy revision and canonical payload digest shared across v1/v2,
+pass them to `VerifyOwnerPolicyV2`, and atomically persist its authenticated
+`RevisionDigest` checkpoint. The standalone CLI uses no installed rollback
+state and is archival evidence only.
+
 The separate `mm-qualification-verify-release` diagnostic command accepts
 those same owner root, key ID, policy, qualification and two host-envelope
 files, plus `-trusted-root` for the exact local Sigstore root JSON, `-bundle`
@@ -156,9 +190,10 @@ an actual release workflow bundle, and physical T01/T02/T03/T21 results are
 still required. No positive production gate is wired; the existing install and
 launch refusals remain in force.
 
-### Owner policy root provisioning proposal
+### Owner policy root provisioning ceremony
 
-This is a proposed owner ceremony, not an installed key or an enabled signer.
+The keyd command path is implemented for review; no production root has been
+created, and no initial policy has been signed or installed.
 Create a **new, purpose-only** Ed25519 policy key through keyd in the secure
 administrator account. Its 32-byte seed belongs only in a keyd-created login
 Keychain item under service `agent-bot.keyd`, account
@@ -169,10 +204,13 @@ device keys are different purposes and cannot serve as this root. First-use
 creation must refuse an existing item; rotation requires a separate reviewed
 Machine release and recovery plan.
 
-The proposed secure-admin command is `agent-bot-keyd qualification-policy
-init-root`, which creates the item once and exports only its 32-byte public
-key. It writes `trust/qualification/owner-root.hex` as exactly 64 lowercase
-hex characters plus LF. The key ID is
+Run `agent-bot-keyd qualification-policy init-root` in the secure admin account
+with an interactive owner-presence prompt. It creates the item once, refuses
+replacement, and prints only its 32-byte public key and ID as labeled lines.
+`agent-bot-keyd qualification-policy public-root` repeats that public export
+without creating or rotating a key. The owner reviews and commits
+`trust/qualification/owner-root.hex` as exactly 64 lowercase hex characters
+plus LF. The key ID is
 `qual-owner-ed25519-` followed by the first 16 lowercase hex characters of
 `SHA-256(raw_public_key)`; `trust/qualification/owner-key-id.txt` contains
 exactly that ID plus LF. A release review compares those bytes with a fresh
@@ -181,22 +219,31 @@ binary. The same reviewed source files are the release workflow's pinned
 preflight inputs. They remain absent until this ceremony; no fixture key or
 arbitrary candidate file can supply them.
 
-The proposed `agent-bot-keyd qualification-policy sign --policy FILE
+`agent-bot-keyd qualification-policy sign --policy FILE
 --revocations FILE --out FILE` operation runs only under the secure admin
-account after exact-policy owner approval. It requires ASCII RFC 8785
+account after a fresh device-owner prompt naming the exact policy and ledger
+SHA-256 digests. If the prompt is unavailable in the admin session, signing
+fails closed; another owner-presence transport is a separate reviewed gate.
+It requires ASCII RFC 8785
 canonical policy bytes, a revision greater than the greatest locally signed
 revision, `owner_key_id` equal to the pinned ID, a fresh complete revocation
 snapshot, and the contract's fixed fields. Keyd signs
 `ASCII("agent-bot/qualification-policy/v1") || 0x00 || policy_bytes` and emits
 the `control/v1` envelope with exact `policy_sha256`, unpadded base64url policy
-bytes and raw 64-byte Ed25519 signature encoded unpadded base64url. It must
-refuse any direct HQ request to sign policy bytes and any unattended replay of
-an earlier owner approval. The operation and its owner-approval check have not
-been implemented; until then no production policy can be issued.
+bytes and raw 64-byte Ed25519 signature encoded unpadded base64url. The
+greatest signed revision is held in a separate keyd-only Keychain item, which
+is initialized to revision zero with the root. A missing item refuses all
+signing, including revision one. A
+secure-admin lock serializes signing and the revision is consumed before
+writing the create-only output file. There is no HQ signing socket. A failed
+or unattended owner prompt cannot sign or refresh a policy. Keyd rechecks
+expiry and revocation freshness against the clock after the prompt returns.
 
 The revocation source is a complete owner-reviewed ledger at
-`~/.config/agent-machine/qualification/revocations.json` in the secure admin
-account, under a 0700 directory and 0600 file. Its three sets are revoked
+the registered secure admin home at
+`.config/agent-machine/qualification/revocations.json`, under a 0700 directory
+and 0600 file owned by that account. The `--revocations` argument must be this
+exact absolute path. Its three sets are revoked
 attestation digests, host signer IDs and release workflow IDs. For each new
 snapshot, the owner reviews the ledger's complete sets and authorizes keyd to
 bind the current `updated_at` in a newly signed policy revision. Re-signing an
