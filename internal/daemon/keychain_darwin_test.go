@@ -131,7 +131,7 @@ func TestDarwinKeychainNeverImportsExec(t *testing.T) {
 				t.Fatalf("keys.go exec.* calls = %v, want [runKeyHelperCmd:Command]", execCalls)
 			}
 		case "hq_device_keyd_darwin.go":
-			if strings.Join(execCalls, ",") != "verifyDeviceCode:CommandContext,runDeviceKeyd:CommandContext" {
+			if strings.Join(execCalls, ",") != "verifyDeviceCode:CommandContext,runDeviceKeyd:CommandContext,runQualificationWitnessKeyd:CommandContext" {
 				t.Fatalf("unexpected device custody subprocess: %v", execCalls)
 			}
 		case "ordinary_hq.go":

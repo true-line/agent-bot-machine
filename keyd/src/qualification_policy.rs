@@ -2,8 +2,11 @@
 //! request can reach this module. The seed never leaves keyd's Keychain item.
 
 use crate::{consent::Consent, store::Store};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use ed25519_dalek::{Signer, SigningKey};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine,
+};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::time::SystemTime;
@@ -501,6 +504,134 @@ fn clock_time(now: SystemTime) -> Result<OffsetDateTime, String> {
     .map_err(|_| "invalid system clock".into())
 }
 
+// AuthenticatedPolicy is the exact owner-signed payload accepted by keyd's
+// independent witness ledger. It carries no launch authority by itself.
+pub(crate) struct AuthenticatedPolicy {
+    pub version: u64,
+    pub revision: u64,
+    pub payload_sha256: String,
+    pub owner_key_id: String,
+    pub evidence_signer_spki: Vec<Vec<u8>>,
+    pub evidence_signer_hosts: Vec<String>,
+}
+
+pub(crate) fn verify_signed_envelope(
+    envelope: &[u8],
+    pinned_root: &[u8; 32],
+    pinned_id: &str,
+    now: OffsetDateTime,
+) -> Result<AuthenticatedPolicy, String> {
+    if envelope.is_empty() || envelope.len() > 2 * MAX_BYTES || !envelope.is_ascii() {
+        return Err("signed policy envelope is unavailable".into());
+    }
+    let value: Value =
+        serde_json::from_slice(envelope).map_err(|_| "invalid signed policy envelope")?;
+    if !strict_json::unique_keys(envelope)?
+        || serde_json::to_vec(&value).map_err(|_| "invalid signed policy envelope")? != envelope
+    {
+        return Err("signed policy envelope is not canonical".into());
+    }
+    let e = fields(
+        &value,
+        &[
+            "schema_version",
+            "purpose",
+            "owner_key_id",
+            "policy_sha256",
+            "policy_base64url",
+            "signature_base64url",
+        ],
+    )?;
+    let version = e["schema_version"]
+        .as_u64()
+        .ok_or("invalid signed policy version")?;
+    let purpose = match version {
+        1 => PURPOSE,
+        2 => PURPOSE_V2,
+        _ => return Err("unsupported signed policy version".into()),
+    };
+    let id = format!(
+        "qual-owner-ed25519-{}",
+        &hex(&Sha256::digest(pinned_root))[..16]
+    );
+    if string(e, "purpose")? != purpose
+        || string(e, "owner_key_id")? != pinned_id
+        || pinned_id != id
+    {
+        return Err("signed policy root or purpose differs from release pin".into());
+    }
+    let encoded = string(e, "policy_base64url")?;
+    let raw = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| "invalid signed policy payload")?;
+    if raw.is_empty()
+        || raw.len() > MAX_BYTES
+        || URL_SAFE_NO_PAD.encode(&raw) != encoded
+        || digest(&raw) != string(e, "policy_sha256")?
+    {
+        return Err("signed policy exact bytes differ".into());
+    }
+    let policy = canonical(&raw)?;
+    let revocations = serde_json::to_vec(&policy["revocation_snapshot"])
+        .map_err(|_| "invalid policy revocations")?;
+    let revision = validate_version(&raw, &revocations, pinned_id, now, version)?;
+    let encoded_signature = string(e, "signature_base64url")?;
+    let signature = URL_SAFE_NO_PAD
+        .decode(encoded_signature)
+        .map_err(|_| "invalid policy signature")?;
+    if signature.len() != 64 || URL_SAFE_NO_PAD.encode(&signature) != encoded_signature {
+        return Err("invalid policy signature".into());
+    }
+    let key = VerifyingKey::from_bytes(pinned_root).map_err(|_| "invalid pinned owner root")?;
+    let signature = Signature::from_slice(&signature).map_err(|_| "invalid policy signature")?;
+    let mut preimage = purpose.as_bytes().to_vec();
+    preimage.push(0);
+    preimage.extend_from_slice(&raw);
+    key.verify_strict(&preimage, &signature)
+        .map_err(|_| "owner policy signature does not verify")?;
+    let evidence_signer_spki = policy["evidence_signers"]
+        .as_array()
+        .ok_or("missing evidence signers")?
+        .iter()
+        .map(|signer| {
+            STANDARD
+                .decode(
+                    signer["public_key_spki_der_base64"]
+                        .as_str()
+                        .ok_or("invalid evidence signer")?,
+                )
+                .map_err(|_| "invalid evidence signer".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let revoked_signers: std::collections::HashSet<&str> = policy["revocation_snapshot"]
+        ["revoked_evidence_signer_ids"]
+        .as_array()
+        .ok_or("invalid revoked evidence signers")?
+        .iter()
+        .map(|id| id.as_str().ok_or("invalid revoked evidence signer"))
+        .collect::<Result<_, _>>()?;
+    let evidence_signer_hosts = policy["evidence_signers"]
+        .as_array()
+        .ok_or("missing evidence signers")?
+        .iter()
+        .filter(|signer| !revoked_signers.contains(signer["id"].as_str().unwrap_or("")))
+        .map(|signer| {
+            signer["host_id"]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or("invalid evidence signer".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(AuthenticatedPolicy {
+        version,
+        revision,
+        payload_sha256: digest(&raw),
+        owner_key_id: pinned_id.to_owned(),
+        evidence_signer_spki,
+        evidence_signer_hosts,
+    })
+}
+
 #[cfg(test)]
 fn sign<F: Fn() -> SystemTime>(
     store: &Store,
@@ -868,6 +999,79 @@ mod tests {
             sign(&store, &owner, &policy, &ledger, || now).is_err(),
             "a missing marker cannot reset revision to zero"
         );
+    }
+
+    #[test]
+    fn independently_verifies_exact_owner_signed_policy_at_freshness_boundary() {
+        let store = Store::new(Box::<Memory>::default());
+        let (_, id) = init_root(&store, &Scripted::new(true)).unwrap();
+        let (policy, ledger, now) = fixture(&id, "2026-11-21T20:00:00Z");
+        let envelope = sign(&store, &Scripted::new(true), &policy, &ledger, || now).unwrap();
+        let mut seed = store.qualification_policy_seed().unwrap();
+        let root = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+        seed.fill(0);
+        let accepted =
+            verify_signed_envelope(&envelope, &root, &id, OffsetDateTime::from(now)).unwrap();
+        assert_eq!(
+            (
+                accepted.version,
+                accepted.revision,
+                accepted.payload_sha256.as_str(),
+                accepted.owner_key_id.as_str()
+            ),
+            (1, 1, digest(&policy).as_str(), id.as_str())
+        );
+        assert!(verify_signed_envelope(
+            &envelope,
+            &root,
+            &id,
+            OffsetDateTime::from(now + Duration::from_secs(1))
+        )
+        .is_err());
+        let mut wrong: Value = serde_json::from_slice(&envelope).unwrap();
+        wrong["purpose"] = json!(PURPOSE_V2);
+        assert!(verify_signed_envelope(
+            &serde_json::to_vec(&wrong).unwrap(),
+            &root,
+            &id,
+            OffsetDateTime::from(now)
+        )
+        .is_err());
+        wrong["purpose"] = json!(PURPOSE);
+        wrong["signature_base64url"] = json!(URL_SAFE_NO_PAD.encode([0u8; 64]));
+        assert!(verify_signed_envelope(
+            &serde_json::to_vec(&wrong).unwrap(),
+            &root,
+            &id,
+            OffsetDateTime::from(now)
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn revoked_signer_cannot_designate_witness_host() {
+        let store = Store::new(Box::<Memory>::default());
+        let (_, id) = init_root(&store, &Scripted::new(true)).unwrap();
+        let (policy_raw, ledger_raw, now) = fixture(&id, "2026-11-21T21:00:00Z");
+        let mut policy: Value = serde_json::from_slice(&policy_raw).unwrap();
+        let mut ledger: Value = serde_json::from_slice(&ledger_raw).unwrap();
+        ledger["revoked_evidence_signer_ids"] = json!(["fixture-signer"]);
+        policy["revocation_snapshot"] = ledger.clone();
+        let envelope = sign(
+            &store,
+            &Scripted::new(true),
+            &serde_json::to_vec(&policy).unwrap(),
+            &serde_json::to_vec(&ledger).unwrap(),
+            || now,
+        )
+        .unwrap();
+        let mut seed = store.qualification_policy_seed().unwrap();
+        let root = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+        seed.fill(0);
+        let accepted =
+            verify_signed_envelope(&envelope, &root, &id, OffsetDateTime::from(now)).unwrap();
+        assert!(accepted.evidence_signer_hosts.is_empty());
+        assert_eq!(accepted.evidence_signer_spki.len(), 1);
     }
 
     #[test]
