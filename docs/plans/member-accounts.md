@@ -117,6 +117,12 @@ the pinned Ed25519 public key as 64 lowercase hex characters),
 `-owner-key-id`, `-policy-envelope`, `-qualification`,
 `-protected-envelope`, and `-cooperative-envelope` file inputs. The command
 uses real current time with no caller clock override and bounded local reads.
+The release-owned trust inputs will be
+`trust/qualification/owner-root.hex` and
+`trust/qualification/owner-key-id.txt` at that pinned Machine commit. They
+are deliberately absent until the owner provisions and reviews an actual
+public policy root, its ID and an initial signed policy; a test fixture root
+cannot fill this production slot.
 It verifies the owner policy signature, expiry and 3,600-second revocation
 snapshot, then the two designated-host signatures, exact qualification bytes,
 the adapter, launch, harness, runner and host values shared across the signed
