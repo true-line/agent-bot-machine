@@ -1,0 +1,48 @@
+{
+  "schema": "machine/v1/measurement-binding.schema.json",
+  "expect": {
+    "schema": "valid"
+  },
+  "note": "Synthetic nonauthorizing custody/binding shape; no Machine signature or physical start.",
+  "input": {
+    "contract": "machine/v1",
+    "kind": "stage2a-measurement-binding",
+    "schema_version": 1,
+    "installation_id": "fixture-installation",
+    "soul_id": "agent_11111111-1111-1111-1111-111111111111",
+    "start_id": "st_111111111111111111111111",
+    "launch_id": "ln_222222222222222222222222",
+    "host_id": "fixture-physical-mac",
+    "hq_epoch": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "plan_id": "fixture-plan",
+    "installed_plan_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "package_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "profile_in_force": "managed-protected",
+    "claimed_definition_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "definition_measurement": "sha256:27c6f3b4c768a2f5b2fe4f5f58c829eef7d02e111517937fea100d0aa15a2ede",
+    "launch_input_measurement": "sha256:2f861779b03affdd5fdc594a5d4ebee5e7d19bef2a433377d6b9b42ea31a7712",
+    "snapshots": {
+      "definition": {
+        "root_path": "/private/stage2a/snapshot-definition",
+        "device": "1",
+        "inode": "1001",
+        "generation": "1",
+        "birthtime_ns": "1795300000000000000",
+        "owner_uid": 0,
+        "owner_gid": 0,
+        "mode": "0555"
+      },
+      "launch_inputs": {
+        "root_path": "/private/stage2a/snapshot-launch",
+        "device": "1",
+        "inode": "1002",
+        "generation": "1",
+        "birthtime_ns": "1795300000000000000",
+        "owner_uid": 0,
+        "owner_gid": 0,
+        "mode": "0555"
+      }
+    }
+  },
+  "canonical_sha256": "sha256:e1c71c3cca87386b7a4c1d5159565ea644debc5585e5663c91d73119e21234a4"
+}

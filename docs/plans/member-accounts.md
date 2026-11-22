@@ -574,6 +574,16 @@ The host-projection check separately matches the descriptor-read raw JSON
 bytes and their file-record hashes to the two parsed values in that object;
 it does not substitute for descriptor custody or a root snapshot receipt.
 
+The Stage 2a per-start binding helper checks the contract's complete canonical
+object and both host-local snapshot identity shapes, then compares measured
+definition and launch-input digests, the selected command's listed executable
+record, the prepared assignment identity, declared host and SoulLock claim.
+It rejects aliases between the two snapshot roots and noncanonical or unknown
+binding fields. These are claims and portable comparisons until a root-owned
+producer observes both snapshots through no-follow descriptors, verifies the
+owner's accepted definition mapping, and carries the same binding through a
+spent Machine-signed reservation and authenticated finalization.
+
 ### What is created
 
 For an HQ account `H` and each listed harness credential account `M`:
