@@ -49,8 +49,12 @@ func qualificationObjectV3(raw []byte, now time.Time) (map[string]json.RawMessag
 		return nil, qualificationReportPairV3{}, soulsBuildRef{}, time.Time{}, ErrUnqualified
 	}
 	fields, err := strictObject(raw, MaxReportBytes)
-	if err != nil || now.IsZero() || !hasFields(fields, "schema_version", "adapter", "launch", "harness", "runner", "soul_start", "host", "profile_in_force", "renders", "cost_bound", "conformance", "recorded_at", "evaluation_cells", "souls_build") ||
+	if err != nil || now.IsZero() || !hasFields(fields, "schema_version", "adapter", "launch", "harness", "runner", "soul_start", "host", "profile_in_force", "renders", "cost_bound", "conformance", "recorded_at", "evaluation_cells", "souls_build", "soul_artifact_sha256") ||
 		!bytes.Equal(fields["schema_version"], []byte("3")) || !bytes.Equal(fields["profile_in_force"], []byte(`"managed-protected"`)) {
+		return refused()
+	}
+	var soulArtifact string
+	if json.Unmarshal(fields["soul_artifact_sha256"], &soulArtifact) != nil || !validHex(soulArtifact, 64) {
 		return refused()
 	}
 	if _, err = bridgeFields(fields["souls_build"], "source_repository", "source_commit", "source_tree", "builder_sha256", "toolchain_sha256", "workflow", "run_id", "run_attempt", "package_sha256", "receipt"); err != nil {
@@ -107,10 +111,11 @@ type qualificationStatementV3 struct {
 	} `json:"subject"`
 	PredicateType string `json:"predicateType"`
 	Predicate     struct {
-		HostReports qualificationReportPairV3 `json:"host_reports"`
-		SoulsBuild  soulsBuildRef             `json:"souls_build"`
-		ExpiresAt   string                    `json:"expires_at"`
-		Release     struct {
+		HostReports        qualificationReportPairV3 `json:"host_reports"`
+		SoulsBuild         soulsBuildRef             `json:"souls_build"`
+		SoulArtifactSHA256 string                    `json:"soul_artifact_sha256"`
+		ExpiresAt          string                    `json:"expires_at"`
+		Release            struct {
 			SourceRepository string `json:"source_repository"`
 			SourceCommit     string `json:"source_commit"`
 			Workflow         string `json:"workflow"`
@@ -118,11 +123,11 @@ type qualificationStatementV3 struct {
 	} `json:"predicate"`
 }
 
-func fixedStatementV3(raw []byte, policy Policy, qualificationSHA string, qualificationRecorded time.Time, now time.Time) (qualificationReportPairV3, soulsBuildRef, time.Time, error) {
+func fixedStatementV3(raw []byte, policy Policy, qualificationSHA, expectedSoulArtifact string, qualificationRecorded time.Time, now time.Time) (qualificationReportPairV3, soulsBuildRef, time.Time, error) {
 	refused := func() (qualificationReportPairV3, soulsBuildRef, time.Time, error) {
 		return qualificationReportPairV3{}, soulsBuildRef{}, time.Time{}, ErrUnqualified
 	}
-	if !validSHA(qualificationSHA) || now.IsZero() || qualificationRecorded.IsZero() || qualificationRecorded.After(now) {
+	if !validSHA(qualificationSHA) || !validHex(expectedSoulArtifact, 64) || now.IsZero() || qualificationRecorded.IsZero() || qualificationRecorded.After(now) {
 		return refused()
 	}
 	if _, err := strictObject(raw, MaxReportBytes); err != nil {
@@ -144,6 +149,7 @@ func fixedStatementV3(raw []byte, policy Policy, qualificationSHA string, qualif
 		statement.Predicate.Release.SourceCommit != policy.ReleaseWorkflow.SourceCommit ||
 		statement.Predicate.Release.Workflow != policy.ReleaseWorkflow.WorkflowPath ||
 		!validV3Pair(statement.Predicate.HostReports) ||
+		statement.Predicate.SoulArtifactSHA256 != expectedSoulArtifact ||
 		!validSoulsBuild(statement.Predicate.SoulsBuild) {
 		return refused()
 	}

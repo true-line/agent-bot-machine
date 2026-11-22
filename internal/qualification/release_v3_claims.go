@@ -68,9 +68,15 @@ func verifyV3ReportPairClaims(policy VerifiedPolicy, qualificationJSON, protecte
 	if err != nil {
 		return ErrUnqualified
 	}
+	var releasedSoulArtifact string
+	if json.Unmarshal(qualification["soul_artifact_sha256"], &releasedSoulArtifact) != nil ||
+		pBinding.SoulArtifactSHA256 != releasedSoulArtifact {
+		return ErrUnqualified
+	}
 	if pBinding.InstallationID != cBinding.InstallationID || pBinding.SoulID != cBinding.SoulID ||
 		pBinding.HostID != cBinding.HostID ||
 		pBinding.PackageSHA256 != cBinding.PackageSHA256 ||
+		pBinding.SoulArtifactSHA256 != cBinding.SoulArtifactSHA256 ||
 		pBinding.ClaimedDefinitionDigest != cBinding.ClaimedDefinitionDigest ||
 		pBinding.DefinitionMeasurement != cBinding.DefinitionMeasurement ||
 		pBinding.Snapshots.Definition != cBinding.Snapshots.Definition ||

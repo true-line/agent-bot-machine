@@ -11,6 +11,7 @@ import (
 
 func TestMeasuredV3StatementAndQualificationParsing(t *testing.T) {
 	now := time.Date(2026, 11, 22, 6, 3, 0, 0, time.UTC)
+	soulArtifact := strings.Repeat("b", 64)
 	policy, _, _ := fixturePolicy(t, now)
 	policy.ReleaseWorkflow.SourceCommit = strings.Repeat("c", 40)
 	qualification, err := os.ReadFile("testdata/measurement-v3-qualification.json")
@@ -25,7 +26,7 @@ func TestMeasuredV3StatementAndQualificationParsing(t *testing.T) {
 	if err != nil {
 		t.Fatal("v3 qualification shape refused", err)
 	}
-	statementRefs, statementBuild, expires, err := fixedStatementV3(statement, policy, digest(qualification), recorded, now)
+	statementRefs, statementBuild, expires, err := fixedStatementV3(statement, policy, digest(qualification), soulArtifact, recorded, now)
 	if err != nil || !reflect.DeepEqual(refs, statementRefs) || build != statementBuild || !expires.After(now) {
 		t.Fatal("v3 Statement and qualification mismatch", err)
 	}
@@ -55,6 +56,9 @@ func TestMeasuredV3StatementAndQualificationParsing(t *testing.T) {
 		{"wrong subject", func(v map[string]any) {
 			v["subject"].([]any)[0].(map[string]any)["digest"].(map[string]any)["sha256"] = strings.Repeat("f", 64)
 		}},
+		{"wrong Soul artifact", func(v map[string]any) {
+			v["predicate"].(map[string]any)["soul_artifact_sha256"] = strings.Repeat("1", 64)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var changed map[string]any
@@ -66,7 +70,7 @@ func TestMeasuredV3StatementAndQualificationParsing(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, _, err := fixedStatementV3(raw, policy, digest(qualification), recorded, now); err == nil {
+			if _, _, _, err := fixedStatementV3(raw, policy, digest(qualification), soulArtifact, recorded, now); err == nil {
 				t.Fatal("invalid v3 Statement accepted")
 			}
 		})

@@ -24,7 +24,7 @@ func reportShapeV3(raw []byte) error {
 		return ErrUnqualified
 	}
 	binding, err := parseMeasurementBinding(fields["measurement_binding"])
-	if err != nil {
+	if err != nil || !validHex(binding.SoulArtifactSHA256, 64) {
 		return ErrUnqualified
 	}
 	runFields, err := strictObject(fields["run_evidence"], MaxReportBytes)
@@ -56,8 +56,7 @@ func reportShapeV3(raw []byte) error {
 	}
 	var report reportDocument
 	if json.Unmarshal(raw, &report) != nil || report.SchemaVersion != 3 ||
-		binding.HostID != report.Host.ID || binding.ProfileInForce != report.ProfileInForce ||
-		"sha256:"+binding.PackageSHA256 != report.Adapter.PackageSHA256 {
+		binding.HostID != report.Host.ID || binding.ProfileInForce != report.ProfileInForce {
 		return ErrUnqualified
 	}
 	if profile == "managed-protected" {

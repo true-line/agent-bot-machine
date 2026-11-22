@@ -76,6 +76,11 @@ func TestV3ReportPairClaimsBindReleasedBytesAndDistinctRuns(t *testing.T) {
 		}
 	}
 	check(t, nil, true)
+	fixture := read(t, "measurement-v3-qualification.json")
+	if fixture["adapter"].(map[string]any)["package_sha256"] == "sha256:"+fixture["soul_artifact_sha256"].(string) ||
+		fixture["souls_build"].(map[string]any)["package_sha256"] == "sha256:"+fixture["soul_artifact_sha256"].(string) {
+		t.Fatal("synthetic adapter, runtime tgz and frozen Soul artifact digests must be distinct")
+	}
 	check(t, func(_, _, cooperative map[string]any) {
 		binding := cooperative["measurement_binding"].(map[string]any)
 		binding["hq_epoch"] = strings.Repeat("e", 64)
@@ -88,6 +93,16 @@ func TestV3ReportPairClaimsBindReleasedBytesAndDistinctRuns(t *testing.T) {
 	}{
 		{"qualification host", func(q, _, _ map[string]any) { q["host"].(map[string]any)["id"] = "other-host" }},
 		{"qualification runner", func(q, _, _ map[string]any) { q["runner"].(map[string]any)["binary_path"] = "/fixture/other-runner" }},
+		{"qualification Soul artifact", func(q, _, _ map[string]any) { q["soul_artifact_sha256"] = strings.Repeat("f", 64) }},
+		{"adapter digest substituted for Soul artifact", func(q, _, _ map[string]any) {
+			q["soul_artifact_sha256"] = strings.TrimPrefix(q["adapter"].(map[string]any)["package_sha256"].(string), "sha256:")
+		}},
+		{"runtime tgz digest substituted for Soul artifact", func(q, _, _ map[string]any) {
+			q["soul_artifact_sha256"] = strings.TrimPrefix(q["souls_build"].(map[string]any)["package_sha256"].(string), "sha256:")
+		}},
+		{"cooperative Soul artifact", func(_, _, c map[string]any) {
+			c["measurement_binding"].(map[string]any)["soul_artifact_sha256"] = strings.Repeat("f", 64)
+		}},
 		{"cooperative reservation replay", func(_, p, c map[string]any) {
 			c["run_evidence"].(map[string]any)["reservation"] = p["run_evidence"].(map[string]any)["reservation"]
 		}},

@@ -36,6 +36,7 @@ type VerifiedRelease struct {
 	v2SoulsBuild        *soulsBuildRef
 	v3Reports           *qualificationReportPairV3
 	v3SoulsBuild        *soulsBuildRef
+	v3SoulArtifact      string
 	v3ExpiresAt         time.Time
 }
 
@@ -205,11 +206,15 @@ func verifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON
 	}
 	qualificationSHA := digest(qualificationJSON)
 	if version == 3 {
-		_, qualificationReports, qualificationBuild, recorded, err := qualificationObjectV3(qualificationJSON, now)
+		qualification, qualificationReports, qualificationBuild, recorded, err := qualificationObjectV3(qualificationJSON, now)
 		if err != nil {
 			return VerifiedRelease{}, ErrUnqualified
 		}
-		reports, build, expires, err := fixedStatementV3(b.GetDsseEnvelope().GetPayload(), policy.value, qualificationSHA, recorded, now)
+		var soulArtifact string
+		if json.Unmarshal(qualification["soul_artifact_sha256"], &soulArtifact) != nil {
+			return VerifiedRelease{}, ErrUnqualified
+		}
+		reports, build, expires, err := fixedStatementV3(b.GetDsseEnvelope().GetPayload(), policy.value, qualificationSHA, soulArtifact, recorded, now)
 		if err != nil || !reflect.DeepEqual(reports, qualificationReports) || build != qualificationBuild {
 			return VerifiedRelease{}, ErrUnqualified
 		}
@@ -218,7 +223,7 @@ func verifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON
 				return VerifiedRelease{}, ErrUnqualified
 			}
 		}
-		return VerifiedRelease{verified: true, bundleSHA256: expectedBundleSHA256, qualificationSHA256: qualificationSHA, v3Reports: &reports, v3SoulsBuild: &build, v3ExpiresAt: expires, ownerKeyID: policy.value.OwnerKeyID, policyRevision: policy.value.PolicyRevision}, nil
+		return VerifiedRelease{verified: true, bundleSHA256: expectedBundleSHA256, qualificationSHA256: qualificationSHA, v3Reports: &reports, v3SoulsBuild: &build, v3SoulArtifact: soulArtifact, v3ExpiresAt: expires, ownerKeyID: policy.value.OwnerKeyID, policyRevision: policy.value.PolicyRevision}, nil
 	}
 	if version == 2 {
 		reports, build, err := fixedStatementV2(b.GetDsseEnvelope().GetPayload(), policy.value, qualificationSHA, now)

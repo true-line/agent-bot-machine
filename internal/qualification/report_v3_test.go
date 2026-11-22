@@ -81,8 +81,11 @@ func TestMeasuredHostReportV3ProfileAndBinding(t *testing.T) {
 			}{
 				{"missing binding", func(v map[string]any) { delete(v, "measurement_binding") }},
 				{"other host", func(v map[string]any) { v["measurement_binding"].(map[string]any)["host_id"] = "other-host" }},
-				{"other package", func(v map[string]any) {
-					v["measurement_binding"].(map[string]any)["package_sha256"] = strings.Repeat("f", 64)
+				{"missing Soul artifact", func(v map[string]any) {
+					delete(v["measurement_binding"].(map[string]any), "soul_artifact_sha256")
+				}},
+				{"malformed Soul artifact", func(v map[string]any) {
+					v["measurement_binding"].(map[string]any)["soul_artifact_sha256"] = "sha256:" + strings.Repeat("f", 64)
 				}},
 				{"wrong profile", func(v map[string]any) { v["measurement_binding"].(map[string]any)["profile_in_force"] = "other" }},
 				{"snapshot alias", func(v map[string]any) {

@@ -27,6 +27,7 @@ type measurementBinding struct {
 	PlanID                  string `json:"plan_id"`
 	InstalledPlanDigest     string `json:"installed_plan_digest"`
 	PackageSHA256           string `json:"package_sha256"`
+	SoulArtifactSHA256      string `json:"soul_artifact_sha256"`
 	ProfileInForce          string `json:"profile_in_force"`
 	ClaimedDefinitionDigest string `json:"claimed_definition_digest"`
 	DefinitionMeasurement   string `json:"definition_measurement"`
@@ -74,11 +75,19 @@ func validSnapshotIdentity(s snapshotIdentity) bool {
 func parseMeasurementBinding(raw []byte) (measurementBinding, error) {
 	var binding measurementBinding
 	fields, err := canonicalBytes(raw, MaxReportBytes)
-	if err != nil || !hasFields(fields,
+	if err != nil {
+		return measurementBinding{}, ErrUnqualified
+	}
+	names := []string{
 		"contract", "kind", "schema_version", "installation_id", "soul_id", "start_id",
 		"launch_id", "host_id", "hq_epoch", "plan_id", "installed_plan_digest",
 		"package_sha256", "profile_in_force", "claimed_definition_digest",
-		"definition_measurement", "launch_input_measurement", "snapshots") {
+		"definition_measurement", "launch_input_measurement", "snapshots",
+	}
+	if _, ok := fields["soul_artifact_sha256"]; ok {
+		names = append(names, "soul_artifact_sha256")
+	}
+	if !hasFields(fields, names...) {
 		return measurementBinding{}, ErrUnqualified
 	}
 	snapshots, err := strictObject(fields["snapshots"], MaxReportBytes)
@@ -101,6 +110,7 @@ func parseMeasurementBinding(raw []byte) (measurementBinding, error) {
 		!reportID.MatchString(binding.HostID) || !validHex(binding.HQEpoch, 64) ||
 		!reportID.MatchString(binding.PlanID) || !validHex(binding.InstalledPlanDigest, 64) ||
 		!validHex(binding.PackageSHA256, 64) ||
+		(binding.SoulArtifactSHA256 != "" && !validHex(binding.SoulArtifactSHA256, 64)) ||
 		(binding.ProfileInForce != "managed-protected" && binding.ProfileInForce != "managed-cooperative") ||
 		!validSHA(binding.ClaimedDefinitionDigest) || !validSHA(binding.DefinitionMeasurement) ||
 		!validSHA(binding.LaunchInputMeasurement) ||
