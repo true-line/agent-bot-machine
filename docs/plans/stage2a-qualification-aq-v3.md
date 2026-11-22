@@ -125,12 +125,17 @@ also use issuer `machine-a` until a separately specified source is reviewed.
 The distinct A-signed `segment_attestation` envelope uses the existing
 six-field Machine Ed25519 record under purpose
 `agent-bot/stage2a-physical-segment/v1`. Its canonical payload has exactly
-`schema_version` (1), `kind` (`stage2a-physical-segment-attestation`), all
-segment selectors and terminal/Q fields above, `segment_manifest_sha256`,
+`schema_version` (1), `kind` (`stage2a-physical-segment-attestation`),
+`gate`, `profile`, `host_id`, `cohort_id`, `suite_revision`,
+`owner_plan_sha256`, `segment_id`, `purpose`, `report_anchor`,
+`terminal_state`, `installation_id`, `soul_id`, `start_id`, `launch_id`,
+`measurement_binding_sha256`, `q_session_status`, `q_session_id`,
+`q_challenge_sha256`, `segment_manifest_sha256`,
 `reservation_sha256`, `b_finalization_sha256`, `stop_sha256`,
 `q_wire_sha256`, `q_index_sha256`, `q_eof_sha256`,
 `owner_acp_to_hq_sha256`, `hq_acp_to_owner_sha256`,
 `os_observation_sha256`, `installed_inputs_sha256`, and `signed_at`.
+It excludes the manifest's `artifacts` object; the manifest digest binds it.
 Each digest equals the exact referenced object's digest. The attestation
 contains no report, gate-manifest, keyd-signature, or post-sign commitment
 reference: A must issue it before requesting the host report signature.
