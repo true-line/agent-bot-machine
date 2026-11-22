@@ -26,7 +26,7 @@ func CheckDarwinSoulRunnerAccounts(s Saved, owner string, uid int) error {
 }
 
 func checkDarwinSoulRunnerAccounts(s Saved, owner string, uid int, h Host) error {
-	if s.SoulRunnerAccounts == nil || s.HarnessLaunch != nil || s.HQService != nil || s.UpgradeFrom != nil || s.QualificationRun != nil ||
+	if s.SoulRunnerAccounts == nil || s.SoulBridgeAccounts != nil || s.HarnessLaunch != nil || s.HQService != nil || s.UpgradeFrom != nil || s.QualificationRun != nil ||
 		!ValidApproval(s.PlanID, s.PlanDigest) || s.Plan.Purpose != SoulRunnerAccountsPurpose || len(s.Plan.Steps) == 0 || s.Plan.Steps[0].UID != uid {
 		return errors.New("saved plan is not this paired Soul runner operation")
 	}
@@ -117,7 +117,7 @@ func soulRunnerAccountStep(name string, h Host, uids map[int]string) (Step, erro
 }
 
 func buildSoulRunnerAccounts(in Input, h Host) (Plan, error) {
-	if in.Platform != PlatformDarwin || in.HQAccount != DarwinHQAccount || in.HarnessLaunch != nil || in.HQService != nil || in.UpgradeFrom != nil || in.HarnessAccounts || in.Dir != DarwinDir || len(in.Members) != 0 {
+	if in.Platform != PlatformDarwin || in.HQAccount != DarwinHQAccount || in.SoulBridgeAccounts != nil || in.HarnessLaunch != nil || in.HQService != nil || in.UpgradeFrom != nil || in.HarnessAccounts || in.Dir != DarwinDir || len(in.Members) != 0 {
 		return Plan{}, refuse(RefusedList, "Soul runners require a separate dedicated Darwin account plan")
 	}
 	runners, accounts, err := validateSoulRunnerAccounts(in.SoulRunnerAccounts)
