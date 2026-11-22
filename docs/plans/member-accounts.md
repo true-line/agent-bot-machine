@@ -198,6 +198,20 @@ an actual release workflow bundle, and physical T01/T02/T03/T21 results are
 still required. No positive production gate is wired; the existing install and
 launch refusals remain in force.
 
+The proposed Stage 2a `agent-bot/qualification-host-report/v3` report adds the
+full [machine/v1 per-start measurement binding](https://github.com/true-line/soul-contracts/blob/main/schemas/machine/v1/stage2a-measurement.md)
+to **both** protected T01–T03 and cooperative T21 signed payloads. Its strict
+parser compares host, profile and adapter package digest with the report; for
+protected runs it also compares installation, Soul, start, launch and plan IDs,
+the normalized installed-plan digest, reservation digest and Machine
+observation with the bridge assignment. The report carries reservation and
+post-Hello finalization refs plus a challenge digest, never a completed-record
+digest. A later immutable completed record must bind the exact report digest;
+release evidence references both without a circular hash. The current v3
+parser verifies shape and designated-host signature only. It cannot resolve
+authenticated one-use artifacts, prove the physical result, or authorize
+installation or launch. v1/v2 substitution refuses.
+
 ### Owner policy root provisioning ceremony
 
 The keyd command path is implemented for review; no production root has been
@@ -335,6 +349,16 @@ the challenge. Before a protected decision, secure-admin Machine must reread
 the policy and pairing under its admission lock and atomically consume that
 challenge. The current source has no positive installed admission from this
 preflight alone.
+
+For the qualification slice, extend the offline report verifier with a
+versioned v3 purpose and exact canonical bytes. Reuse the release-pinned v2
+owner policy's distinct host designation and 3,600-second revocation-snapshot
+check. Accept a protected or cooperative report only when its own gate shape
+and full per-start binding agree with its signed common fields. A separate
+release verifier must later authenticate the completed record, released
+adapter and Souls bytes, independent runner, HQ-started Soul, measured frozen
+definition and full launch inputs before positive admission. Until that
+producer and release path exist, the installed protected gate remains closed.
 
 On macOS, `members plan` without an account list retains the HQ-only plan.
 Pass `--hq-config` to plan one role for each distinct credential account in
@@ -1046,6 +1070,13 @@ this read-only function; no test may count that as challenge consumption or
 as a protected launch. Installed acceptance still requires the separate
 atomic challenge claim and physical host evidence.
 
+- The synthetic v3 protected and cooperative contract vectors verify under
+  an owner-designated test host key, while v1/v2 purpose substitution, a v1
+  policy, missing or extra binding fields, changed host/package/profile,
+  aliased snapshot roots, mismatched protected bridge start and reservation,
+  and cooperative gate substitution refuse. This is verifier evidence only;
+  no fixture counts as physical T01/T02/T03/T21 or a release qualification.
+
 On real accounts in CI (Linux), as in agent-bot-hq's member accounts step:
 
 - `plan` changes nothing and its digest is stable across two runs.
@@ -1096,6 +1127,11 @@ completed-run/report producer out of this portable preflight.
 4. Gate: `gofmt -l . && go vet ./... && go test ./...`.
 5. Update the closed verb set in [machine-daemon.md](machine-daemon.md) in
    the change that adds `approve-members`.
+6. For the v3 qualification verifier, run the focused contract-vector and
+   refusal tests in `internal/qualification`, then the repository Go test and
+   vet gates. Recheck the two signed report envelopes against the eventual
+   completed-run/release artifacts before any protected acceptance; the
+   current source-only verifier must continue to refuse positive admission.
 
 ### Opt-in Linux HQ service
 
