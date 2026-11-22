@@ -67,6 +67,7 @@ type stage2aQualificationSessionV1 struct {
 	requests         bytes.Buffer
 	observations     bytes.Buffer
 	closed           bool
+	lastCaptured     time.Time
 	started          time.Time
 }
 
@@ -194,5 +195,5 @@ func beginStage2aQualificationSessionV1(conn *net.UnixConn, peer stage2aQualific
 	return &stage2aQualificationSessionV1{conn: conn, peer: peer, begin: input,
 		beginFrame: beginFrame, readyFrame: append([]byte(nil), raw...),
 		challengeSHA256: ready.ChallengeSHA256, sourceSHA256: expectedSourceSHA256,
-		sequence: 1, started: now}, nil
+		sequence: 1, lastCaptured: captured, started: now}, nil
 }

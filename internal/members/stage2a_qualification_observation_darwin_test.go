@@ -36,6 +36,11 @@ func TestStage2aQualificationObservationBindsRequestAndUnknownPath(t *testing.T)
 	if err := check(); err != nil {
 		t.Fatal("Q-compatible unknown observation refused", err)
 	}
+	response["captured_at"] = "2026-99-99T20:00:00.120Z"
+	if check() == nil {
+		t.Fatal("impossible Q observation timestamp accepted")
+	}
+	response["captured_at"] = "2026-11-22T20:00:00.120Z"
 	delete(response, "stimulus_ref")
 	if check() == nil {
 		t.Fatal("missing ACP reference echo accepted")

@@ -59,9 +59,28 @@ func TestStage2aQualificationPairedFramesRejectSplice(t *testing.T) {
 		"pid": 42, "uid": 501, "gid": 20, "source_sha256": result.sourceSHA256,
 		"captured_at": "2026-11-22T20:00:00.120Z",
 	})
+	finished := map[string]any{
+		"schema": stage2aQualificationSchemaV1, "kind": "finished", "session_id": sessionID,
+		"challenge_sha256": result.challengeSHA256, "sequence": 2,
+		"observation_count": 1, "observations_sha256": result.observationsSHA256,
+		"captured_at": "2026-11-22T20:00:00.120Z",
+	}
+	result.finishedFrame = mustStage2aQualificationJSON(t, finished)
 	if err := verifyStage2aQualificationPairedFramesV1(result); err != nil {
 		t.Fatal("valid paired frames refused", err)
 	}
+	finished["captured_at"] = "2026-11-22T20:00:00.119Z"
+	result.finishedFrame = mustStage2aQualificationJSON(t, finished)
+	if verifyStage2aQualificationPairedFramesV1(result) == nil {
+		t.Fatal("finished frame before observation accepted")
+	}
+	finished["captured_at"] = "2026-11-22T20:00:00.120Z"
+	finished["observations_sha256"] = "sha256:" + strings.Repeat("d", 64)
+	result.finishedFrame = mustStage2aQualificationJSON(t, finished)
+	if verifyStage2aQualificationPairedFramesV1(result) == nil {
+		t.Fatal("finished frame with another transcript digest accepted")
+	}
+	finished["observations_sha256"] = result.observationsSHA256
 	response["gate"] = "T02"
 	observations.Reset()
 	if _, err := writeStage2aQualificationFrame(&observations, response); err != nil {
@@ -69,7 +88,22 @@ func TestStage2aQualificationPairedFramesRejectSplice(t *testing.T) {
 	}
 	result.observationFrames = bytes.Clone(observations.Bytes())
 	result.observationsSHA256 = stage2aQualificationSHA256(result.observationFrames)
+	finished["observations_sha256"] = result.observationsSHA256
+	result.finishedFrame = mustStage2aQualificationJSON(t, finished)
 	if verifyStage2aQualificationPairedFramesV1(result) == nil {
 		t.Fatal("spliced response with recomputed transcript digest accepted")
+	}
+	response["gate"] = "T01"
+	response["captured_at"] = "2026-11-22T19:59:59.999Z"
+	observations.Reset()
+	if _, err := writeStage2aQualificationFrame(&observations, response); err != nil {
+		t.Fatal(err)
+	}
+	result.observationFrames = bytes.Clone(observations.Bytes())
+	result.observationsSHA256 = stage2aQualificationSHA256(result.observationFrames)
+	finished["observations_sha256"] = result.observationsSHA256
+	result.finishedFrame = mustStage2aQualificationJSON(t, finished)
+	if verifyStage2aQualificationPairedFramesV1(result) == nil {
+		t.Fatal("observation before ready accepted")
 	}
 }

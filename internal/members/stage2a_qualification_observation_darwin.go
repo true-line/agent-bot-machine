@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"strconv"
+	"time"
 )
 
 var stage2aQualificationTokenV1 = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
@@ -96,6 +97,9 @@ func validateStage2aQualificationObservationV1(requestRaw, responseRaw []byte,
 		(profile == "managed-protected" && request.Gate == "T21") ||
 		(profile == "managed-cooperative" && request.Gate != "T21") ||
 		(request.Gate != "T01" && request.Gate != "T02" && request.Gate != "T03" && request.Gate != "T21") {
+		return errStage2aQualificationFrame
+	}
+	if _, err := time.Parse(time.RFC3339Nano, response.CapturedAt); err != nil {
 		return errStage2aQualificationFrame
 	}
 	if (requestFields["stimulus_ref"] == nil) != (responseFields["stimulus_ref"] == nil) ||

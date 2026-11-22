@@ -20,6 +20,7 @@ type stage2aQualificationSessionResultV1 struct {
 	peer               stage2aQualificationPeerV1
 	beginFrame         []byte
 	readyFrame         []byte
+	finishedFrame      []byte
 	sourceSHA256       string
 	challengeSHA256    string
 	requestFrames      []byte
@@ -58,6 +59,10 @@ func verifyStage2aQualificationPairedFramesV1(result stage2aQualificationSession
 		!stage2aQualificationTimestampV1.MatchString(ready.CapturedAt) {
 		return errStage2aReservationAuthority
 	}
+	lastCaptured, err := time.Parse(time.RFC3339Nano, ready.CapturedAt)
+	if err != nil {
+		return errStage2aReservationAuthority
+	}
 	requests := bytes.NewReader(result.requestFrames)
 	responses := bytes.NewReader(result.observationFrames)
 	for sequence := 1; sequence <= result.count; sequence++ {
@@ -71,11 +76,58 @@ func verifyStage2aQualificationPairedFramesV1(result stage2aQualificationSession
 			result.begin.PathRoots) != nil {
 			return errStage2aReservationAuthority
 		}
+		var observed struct {
+			CapturedAt string `json:"captured_at"`
+		}
+		if json.Unmarshal(responseRaw, &observed) != nil {
+			return errStage2aReservationAuthority
+		}
+		captured, err := time.Parse(time.RFC3339Nano, observed.CapturedAt)
+		if err != nil || captured.Before(lastCaptured) {
+			return errStage2aReservationAuthority
+		}
+		lastCaptured = captured
 	}
 	if requests.Len() != 0 || responses.Len() != 0 {
 		return errStage2aReservationAuthority
 	}
+	finishedAt, err := parseStage2aQualificationFinishedV1(result.finishedFrame,
+		result.begin.SessionID, result.challengeSHA256, result.count+1, result.count,
+		result.observationsSHA256)
+	if err != nil || finishedAt.Before(lastCaptured) {
+		return errStage2aReservationAuthority
+	}
 	return nil
+}
+
+func parseStage2aQualificationFinishedV1(raw []byte, sessionID, challengeSHA string,
+	sequence, count int, observationsSHA string) (time.Time, error) {
+	if _, err := stage2aQualificationKeysV1(raw, []string{"schema", "kind", "session_id",
+		"challenge_sha256", "sequence", "observation_count", "observations_sha256", "captured_at"}, ""); err != nil {
+		return time.Time{}, errStage2aReservationAuthority
+	}
+	var finished struct {
+		Schema             string `json:"schema"`
+		Kind               string `json:"kind"`
+		SessionID          string `json:"session_id"`
+		ChallengeSHA256    string `json:"challenge_sha256"`
+		Sequence           int    `json:"sequence"`
+		ObservationCount   int    `json:"observation_count"`
+		ObservationsSHA256 string `json:"observations_sha256"`
+		CapturedAt         string `json:"captured_at"`
+	}
+	if json.Unmarshal(raw, &finished) != nil || finished.Schema != stage2aQualificationSchemaV1 ||
+		finished.Kind != "finished" || finished.SessionID != sessionID ||
+		finished.ChallengeSHA256 != challengeSHA || finished.Sequence != sequence ||
+		finished.ObservationCount != count || finished.ObservationsSHA256 != observationsSHA ||
+		!stage2aQualificationTimestampV1.MatchString(finished.CapturedAt) {
+		return time.Time{}, errStage2aReservationAuthority
+	}
+	captured, err := time.Parse(time.RFC3339Nano, finished.CapturedAt)
+	if err != nil {
+		return time.Time{}, errStage2aReservationAuthority
+	}
+	return captured, nil
 }
 
 func (s *stage2aQualificationSessionV1) close() {
@@ -132,6 +184,20 @@ func (s *stage2aQualificationSessionV1) observe(request stage2aQualificationObse
 		s.close()
 		return nil, errStage2aReservationAuthority
 	}
+	var observed struct {
+		CapturedAt string `json:"captured_at"`
+	}
+	if json.Unmarshal(responseRaw, &observed) != nil {
+		s.close()
+		return nil, errStage2aReservationAuthority
+	}
+	captured, err := time.Parse(time.RFC3339Nano, observed.CapturedAt)
+	if err != nil || captured.Before(s.lastCaptured) || captured.Before(s.started.Add(-time.Second)) ||
+		captured.After(time.Now().Add(time.Second)) {
+		s.close()
+		return nil, errStage2aReservationAuthority
+	}
+	s.lastCaptured = captured
 	var header [4]byte
 	binary.BigEndian.PutUint32(header[:], uint32(len(responseRaw)))
 	s.requests.Write(requestFrame)
@@ -162,30 +228,10 @@ func (s *stage2aQualificationSessionV1) finish() (stage2aQualificationSessionRes
 	if err != nil {
 		return zero, errStage2aReservationAuthority
 	}
-	if _, err := stage2aQualificationKeysV1(raw, []string{"schema", "kind", "session_id",
-		"challenge_sha256", "sequence", "observation_count", "observations_sha256", "captured_at"}, ""); err != nil {
-		return zero, errStage2aReservationAuthority
-	}
-	var finished struct {
-		Schema             string `json:"schema"`
-		Kind               string `json:"kind"`
-		SessionID          string `json:"session_id"`
-		ChallengeSHA256    string `json:"challenge_sha256"`
-		Sequence           int    `json:"sequence"`
-		ObservationCount   int    `json:"observation_count"`
-		ObservationsSHA256 string `json:"observations_sha256"`
-		CapturedAt         string `json:"captured_at"`
-	}
-	if json.Unmarshal(raw, &finished) != nil || finished.Schema != stage2aQualificationSchemaV1 ||
-		finished.Kind != "finished" || finished.SessionID != s.begin.SessionID ||
-		finished.ChallengeSHA256 != s.challengeSHA256 || finished.Sequence != s.sequence ||
-		finished.ObservationCount != s.observationCount ||
-		finished.ObservationsSHA256 != stage2aQualificationSHA256(s.observations.Bytes()) ||
-		!stage2aQualificationTimestampV1.MatchString(finished.CapturedAt) {
-		return zero, errStage2aReservationAuthority
-	}
-	captured, err := time.Parse(time.RFC3339Nano, finished.CapturedAt)
-	if err != nil || captured.Before(s.started.Add(-time.Second)) || captured.After(time.Now().Add(time.Second)) {
+	observationsSHA := stage2aQualificationSHA256(s.observations.Bytes())
+	captured, err := parseStage2aQualificationFinishedV1(raw, s.begin.SessionID,
+		s.challengeSHA256, s.sequence, s.observationCount, observationsSHA)
+	if err != nil || captured.Before(s.lastCaptured) || captured.After(time.Now().Add(time.Second)) {
 		return zero, errStage2aReservationAuthority
 	}
 	if s.conn.SetReadDeadline(time.Now().Add(5*time.Second)) != nil {
@@ -198,9 +244,10 @@ func (s *stage2aQualificationSessionV1) finish() (stage2aQualificationSessionRes
 	return stage2aQualificationSessionResultV1{
 		begin: s.begin, peer: s.peer, sourceSHA256: s.sourceSHA256,
 		beginFrame: bytes.Clone(s.beginFrame), readyFrame: bytes.Clone(s.readyFrame),
+		finishedFrame:   bytes.Clone(raw),
 		challengeSHA256: s.challengeSHA256,
 		requestFrames:   bytes.Clone(s.requests.Bytes()), observationFrames: bytes.Clone(s.observations.Bytes()),
 		requestsSHA256:     stage2aQualificationSHA256(s.requests.Bytes()),
-		observationsSHA256: finished.ObservationsSHA256, count: s.observationCount, validated: true,
+		observationsSHA256: observationsSHA, count: s.observationCount, validated: true,
 	}, nil
 }
