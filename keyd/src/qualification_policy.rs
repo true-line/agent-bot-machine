@@ -353,6 +353,7 @@ fn validate_frozen_soul_policy(p: &serde_json::Map<String, Value>) -> Result<(),
         &[
             "soul_id",
             "artifact_sha256",
+            "receipt_sha256",
             "claimed_definition_digest",
             "definition_measurement",
         ],
@@ -371,6 +372,7 @@ fn validate_frozen_soul_policy(p: &serde_json::Map<String, Value>) -> Result<(),
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         })
         || !hex_digest(string(mapping, "artifact_sha256")?)
+        || !sha(string(mapping, "receipt_sha256")?)
         || !sha(string(mapping, "claimed_definition_digest")?)
         || !sha(string(mapping, "definition_measurement")?)
     {
@@ -642,6 +644,11 @@ fn validate_version(
                 .unwrap()
                 .iter()
                 .any(|v| v == &mapping["artifact_sha256"])
+            || snapshot["revoked_frozen_soul_receipt_sha256"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == &mapping["receipt_sha256"])
         {
             return Err("frozen Soul workflow or artifact is revoked".into());
         }
@@ -749,9 +756,10 @@ fn sign_version<F: Fn() -> SystemTime, R: Fn() -> Result<Vec<u8>, String>>(
         let build = &value["frozen_soul_build_workflow"];
         let mapping = &value["frozen_soul_mapping"];
         format!(
-            ", frozen Soul {}, artifact {}, definition {}, frozen builder {} at {}, root {}, Rekor log {}",
+            ", frozen Soul {}, artifact {}, receipt {}, definition {}, frozen builder {} at {}, root {}, Rekor log {}",
             mapping["soul_id"].as_str().ok_or("missing Soul ID")?,
             mapping["artifact_sha256"].as_str().ok_or("missing frozen artifact")?,
+            mapping["receipt_sha256"].as_str().ok_or("missing frozen receipt")?,
             mapping["definition_measurement"].as_str().ok_or("missing frozen definition")?,
             build["source_commit"].as_str().ok_or("missing frozen source commit")?,
             build["source_tree"].as_str().ok_or("missing frozen source tree")?,
@@ -1058,6 +1066,7 @@ mod tests {
         policy["frozen_soul_mapping"] = json!({
             "soul_id": "agent_00000000-0000-0000-0000-000000000000",
             "artifact_sha256": "c".repeat(64),
+            "receipt_sha256": format!("sha256:{}", "f".repeat(64)),
             "claimed_definition_digest": format!("sha256:{}", "d".repeat(64)),
             "definition_measurement": format!("sha256:{}", "e".repeat(64))
         });
@@ -1135,6 +1144,32 @@ mod tests {
         )
         .is_err());
         policy["frozen_soul_build_workflow"]["rekor_entry_version"] = json!("0.0.1");
+        let saved_receipt = policy["frozen_soul_mapping"]["receipt_sha256"].clone();
+        policy["frozen_soul_mapping"]
+            .as_object_mut()
+            .unwrap()
+            .remove("receipt_sha256");
+        assert!(validate_version(
+            &serde_json::to_vec(&policy).unwrap(),
+            &ledger_raw,
+            &id,
+            OffsetDateTime::from(now),
+            3
+        )
+        .is_err());
+        policy["frozen_soul_mapping"]["receipt_sha256"] = saved_receipt;
+        let mut receipt_revoked = policy.clone();
+        receipt_revoked["revocation_snapshot"]["revoked_frozen_soul_receipt_sha256"] =
+            json!(["sha256:".to_owned() + &"f".repeat(64)]);
+        let receipt_ledger = serde_json::to_vec(&receipt_revoked["revocation_snapshot"]).unwrap();
+        assert!(validate_version(
+            &serde_json::to_vec(&receipt_revoked).unwrap(),
+            &receipt_ledger,
+            &id,
+            OffsetDateTime::from(now),
+            3
+        )
+        .is_err());
         assert!(validate_version(
             &serde_json::to_vec(&policy).unwrap(),
             &ledger_raw,
