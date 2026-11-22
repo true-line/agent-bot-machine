@@ -259,11 +259,18 @@ func runQualificationWitnessKeyd(ctx context.Context, adminHome, mode string, si
 	cmd := exec.CommandContext(ctx, "./agent-bot-keyd", "qualification-witness", mode)
 	cmd.Dir = cwd
 	cmd.Env = []string{"HOME=" + adminHome, "PATH=/usr/bin:/bin"}
-	cmd.Stdin = bytes.NewReader(append(signedRequest, '\n'))
+	cmd.Stdin = qualificationWitnessInput(signedRequest)
 	out := keydOutput{limit: 8192}
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
 		return nil, errHQDevice
 	}
 	return out.buf.Bytes(), nil
+}
+
+// keyd reads stdin to EOF and compares it with canonical JSON bytes before
+// verifying the Machine signature. Transport framing is not part of that
+// signed request, so the child must receive these bytes without a delimiter.
+func qualificationWitnessInput(signedRequest []byte) *bytes.Reader {
+	return bytes.NewReader(bytes.Clone(signedRequest))
 }
