@@ -227,6 +227,17 @@ provide a root, trusted Sigstore log, signed frozen receipt, measured archive,
 completed-run record or protected launch authority; those still require
 independent Machine verification and owner review.
 
+The offline `VerifyOwnerPolicyV3` source seam accepts only a release-supplied
+Ed25519 public root and exact v3 envelope purpose. It verifies the signature
+over the canonical bytes, the shared revision/digest checkpoint, the separate
+frozen workflow/template/log fields, exact owner mapping and all revocation
+sets at a supplied current time. The host-report v3 verifier now refuses a v2
+policy, and the source-only report-pair checker compares the released frozen
+artifact and measured Soul ID/definition to the owner mapping. This is not a
+positive release or launch decision: trusted-root bytes, the real frozen
+Sigstore receipt, root-owned installed measurements, immutable completed-run
+records and physical T01/T02/T03/T21 results still require authentication.
+
 ### Owner policy root provisioning ceremony
 
 The keyd command path is implemented for review; no production root has been

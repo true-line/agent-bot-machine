@@ -49,7 +49,7 @@ func TestMeasuredHostReportV3ProfileAndBinding(t *testing.T) {
 	p, _, _ := fixturePolicy(t, now)
 	p.EvidenceSigners[0].HostID = "fixture-physical-mac"
 	p.EvidenceSigners[0].PublicKeySPKIDERBase64 = base64.StdEncoding.EncodeToString(spki)
-	verified := VerifiedPolicy{value: p, verified: true, at: now, version: 2}
+	verified := VerifiedPolicy{value: p, verified: true, at: now, version: 3}
 	for _, name := range []string{"protected", "cooperative"} {
 		t.Run(name, func(t *testing.T) {
 			raw, err := os.ReadFile("testdata/stage2a-report-v3-" + name + "-synthetic.json")
@@ -67,9 +67,9 @@ func TestMeasuredHostReportV3ProfileAndBinding(t *testing.T) {
 				t.Fatal("v3 accepted as v2")
 			}
 			legacy := verified
-			legacy.version = 1
+			legacy.version = 2
 			if _, err := VerifyHostReportV3(envelope, legacy, now); err == nil {
-				t.Fatal("v1 owner policy accepted for v3")
+				t.Fatal("v2 owner policy accepted for v3")
 			}
 			var original map[string]any
 			if json.Unmarshal(raw, &original) != nil {

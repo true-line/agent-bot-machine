@@ -26,7 +26,13 @@ func TestV3ReportPairClaimsBindReleasedBytesAndDistinctRuns(t *testing.T) {
 	p, _, _ := fixturePolicy(t, now)
 	p.EvidenceSigners[0].HostID = "fixture-physical-mac"
 	p.EvidenceSigners[0].PublicKeySPKIDERBase64 = base64.StdEncoding.EncodeToString(spki)
-	verified := VerifiedPolicy{value: p, verified: true, at: now, version: 2}
+	p.FrozenSoulMapping = &FrozenSoulMapping{
+		SoulID:                  "agent_11111111-1111-1111-1111-111111111111",
+		ArtifactSHA256:          strings.Repeat("b", 64),
+		ClaimedDefinitionDigest: "sha256:" + strings.Repeat("b", 64),
+		DefinitionMeasurement:   "sha256:27c6f3b4c768a2f5b2fe4f5f58c829eef7d02e111517937fea100d0aa15a2ede",
+	}
+	verified := VerifiedPolicy{value: p, verified: true, at: now, version: 3}
 	read := func(t *testing.T, name string) map[string]any {
 		t.Helper()
 		raw, err := os.ReadFile("testdata/" + name)
@@ -76,6 +82,15 @@ func TestV3ReportPairClaimsBindReleasedBytesAndDistinctRuns(t *testing.T) {
 		}
 	}
 	check(t, nil, true)
+	verified.value.FrozenSoulMapping.ArtifactSHA256 = strings.Repeat("f", 64)
+	check(t, nil, false)
+	verified.value.FrozenSoulMapping.ArtifactSHA256 = strings.Repeat("b", 64)
+	verified.value.FrozenSoulMapping.DefinitionMeasurement = "sha256:" + strings.Repeat("f", 64)
+	check(t, nil, false)
+	verified.value.FrozenSoulMapping.DefinitionMeasurement = "sha256:27c6f3b4c768a2f5b2fe4f5f58c829eef7d02e111517937fea100d0aa15a2ede"
+	verified.version = 2
+	check(t, nil, false)
+	verified.version = 3
 	fixture := read(t, "measurement-v3-qualification.json")
 	if fixture["adapter"].(map[string]any)["package_sha256"] == "sha256:"+fixture["soul_artifact_sha256"].(string) ||
 		fixture["souls_build"].(map[string]any)["package_sha256"] == "sha256:"+fixture["soul_artifact_sha256"].(string) {

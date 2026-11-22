@@ -10,7 +10,7 @@ import (
 // authenticate Machine-owned one-use records, the release signature, or
 // installed bytes.
 func verifyV3ReportPairClaims(policy VerifiedPolicy, qualificationJSON, protectedEnvelope, cooperativeEnvelope []byte, now time.Time) error {
-	if !policy.verified || policy.version != 2 || now.IsZero() || !policy.at.Equal(now) {
+	if !policy.verified || policy.version != 3 || policy.value.FrozenSoulMapping == nil || now.IsZero() || !policy.at.Equal(now) {
 		return ErrUnqualified
 	}
 	qualification, refs, _, qualificationAt, err := qualificationObjectV3(qualificationJSON, now)
@@ -71,6 +71,12 @@ func verifyV3ReportPairClaims(policy VerifiedPolicy, qualificationJSON, protecte
 	var releasedSoulArtifact string
 	if json.Unmarshal(qualification["soul_artifact_sha256"], &releasedSoulArtifact) != nil ||
 		pBinding.SoulArtifactSHA256 != releasedSoulArtifact {
+		return ErrUnqualified
+	}
+	mapping := policy.value.FrozenSoulMapping
+	if mapping.SoulID != pBinding.SoulID || mapping.ArtifactSHA256 != releasedSoulArtifact ||
+		mapping.ClaimedDefinitionDigest != pBinding.ClaimedDefinitionDigest ||
+		mapping.DefinitionMeasurement != pBinding.DefinitionMeasurement {
 		return ErrUnqualified
 	}
 	if pBinding.InstallationID != cBinding.InstallationID || pBinding.SoulID != cBinding.SoulID ||
