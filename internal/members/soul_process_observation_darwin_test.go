@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"reflect"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestSoulProcessArgumentsObservedWithoutEnvironment(t *testing.T) {
@@ -102,8 +104,25 @@ func TestSoulProcessArgumentsRefusesLiveEmptyArgv(t *testing.T) {
 			if _, err := observeSoulKernelProcess(child.Process.Pid); err != nil {
 				t.Fatalf("child was not live before argv check: %v", err)
 			}
-			if _, err := observeSoulProcessArguments(child.Process.Pid); err == nil {
-				t.Fatal("empty argv was accepted")
+			if observed, err := observeSoulProcessArguments(child.Process.Pid); err == nil {
+				// A hosted Darwin kernel may represent the empty argument
+				// differently. Capture structure only; never log argv or the
+				// environment that kern.procargs2 can include.
+				raw, rawErr := unix.SysctlRaw("kern.procargs2", child.Process.Pid)
+				rawArgc := -1
+				if len(raw) >= 4 {
+					rawArgc = int(int32(binary.NativeEndian.Uint32(raw[:4])))
+				}
+				clear(raw)
+				lengths := make([]int, len(observed.Argv))
+				for i, arg := range observed.Argv {
+					lengths[i] = len(arg)
+				}
+				firstExpected := len(observed.Argv) > 0 && observed.Argv[0] == example.args[0]
+				lastIsEnvironment := len(observed.Argv) > 0 &&
+					observed.Argv[len(observed.Argv)-1] == child.Env[0]
+				t.Fatalf("empty argv was accepted: raw_argc=%d raw_read_error=%t parsed_count=%d parsed_lengths=%v first_expected=%t last_is_environment=%t",
+					rawArgc, rawErr != nil, len(observed.Argv), lengths, firstExpected, lastIsEnvironment)
 			}
 		})
 	}
