@@ -362,8 +362,18 @@ producer and release path exist, the installed protected gate remains closed.
 The source-only v3 qualification and Statement parsers require distinct
 protected/cooperative report, signature and completed-run references, a
 matching Souls build claim, an exact qualification subject and a future
-Statement expiry. They do not mint a verified release without authenticated
-Machine completed-run records and measured installed bytes.
+Statement expiry. Those parsers alone do not authenticate a release. The next
+source slice compares both signed reports with the exact qualification record,
+requires a separate protected and cooperative start, and checks the local v3
+DSSE Statement against the release-pinned workflow certificate, trust root,
+transparency proof and signing time before expiry. Its `VerifiedRelease` value
+still grants no launch authority: the Machine lifecycle issuer, completed-run
+bytes, installed inputs and physical results must be
+authenticated by a later composition before a protected decision. The two
+attempts may use different HQ epochs and reviewed plan IDs; each lifecycle
+record must independently authenticate those values before acceptance. The
+separate v3 Souls build receipt verifier reuses the v2 pinned root and workflow
+checks, but its result must also be composed with that final decision.
 
 On macOS, `members plan` without an account list retains the HQ-only plan.
 Pass `--hq-config` to plan one role for each distinct credential account in

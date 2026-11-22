@@ -38,7 +38,8 @@ func reportShapeV3(raw []byte) error {
 	}
 	if json.Unmarshal(fields["run_evidence"], &run) != nil || !reportRef(run.Reservation) ||
 		!reportRef(run.Finalization) || !validSHA(run.ChallengeSHA256) ||
-		run.Reservation == run.Finalization {
+		run.Reservation.URI == run.Finalization.URI ||
+		run.Reservation.SHA256 == run.Finalization.SHA256 {
 		return ErrUnqualified
 	}
 	for _, name := range []string{"reservation", "finalization"} {

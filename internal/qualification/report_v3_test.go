@@ -90,6 +90,14 @@ func TestMeasuredHostReportV3ProfileAndBinding(t *testing.T) {
 					s["launch_inputs"].(map[string]any)["root_path"] = s["definition"].(map[string]any)["root_path"]
 				}},
 				{"missing finalization", func(v map[string]any) { delete(v["run_evidence"].(map[string]any), "finalization") }},
+				{"reservation and finalization same URI", func(v map[string]any) {
+					run := v["run_evidence"].(map[string]any)
+					run["finalization"].(map[string]any)["uri"] = run["reservation"].(map[string]any)["uri"]
+				}},
+				{"reservation and finalization same bytes", func(v map[string]any) {
+					run := v["run_evidence"].(map[string]any)
+					run["finalization"].(map[string]any)["sha256"] = run["reservation"].(map[string]any)["sha256"]
+				}},
 				{"extra completed digest", func(v map[string]any) {
 					v["run_evidence"].(map[string]any)["completed_run"] = map[string]any{"uri": "fixture:bogus", "sha256": "sha256:" + strings.Repeat("f", 64)}
 				}},

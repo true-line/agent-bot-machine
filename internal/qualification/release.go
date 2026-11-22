@@ -34,11 +34,17 @@ type VerifiedRelease struct {
 	policyRevision      uint64
 	v2Reports           *qualificationReportPair
 	v2SoulsBuild        *soulsBuildRef
+	v3Reports           *qualificationReportPairV3
+	v3SoulsBuild        *soulsBuildRef
+	v3ExpiresAt         time.Time
 }
 
 func (r VerifiedRelease) HostReportDigests() []string {
 	if !r.verified {
 		return nil
+	}
+	if r.v3Reports != nil {
+		return []string{r.v3Reports.ProtectedReport.Payload.SHA256, r.v3Reports.CooperativeReport.Payload.SHA256}
 	}
 	if r.v2Reports != nil {
 		return []string{r.v2Reports.ProtectedReport.Payload.SHA256, r.v2Reports.CooperativeReport.Payload.SHA256}
@@ -51,7 +57,13 @@ func (r VerifiedRelease) HostReportDigests() []string {
 }
 
 func (r VerifiedRelease) HostEnvelopeDigests() []string {
-	if !r.verified || r.v2Reports == nil {
+	if !r.verified {
+		return nil
+	}
+	if r.v3Reports != nil {
+		return []string{r.v3Reports.ProtectedReport.Signature.SHA256, r.v3Reports.CooperativeReport.Signature.SHA256}
+	}
+	if r.v2Reports == nil {
 		return nil
 	}
 	return []string{r.v2Reports.ProtectedReport.Signature.SHA256, r.v2Reports.CooperativeReport.Signature.SHA256}
@@ -117,7 +129,7 @@ func fixedStatement(raw []byte, policy Policy, qualificationSHA string, now time
 // Neither can be accepted from the bundle being verified. No network fetch is
 // made: the root, bundle, statement, certificate and log proofs are local.
 func VerifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON, qualificationJSON []byte, expectedBundleSHA256 string, now time.Time) (VerifiedRelease, error) {
-	return verifyReleaseAttestation(policy, trustedRootJSON, bundleJSON, qualificationJSON, expectedBundleSHA256, now, false)
+	return verifyReleaseAttestation(policy, trustedRootJSON, bundleJSON, qualificationJSON, expectedBundleSHA256, now, 1)
 }
 
 // VerifyReleaseAttestationV2 requires the bridge-aware Statement predicate and
@@ -126,11 +138,22 @@ func VerifyReleaseAttestationV2(policy VerifiedPolicy, trustedRootJSON, bundleJS
 	if policy.version != 2 {
 		return VerifiedRelease{}, ErrUnqualified
 	}
-	return verifyReleaseAttestation(policy, trustedRootJSON, bundleJSON, qualificationJSON, expectedBundleSHA256, now, true)
+	return verifyReleaseAttestation(policy, trustedRootJSON, bundleJSON, qualificationJSON, expectedBundleSHA256, now, 2)
 }
 
-func verifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON, qualificationJSON []byte, expectedBundleSHA256 string, now time.Time, v2 bool) (VerifiedRelease, error) {
-	if !policy.verified || now.IsZero() || !policy.at.Equal(now) ||
+// VerifyReleaseAttestationV3 authenticates a local v3 DSSE Statement, its
+// designated workflow and signing-time proof against release-pinned roots.
+// It does not authenticate completed runs or installed bytes; its result is
+// only one input to the still-closed protected launch decision.
+func VerifyReleaseAttestationV3(policy VerifiedPolicy, trustedRootJSON, bundleJSON, qualificationJSON []byte, expectedBundleSHA256 string, now time.Time) (VerifiedRelease, error) {
+	if policy.version != 2 {
+		return VerifiedRelease{}, ErrUnqualified
+	}
+	return verifyReleaseAttestation(policy, trustedRootJSON, bundleJSON, qualificationJSON, expectedBundleSHA256, now, 3)
+}
+
+func verifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON, qualificationJSON []byte, expectedBundleSHA256 string, now time.Time, version int) (VerifiedRelease, error) {
+	if version < 1 || version > 3 || !policy.verified || now.IsZero() || !policy.at.Equal(now) ||
 		len(trustedRootJSON) == 0 || len(trustedRootJSON) > maxTrustedRoot ||
 		len(bundleJSON) == 0 || len(bundleJSON) > maxReleaseBundle ||
 		len(qualificationJSON) == 0 || len(qualificationJSON) > MaxReportBytes ||
@@ -181,7 +204,23 @@ func verifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON
 		}
 	}
 	qualificationSHA := digest(qualificationJSON)
-	if v2 {
+	if version == 3 {
+		_, qualificationReports, qualificationBuild, recorded, err := qualificationObjectV3(qualificationJSON, now)
+		if err != nil {
+			return VerifiedRelease{}, ErrUnqualified
+		}
+		reports, build, expires, err := fixedStatementV3(b.GetDsseEnvelope().GetPayload(), policy.value, qualificationSHA, recorded, now)
+		if err != nil || !reflect.DeepEqual(reports, qualificationReports) || build != qualificationBuild {
+			return VerifiedRelease{}, ErrUnqualified
+		}
+		for _, timestamp := range result.VerifiedTimestamps {
+			if !timestamp.Timestamp.Before(expires) {
+				return VerifiedRelease{}, ErrUnqualified
+			}
+		}
+		return VerifiedRelease{verified: true, bundleSHA256: expectedBundleSHA256, qualificationSHA256: qualificationSHA, v3Reports: &reports, v3SoulsBuild: &build, v3ExpiresAt: expires, ownerKeyID: policy.value.OwnerKeyID, policyRevision: policy.value.PolicyRevision}, nil
+	}
+	if version == 2 {
 		reports, build, err := fixedStatementV2(b.GetDsseEnvelope().GetPayload(), policy.value, qualificationSHA, now)
 		if err != nil {
 			return VerifiedRelease{}, err

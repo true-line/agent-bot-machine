@@ -83,6 +83,19 @@ func validSoulsPackageName(name string) bool {
 // packageSHA must be computed from the exact delivered tgz bytes by the caller.
 func VerifySoulsBuildReceiptV2(policy VerifiedPolicy, trustedRootJSON, bundleJSON, qualificationJSON []byte, packageSHA string, now time.Time) (VerifiedSoulsBuild, error) {
 	_, _, claim, parseErr := qualificationObjectV2(qualificationJSON)
+	return verifySoulsBuildReceipt(policy, trustedRootJSON, bundleJSON, claim, packageSHA, now, parseErr)
+}
+
+// VerifySoulsBuildReceiptV3 authenticates the same separately signed Souls
+// build claim in a v3 qualification. It does not verify the host reports,
+// Machine completed runs, or installed adapter inputs. The caller must hash
+// the exact delivered Souls tgz to supply packageSHA.
+func VerifySoulsBuildReceiptV3(policy VerifiedPolicy, trustedRootJSON, bundleJSON, qualificationJSON []byte, packageSHA string, now time.Time) (VerifiedSoulsBuild, error) {
+	_, _, claim, _, parseErr := qualificationObjectV3(qualificationJSON, now)
+	return verifySoulsBuildReceipt(policy, trustedRootJSON, bundleJSON, claim, packageSHA, now, parseErr)
+}
+
+func verifySoulsBuildReceipt(policy VerifiedPolicy, trustedRootJSON, bundleJSON []byte, claim soulsBuildRef, packageSHA string, now time.Time, parseErr error) (VerifiedSoulsBuild, error) {
 	if !policy.verified || policy.version != 2 || policy.value.SoulsBuildWorkflow == nil ||
 		parseErr != nil || now.IsZero() || !policy.at.Equal(now) || !validSoulsBuild(claim) ||
 		!validSHA(packageSHA) || packageSHA != claim.PackageSHA ||
