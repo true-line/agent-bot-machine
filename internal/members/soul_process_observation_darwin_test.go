@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -110,15 +111,28 @@ func TestSoulProcessArgumentsRefusesLiveEmptyArgv(t *testing.T) {
 					if _, err := observeSoulKernelProcess(child.Process.Pid); err != nil {
 						t.Fatalf("child was not live before argv check: %v", err)
 					}
-					if observed, err := observeSoulProcessArguments(child.Process.Pid); err == nil {
+					// Diagnose the exact bytes parsed, rather than fetching a
+					// second process snapshot after an unexpected acceptance.
+					raw, readErr := unix.SysctlRaw("kern.procargs2", child.Process.Pid)
+					if readErr != nil {
+						t.Fatal(readErr)
+					}
+					observed, parseErr := parseSoulProcessArguments(raw)
+					if parseErr == nil {
 						// A hosted Darwin kernel may represent the empty argument
 						// differently. Capture structure only; never log argv or the
 						// environment that kern.procargs2 can include.
-						raw, rawErr := unix.SysctlRaw("kern.procargs2", child.Process.Pid)
 						rawArgc := -1
 						if len(raw) >= 4 {
 							rawArgc = int(int32(binary.NativeEndian.Uint32(raw[:4])))
 						}
+						zeroOffsets := make([]int, 0, 8)
+						for offset, b := range raw {
+							if b == 0 && offset >= 4 && len(zeroOffsets) < 8 {
+								zeroOffsets = append(zeroOffsets, offset)
+							}
+						}
+						rawLength := len(raw)
 						clear(raw)
 						lengths := make([]int, len(observed.Argv))
 						for i, arg := range observed.Argv {
@@ -127,9 +141,14 @@ func TestSoulProcessArgumentsRefusesLiveEmptyArgv(t *testing.T) {
 						firstExpected := len(observed.Argv) > 0 && observed.Argv[0] == example.args[0]
 						lastIsEnvironment := len(observed.Argv) > 0 &&
 							observed.Argv[len(observed.Argv)-1] == child.Env[0]
-						t.Fatalf("empty argv was accepted: attempt=%d raw_argc=%d raw_read_error=%t parsed_count=%d parsed_lengths=%v first_expected=%t last_is_environment=%t",
-							attempt, rawArgc, rawErr != nil, len(observed.Argv), lengths, firstExpected, lastIsEnvironment)
+						last := observed.Argv[len(observed.Argv)-1]
+						equalsOffset := strings.IndexByte(last, '=')
+						lastContainsEnvironment := strings.Contains(last, child.Env[0])
+						t.Fatalf("empty argv was accepted: attempt=%d raw_argc=%d raw_length=%d zero_offsets=%v parsed_count=%d parsed_lengths=%v first_expected=%t last_equals_environment=%t last_contains_environment=%t last_equals_offset=%d",
+							attempt, rawArgc, rawLength, zeroOffsets, len(observed.Argv), lengths, firstExpected,
+							lastIsEnvironment, lastContainsEnvironment, equalsOffset)
 					}
+					clear(raw)
 				}()
 			}
 		})
