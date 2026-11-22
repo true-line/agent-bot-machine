@@ -51,7 +51,7 @@ func ValidateSoulRunners(runners []SoulRunner, hqUID int, harnesses []HarnessAda
 	previous := ""
 	for _, r := range runners {
 		if !soulIdentity.MatchString(r.SoulID) || !soulInstallationID.MatchString(r.InstallationID) ||
-			!accountName.MatchString(r.Account) || r.Account == "root" || r.Account == "admin" ||
+			!accountName.MatchString(r.Account) || r.Account == "root" || darwinProtectedGroup(r.Account) ||
 			r.UID < 300 || r.UID > 399 || r.GID != r.UID ||
 			!strings.HasPrefix(r.PackageRoot, "/") || path.Clean(r.PackageRoot) != r.PackageRoot ||
 			len(r.PackageRoot) > 1024 || strings.ContainsAny(r.PackageRoot, "\x00\n\r") ||
