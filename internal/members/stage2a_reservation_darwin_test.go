@@ -128,15 +128,20 @@ func TestStage2aReservationStrictPreHelloEnvelope(t *testing.T) {
 	if err != nil || !ed25519.Verify(in.enrolledAdminKey, preimage, sig) || ed25519.Verify(in.enrolledAdminKey, payloadBytes, sig) {
 		t.Fatalf("signature must use the reservation domain: %v", err)
 	}
+	endpoints, err := DeriveSoulBridgeEndpoints(in.runner, in.bridge, in.hqUID, req.start.StartID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if payload.HostID != in.hostID || payload.AdmissionChallengeSHA256 != stage2aReservationSHA256(in.admissionChallenge[:]) ||
 		payload.InstalledPlanReceiptSHA256 != stage2aReservationSHA256(in.installedReceipt) ||
 		payload.MeasurementBinding != in.binding || payload.ExpiresAt != in.expires.Format(time.RFC3339Nano) ||
 		payload.Assignment.SoulArtifactSHA256 != in.installedArtifact ||
 		payload.Assignment.SoulArtifactSHA256 != payload.MeasurementBinding.SoulArtifactSHA256 ||
 		payload.Assignment.PackageSHA256 == string(payload.Assignment.SoulArtifactSHA256) ||
-		!reflect.DeepEqual(payload.MemberEndpoint, payload.Assignment.Member) ||
-		!reflect.DeepEqual(payload.MemberEndpoint.PeerUIDs, []int{in.runner.UID, in.bridge.UID}) ||
-		payload.MemberEndpoint.DirMode != 02750 || payload.MemberEndpoint.SocketMode != 0660 {
+		!reflect.DeepEqual(payload.MemberEndpoint, endpoints.MemberLaunchAssignment()) ||
+		payload.MemberEndpoint.MemberSocket != payload.Assignment.Member.SocketPath ||
+		!reflect.DeepEqual(payload.MemberEndpoint.MemberEndpoint.PeerUIDs, []int{in.runner.UID, in.bridge.UID}) ||
+		payload.MemberEndpoint.MemberEndpoint.DirMode != 02750 || payload.MemberEndpoint.MemberEndpoint.SocketMode != 0660 {
 		t.Fatal("reservation did not bind exact installed authority and member endpoint")
 	}
 	for _, key := range []string{`"runtime_id"`, `"peer_pid"`, `"peer_uid"`, `"socket_inode"`, `"broker_binding_b"`, `"admission_challenge"`} {
@@ -146,7 +151,7 @@ func TestStage2aReservationStrictPreHelloEnvelope(t *testing.T) {
 	}
 	// Independent RFC 8785 fixture: ASCII fixture object keys sorted recursively,
 	// then Node's JSON.stringify, crypto.sign and crypto.createHash.
-	const want = "sha256:c2a10ac4c6abf25e8dd23fa232458b535acdb5f38fac439834d82dbabafe21b3"
+	const want = "sha256:5447b4e31c9e7e7c1cbb434c2fd1f45de0d507f66f25076f3ab2da3bfb94f882"
 	if got.sha256 != want {
 		t.Fatalf("exact signed envelope digest = %s, want %s", got.sha256, want)
 	}

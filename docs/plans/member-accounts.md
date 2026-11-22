@@ -578,9 +578,12 @@ independently sourced. The shared `machine/v1` binding uses the additive
 field required by the v3 report in [Contracts #60](https://github.com/true-line/soul-contracts/pull/60).
 The authenticated finalization, immutable completed-run record and signed
 v3 host report must preserve the full measurement binding.
-The endpoint in this record contains the expected path, owners, modes and
-permitted peer UIDs. Actual socket inode, process and peer facts belong to
-authenticated finalization. HQ creates its runtime IDs after Hello.
+The payload signs the exact `SoulMemberLaunchAssignment` fragment that Souls
+expects: `member_socket` and nested `member_endpoint` with the reviewed
+directory, owners, modes and permitted peer UIDs. It is checked against the
+flat Machine start assignment before signing. Actual socket inode, process
+and peer facts belong to authenticated finalization. HQ creates its runtime
+IDs after Hello.
 
 The candidate serializes one installation under a permanent root-private
 lock. It binds host, HQ epoch, installation, start and launch in the signed

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -119,7 +120,7 @@ type stage2aReservationPayload struct {
 	ExpiresAt                  string                       `json:"expires_at"`
 	InstalledPlanReceiptSHA256 string                       `json:"installed_plan_receipt_sha256"`
 	Assignment                 stage2aReservationAssignment `json:"assignment"`
-	MemberEndpoint             SoulStartEndpoint            `json:"member_endpoint"`
+	MemberEndpoint             SoulMemberLaunchAssignment   `json:"member_endpoint"`
 	MeasurementBinding         stage2aMeasurementBinding    `json:"measurement_binding"`
 	AdmissionChallengeSHA256   string                       `json:"admission_challenge_sha256"`
 }
@@ -192,12 +193,16 @@ func prepareStage2aReservation(req stage2aReservationRequest, in stage2aReservat
 		in.hqUID, in.machineUID, req.start, req.launchID, issued) != nil || !in.binding.matches(a, in.hostID) {
 		return stage2aReservationPayload{}, errStage2aReservationAuthority
 	}
+	endpoints, err := DeriveSoulBridgeEndpoints(in.runner, in.bridge, in.hqUID, req.start.StartID)
+	if err != nil || !reflect.DeepEqual(startEndpoint(endpoints.Member), a.Member) {
+		return stage2aReservationPayload{}, errStage2aReservationAuthority
+	}
 	return stage2aReservationPayload{
 		Contract: "machine/v1", Kind: "stage2a-reservation", SchemaVersion: 1, HostID: in.hostID,
 		IssuedAt: issued.UTC().Format(time.RFC3339Nano), ExpiresAt: a.ExpiresAt,
 		InstalledPlanReceiptSHA256: stage2aReservationSHA256(in.installedReceipt),
 		Assignment:                 stage2aReservationAssignment{SoulStartAssignment: a, SoulArtifactSHA256: in.installedArtifact},
-		MemberEndpoint:             a.Member,
+		MemberEndpoint:             endpoints.MemberLaunchAssignment(),
 		MeasurementBinding:         in.binding,
 		AdmissionChallengeSHA256:   stage2aReservationSHA256(in.admissionChallenge[:]),
 	}, nil
