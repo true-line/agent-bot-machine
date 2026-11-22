@@ -520,8 +520,8 @@ spent claim. A future Machine-authenticated post-Hello finalization must bind
 both to the earlier signed and spent reservation, independently observed
 runner PID/start/UID and process chain, exact endpoint inodes, one-use
 admission challenge and live B bind before HQ records a protected launch or
-opens ACP. The finalization producer and signed reservation operation do not
-exist, and the installed rule remains absent.
+opens ACP. The production finalization producer, reservation entry point,
+and installed rule remain absent.
 The Darwin observation helper samples a live PID's kernel start time, parent,
 process group and real/effective/saved UID/GID and groups before and after a
 bounded `kern.procargs2` argv read. It refuses PID reuse, changed credentials,
@@ -558,6 +558,51 @@ the protected grant, or authorize a start. The future root producer must copy
 and measure through no-follow descriptors, publish and recheck an immutable
 snapshot, then bind both definition and launch-input measurements to a spent
 signed reservation and the later authenticated finalization.
+
+The source-only Darwin reservation candidate introduces a root-private step
+before Hello. It derives the exact R/B member endpoint from the reviewed
+assignment and signs `agent-bot/stage2a-reservation/v1`, one NUL byte, and
+the RFC 8785 JCS `machine/v1` reservation payload with the enrolled
+administrator Ed25519 key. It hashes the exact JCS signed envelope for
+`reservation_sha256`. The provisional envelope contains schema version,
+purpose, pinned issuer public key, exact payload digest, payload and
+signature. It encodes the key, payload and signature in unpadded base64url.
+The payload digest covers decoded canonical payload bytes. The admission
+challenge digest covers the exact 32-byte challenge supplied by installed
+authority, and the challenge itself stays private.
+The typed frozen `.soul` digest in `assignment.soul_artifact_sha256` and
+`measurement_binding.soul_artifact_sha256` must match both the authenticated
+owner mapping and the authenticated installed-byte receipt. The legacy
+`package_sha256`, adapter package and Souls runtime archive digests are
+independently sourced. The shared `machine/v1` binding uses the additive
+field required by the v3 report in [Contracts #60](https://github.com/true-line/soul-contracts/pull/60).
+The authenticated finalization, immutable completed-run record and signed
+v3 host report must preserve the full measurement binding.
+The endpoint in this record contains the expected path, owners, modes and
+permitted peer UIDs. Actual socket inode, process and peer facts belong to
+authenticated finalization. HQ creates its runtime IDs after Hello.
+
+The candidate serializes one installation under a permanent root-private
+lock. It binds host, HQ epoch, installation, start and launch in the signed
+record, and shares the older installation/start claim namespace so a retry
+cannot reuse the same socket assignment with a new epoch or launch ID.
+It exclusively publishes the complete `0600` envelope and syncs the private
+directory before returning its bytes. An interrupted response, expiry after
+publication or directory sync error leaves any existing claim occupied. An
+earlier interruption exposes no signed response. The synthetic checks cover
+the wire bytes and signature, input mismatch, existing claims, concurrency
+and a response lost after publication.
+
+Connecting the candidate requires an authenticated installed receipt and
+live HQ pairing, an owner-approved frozen artifact and definition mapping,
+root descriptor measurements, a purpose-limited secure-administrator signer,
+and one-use owner approval for the exact launch before execution. The entry
+point currently has no production caller or signer. Pre-Hello reservation
+signing is a separate purpose from PDR-0102 result signing. The latter needs
+the immutable completed-run record and independent Machine observation of
+the actual runner, account, process and enforcement. HQ still needs the
+live B bind, post-Hello finalization and containment before admitting a
+protected runtime.
 
 ### What is created
 
