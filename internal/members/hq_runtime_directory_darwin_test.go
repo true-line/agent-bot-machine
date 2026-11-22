@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -114,7 +115,8 @@ func TestDarwinRuntimeDirectoryCreationAndRollback(t *testing.T) {
 }
 
 func TestDarwinBrokerDirectoryPublishesExactGroupModeOnce(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "fixture")
+	parent := t.TempDir()
+	p := filepath.Join(parent, "fixture")
 	dir, err := createProtectedDirectory(p, os.Getuid(), os.Getgid(), os.ModeSetgid|0750)
 	if err != nil {
 		t.Fatal(err)
@@ -130,9 +132,36 @@ func TestDarwinBrokerDirectoryPublishesExactGroupModeOnce(t *testing.T) {
 	if _, err = createProtectedDirectory(p, os.Getuid(), os.Getgid(), 0755); !errors.Is(err, os.ErrExist) {
 		t.Fatal("existing directory changed", err)
 	}
+	if stages, err := filepath.Glob(filepath.Join(parent, ".hq-runtime-*")); err != nil || len(stages) != 0 {
+		t.Fatalf("root-private staging parent remains visible: %v, %v", stages, err)
+	}
 	current, err := os.Lstat(p)
 	if err != nil || !os.SameFile(st, current) {
 		t.Fatal("lost original directory", err)
+	}
+}
+
+func TestDarwinSoulEndpointRootRefusesUnreviewedPathAndRoles(t *testing.T) {
+	slot := strings.Repeat("a", 20)
+	runner := "_abm-sr-" + strings.Repeat("b", 20)
+	bridge := "_abm-br-" + strings.Repeat("c", 20)
+	for _, tc := range []struct {
+		name, path, owner, group string
+		mode, uid, gid           int
+	}{
+		{"foreign path", filepath.Join(t.TempDir(), slot), runner, bridge, 02750, 331, 333},
+		{"wrong member owner", filepath.Join(launchRuntimeDir, "m", slot), bridge, runner, 02750, 333, 331},
+		{"wrong relay group", filepath.Join(launchRuntimeDir, "s", slot), bridge, bridge, 02750, 333, 333},
+		{"wrong admission owner", filepath.Join(launchRuntimeDir, "r", slot), runner, runner, 02750, 331, 331},
+		{"unreviewed mode", filepath.Join(launchRuntimeDir, "m", slot), runner, bridge, 0777, 331, 333},
+		{"invalid slot", filepath.Join(launchRuntimeDir, "m", "chosen"), runner, bridge, 02750, 331, 333},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := (OSRoot{}).CreateReviewedSoulEndpointDirectory(tc.path, tc.owner, tc.group,
+				uint32(tc.mode), tc.uid, tc.gid); err == nil {
+				t.Fatal("unreviewed endpoint directory accepted")
+			}
+		})
 	}
 }
 

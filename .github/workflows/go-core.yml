@@ -219,6 +219,9 @@ jobs:
       - name: Exercise the Darwin harness process egress profile
         if: matrix.os == 'darwin'
         run: python3 -I tests/fixtures/darwin-harness-egress.py
+      - name: Exercise the Darwin Soul runner and bridge egress profiles
+        if: matrix.os == 'darwin'
+        run: python3 -I tests/fixtures/darwin-soul-profiles.py
       - name: Check out the reviewed T02 observer
         if: matrix.os == 'darwin' && github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

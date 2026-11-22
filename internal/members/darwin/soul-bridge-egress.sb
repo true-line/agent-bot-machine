@@ -1,0 +1,8 @@
+(version 1)
+; Installed launcher supplies the exact HQ broker, Souls member and relay
+; listener paths for this start. The bridge gets no IP destination.
+(allow default)
+(deny network*)
+(allow network-outbound (remote unix-socket (path-literal (param "BROKER_SOCKET"))))
+(allow network-outbound (remote unix-socket (path-literal (param "MEMBER_SOCKET"))))
+(allow network-bind (local unix-socket (path-literal (param "RELAY_SOCKET"))))
