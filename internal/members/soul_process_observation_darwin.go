@@ -11,28 +11,20 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// soulProcessArguments is a bounded reading of the Darwin exec argument area.
-// The path and argv are supporting observations only: the exec path is not a
-// vnode identity, and argv is not an authorization or a package measurement.
-type soulProcessArguments struct {
-	ExecPath string
-	Argv     []string
-}
-
 type soulProcessObservation struct {
-	Kernel    soulKernelProcessSnapshot
-	Arguments soulProcessArguments
+	Kernel soulKernelProcessSnapshot
 }
 
-// Bracket the argument read with kernel identity samples. A PID that exits and
-// is reused during observation must not lend its argv to an earlier process.
-func observeSoulProcess(pid int) (soulProcessObservation, error) {
+// Bracket the expected-argument comparison with kernel identity samples. A
+// PID that exits and is reused during observation cannot lend its argv to an
+// earlier process. This is supporting evidence only: the exec path is not a
+// vnode identity and the launcher must independently prove its execve inputs.
+func observeSoulProcess(pid int, expectedPath string, expectedArgv []string) (soulProcessObservation, error) {
 	first, err := observeSoulKernelProcess(pid)
 	if err != nil {
 		return soulProcessObservation{}, err
 	}
-	arguments, err := observeSoulProcessArguments(pid)
-	if err != nil {
+	if err := observeSoulProcessArguments(pid, expectedPath, expectedArgv); err != nil {
 		return soulProcessObservation{}, err
 	}
 	last, err := observeSoulKernelProcess(pid)
@@ -42,66 +34,84 @@ func observeSoulProcess(pid int) (soulProcessObservation, error) {
 	if !sameSoulKernelProcess(first, last) {
 		return soulProcessObservation{}, errors.New("Soul process changed during observation")
 	}
-	return soulProcessObservation{Kernel: last, Arguments: arguments}, nil
+	return soulProcessObservation{Kernel: last}, nil
 }
 
-func observeSoulProcessArguments(pid int) (soulProcessArguments, error) {
+func observeSoulProcessArguments(pid int, expectedPath string, expectedArgv []string) error {
 	if pid <= 1 {
-		return soulProcessArguments{}, errors.New("invalid Soul process PID")
+		return errors.New("invalid Soul process PID")
+	}
+	if err := validateSoulExpectedArguments(expectedPath, expectedArgv); err != nil {
+		return err
 	}
 	raw, err := unix.SysctlRaw("kern.procargs2", pid)
 	if err != nil {
-		return soulProcessArguments{}, fmt.Errorf("observe Soul process arguments: %w", err)
+		return fmt.Errorf("observe Soul process arguments: %w", err)
 	}
-	// The sysctl can copy environment bytes after argv into this buffer. Never
-	// return them, and erase the transient copy even when parsing refuses.
+	// Darwin can blur an empty argv slot with following environment bytes.
+	// Compare the exact approved nonempty bytes in place and never return any
+	// observed string, including on refusal. Clear even an invalid raw area.
 	defer clear(raw)
-	return parseSoulProcessArguments(raw)
+	return matchSoulProcessArguments(raw, expectedPath, expectedArgv)
+}
+
+// Refuse empty approved arguments before kern.procargs2 reads the process: a
+// Darwin kernel can elide an empty slot and expose environment bytes instead.
+func validateSoulExpectedArguments(expectedPath string, expectedArgv []string) error {
+	const maxArgs = 128
+	if len(expectedPath) == 0 || expectedPath[0] != '/' ||
+		len(expectedArgv) == 0 || len(expectedArgv) > maxArgs ||
+		bytes.IndexByte([]byte(expectedPath), 0) >= 0 {
+		return errors.New("Soul expected exec path or arguments are invalid")
+	}
+	for _, arg := range expectedArgv {
+		if arg == "" || bytes.IndexByte([]byte(arg), 0) >= 0 {
+			return errors.New("Soul expected argument is empty or invalid")
+		}
+	}
+	return nil
 }
 
 // KERN_PROCARGS2 starts with a native int argc, then an exec path aligned to
 // the target process pointer width, then exactly argc NUL-terminated argument
 // strings. Current Darwin only runs 64-bit processes. Skip the exact padding,
-// never arbitrary NULs: an empty argv[0] must not be mistaken for padding.
-// Reject any empty argument before it can shift the parse into environment.
-func parseSoulProcessArguments(raw []byte) (soulProcessArguments, error) {
-	const (
-		maxArgs      = 128
-		pointerWidth = 8
-	)
+// never arbitrary NULs. A match cannot replace measured launcher inputs.
+func matchSoulProcessArguments(raw []byte, expectedPath string, expectedArgv []string) error {
+	const pointerWidth = 8
+	if err := validateSoulExpectedArguments(expectedPath, expectedArgv); err != nil {
+		return err
+	}
 	if len(raw) < 6 || len(raw) > 1<<20 {
-		return soulProcessArguments{}, errors.New("Soul process arguments have invalid size")
+		return errors.New("Soul process arguments have invalid size")
 	}
 	argc := int(int32(binary.NativeEndian.Uint32(raw[:4])))
-	if argc <= 0 || argc > maxArgs {
-		return soulProcessArguments{}, errors.New("Soul process argument count is invalid")
+	if argc != len(expectedArgv) {
+		return errors.New("Soul process argument count differs from approved launch")
 	}
 	remaining := raw[4:]
 	end := bytes.IndexByte(remaining, 0)
-	if end <= 0 || remaining[0] != '/' {
-		return soulProcessArguments{}, errors.New("Soul process exec path is unavailable")
+	if end <= 0 || remaining[0] != '/' || !bytes.Equal(remaining[:end], []byte(expectedPath)) {
+		return errors.New("Soul process exec path differs from approved launch")
 	}
-	result := soulProcessArguments{ExecPath: string(remaining[:end]), Argv: make([]string, 0, argc)}
 	remaining = remaining[end+1:]
 	pad := (pointerWidth - (end+1)%pointerWidth) % pointerWidth
 	if len(remaining) < pad {
-		return soulProcessArguments{}, errors.New("Soul process exec path padding is incomplete")
+		return errors.New("Soul process exec path padding is incomplete")
 	}
 	for _, value := range remaining[:pad] {
 		if value != 0 {
-			return soulProcessArguments{}, errors.New("Soul process exec path padding is invalid")
+			return errors.New("Soul process exec path padding is invalid")
 		}
 	}
 	remaining = remaining[pad:]
-	for i := 0; i < argc; i++ {
+	for i, expected := range expectedArgv {
 		end = bytes.IndexByte(remaining, 0)
-		if end <= 0 {
-			return soulProcessArguments{}, errors.New("Soul process argv is incomplete")
+		if end <= 0 || !bytes.Equal(remaining[:end], []byte(expected)) {
+			return fmt.Errorf("Soul process argv[%d] differs from approved launch", i)
 		}
-		result.Argv = append(result.Argv, string(remaining[:end]))
 		remaining = remaining[end+1:]
 	}
-	return result, nil
+	return nil
 }
 
 // soulKernelProcessSnapshot is a kernel observation of one live PID. PID and
