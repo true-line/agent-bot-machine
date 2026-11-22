@@ -16,6 +16,21 @@ public func keydQualificationValidSPKI(_ bytes: UnsafePointer<UInt8>?, _ count: 
 
 private typealias DeviceKey = SecureEnclave.P256.Signing.PrivateKey
 
+// Large signing messages are reserved for the two fixed host-report purposes.
+// The report itself remains bounded to 1 MiB; every other purpose keeps the
+// 8 KiB limit below. This check is independent of Secure Enclave availability.
+func keydFixedHostReportMessage(_ op: Int32, _ message: UnsafePointer<UInt8>, _ count: Int) -> Bool {
+    guard op == 2, count > 8192 else { return false }
+    for purpose in ["agent-bot/qualification-host-report/v1", "agent-bot/qualification-host-report/v2"] {
+        let prefix = Array("\(purpose)\u{0}".utf8)
+        if count <= 1_048_576 + prefix.count &&
+            Data(bytes: message, count: prefix.count).elementsEqual(prefix) {
+            return true
+        }
+    }
+    return false
+}
+
 // Return only a reference on create, public point on inspect, or raw signature
 // on sign. Each call disables authentication prompts in the service account.
 @_cdecl("keyd_device_enclave")
@@ -23,9 +38,7 @@ public func keydDeviceEnclave(
     _ op: Int32, _ reference: UnsafePointer<UInt8>, _ nr: Int,
     _ message: UnsafePointer<UInt8>, _ nm: Int, _ output: UnsafeMutablePointer<UInt8>, _ cap: Int
 ) -> Int {
-    let hostReportPrefix = Array("agent-bot/qualification-host-report/v1\u{0}".utf8)
-    let fixedHostReport = op == 2 && nm > 8192 && nm <= 1_048_576 + hostReportPrefix.count &&
-        Data(bytes: message, count: hostReportPrefix.count).elementsEqual(hostReportPrefix)
+    let fixedHostReport = nm > 8192 && keydFixedHostReportMessage(op, message, nm)
     guard nr >= 0, nr <= 8192, nm >= 0, (nm <= 8192 || fixedHostReport),
           cap > 0, SecureEnclave.isAvailable else { return -1 }
     let ctx = LAContext()
