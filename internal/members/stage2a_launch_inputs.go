@@ -72,7 +72,8 @@ func stage2aAbsolutePath(p string) bool {
 // JSON shape after a typed producer has serialized its object. This avoids
 // accepting a RawMessage hidden in an otherwise ordinary map value.
 func stage2aStrictJSON(raw []byte) error {
-	if len(raw) == 0 || len(raw) > 1<<20 || !utf8.Valid(raw) || !json.Valid(raw) {
+	if len(raw) == 0 || len(raw) > 1<<20 || !utf8.Valid(raw) || !json.Valid(raw) ||
+		!stage2aValidJSONSurrogates(raw) {
 		return errors.New("invalid Stage 2a JSON")
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -131,6 +132,49 @@ func stage2aStrictJSON(raw []byte) error {
 		return errors.New("Stage 2a JSON has trailing data")
 	}
 	return nil
+}
+
+// encoding/json accepts unpaired UTF-16 surrogate escapes and decodes them
+// as U+FFFD. Inspect the original quoted bytes before Token or Unmarshal can
+// erase the difference between an invalid escaped input and an approved rune.
+func stage2aValidJSONSurrogates(raw []byte) bool {
+	quoted := false
+	for i := 0; i < len(raw); i++ {
+		switch raw[i] {
+		case '"':
+			quoted = !quoted
+		case '\\':
+			if !quoted || i+1 >= len(raw) {
+				return false
+			}
+			i++
+			if raw[i] != 'u' {
+				continue
+			}
+			if i+4 >= len(raw) {
+				return false
+			}
+			first, err := strconv.ParseUint(string(raw[i+1:i+5]), 16, 16)
+			if err != nil {
+				return false
+			}
+			i += 4
+			if first >= 0xdc00 && first <= 0xdfff {
+				return false
+			}
+			if first >= 0xd800 && first <= 0xdbff {
+				if i+6 >= len(raw) || raw[i+1] != '\\' || raw[i+2] != 'u' {
+					return false
+				}
+				second, err := strconv.ParseUint(string(raw[i+3:i+7]), 16, 16)
+				if err != nil || second < 0xdc00 || second > 0xdfff {
+					return false
+				}
+				i += 6
+			}
+		}
+	}
+	return !quoted
 }
 
 func stage2aJSONSize(value any, max int) bool {

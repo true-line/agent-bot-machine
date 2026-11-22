@@ -3,6 +3,7 @@ package members
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -197,6 +198,67 @@ func TestStage2aLaunchInputRejectsInvalidUTF8BeforeMarshal(t *testing.T) {
 				t.Fatal("invalid observed source bytes matched approved replacement character")
 			}
 		})
+	}
+}
+
+func TestStage2aStrictJSONRejectsUnpairedSurrogateEscapes(t *testing.T) {
+	for name, raw := range map[string][]byte{
+		"high alone":       []byte(`{"value":"\ud800"}`),
+		"low alone":        []byte(`{"value":"\udc00"}`),
+		"high then high":   []byte(`{"value":"\ud800\ud800"}`),
+		"high then normal": []byte(`{"value":"\ud800\u0041"}`),
+		"low then high":    []byte(`{"value":"\udc00\ud800"}`),
+		"object key":       []byte(`{"\ud800":"value"}`),
+		"nested value":     []byte(`{"outer":{"value":"\ud800"}}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !json.Valid(raw) {
+				t.Fatal("fixture is not JSON accepted by encoding/json")
+			}
+			if err := stage2aStrictJSON(raw); err == nil {
+				t.Fatal("unpaired surrogate escape accepted")
+			}
+		})
+	}
+	for name, raw := range map[string][]byte{
+		"valid pair":     []byte(`{"value":"\ud83d\ude00"}`),
+		"literal escape": []byte(`{"value":"\\ud800"}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := stage2aStrictJSON(raw); err != nil {
+				t.Fatalf("valid JSON escape refused: %v", err)
+			}
+		})
+	}
+}
+
+func TestStage2aHostProjectionRefusesEscapedSurrogateCollision(t *testing.T) {
+	input := stage2aLaunchFixture(t)
+	adapters := []byte(`{"selected":"\ud800"}`)
+	input.HostProjection.Adapters["selected"] = "\ufffd"
+	for i := range input.Files {
+		if input.Files[i].Path == "host/adapters.json" {
+			size := uint64(len(adapters))
+			input.Files[i].Size = &size
+			sum := sha256.Sum256(adapters)
+			input.Files[i].SHA256 = fmt.Sprintf("%x", sum)
+		}
+	}
+	if err := CheckStage2aHostProjectionBytes(input, adapters, []byte(`{"id":"fixture-installation"}`)); err == nil {
+		t.Fatal("escaped unpaired surrogate matched approved replacement character")
+	}
+}
+
+func TestStage2aLaunchInputRefusesRawMessageSurrogateCollision(t *testing.T) {
+	observed := stage2aLaunchFixture(t)
+	approved := stage2aLaunchFixture(t)
+	observed.HostProjection.Adapters["selected"] = json.RawMessage(`"\ud800"`)
+	approved.HostProjection.Adapters["selected"] = "\ufffd"
+	if _, _, err := Stage2aLaunchInputDigest(observed); err == nil {
+		t.Fatal("unpaired surrogate RawMessage accepted")
+	}
+	if _, err := CheckStage2aApprovedLaunchInputs(observed, approved); err == nil {
+		t.Fatal("unpaired surrogate RawMessage matched approved replacement character")
 	}
 }
 
