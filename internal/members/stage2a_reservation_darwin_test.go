@@ -162,11 +162,23 @@ func TestStage2aReservationRefusesMissingOrMismatchedAuthority(t *testing.T) {
 	if got, err := reserveStage2aStart(req, stage2aReservationAuthority{}); !errors.Is(err, errStage2aReservationAuthority) || len(got.envelope) != 0 {
 		t.Fatal("missing production authority issued a reservation")
 	}
+	invalidRoot := "/Library/Souls/" + string([]byte{0xff})
+	invalidJSON, _ := json.Marshal(invalidRoot)
+	replacementJSON, _ := json.Marshal("/Library/Souls/\ufffd")
+	if !bytes.Equal(invalidJSON, replacementJSON) {
+		t.Fatal("invalid UTF-8 path no longer demonstrates the JSON replacement collision")
+	}
+	invalidRunner := in.runner
+	invalidRunner.PackageRoot = invalidRoot
+	if err := ValidateSoulRunners([]SoulRunner{invalidRunner}, in.hqUID, nil); err != nil {
+		t.Fatalf("fixture no longer reaches reservation validation: %v", err)
+	}
 	mutations := map[string]func(*stage2aReservationInputs){
-		"missing installed receipt": func(in *stage2aReservationInputs) { in.installedReceipt = nil },
-		"wrong installed plan":      func(in *stage2aReservationInputs) { in.installedPlan = []byte(`{"changed":true}`) },
-		"missing owner mapping":     func(in *stage2aReservationInputs) { in.approvedArtifact = "" },
-		"missing frozen artifact":   func(in *stage2aReservationInputs) { in.installedArtifact = "" },
+		"invalid UTF-8 package root": func(in *stage2aReservationInputs) { in.runner.PackageRoot = invalidRoot },
+		"missing installed receipt":  func(in *stage2aReservationInputs) { in.installedReceipt = nil },
+		"wrong installed plan":       func(in *stage2aReservationInputs) { in.installedPlan = []byte(`{"changed":true}`) },
+		"missing owner mapping":      func(in *stage2aReservationInputs) { in.approvedArtifact = "" },
+		"missing frozen artifact":    func(in *stage2aReservationInputs) { in.installedArtifact = "" },
 		"different frozen artifact": func(in *stage2aReservationInputs) {
 			in.installedArtifact = stage2aSoulArtifactSHA256(strings.Repeat("0", 64))
 		},

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"golang.org/x/sys/unix"
@@ -182,6 +183,7 @@ func prepareStage2aReservation(req stage2aReservationRequest, in stage2aReservat
 	if !req.start.valid() || !soulLaunchID.MatchString(req.launchID) ||
 		!soulInstallationID.MatchString(in.hostID) || len(in.installedReceipt) == 0 ||
 		in.machineUID > math.MaxUint32 ||
+		!utf8.ValidString(in.runner.PackageRoot) ||
 		!soulDigest.MatchString(string(in.approvedArtifact)) || in.approvedArtifact != in.installedArtifact ||
 		in.binding.SoulArtifactSHA256 != in.installedArtifact ||
 		len(in.enrolledAdminKey) != ed25519.PublicKeySize || in.admissionChallenge == [32]byte{} {
