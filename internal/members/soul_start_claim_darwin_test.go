@@ -22,14 +22,14 @@ func TestSoulStartClaimSpendsExactStartOnce(t *testing.T) {
 	runner, bridge := runnerFixture()[0], bridgeFixture()[0]
 	live := SoulRunRequest{PlanDigest: digest, InstallationID: runner.InstallationID,
 		StartID: "st_0123456789abcdef01234567", HQEpoch: strings.Repeat("d", 64)}
-	launchID, runtimeID := "ln_0123456789abcdef01234567", "runtime-1"
+	launchID := "ln_0123456789abcdef01234567"
 	assignment, err := PrepareSoulStartAssignment(runner, bridge, 309, 501, planID, digest,
-		live.StartID, launchID, runtimeID, live.HQEpoch, now, now.Add(20*time.Second))
+		live.StartID, launchID, live.HQEpoch, now, now.Add(20*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
 	claim, err := prepareSoulStartClaim(assignment, planID, canonical, runner, bridge,
-		309, 501, live, launchID, runtimeID, now)
+		309, 501, live, launchID, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,12 +54,12 @@ func TestSoulStartClaimSpendsExactStartOnce(t *testing.T) {
 	}
 	reboundLaunch := "ln_0123456789abcdef01234568"
 	reboundAssignment, err := PrepareSoulStartAssignment(runner, bridge, 309, 501, planID, digest,
-		live.StartID, reboundLaunch, runtimeID, live.HQEpoch, now, now.Add(20*time.Second))
+		live.StartID, reboundLaunch, live.HQEpoch, now, now.Add(20*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
 	reboundClaim, err := prepareSoulStartClaim(reboundAssignment, planID, canonical, runner, bridge,
-		309, 501, live, reboundLaunch, runtimeID, now)
+		309, 501, live, reboundLaunch, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,9 +70,18 @@ func TestSoulStartClaimSpendsExactStartOnce(t *testing.T) {
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("replay changed the spent claim", err)
 	}
+	if bytes.Contains(after, []byte("runtime_id")) || bytes.Contains(after, []byte("installation_epoch")) {
+		t.Fatal("prestart claim contains post-Hello identity")
+	}
 	var saved soulStartClaim
-	if json.Unmarshal(bytes.TrimSpace(after), &saved) != nil || saved != claim || saved.State != "started" {
+	if json.Unmarshal(bytes.TrimSpace(after), &saved) != nil || saved != claim ||
+		saved.Schema != "agent-bot-machine/soul-start-claim/v2" || saved.State != "started" {
 		t.Fatal("claim was not durable and exact")
+	}
+	legacy := claim
+	legacy.Schema = "agent-bot-machine/soul-start-claim/v1"
+	if err := claimSoulStartOnceFile(filepath.Join(t.TempDir(), soulStartClaimName(live.InstallationID, live.StartID)), legacy); err == nil {
+		t.Fatal("legacy pre-Hello claim shape accepted")
 	}
 	if err := claimSoulStartOnceFile(filepath.Join(t.TempDir(), "chosen.json"), claim); err == nil {
 		t.Fatal("caller-chosen claim name accepted")
@@ -83,17 +92,20 @@ func TestSoulStartClaimSpendsExactStartOnce(t *testing.T) {
 	changed := assignment
 	changed.BridgeUID++
 	if _, err := prepareSoulStartClaim(changed, planID, canonical, runner, bridge,
-		309, 501, live, launchID, runtimeID, now); err == nil {
+		309, 501, live, launchID, now); err == nil {
 		t.Fatal("changed bridge UID prepared a claim")
 	}
 	if _, err := prepareSoulStartClaim(assignment, planID, canonical, runner, bridge,
-		309, 501, live, launchID, runtimeID, now.Add(20*time.Second)); err == nil {
+		309, 501, live, launchID, now.Add(20*time.Second)); err == nil {
 		t.Fatal("expired assignment prepared a claim")
 	}
 }
 
 func TestSoulStartClaimNameBindsInstallationAndStart(t *testing.T) {
 	first := soulStartClaimName("inst_0000000000000001", "st_0123456789abcdef01234567")
+	if first != "eb04c8afe747a8f0b755eeb9344ce0d2641e0cd598311ebd1c152472251855e4.json" {
+		t.Fatal("schema upgrade changed the spent-start pathname")
+	}
 	for _, next := range []string{
 		soulStartClaimName("inst_0000000000000002", "st_0123456789abcdef01234567"),
 		soulStartClaimName("inst_0000000000000001", "st_0123456789abcdef01234568"),
