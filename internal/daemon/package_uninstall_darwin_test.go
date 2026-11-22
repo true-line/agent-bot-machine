@@ -20,6 +20,17 @@ func absentPackageServices() packageObservers {
 	return packageObservers{grantAbsent: func() error { return nil }, job: func(int, string, string) ([]byte, bool, error) { return nil, false, nil }, processes: func(int) ([]byte, error) { return nil, nil }}
 }
 
+func TestHomebrewPackageGrantObserverKeepsNonrootCaller(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("package owner runs without root")
+	}
+	// The real package-uninstall observer must remain callable by the Homebrew
+	// prefix owner. A separate root-only check protects HQ service uninstall.
+	if err := checkPackageLaunchGrant(); err != nil && strings.Contains(err.Error(), "root required") {
+		t.Fatalf("package owner lost its grant observer: %v", err)
+	}
+}
+
 func TestHomebrewPackageUninstall(t *testing.T) {
 	for _, filename := range []string{"keyd-original.plist", "keyd-background.plist"} {
 		t.Run(filename, func(t *testing.T) {

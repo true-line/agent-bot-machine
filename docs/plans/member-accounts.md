@@ -495,6 +495,15 @@ target or shared C target is allowed. Rule rendering alone installs nothing.
 The paired grant installer must verify the launcher, package closure and
 profiles, validate the exact rule with `visudo`, and publish its root receipt
 and rule under the owner approval guard before either command may run.
+Root-run HQ package uninstall must first verify that the protected Soul
+launcher, both profiles, its policy file, the sudoers rule and any staged
+transition files are absent. An installed or partly staged grant must be
+retired or reconciled while the paired HQ approval path is still available.
+This file-visibility guard does not observe live R/B children or retire a
+grant by itself; the grant retirement must separately prove both roles idle.
+The Homebrew prefix owner's separate package-uninstall observer remains
+nonroot and refuses visible launch payloads. It cannot treat unreadable
+sudoers.d as root-attested rule absence; root HQ uninstall performs that check.
 Machine's prepared pre-Hello start assignment v2 binds the approved plan ID
 and digest, installation and Soul IDs, Machine and HQ epochs, the start and
 launch IDs, the R/B/HQ/Machine numeric identities, the reviewed package root
