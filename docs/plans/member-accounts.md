@@ -584,6 +584,33 @@ producer observes both snapshots through no-follow descriptors, verifies the
 owner's accepted definition mapping, and carries the same binding through a
 spent Machine-signed reservation and authenticated finalization.
 
+The Darwin frozen-tree observer is a read-only pre-exec building block. Under
+Machine root custody it opens the claimed snapshot root and every `Contents/`
+component with no-follow descriptors, rejects unlisted root and frozen paths,
+links, writable modes and ACL allows, checks the bounded metadata inventory
+before hashing, then reopens each file through directory descriptors and
+compares identity and exact bytes with the approved records. It also compares
+the claimed root device, inode, generation, birth time, owner and mode with
+its opened descriptor. The separate Darwin frozen-source publisher uses that
+observation before and after copying through no-follow file descriptors. It
+syncs staged files and directories, exclusively renames one root-owned,
+read-only private tree, syncs the parent and re-observes the published bytes.
+The fixed common snapshot parent is root:wheel `0711`; each installation gets
+its own deterministic root:runner-primary-group `0750` namespace, so its R
+account can traverse and read the staged definition while sibling R accounts
+cannot traverse that namespace. Machine must verify the actual two-account
+kernel access/refusal on the designated host before claiming enforcement.
+The publisher preserves each approved entry mode and refuses any directory
+without runner-group read and search bits or file without runner-group read.
+This prevents an owner-approved root-only source from becoming an unreadable
+runner package after publication; the owner must approve a readable source
+inventory rather than have Machine silently change its measured modes.
+An uncertain sync or post-publish check leaves the name occupied. Neither
+helper has an owner-approved installed-plan caller yet, proves the selected
+process loaded these bytes, or authorizes a Soul launch. The installer must
+bind source, inventory, snapshot name and root receipt to the exact approval;
+the pre-exec caller must recheck both snapshots and the one-use lifecycle.
+
 ### What is created
 
 For an HQ account `H` and each listed harness credential account `M`:
