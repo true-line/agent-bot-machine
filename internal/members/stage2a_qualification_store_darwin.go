@@ -63,7 +63,10 @@ type stage2aQualificationBundleV1 struct {
 	SessionID                            string `json:"session_id"`
 	BeginFrameBase64URL                  string `json:"begin_frame_base64url"`
 	ReadyFrameBase64URL                  string `json:"ready_frame_base64url"`
+	FinishRequestFrameBase64URL          string `json:"finish_request_frame_base64url"`
 	FinishedFrameBase64URL               string `json:"finished_frame_base64url"`
+	CleanEOFObserved                     bool   `json:"clean_eof_observed"`
+	EOFObservedAt                        string `json:"eof_observed_at"`
 	QSourceSHA256                        string `json:"q_source_sha256"`
 	QUID                                 int    `json:"q_uid"`
 	QGID                                 int    `json:"q_gid"`
@@ -289,10 +292,13 @@ func persistStage2aQualificationBundleV3(store stage2aAdminClaimStore, q Stage2a
 	bundle, err := marshalStage2aReservationJCS(stage2aQualificationBundleV1{
 		SchemaVersion: 1, Kind: "stage2a-qualification-bundle", InstallationID: q.InstallationID,
 		StartID: q.StartID, SessionID: session.begin.SessionID,
-		BeginFrameBase64URL:    base64.RawURLEncoding.EncodeToString(session.beginFrame),
-		ReadyFrameBase64URL:    base64.RawURLEncoding.EncodeToString(session.readyFrame),
-		FinishedFrameBase64URL: base64.RawURLEncoding.EncodeToString(session.finishedFrame),
-		QSourceSHA256:          session.sourceSHA256, QUID: session.peer.uid, QGID: session.peer.gid,
+		BeginFrameBase64URL:         base64.RawURLEncoding.EncodeToString(session.beginFrame),
+		ReadyFrameBase64URL:         base64.RawURLEncoding.EncodeToString(session.readyFrame),
+		FinishRequestFrameBase64URL: base64.RawURLEncoding.EncodeToString(session.finishRequestFrame),
+		FinishedFrameBase64URL:      base64.RawURLEncoding.EncodeToString(session.finishedFrame),
+		CleanEOFObserved:            session.cleanEOFObserved,
+		EOFObservedAt:               session.eofObservedAt.UTC().Format(time.RFC3339Nano),
+		QSourceSHA256:               session.sourceSHA256, QUID: session.peer.uid, QGID: session.peer.gid,
 		TestPlanSHA256:                       expectedTestPlanSHA256,
 		RequestsSHA256:                       session.requestsSHA256,
 		RequestsBase64URL:                    base64.RawURLEncoding.EncodeToString(session.requestFrames),

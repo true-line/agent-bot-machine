@@ -19,22 +19,31 @@ var errStage2aQualificationFrame = errors.New("invalid Stage 2a qualification fr
 // big-endian length and one canonical ASCII JSON object per frame. A frame is
 // raw observation input; it never grants a pass or signing authority.
 func readStage2aQualificationFrame(r io.Reader) ([]byte, error) {
+	raw, _, err := readStage2aQualificationObservedFrame(r)
+	return raw, err
+}
+
+// Retain the bytes actually read from Q, including the length prefix. An
+// archive producer must not reconstruct the prefix after the connection ends.
+func readStage2aQualificationObservedFrame(r io.Reader) ([]byte, []byte, error) {
 	var header [4]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {
-		return nil, errStage2aQualificationFrame
+		return nil, nil, errStage2aQualificationFrame
 	}
 	length := binary.BigEndian.Uint32(header[:])
 	if length == 0 || length > stage2aQualificationFrameMax {
-		return nil, errStage2aQualificationFrame
+		return nil, nil, errStage2aQualificationFrame
 	}
-	raw := make([]byte, length)
+	frame := make([]byte, 4+length)
+	copy(frame, header[:])
+	raw := frame[4:]
 	if _, err := io.ReadFull(r, raw); err != nil {
-		return nil, errStage2aQualificationFrame
+		return nil, nil, errStage2aQualificationFrame
 	}
 	if stage2aQualificationCanonical(raw) != nil {
-		return nil, errStage2aQualificationFrame
+		return nil, nil, errStage2aQualificationFrame
 	}
-	return raw, nil
+	return raw, frame, nil
 }
 
 func writeStage2aQualificationFrame(w io.Writer, value any) ([]byte, error) {

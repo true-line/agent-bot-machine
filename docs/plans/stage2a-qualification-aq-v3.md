@@ -50,7 +50,10 @@ requests, and Q sends raw `observation` frames. A validates each Q frame against
 the exact request bytes, session, sequence, challenge hash, profile, and reviewed
 path roots. Q's `finished` frame must commit to the count and SHA-256 of the
 exact length-prefixed observation frames, then close the stream. A retains the
-begin, ready, request, and response bytes in a private finalized session result.
+exact length-prefixed begin, ready, request, response, finish-request, and
+finished bytes in a private finalized session result. A also records when it
+observed a clean EOF with no trailing bytes; the framed-byte verifier rejects
+a missing EOF or one timestamped before `finished`.
 Unknown path access (`EACCES` or `EPERM`) remains unknown and cannot prove
 absence. No raw Q frame carries a pass/fail verdict.
 
@@ -68,22 +71,27 @@ refuses a changed Q observation with stale transcript digests. A coherent
 replacement transcript is not yet bound by the host signature. That test
 grants no physical gate.
 
-The separate `mm-qualification-verify-release --host-v3` command checks an
-already delivered v3 release entirely offline using the supplied owner root,
-policy, trusted Sigstore roots, exact release and Souls bundles, two host
-envelopes, two A pre-sign completion records, two A post-sign commitments, and
-the independently enrolled Machine public key. It is a diagnostic verifier;
-Machine's live acceptance path must also prevent policy rollback and remeasure
-installed adapter, runner, Soul, host, and Q inputs before launch.
+The separate `mm-qualification-verify-release --host-v3` command parses the
+supplied owner root, policy, trusted Sigstore roots, exact release and Souls
+bundles, two host envelopes, two A pre-sign completion records, two A post-sign
+commitments, and independently enrolled Machine public key entirely offline.
+Its v3 acceptance result remains **unqualified** even for valid synthetic
+chains until it also authenticates the physical gate manifests, segment
+attestations, raw Q/ACP/OS evidence and installed inputs. The signed-chain
+check is only a diagnostic component. Machine's live acceptance path must
+also prevent policy rollback and remeasure installed adapter, runner, Soul,
+host, and Q inputs before launch.
 
 ## Open acceptance work
 
 There is no production Q account installation or A spawn/call site in this
 source slice. The composite A bundle is written after the host report and
 post-sign commitment, so it cannot be a pre-sign gate-manifest reference.
-The exact Q session bytes and A identity assertions still need a separate
-durably sealed pre-sign artifact. It must bind the exact begin, ready, request,
-response and finished bytes, paired transcript digests, observed Q PID and
+The exact Q session bytes, clean-EOF fact, and A identity assertions still need
+a separate A-authenticated, durably sealed pre-sign index and a distinct
+finished-plus-clean-EOF receipt before the host report is signed. The index
+must bind the exact begin, ready, request, response, finish-request, and
+finished bytes, paired transcript digests, observed Q PID and
 kernel start identity, sequence and count, and A-observed EOF without trailing
 bytes. A must independently corroborate Q's raw
 observations with kernel, filesystem, receipt, and ACP capture facts. The exact per-gate

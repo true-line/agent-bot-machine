@@ -14,8 +14,8 @@ func TestStage2aQualificationFramesRejectAmbiguity(t *testing.T) {
 	if err != nil || !bytes.Equal(stream.Bytes(), framed) {
 		t.Fatal("canonical frame write", err)
 	}
-	raw, err := readStage2aQualificationFrame(&stream)
-	if err != nil || string(raw) != `{"kind":"ready","sequence":0}` {
+	raw, observed, err := readStage2aQualificationObservedFrame(&stream)
+	if err != nil || string(raw) != `{"kind":"ready","sequence":0}` || !bytes.Equal(observed, framed) {
 		t.Fatal("canonical frame read", err)
 	}
 	frame := func(raw string) []byte {
@@ -40,4 +40,14 @@ func TestStage2aQualificationFramesRejectAmbiguity(t *testing.T) {
 			t.Fatalf("accepted ambiguous frame %q", bad)
 		}
 	}
+}
+
+func mustStage2aQualificationFrame(t *testing.T, value any) []byte {
+	t.Helper()
+	var stream bytes.Buffer
+	framed, err := writeStage2aQualificationFrame(&stream, value)
+	if err != nil || !bytes.Equal(stream.Bytes(), framed) {
+		t.Fatal("canonical frame write", err)
+	}
+	return framed
 }

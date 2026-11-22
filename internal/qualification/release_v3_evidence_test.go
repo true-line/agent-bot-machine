@@ -127,12 +127,17 @@ func TestReleasedReportsV3RequiresBothRunChains(t *testing.T) {
 		}
 	}
 	verify := func(r VerifiedRelease, q []byte, p, c chain) error {
-		return VerifyReleasedReportsV3(r, verified, q,
+		return verifyReleasedReportsV3Claims(r, verified, q,
 			p.report, c.report, p.execution, c.execution,
 			p.commitment, c.commitment, machinePub, now)
 	}
 	if err := verify(release, qualificationRaw, runs[0], runs[1]); err != nil {
-		t.Fatal("valid synthetic released two-run set refused", err)
+		t.Fatal("valid synthetic signed-chain diagnostic refused", err)
+	}
+	if err := VerifyReleasedReportsV3(release, verified, qualificationRaw,
+		runs[0].report, runs[1].report, runs[0].execution, runs[1].execution,
+		runs[0].commitment, runs[1].commitment, machinePub, now); err == nil {
+		t.Fatal("v3 release accepted without authenticated physical gate evidence")
 	}
 	producer, err := VerifyHostReportsForReleaseV3(verified, qualificationRaw,
 		runs[0].report, runs[1].report, runs[0].execution, runs[1].execution,

@@ -242,14 +242,15 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 		PathRoots: []string{"/private/tmp"}, QUID: 650, QGID: 651,
 		DeadlineAt: "2026-11-22T07:30:00Z",
 	}, peer: stage2aQualificationPeerV1{pid: 42, uid: 650, gid: 651},
-		sourceSHA256: sourceSHA, count: 1, validated: true}
+		sourceSHA256: sourceSHA, count: 1, validated: true,
+		cleanEOFObserved: true, eofObservedAt: now.Add(-time.Minute)}
 	var stream bytes.Buffer
 	session.beginFrame, err = writeStage2aQualificationFrame(&stream, session.begin)
 	if err != nil {
 		t.Fatal(err)
 	}
 	session.challengeSHA256 = stage2aQualificationSHA256(challenge)
-	session.readyFrame = mustStage2aQualificationJSON(t, map[string]any{
+	session.readyFrame = mustStage2aQualificationFrame(t, map[string]any{
 		"schema": stage2aQualificationSchemaV1, "kind": "ready", "session_id": sessionID,
 		"challenge_sha256": session.challengeSHA256, "sequence": 0,
 		"pid": 42, "uid": 650, "gid": 651, "source_sha256": sourceSHA,
@@ -276,7 +277,11 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 	}
 	session.observationFrames = bytes.Clone(observations.Bytes())
 	session.observationsSHA256 = stage2aQualificationSHA256(session.observationFrames)
-	session.finishedFrame = mustStage2aQualificationJSON(t, map[string]any{
+	session.finishRequestFrame = mustStage2aQualificationFrame(t, map[string]any{
+		"schema": stage2aQualificationSchemaV1, "kind": "finish", "session_id": sessionID,
+		"sequence": 2,
+	})
+	session.finishedFrame = mustStage2aQualificationFrame(t, map[string]any{
 		"schema": stage2aQualificationSchemaV1, "kind": "finished", "session_id": sessionID,
 		"challenge_sha256": session.challengeSHA256, "sequence": 2, "observation_count": 1,
 		"observations_sha256": session.observationsSHA256, "captured_at": "2026-11-22T06:00:00.120Z",
@@ -293,8 +298,11 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 	}
 	var bundle stage2aQualificationBundleV1
 	if json.Unmarshal(stored, &bundle) != nil ||
-		bundle.FinishedFrameBase64URL != base64.RawURLEncoding.EncodeToString(session.finishedFrame) {
-		t.Fatal("stored bundle lost the exact Q finished frame")
+		bundle.ReadyFrameBase64URL != base64.RawURLEncoding.EncodeToString(session.readyFrame) ||
+		bundle.FinishRequestFrameBase64URL != base64.RawURLEncoding.EncodeToString(session.finishRequestFrame) ||
+		bundle.FinishedFrameBase64URL != base64.RawURLEncoding.EncodeToString(session.finishedFrame) ||
+		!bundle.CleanEOFObserved || bundle.EOFObservedAt != session.eofObservedAt.Format(time.RFC3339Nano) {
+		t.Fatal("stored bundle lost exact framed Q exchange or clean EOF observation")
 	}
 	// A changed Q observation with stale transcript and finished digests is refused.
 	tampered := bytes.Replace(session.observationFrames, []byte(`"event_id":"event-1"`),

@@ -171,7 +171,7 @@ func beginStage2aQualificationSessionV1(conn *net.UnixConn, peer stage2aQualific
 	if err != nil {
 		return nil, errStage2aReservationAuthority
 	}
-	raw, err := readStage2aQualificationFrame(conn)
+	raw, readyFrame, err := readStage2aQualificationObservedFrame(conn)
 	if err != nil || peer.recheck() != nil {
 		return nil, errStage2aReservationAuthority
 	}
@@ -193,7 +193,7 @@ func beginStage2aQualificationSessionV1(conn *net.UnixConn, peer stage2aQualific
 		return nil, errStage2aReservationAuthority
 	}
 	return &stage2aQualificationSessionV1{conn: conn, peer: peer, begin: input,
-		beginFrame: beginFrame, readyFrame: append([]byte(nil), raw...),
+		beginFrame: beginFrame, readyFrame: bytes.Clone(readyFrame),
 		challengeSHA256: ready.ChallengeSHA256, sourceSHA256: expectedSourceSHA256,
 		sequence: 1, lastCaptured: captured, started: now}, nil
 }
