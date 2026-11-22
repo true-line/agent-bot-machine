@@ -98,6 +98,60 @@ digests for later joins, without a gate verdict. The caller must still bind
 these digests to an A-signed physical segment and the host report, then verify
 installed inputs, raw ACP/OS evidence, and physical results before acceptance.
 
+## Physical segment wire under review
+
+The first segment form represents one **completed protected reserved start**
+for T01, T02, or T03. It does not describe the cooperative T21 run: the
+current `Stage2aFinalizationPurpose` is B-specific, and T21 must not borrow
+protected B authority. A canonical
+`stage2a-physical-segment` object has exactly these top-level fields:
+`schema_version` (1), `kind`, `gate`, `profile`, `host_id`, `cohort_id`,
+`suite_revision`, `owner_plan_sha256`, `segment_id`, `purpose`,
+`report_anchor`, `terminal_state` (`stopped`), `installation_id`, `soul_id`,
+`start_id`, `launch_id`, `measurement_binding_sha256`, `q_session_status`
+(`completed`), `q_session_id`, `q_challenge_sha256`, and `artifacts`.
+`artifacts` is an object with exactly these content-addressed blob references:
+`reservation`, `b_finalization`, `stop`, `q_wire`, `q_index`, `q_eof`,
+`owner_acp_to_hq`, `hq_acp_to_owner`, `os_observation`, and
+`installed_inputs`. Each reference uses the existing gate-object tuple
+`{role,uri,sha256,size_bytes,issuer}` and an exact role equal to its field
+name. The containing gate manifest's segment ID, purpose, report-anchor bit,
+gate, profile, host, cohort, and measurement binding must agree. Its
+`segment_manifest` reference addresses these exact bytes. Both containing
+references use issuer `machine-a`: role `segment_manifest` for the manifest
+and role `segment_attestation` for the A envelope. All ten inner references
+also use issuer `machine-a` until a separately specified source is reviewed.
+
+The distinct A-signed `segment_attestation` envelope uses the existing
+six-field Machine Ed25519 record under purpose
+`agent-bot/stage2a-physical-segment/v1`. Its canonical payload has exactly
+`schema_version` (1), `kind` (`stage2a-physical-segment-attestation`), all
+segment selectors and terminal/Q fields above, `segment_manifest_sha256`,
+`reservation_sha256`, `b_finalization_sha256`, `stop_sha256`,
+`q_wire_sha256`, `q_index_sha256`, `q_eof_sha256`,
+`owner_acp_to_hq_sha256`, `hq_acp_to_owner_sha256`,
+`os_observation_sha256`, `installed_inputs_sha256`, and `signed_at`.
+Each digest equals the exact referenced object's digest. The attestation
+contains no report, gate-manifest, keyd-signature, or post-sign commitment
+reference: A must issue it before requesting the host report signature.
+Its `signed_at` must follow A's observed Q EOF and idle stop and precede the
+host report's pre-sign completion. The reservation, B finalization, and stop
+objects keep their distinct A signature purposes and must join the same
+start, launch, and installed measurement.
+The one `report_anchor=true` segment must join the report's top-level
+reservation, finalization, challenge, and measurement binding.
+
+This segment form forbids an absent Q session, missing finalization, or a
+non-idle stop. Refusals before reservation or Q completion are separate
+`attempts` in the gate manifest, with distinct A-authenticated refusal and
+terminal records; they never pretend to be completed segments or fabricate
+Q frames. A future positive verifier must also resolve the actual ACP and OS
+capture bytes, confirm their A-observed peer custody, remeasure installed
+inputs, and check the gate-specific stimulus inventory. Field shape or an
+A signature by itself grants no gate credit. The producer, capture formats,
+T21 segment form, and gate-specific inventory remain open; public v3
+acceptance stays closed.
+
 The separate `mm-qualification-verify-release --host-v3` command parses the
 supplied owner root, policy, trusted Sigstore roots, exact release and Souls
 bundles, two host envelopes, two A pre-sign completion records, two A post-sign
