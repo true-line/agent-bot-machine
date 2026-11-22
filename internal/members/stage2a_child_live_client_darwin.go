@@ -29,9 +29,9 @@ type stage2aChildLiveWire struct {
 
 func requestStage2aChildLive(in Stage2aRoleInvocation, receiptSHA256 string,
 	launcher, child soulKernelProcessSnapshot, pub ed25519.PublicKey,
-	after uint64) (Stage2aLiveLeasePayload, error) {
+	after uint64, priorExpires time.Time) (Stage2aLiveLeasePayload, error) {
 	invalid := errors.New("protected child Live lease unavailable")
-	if in.ChildExec == nil || !validStage2aExecDigest(receiptSHA256) ||
+	if !time.Now().Before(priorExpires) || in.ChildExec == nil || !validStage2aExecDigest(receiptSHA256) ||
 		in.Start.Admission.OwnerUID != in.Start.HQUID ||
 		in.Start.Admission.GroupGID != in.Runner.GID ||
 		in.Start.Admission.DirMode != 02750 || in.Start.Admission.SocketMode != 0660 ||
@@ -53,7 +53,14 @@ func requestStage2aChildLive(in Stage2aRoleInvocation, receiptSHA256 string,
 		checkDarwinACLs([]string{in.Start.Admission.Directory, in.Start.Admission.SocketPath}) != nil {
 		return Stage2aLiveLeasePayload{}, invalid
 	}
-	conn, err := net.DialTimeout("unix", in.Start.Admission.SocketPath, 1500*time.Millisecond)
+	timeout := time.Until(priorExpires)
+	if timeout > 1500*time.Millisecond {
+		timeout = 1500 * time.Millisecond
+	}
+	if timeout <= 0 {
+		return Stage2aLiveLeasePayload{}, invalid
+	}
+	conn, err := net.DialTimeout("unix", in.Start.Admission.SocketPath, timeout)
 	if err != nil {
 		return Stage2aLiveLeasePayload{}, invalid
 	}
@@ -90,7 +97,11 @@ func requestStage2aChildLive(in Stage2aRoleInvocation, receiptSHA256 string,
 	request.Payload.ReservationSHA256 = in.ChildExec.ReservationSHA256
 	request.Payload.Challenge = challenge
 	body, err := json.Marshal(request)
-	if err != nil || len(body) > 4095 || conn.SetDeadline(time.Now().Add(1500*time.Millisecond)) != nil {
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	if deadline.After(priorExpires) {
+		deadline = priorExpires
+	}
+	if err != nil || len(body) > 4095 || !time.Now().Before(deadline) || conn.SetDeadline(deadline) != nil {
 		return Stage2aLiveLeasePayload{}, invalid
 	}
 	body = append(body, '\n')
@@ -109,9 +120,13 @@ func requestStage2aChildLive(in Stage2aRoleInvocation, receiptSHA256 string,
 	}
 	reply := Stage2aLiveReply{LeaseEnvelopeBase64URL: response.Result.LeaseEnvelopeBase64URL,
 		LeaseSHA256: response.Result.LeaseSHA256, LeaseSequence: response.Result.LeaseSequence}
+	verifiedAt := time.Now()
+	if !verifiedAt.Before(priorExpires) {
+		return Stage2aLiveLeasePayload{}, invalid
+	}
 	lease, err := verifyStage2aChildLiveLease(reply, challenge, in, receiptSHA256,
-		launcher, child, pub, after, time.Now())
-	if err != nil || lease.ExpiresAtMS <= time.Now().UnixMilli() {
+		launcher, child, pub, after, verifiedAt)
+	if err != nil || lease.ExpiresAtMS <= time.Now().UnixMilli() || !time.Now().Before(priorExpires) {
 		return Stage2aLiveLeasePayload{}, invalid
 	}
 	return lease, nil

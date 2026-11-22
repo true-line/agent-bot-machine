@@ -111,12 +111,13 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 		if decodeStage2aRoleJSON(line, &receipt) != nil {
 			return errors.New("invalid protected child receipt frame")
 		}
-		if _, err := verifyStage2aChildStartReceipt(receipt, in, grantSHA256,
-			launcher, observed, pub, time.Now()); err != nil {
+		signedReceipt, err := verifyStage2aChildStartReceipt(receipt, in, grantSHA256,
+			launcher, observed, pub, time.Now())
+		if err != nil {
 			return err
 		}
 		first, err := requestStage2aChildLive(in, receipt.SHA256, launcher, observed,
-			pub, 0)
+			pub, 0, time.UnixMilli(signedReceipt.ExpiresAtMS))
 		if err != nil {
 			return err
 		}
@@ -164,38 +165,67 @@ func stage2aCreateChildState(runner SoulRunner, start SoulStartAssignment) error
 func watchStage2aChildLive(ctx context.Context, cancel context.CancelFunc, in Stage2aRoleInvocation,
 	receiptSHA256 string, launcher, child soulKernelProcessSnapshot, pub ed25519.PublicKey,
 	first Stage2aLiveLeasePayload) {
+	watchStage2aChildLiveWithRequest(ctx, cancel, first, func(after uint64,
+		priorExpires time.Time) (Stage2aLiveLeasePayload, error) {
+		return requestStage2aChildLive(in, receiptSHA256, launcher, child,
+			pub, after, priorExpires)
+	})
+}
+
+// The independent timer cancels the child even if the HQ renewal I/O blocks.
+// A late signed response never extends a lease that already lapsed.
+func watchStage2aChildLiveWithRequest(ctx context.Context, cancel context.CancelFunc,
+	first Stage2aLiveLeasePayload, request func(uint64, time.Time) (Stage2aLiveLeasePayload, error)) {
 	last := first
 	for {
-		remaining := time.Until(time.UnixMilli(last.ExpiresAtMS))
+		expires := time.UnixMilli(last.ExpiresAtMS)
+		remaining := time.Until(expires)
 		if remaining <= 0 {
 			cancel()
 			return
 		}
+		expiryTimer := time.AfterFunc(remaining, cancel)
 		wait := remaining - 2*time.Second
 		if wait < 100*time.Millisecond {
 			wait = 100 * time.Millisecond
 		}
 		select {
 		case <-ctx.Done():
+			expiryTimer.Stop()
 			return
 		case <-time.After(wait):
 		}
-		for time.Now().UnixMilli() < last.ExpiresAtMS {
-			next, err := requestStage2aChildLive(in, receiptSHA256, launcher, child,
-				pub, last.Sequence)
-			if err == nil {
+		for {
+			if ctx.Err() != nil || !time.Now().Before(expires) {
+				expiryTimer.Stop()
+				cancel()
+				return
+			}
+			next, err := request(last.Sequence, expires)
+			if ctx.Err() != nil || !time.Now().Before(expires) {
+				expiryTimer.Stop()
+				cancel()
+				return
+			}
+			if err == nil && next.Sequence > last.Sequence &&
+				time.Now().UnixMilli() < next.ExpiresAtMS {
+				if !expiryTimer.Stop() || ctx.Err() != nil || !time.Now().Before(expires) {
+					cancel()
+					return
+				}
 				last = next
 				break
 			}
+			retry := time.Until(expires)
+			if retry > 100*time.Millisecond {
+				retry = 100 * time.Millisecond
+			}
 			select {
 			case <-ctx.Done():
+				expiryTimer.Stop()
 				return
-			case <-time.After(100 * time.Millisecond):
+			case <-time.After(retry):
 			}
-		}
-		if time.Now().UnixMilli() >= last.ExpiresAtMS {
-			cancel()
-			return
 		}
 	}
 }

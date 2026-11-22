@@ -862,6 +862,11 @@ child-start receipt, and verifies its first A Live lease. `stage2a-child-ready`
 requires the granted wrapper, direct child PID, exact frozen executable/argv,
 R UID/GID, group and profile pin; its signed receipt binds those identities,
 the exact environment digest, B finalization and protected Hello finalization.
+Each child Live renewal is bounded by the currently signed lease expiry,
+including the Unix dial and response deadline. An independent expiry timer
+cancels the child process group while a renewal call is blocked; a later
+signed response cannot revive a lease that already lapsed. The first Live
+request is likewise bounded by the signed child-start receipt expiry.
 Stop requires both whole
 dedicated UID sets idle and records the child identities when present. On local
 macOS 27, a second `sandbox-exec` inside the outer R sandbox failed with
