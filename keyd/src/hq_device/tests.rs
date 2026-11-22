@@ -105,9 +105,13 @@ fn request_for_session(
 }
 
 fn host_report_request(p: &Pair, raw: &[u8]) -> Request {
-    let mut req = request(p, "qualification-host-report", 100);
+    host_report_request_for(p, raw, "qualification-host-report", "fixture-host")
+}
+
+fn host_report_request_for(p: &Pair, raw: &[u8], option: &str, host_id: &str) -> Request {
+    let mut req = request(p, option, 100);
     req.report_base64url = Some(URL.encode(raw));
-    req.host_id = Some("fixture-host".into());
+    req.host_id = Some(host_id.into());
     req.signer_id = Some("fixture-signer".into());
     let mut msg = [
         "agent-bot-machine/keyd-hq-device/v1",
@@ -116,7 +120,7 @@ fn host_report_request(p: &Pair, raw: &[u8]) -> Request {
         &p.hq_uid.to_string(),
         &req.req_nonce,
         "100",
-        "qualification-host-report",
+        option,
         "",
         "",
         "",
@@ -189,6 +193,106 @@ fn host_report_signing_is_fixed_and_pair_bound() {
         "\"package_sha256\":\"sha256:fixture\"",
     );
     assert!(fixed_host_report(&host_report_request(&p, missing_adapter.as_bytes())).is_err());
+}
+
+#[test]
+fn bridge_v2_host_report_has_distinct_purpose_and_custody_shape() {
+    let (items, native, p) = (Memory::default(), Fake::default(), pair());
+    initialize(&items, &native, p.clone()).unwrap();
+    let raw = include_bytes!("../../../internal/qualification/testdata/bridge-v2-synthetic.json");
+    let req = host_report_request_for(
+        &p,
+        raw,
+        "qualification-host-report-v2",
+        "fixture-qualification-mac",
+    );
+    let result = run(&items, &native, &p, req, seconds(100)).unwrap();
+    assert_eq!(result["schema_version"], 2);
+    assert_eq!(result["purpose"], HOST_REPORT_PURPOSE_V2);
+    assert_eq!(result["report_sha256"], format!("sha256:{}", digest(raw)));
+    assert_eq!(
+        native.signed.borrow().last().unwrap(),
+        &[HOST_REPORT_PURPOSE_V2.as_bytes(), &[0], raw.as_slice()].concat()
+    );
+    assert!(run(
+        &items,
+        &native,
+        &p,
+        host_report_request_for(
+            &p,
+            raw,
+            "qualification-host-report",
+            "fixture-qualification-mac"
+        ),
+        seconds(100)
+    )
+    .is_err());
+    let mut report: Value = serde_json::from_slice(raw).unwrap();
+    report["bridge"]["endpoints"]["hq_broker"]["socket_mode"] = json!("0666");
+    let changed = serde_json::to_vec(&report).unwrap();
+    assert!(run(
+        &items,
+        &native,
+        &p,
+        host_report_request_for(
+            &p,
+            &changed,
+            "qualification-host-report-v2",
+            "fixture-qualification-mac"
+        ),
+        seconds(100)
+    )
+    .is_err());
+    report["bridge"]["endpoints"]["hq_broker"]["socket_mode"] = json!("0660");
+    report["bridge"]["principals"]["credential_uid"] = json!(502);
+    let changed = serde_json::to_vec(&report).unwrap();
+    assert!(run(
+        &items,
+        &native,
+        &p,
+        host_report_request_for(
+            &p,
+            &changed,
+            "qualification-host-report-v2",
+            "fixture-qualification-mac"
+        ),
+        seconds(100)
+    )
+    .is_err());
+    report["bridge"]["principals"]["credential_uid"] = json!(503);
+    report["bridge"]["assignment"]["machine_observation"]["sha256"] =
+        json!(format!("sha256:{}", "d".repeat(64)));
+    let changed = serde_json::to_vec(&report).unwrap();
+    assert!(run(
+        &items,
+        &native,
+        &p,
+        host_report_request_for(
+            &p,
+            &changed,
+            "qualification-host-report-v2",
+            "fixture-qualification-mac"
+        ),
+        seconds(100)
+    )
+    .is_err());
+    report["bridge"]["assignment"]["machine_observation"] =
+        report["soul_start"]["machine_observation"].clone();
+    report["bridge"]["principals"]["credential_uid"] = json!(504);
+    let changed = serde_json::to_vec(&report).unwrap();
+    assert!(run(
+        &items,
+        &native,
+        &p,
+        host_report_request_for(
+            &p,
+            &changed,
+            "qualification-host-report-v2",
+            "fixture-qualification-mac"
+        ),
+        seconds(100)
+    )
+    .is_err());
 }
 #[test]
 fn initialization_preserves_creation_failure_and_leaves_custody_absent() {

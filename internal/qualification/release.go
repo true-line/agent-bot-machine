@@ -32,17 +32,29 @@ type VerifiedRelease struct {
 	hostReports         []reportReference
 	ownerKeyID          string
 	policyRevision      uint64
+	v2Reports           *qualificationReportPair
+	v2SoulsBuild        *soulsBuildRef
 }
 
 func (r VerifiedRelease) HostReportDigests() []string {
 	if !r.verified {
 		return nil
 	}
+	if r.v2Reports != nil {
+		return []string{r.v2Reports.ProtectedReport.Payload.SHA256, r.v2Reports.CooperativeReport.Payload.SHA256}
+	}
 	out := make([]string, len(r.hostReports))
 	for i, ref := range r.hostReports {
 		out[i] = ref.SHA256
 	}
 	return out
+}
+
+func (r VerifiedRelease) HostEnvelopeDigests() []string {
+	if !r.verified || r.v2Reports == nil {
+		return nil
+	}
+	return []string{r.v2Reports.ProtectedReport.Signature.SHA256, r.v2Reports.CooperativeReport.Signature.SHA256}
 }
 
 type qualificationStatement struct {
@@ -105,6 +117,19 @@ func fixedStatement(raw []byte, policy Policy, qualificationSHA string, now time
 // Neither can be accepted from the bundle being verified. No network fetch is
 // made: the root, bundle, statement, certificate and log proofs are local.
 func VerifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON, qualificationJSON []byte, expectedBundleSHA256 string, now time.Time) (VerifiedRelease, error) {
+	return verifyReleaseAttestation(policy, trustedRootJSON, bundleJSON, qualificationJSON, expectedBundleSHA256, now, false)
+}
+
+// VerifyReleaseAttestationV2 requires the bridge-aware Statement predicate and
+// exact protected v2 and cooperative v1 payload/envelope references.
+func VerifyReleaseAttestationV2(policy VerifiedPolicy, trustedRootJSON, bundleJSON, qualificationJSON []byte, expectedBundleSHA256 string, now time.Time) (VerifiedRelease, error) {
+	if policy.version != 2 {
+		return VerifiedRelease{}, ErrUnqualified
+	}
+	return verifyReleaseAttestation(policy, trustedRootJSON, bundleJSON, qualificationJSON, expectedBundleSHA256, now, true)
+}
+
+func verifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON, qualificationJSON []byte, expectedBundleSHA256 string, now time.Time, v2 bool) (VerifiedRelease, error) {
 	if !policy.verified || now.IsZero() || !policy.at.Equal(now) ||
 		len(trustedRootJSON) == 0 || len(trustedRootJSON) > maxTrustedRoot ||
 		len(bundleJSON) == 0 || len(bundleJSON) > maxReleaseBundle ||
@@ -156,6 +181,13 @@ func VerifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON
 		}
 	}
 	qualificationSHA := digest(qualificationJSON)
+	if v2 {
+		reports, build, err := fixedStatementV2(b.GetDsseEnvelope().GetPayload(), policy.value, qualificationSHA, now)
+		if err != nil {
+			return VerifiedRelease{}, err
+		}
+		return VerifiedRelease{verified: true, bundleSHA256: expectedBundleSHA256, qualificationSHA256: qualificationSHA, v2Reports: &reports, v2SoulsBuild: &build, ownerKeyID: policy.value.OwnerKeyID, policyRevision: policy.value.PolicyRevision}, nil
+	}
 	reports, err := fixedStatement(b.GetDsseEnvelope().GetPayload(), policy.value, qualificationSHA, now)
 	if err != nil {
 		return VerifiedRelease{}, err

@@ -20,6 +20,7 @@ const ITEM: &str = "managed-device";
 const WINDOW: u64 = 30;
 const MAX_RECENT: usize = 256;
 const HOST_REPORT_PURPOSE: &str = "agent-bot/qualification-host-report/v1";
+const HOST_REPORT_PURPOSE_V2: &str = "agent-bot/qualification-host-report/v2";
 
 use crate::store::{keychain_read_interaction_denied, Items};
 
@@ -96,6 +97,7 @@ impl Request {
                     | "bind-access"
                     | "whoami"
                     | "qualification-host-report"
+                    | "qualification-host-report-v2"
             )
         {
             return Err(UNAVAILABLE);
@@ -144,7 +146,7 @@ impl Request {
             }
         }
         match self.option.as_str() {
-            "qualification-host-report" => {
+            "qualification-host-report" | "qualification-host-report-v2" => {
                 for (label, value) in [
                     ("report_base64url", &self.report_base64url),
                     ("host_id", &self.host_id),
@@ -270,7 +272,260 @@ fn report_artifacts(value: &Value) -> bool {
         && report_sha(&value["package_sha256"])
 }
 
+fn bridge_pass(value: &Value) -> bool {
+    exact_fields(value, &["outcome", "evidence"])
+        && value["outcome"] == "pass"
+        && report_evidence(&value["evidence"])
+}
+
+fn bridge_uid(value: &Value) -> Option<u32> {
+    value.as_u64().and_then(|n| u32::try_from(n).ok())
+}
+
+fn bridge_id(value: &Value) -> bool {
+    value.as_str().is_some_and(|s| {
+        (1..=128).contains(&s.len())
+            && s.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric())
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+    })
+}
+
+fn bridge_soul_id(value: &Value) -> bool {
+    value.as_str().is_some_and(|s| {
+        if !s.starts_with("agent_") || s.len() != 42 {
+            return false;
+        }
+        s[6..].bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_digit() || (b'a'..=b'f').contains(&b)
+            }
+        })
+    })
+}
+
+fn bridge_endpoint(value: &Value, owner: u32, group: u32, peer: u32) -> bool {
+    exact_fields(
+        value,
+        &[
+            "socket_path",
+            "parent_uid",
+            "parent_gid",
+            "parent_mode",
+            "parent_inode",
+            "socket_uid",
+            "socket_gid",
+            "socket_mode",
+            "socket_inode",
+            "observed_peer_uid",
+            "machine_custody",
+            "kernel_peer_check",
+        ],
+    ) && report_path(&value["socket_path"])
+        && bridge_uid(&value["parent_uid"]) == Some(owner)
+        && bridge_uid(&value["socket_uid"]) == Some(owner)
+        && bridge_uid(&value["parent_gid"]) == Some(group)
+        && bridge_uid(&value["socket_gid"]) == Some(group)
+        && value["parent_mode"] == "2750"
+        && value["socket_mode"] == "0660"
+        && value["parent_inode"].as_u64().is_some_and(|n| n > 0)
+        && value["socket_inode"].as_u64().is_some_and(|n| n > 0)
+        && bridge_uid(&value["observed_peer_uid"]) == Some(peer)
+        && bridge_pass(&value["machine_custody"])
+        && bridge_pass(&value["kernel_peer_check"])
+}
+
+fn bridge_shape(value: &Value) -> bool {
+    if !exact_fields(
+        value,
+        &[
+            "assignment",
+            "principals",
+            "endpoints",
+            "handoff",
+            "admission",
+            "lifecycle",
+        ],
+    ) {
+        return false;
+    }
+    let a = &value["assignment"];
+    let p = &value["principals"];
+    let e = &value["endpoints"];
+    let h = &value["handoff"];
+    let admission = &value["admission"];
+    let life = &value["lifecycle"];
+    if !exact_fields(
+        a,
+        &[
+            "installation_id",
+            "soul_id",
+            "start_id",
+            "launch_id",
+            "runtime_id",
+            "plan_id",
+            "plan_digest",
+            "machine_reservation_sha256",
+            "machine_observation",
+        ],
+    ) || ![
+        "installation_id",
+        "start_id",
+        "launch_id",
+        "runtime_id",
+        "plan_id",
+    ]
+    .iter()
+    .all(|name| bridge_id(&a[*name]))
+        || !bridge_soul_id(&a["soul_id"])
+        || !report_sha(&a["plan_digest"])
+        || !report_sha(&a["machine_reservation_sha256"])
+        || !report_evidence(&a["machine_observation"])
+        || !exact_fields(
+            p,
+            &[
+                "runner_uid",
+                "bridge_uid",
+                "credential_uid",
+                "hq_uid",
+                "machine_uid",
+                "bridge_private_gid",
+                "runner_private_gid",
+            ],
+        )
+    {
+        return false;
+    }
+    let [Some(r), Some(b), Some(c), Some(hq), Some(machine), Some(bg), Some(rg)] = [
+        "runner_uid",
+        "bridge_uid",
+        "credential_uid",
+        "hq_uid",
+        "machine_uid",
+        "bridge_private_gid",
+        "runner_private_gid",
+    ]
+    .map(|name| bridge_uid(&p[name])) else {
+        return false;
+    };
+    if r == 0
+        || b == 0
+        || c == 0
+        || r == b
+        || r == c
+        || r == hq
+        || r == machine
+        || b == c
+        || b == hq
+        || b == machine
+        || c == hq
+        || c == machine
+        || hq == machine
+        || bg == 0
+        || rg == 0
+        || bg == rg
+        || !exact_fields(e, &["hq_broker", "souls_member", "http_relay"])
+        || !bridge_endpoint(&e["hq_broker"], hq, bg, b)
+        || !bridge_endpoint(&e["souls_member"], r, bg, b)
+        || !bridge_endpoint(&e["http_relay"], b, rg, r)
+    {
+        return false;
+    }
+    let paths = [
+        &e["hq_broker"]["socket_path"],
+        &e["souls_member"]["socket_path"],
+        &e["http_relay"]["socket_path"],
+    ];
+    let inodes = [
+        &e["hq_broker"]["socket_inode"],
+        &e["souls_member"]["socket_inode"],
+        &e["http_relay"]["socket_inode"],
+    ];
+    let parent_inodes = [
+        &e["hq_broker"]["parent_inode"],
+        &e["souls_member"]["parent_inode"],
+        &e["http_relay"]["parent_inode"],
+    ];
+    if paths[0] == paths[1]
+        || paths[0] == paths[2]
+        || paths[1] == paths[2]
+        || inodes[0] == inodes[1]
+        || inodes[0] == inodes[2]
+        || inodes[1] == inodes[2]
+        || parent_inodes[0] == parent_inodes[1]
+        || parent_inodes[0] == parent_inodes[2]
+        || parent_inodes[1] == parent_inodes[2]
+        || !exact_fields(
+            h,
+            &[
+                "transport",
+                "recipient_uid",
+                "bootstrap_sha256",
+                "bind_receipt_sha256",
+                "b_only_custody",
+                "r_denied",
+                "c_denied",
+                "other_b_denied",
+            ],
+        )
+        || h["transport"] != "one-use-inherited-anonymous-fds"
+        || bridge_uid(&h["recipient_uid"]) != Some(b)
+        || !report_sha(&h["bootstrap_sha256"])
+        || !report_sha(&h["bind_receipt_sha256"])
+        || !["b_only_custody", "r_denied", "c_denied", "other_b_denied"]
+            .iter()
+            .all(|name| bridge_pass(&h[*name]))
+        || !exact_fields(
+            admission,
+            &[
+                "runner_endpoint",
+                "member_hello",
+                "hq_broker_hmac_bind",
+                "hq_bind_receipt_sha256",
+                "bind_before_acp",
+                "relay_peer",
+            ],
+        )
+        || !report_sha(&admission["hq_bind_receipt_sha256"])
+        || ![
+            "runner_endpoint",
+            "member_hello",
+            "hq_broker_hmac_bind",
+            "bind_before_acp",
+            "relay_peer",
+        ]
+        .iter()
+        .all(|name| bridge_pass(&admission[*name]))
+        || !exact_fields(
+            life,
+            &[
+                "one_use",
+                "restart_replay_refused",
+                "failed_bind_prevents_acp",
+                "stop_cleanup",
+            ],
+        )
+        || ![
+            "one_use",
+            "restart_replay_refused",
+            "failed_bind_prevents_acp",
+            "stop_cleanup",
+        ]
+        .iter()
+        .all(|name| bridge_pass(&life[*name]))
+    {
+        return false;
+    }
+    true
+}
+
 fn fixed_host_report(request: &Request) -> Result<Vec<u8>, &'static str> {
+    fixed_host_report_version(request, 1)
+}
+
+fn fixed_host_report_version(request: &Request, version: u64) -> Result<Vec<u8>, &'static str> {
     let encoded = request.report_base64url.as_ref().ok_or(UNAVAILABLE)?;
     let raw = URL.decode(encoded).map_err(|_| UNAVAILABLE)?;
     if raw.is_empty() || raw.len() > 1024 * 1024 || URL.encode(&raw) != *encoded || !raw.is_ascii()
@@ -281,7 +536,7 @@ fn fixed_host_report(request: &Request) -> Result<Vec<u8>, &'static str> {
     if serde_json::to_vec(&report).map_err(|_| UNAVAILABLE)? != raw {
         return Err(UNAVAILABLE);
     }
-    let keys = [
+    let mut keys = vec![
         "adapter",
         "checks",
         "cost_bound",
@@ -300,10 +555,13 @@ fn fixed_host_report(request: &Request) -> Result<Vec<u8>, &'static str> {
         "soul_start",
         "suite_revision",
     ];
+    if version == 2 {
+        keys.push("bridge");
+    }
     let fields = report.as_object().ok_or(UNAVAILABLE)?;
     if fields.len() != keys.len()
         || keys.iter().any(|key| !fields.contains_key(*key))
-        || report["schema_version"] != 1
+        || report["schema_version"] != version
         || report["outcome"] != "pass"
         || !report_artifacts(&report["adapter"])
         || !exact_fields(
@@ -443,6 +701,14 @@ fn fixed_host_report(request: &Request) -> Result<Vec<u8>, &'static str> {
                     .all(|name| gates.contains_key(*name))))
         || (report["profile_in_force"] == "managed-cooperative"
             && (gates.len() != 1 || !gates.contains_key("T21")))
+    {
+        return Err(UNAVAILABLE);
+    }
+    if version == 2
+        && (report["profile_in_force"] != "managed-protected"
+            || !bridge_shape(&report["bridge"])
+            || report["bridge"]["assignment"]["machine_observation"]
+                != report["soul_start"]["machine_observation"])
     {
         return Err(UNAVAILABLE);
     }
@@ -897,6 +1163,22 @@ fn execute(
             result = json!({
                 "schema_version": 1,
                 "purpose": HOST_REPORT_PURPOSE,
+                "host_id": request.host_id.as_ref().ok_or(UNAVAILABLE)?,
+                "signer_id": request.signer_id.as_ref().ok_or(UNAVAILABLE)?,
+                "report_sha256": format!("sha256:{}", digest(&raw)),
+                "report_base64url": URL.encode(&raw),
+                "signature_base64url": URL.encode(signature),
+            });
+        }
+        "qualification-host-report-v2" => {
+            let raw = fixed_host_report_version(&request, 2)?;
+            let mut message = HOST_REPORT_PURPOSE_V2.as_bytes().to_vec();
+            message.push(0);
+            message.extend_from_slice(&raw);
+            let signature = provider.sign(&reference, &message)?;
+            result = json!({
+                "schema_version": 2,
+                "purpose": HOST_REPORT_PURPOSE_V2,
                 "host_id": request.host_id.as_ref().ok_or(UNAVAILABLE)?,
                 "signer_id": request.signer_id.as_ref().ok_or(UNAVAILABLE)?,
                 "report_sha256": format!("sha256:{}", digest(&raw)),

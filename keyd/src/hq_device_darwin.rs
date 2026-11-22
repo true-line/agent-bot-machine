@@ -279,6 +279,14 @@ pub(crate) fn cli_result(
     }
 }
 
+fn device_request_size_allowed(option: &str, size: usize) -> bool {
+    let limit = match option {
+        "qualification-host-report" | "qualification-host-report-v2" => 2 * 1024 * 1024,
+        _ => 16384,
+    };
+    size <= limit
+}
+
 pub(crate) fn command(init: bool) -> Result<(), &'static str> {
     if init {
         crate::standalone::begin_custody()?;
@@ -304,7 +312,7 @@ pub(crate) fn command(init: bool) -> Result<(), &'static str> {
         return Err(UNAVAILABLE);
     }
     let request: hq_device::Request = serde_json::from_slice(&raw).map_err(|_| UNAVAILABLE)?;
-    if request.option != "qualification-host-report" && raw.len() > 16384 {
+    if !device_request_size_allowed(&request.option, raw.len()) {
         return Err(UNAVAILABLE);
     }
     let now = std::time::SystemTime::now()
@@ -322,6 +330,16 @@ mod tests {
         fs,
         os::unix::fs::{symlink, PermissionsExt},
     };
+
+    #[test]
+    fn both_host_report_versions_use_the_bounded_large_request_limit() {
+        for option in ["qualification-host-report", "qualification-host-report-v2"] {
+            assert!(device_request_size_allowed(option, 16385));
+            assert!(device_request_size_allowed(option, 2 * 1024 * 1024));
+            assert!(!device_request_size_allowed(option, 2 * 1024 * 1024 + 1));
+        }
+        assert!(!device_request_size_allowed("whoami", 16385));
+    }
 
     #[test]
     fn only_explicit_initialization_reports_denied_interaction_at_creation() {

@@ -24,6 +24,7 @@ func TestDeviceKeydReportTransportLimits(t *testing.T) {
 	}{
 		{"whoami", 16384, 8192},
 		{"qualification-host-report", 2 * 1024 * 1024, 2 * 1024 * 1024},
+		{"qualification-host-report-v2", 2 * 1024 * 1024, 2 * 1024 * 1024},
 	} {
 		input, output := deviceKeydLimits(tc.option)
 		if input != tc.input || output != tc.output {
