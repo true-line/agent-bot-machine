@@ -63,8 +63,8 @@ def check_denials(port4, port6, *unix_paths):
 
 def bridge_child(port4, port6, broker, member, sibling, relay, other_bind):
     check_denials(port4, port6, sibling)
-    if exchange(socket.AF_UNIX, broker) != REPLY or exchange(socket.AF_UNIX, member) != REPLY:
-        raise AssertionError("bridge could not reach its assigned broker and member")
+    if exchange(socket.AF_UNIX, broker) != REPLY:
+        raise AssertionError("bridge could not reach its assigned broker")
     denied_bind(socket.AF_INET, ("127.0.0.1", 0))
     denied_bind(socket.AF_INET6, ("::1", 0))
     denied_bind(socket.AF_UNIX, other_bind)
@@ -73,6 +73,11 @@ def bridge_child(port4, port6, broker, member, sibling, relay, other_bind):
         listener.listen(1)
         listener.settimeout(8)
         print("ready", flush=True)
+        deadline = time.monotonic() + 5
+        while not Path(member).exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if exchange(socket.AF_UNIX, member) != REPLY:
+            raise AssertionError("bridge could not reach its assigned member")
         with listener.accept()[0] as connection:
             with connection.makefile("rb") as stream:
                 if stream.readline(64) != REQUEST:
@@ -80,11 +85,22 @@ def bridge_child(port4, port6, broker, member, sibling, relay, other_bind):
             connection.sendall(REPLY)
 
 
-def runner_child(port4, port6, broker, member, sibling, relay, other_relay, other_bind):
+def runner_child(port4, port6, broker, admission, member, sibling, relay, other_relay, other_bind):
     check_denials(port4, port6, broker, sibling, other_relay)
     denied_bind(socket.AF_UNIX, other_bind)
-    if exchange(socket.AF_UNIX, member) != REPLY or exchange(socket.AF_UNIX, relay) != REPLY:
-        raise AssertionError("runner could not reach its assigned member and relay")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+        listener.bind(member)
+        listener.listen(1)
+        listener.settimeout(8)
+        if exchange(socket.AF_UNIX, admission) != REPLY:
+            raise AssertionError("runner could not reach its assigned admission")
+        with listener.accept()[0] as connection:
+            with connection.makefile("rb") as stream:
+                if stream.readline(64) != REQUEST:
+                    raise AssertionError("unexpected member request")
+            connection.sendall(REPLY)
+        if exchange(socket.AF_UNIX, relay) != REPLY:
+            raise AssertionError("runner could not reach its assigned relay")
 
 
 class Listener:
@@ -138,6 +154,7 @@ class DarwinSoulProfiles(unittest.TestCase):
                 original.bind(str(assigned))
                 original.listen(1)
                 runner = ["/usr/bin/sandbox-exec", "-f", str(RUNNER),
+                          "-D", "ADMISSION_SOCKET=" + str(Path(tmp) / "admission.sock"),
                           "-D", "MEMBER_SOCKET=" + str(assigned),
                           "-D", "RELAY_SOCKET=" + relay,
                           sys.executable, "-I", str(Path(__file__).resolve()),
@@ -161,18 +178,19 @@ class DarwinSoulProfiles(unittest.TestCase):
             v4 = listen(socket.AF_INET, ("127.0.0.1", 0))
             v6 = listen(socket.AF_INET6, ("::1", 0))
             broker = listen(socket.AF_UNIX, str(Path(tmp) / "broker.sock"))
-            member = listen(socket.AF_UNIX, str(Path(tmp) / "member.sock"))
+            admission = listen(socket.AF_UNIX, str(Path(tmp) / "admission.sock"))
+            member = str(Path(tmp) / "member.sock")
             sibling = listen(socket.AF_UNIX, str(Path(tmp) / "sibling.sock"))
             other_relay = listen(socket.AF_UNIX, str(Path(tmp) / "other-relay.sock"))
             relay = str(Path(tmp) / "relay.sock")
             other_bind = str(Path(tmp) / "other-bind.sock")
             bridge = ["/usr/bin/sandbox-exec", "-f", str(BRIDGE),
                       "-D", "BROKER_SOCKET=" + broker.address,
-                      "-D", "MEMBER_SOCKET=" + member.address,
+                      "-D", "MEMBER_SOCKET=" + member,
                       "-D", "RELAY_SOCKET=" + relay,
                       sys.executable, "-I", str(Path(__file__).resolve()), "--bridge",
                       str(v4.address[1]), str(v6.address[1]), broker.address,
-                      member.address, sibling.address, relay, other_bind]
+                      member, sibling.address, relay, other_bind]
             with subprocess.Popen(bridge, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:
                 ready, _, _ = select.select([process.stdout], [], [], 5)
                 if not ready or process.stdout.readline().strip() != "ready":
@@ -182,16 +200,17 @@ class DarwinSoulProfiles(unittest.TestCase):
                 while not Path(relay).exists() and time.monotonic() < deadline:
                     time.sleep(0.02)
                 runner = ["/usr/bin/sandbox-exec", "-f", str(RUNNER),
-                          "-D", "MEMBER_SOCKET=" + member.address,
+                          "-D", "ADMISSION_SOCKET=" + admission.address,
+                          "-D", "MEMBER_SOCKET=" + member,
                           "-D", "RELAY_SOCKET=" + relay,
                           sys.executable, "-I", str(Path(__file__).resolve()), "--runner",
                           str(v4.address[1]), str(v6.address[1]), broker.address,
-                          member.address, sibling.address, relay, other_relay.address, other_bind]
+                          admission.address, member, sibling.address, relay, other_relay.address, other_bind]
                 subprocess.run(runner, check=True, timeout=10)
                 stdout, stderr = process.communicate(timeout=10)
                 self.assertEqual(process.returncode, 0, (stdout, stderr))
-            self.assertEqual((broker.count, member.count, sibling.count, other_relay.count, v4.count, v6.count),
-                             (1, 2, 0, 0, 0, 0))
+            self.assertEqual((broker.count, admission.count, sibling.count, other_relay.count, v4.count, v6.count),
+                             (1, 1, 0, 0, 0, 0))
             self.assertFalse(Path(other_bind).exists())
 
 
