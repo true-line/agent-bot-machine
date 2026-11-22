@@ -359,6 +359,11 @@ release verifier must later authenticate the completed record, released
 adapter and Souls bytes, independent runner, HQ-started Soul, measured frozen
 definition and full launch inputs before positive admission. Until that
 producer and release path exist, the installed protected gate remains closed.
+The source-only v3 qualification and Statement parsers require distinct
+protected/cooperative report, signature and completed-run references, a
+matching Souls build claim, an exact qualification subject and a future
+Statement expiry. They do not mint a verified release without authenticated
+Machine completed-run records and measured installed bytes.
 
 On macOS, `members plan` without an account list retains the HQ-only plan.
 Pass `--hq-config` to plan one role for each distinct credential account in
@@ -1076,6 +1081,10 @@ atomic challenge claim and physical host evidence.
   aliased snapshot roots, mismatched protected bridge start and reservation,
   and cooperative gate substitution refuse. This is verifier evidence only;
   no fixture counts as physical T01/T02/T03/T21 or a release qualification.
+- A synthetic v3 qualification and Statement pair agrees on exact references
+  and subject digest. Old purpose, missing or reused completed-run reference,
+  future qualification date and expiry at verification time refuse. These
+  parser results grant no release or launch authority.
 
 On real accounts in CI (Linux), as in agent-bot-hq's member accounts step:
 
@@ -1132,6 +1141,10 @@ completed-run/report producer out of this portable preflight.
    vet gates. Recheck the two signed report envelopes against the eventual
    completed-run/release artifacts before any protected acceptance; the
    current source-only verifier must continue to refuse positive admission.
+   The v3 qualification/Statement parser vectors are
+   `TestMeasuredV3StatementAndQualificationParsing`; they do not replace the
+   separately authenticated completed-run, signing-time or installed-byte
+   checks.
 
 ### Opt-in Linux HQ service
 
