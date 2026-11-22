@@ -123,7 +123,7 @@ func TestWaitForLaunchSocket(t *testing.T) {
 }
 
 func TestWaitForLaunchSocketModePublication(t *testing.T) {
-	for _, change := range []string{"chmod", "replaced", "disappeared", "overbroad"} {
+	for _, change := range []string{"chmod", "pending-0755", "replaced", "disappeared", "overbroad"} {
 		t.Run(change, func(t *testing.T) {
 			dir, err := os.MkdirTemp("/tmp", "hqpublish.")
 			if err != nil {
@@ -144,6 +144,9 @@ func TestWaitForLaunchSocketModePublication(t *testing.T) {
 				return path
 			}
 			initial := os.FileMode(0700)
+			if change == "pending-0755" {
+				initial = 0755
+			}
 			if change == "overbroad" {
 				initial = 0777
 			}
@@ -170,7 +173,7 @@ func TestWaitForLaunchSocketModePublication(t *testing.T) {
 			if updateErr := <-changed; updateErr != nil {
 				t.Fatal(updateErr)
 			}
-			if change == "chmod" {
+			if change == "chmod" || change == "pending-0755" {
 				if err != nil || !os.SameFile(original, ready) || ready.Mode() != os.ModeSocket|0666 {
 					t.Fatalf("socket never became ready on the original inode: %v", err)
 				}
@@ -205,6 +208,7 @@ func TestWaitForLaunchSocketRefusesForeignOrPrivateNode(t *testing.T) {
 	}{
 		{0600, uid, "mode 0600, expected 0666"},
 		{0700, uid, "mode 0700, expected 0666"},
+		{0755, uid, "mode 0755, expected 0666"},
 		{0700 | os.ModeSticky, uid, "mode 1700, expected 0666"},
 		{0666, uid + 1, "wrong owner"},
 	} {

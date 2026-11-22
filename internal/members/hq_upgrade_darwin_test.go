@@ -8,7 +8,43 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
+
+func TestWaitForApprovedHQPID(t *testing.T) {
+	calls := 0
+	pid, err := waitForApprovedHQPID(time.Second, func() (bool, string, error) {
+		calls++
+		if calls == 1 {
+			return true, "", nil
+		}
+		return true, "123", nil
+	})
+	if err != nil || pid != "123" || calls != 2 {
+		t.Fatalf("approved pending process: pid %q, calls %d, error %v", pid, calls, err)
+	}
+	for _, tc := range []struct {
+		name    string
+		active  bool
+		pid     string
+		err     error
+		message string
+	}{
+		{"changed job", false, "", nil, "approved HQ job"},
+		{"inspection failure", true, "", errors.New("private detail"), "approved HQ job"},
+		{"invalid pid", true, "not-a-pid", nil, "running HQ process"},
+		{"missing pid at deadline", true, "", nil, "running HQ process"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := waitForApprovedHQPID(0, func() (bool, string, error) {
+				return tc.active, tc.pid, tc.err
+			})
+			if got != "" || err == nil || !strings.Contains(err.Error(), tc.message) || strings.Contains(err.Error(), "private detail") {
+				t.Fatalf("invalid process admitted or leaked detail: pid %q, error %v", got, err)
+			}
+		})
+	}
+}
 
 func upgradeWorld(t *testing.T) (Input, *fakeHost) {
 	t.Helper()

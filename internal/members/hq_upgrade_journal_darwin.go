@@ -150,7 +150,9 @@ func (j *upgradeJournal) stopPublished(r launchRecord, phase string, absent bool
 	defer parent.Close()
 	var sock os.FileInfo
 	if !absent {
-		sock, err = waitForLaunchSocket(launchRuntimeSocket, 0, 0)
+		// A failed status probe can coincide with launchd's socket mode
+		// publication. Stop only after the same inode reaches its reviewed mode.
+		sock, err = waitForLaunchSocket(launchRuntimeSocket, 0, 3*time.Second)
 		if err != nil {
 			return err
 		}
@@ -172,13 +174,14 @@ func (j *upgradeJournal) stopObserved(r launchRecord, phase string, parent *os.F
 		if err := verifyReviewedPlist(launchPlist, r.Plist); err != nil {
 			return err
 		}
-		active, pid, err := loadedLaunchDaemon(r.Service, j.Owner)
-		if err != nil || !active {
-			return errors.New("cannot identify the approved HQ job to stop")
+		pid, err := waitForApprovedHQPID(3*time.Second, func() (bool, string, error) {
+			return loadedLaunchDaemon(r.Service, j.Owner)
+		})
+		if err != nil {
+			return err
 		}
-		n, err := strconv.Atoi(pid)
-		if err != nil || n <= 0 {
-			return errors.New("cannot identify the running HQ process to stop")
+		if err := verifyReviewedPlist(launchPlist, r.Plist); err != nil {
+			return err
 		}
 		if err := verifyHQProcessUID(pid); err != nil {
 			return err
@@ -195,6 +198,31 @@ func (j *upgradeJournal) stopObserved(r launchRecord, phase string, parent *os.F
 		return err
 	}
 	return j.clearStoppedEndpoint()
+}
+
+// launchd can report an approved loaded job before it publishes the child PID.
+// A changed or absent job refuses immediately; only that pending PID gets a
+// bounded retry before the existing UID and socket-inode checks.
+func waitForApprovedHQPID(limit time.Duration, observe func() (bool, string, error)) (string, error) {
+	deadline := time.Now().Add(limit)
+	for {
+		active, pid, err := observe()
+		if err != nil || !active {
+			return "", errors.New("cannot identify the approved HQ job to stop")
+		}
+		if pid != "" {
+			n, err := strconv.Atoi(pid)
+			if err != nil || n <= 0 {
+				return "", errors.New("cannot identify the running HQ process to stop")
+			}
+			return pid, nil
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return "", errors.New("cannot identify the running HQ process to stop")
+		}
+		time.Sleep(min(25*time.Millisecond, remaining))
+	}
 }
 
 func (j *upgradeJournal) recordBootout(path, phase string, evidence *stoppingHQ, bootout func() error) error {
