@@ -117,7 +117,9 @@ func observeSoulKernelProcess(pid int) (soulKernelProcessSnapshot, error) {
 	if err != nil {
 		return soulKernelProcessSnapshot{}, fmt.Errorf("observe Soul process: %w", err)
 	}
-	if proc == nil || int(proc.Proc.P_pid) != pid || proc.Proc.P_stat == 0 || proc.Proc.P_stat == 5 ||
+	// Darwin's public sys/proc.h defines live SRUN, SSLEEP and SSTOP as 2..4.
+	// SIDL is still being created; SZOMB is awaiting collection.
+	if proc == nil || int(proc.Proc.P_pid) != pid || proc.Proc.P_stat < 2 || proc.Proc.P_stat > 4 ||
 		proc.Eproc.Ppid <= 0 || proc.Eproc.Pgid <= 0 ||
 		proc.Proc.P_starttime.Sec <= 0 || proc.Proc.P_starttime.Usec < 0 || proc.Proc.P_starttime.Usec >= 1_000_000 ||
 		proc.Eproc.Ucred.Ngroups <= 0 || int(proc.Eproc.Ucred.Ngroups) > len(proc.Eproc.Ucred.Groups) {
