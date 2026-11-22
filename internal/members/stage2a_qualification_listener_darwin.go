@@ -19,9 +19,13 @@ import (
 // setgid bit gives A-created sockets the Q group without adding A to Q.
 // The owner-reviewed plan must pin that exact parent and Q numeric identity.
 type stage2aQualificationListenerV1 struct {
-	listener *net.UnixListener
-	path     string
-	qGID     int
+	listener           *net.UnixListener
+	path               string
+	qGID               int
+	socketDev          uint64
+	socketInode        uint64
+	socketBirthSeconds int64
+	socketBirthNanos   int64
 }
 
 func newStage2aQualificationListenerV1(parent string, qGID int) (*stage2aQualificationListenerV1, error) {
@@ -63,10 +67,14 @@ func newStage2aQualificationListenerV1(parent string, qGID int) (*stage2aQualifi
 	var socketStat unix.Stat_t
 	if unix.Lstat(path, &socketStat) != nil || socketStat.Mode != unix.S_IFSOCK|0660 ||
 		socketStat.Uid != uint32(os.Getuid()) || socketStat.Gid != uint32(qGID) ||
+		socketStat.Dev <= 0 || socketStat.Ino == 0 || socketStat.Btim.Sec <= 0 ||
+		socketStat.Btim.Nsec < 0 || socketStat.Btim.Nsec >= 1_000_000_000 ||
 		checkDarwinACLs([]string{path}) != nil {
 		return closeOnFailure()
 	}
-	return &stage2aQualificationListenerV1{listener: listener, path: path, qGID: qGID}, nil
+	return &stage2aQualificationListenerV1{listener: listener, path: path, qGID: qGID,
+		socketDev: uint64(socketStat.Dev), socketInode: socketStat.Ino,
+		socketBirthSeconds: socketStat.Btim.Sec, socketBirthNanos: socketStat.Btim.Nsec}, nil
 }
 
 func (l *stage2aQualificationListenerV1) close() {
@@ -95,6 +103,16 @@ func (l *stage2aQualificationListenerV1) accept(ctx context.Context, pid, uid, g
 		return nil, refused, errStage2aReservationAuthority
 	}
 	conn, err := l.listener.AcceptUnix()
+	var socketStat unix.Stat_t
+	if err == nil && (unix.Lstat(l.path, &socketStat) != nil ||
+		socketStat.Mode != unix.S_IFSOCK|0660 || socketStat.Uid != uint32(os.Getuid()) ||
+		socketStat.Gid != uint32(l.qGID) || uint64(socketStat.Dev) != l.socketDev ||
+		socketStat.Ino != l.socketInode || socketStat.Btim.Sec != l.socketBirthSeconds ||
+		socketStat.Btim.Nsec != l.socketBirthNanos || checkDarwinACLs([]string{l.path}) != nil) {
+		conn.Close()
+		l.close()
+		return nil, refused, errStage2aReservationAuthority
+	}
 	l.close()
 	if err != nil {
 		return nil, refused, errStage2aReservationAuthority
@@ -105,6 +123,10 @@ func (l *stage2aQualificationListenerV1) accept(ctx context.Context, pid, uid, g
 		return nil, refused, errStage2aReservationAuthority
 	}
 	peer.socketPath = l.path
+	peer.socketDev = l.socketDev
+	peer.socketInode = l.socketInode
+	peer.socketBirthSeconds = l.socketBirthSeconds
+	peer.socketBirthNanos = l.socketBirthNanos
 	if conn.SetDeadline(time.Now().Add(60*time.Second)) != nil {
 		conn.Close()
 		return nil, refused, errStage2aReservationAuthority

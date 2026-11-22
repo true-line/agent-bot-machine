@@ -149,12 +149,13 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	sign := func(raw []byte) ([]byte, error) { return ed25519.Sign(machineKey, raw), nil }
+	launchChallengeSHA := "sha256:" + strings.Repeat("f", 64)
 	reservation, err := signStage2aEnvelope(stage2aReservationPayload{
 		Assignment: stage2aReservationAssignment{SoulStartAssignment: SoulStartAssignment{
 			InstallationID: q.InstallationID, StartID: q.StartID, LaunchID: q.LaunchID,
 			SoulID: binding.SoulID,
 			PlanID: q.PlanID, PlanDigest: q.PlanDigest, HQEpoch: q.HQEpoch}},
-		MeasurementBinding: binding,
+		MeasurementBinding: binding, AdmissionChallengeSHA256: launchChallengeSHA,
 	}, 2, stage2aAdminReservationPurpose, machinePub, sign)
 	if err != nil {
 		t.Fatal(err)
@@ -288,6 +289,9 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 		"observations_sha256": session.observationsSHA256, "captured_at": "2026-11-22T06:00:00.120Z",
 	})
 	session.peer.socketPath = "/private/tmp/q-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock"
+	session.peer.socketDev = 1
+	session.peer.socketInode = 4242
+	session.peer.socketBirthSeconds = 1795327200
 	session.peer.executable = "/usr/local/bin/node"
 	session.peer.argv = []string{session.peer.executable, "/opt/q/qualification-runner.mjs", "--once"}
 	session.peer.kernel = soulKernelProcessSnapshot{
@@ -295,7 +299,6 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 		RealUID: 650, EffectiveUID: 650, SavedUID: 650,
 		RealGID: 651, PrimaryGroupGID: 651, SavedGID: 651,
 	}
-	launchChallengeSHA := "sha256:" + strings.Repeat("f", 64)
 	wire, index, eofReceipt, err := issueStage2aQualificationPreSignV1(session,
 		launchChallengeSHA, now, machinePub, sign)
 	if err != nil {
@@ -322,6 +325,8 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 		indexed.QChallengeSHA256 == indexed.LaunchChallengeSHA256 ||
 		indexed.QPID != 42 || indexed.QStartSeconds != session.peer.kernel.StartSeconds ||
 		indexed.QSocketPath != session.peer.socketPath ||
+		indexed.QSocketDevice != session.peer.socketDev ||
+		indexed.QSocketInode != session.peer.socketInode ||
 		indexed.ObservationCount != 1 ||
 		framed.ReadyFrameBase64URL != base64.RawURLEncoding.EncodeToString(session.readyFrame) ||
 		framed.RequestFramesBase64URL != base64.RawURLEncoding.EncodeToString(session.requestFrames) ||
@@ -354,6 +359,16 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 	if _, _, _, err := issueStage2aQualificationPreSignV1(wrongSocket,
 		launchChallengeSHA, now, machinePub, sign); err == nil {
 		t.Fatal("Q pre-sign evidence issued without one-use socket path")
+	}
+	wrongSocket = session
+	wrongSocket.peer.socketInode = 0
+	if _, _, _, err := issueStage2aQualificationPreSignV1(wrongSocket,
+		launchChallengeSHA, now, machinePub, sign); err == nil {
+		t.Fatal("Q pre-sign evidence issued without kernel listener inode")
+	}
+	if _, err := persistStage2aQualificationPreSignV1(store, session, reservation,
+		"sha256:"+strings.Repeat("1", 64), now, machinePub, sign); err == nil {
+		t.Fatal("Q pre-sign index accepted a different well-formed launch challenge")
 	}
 	preSign, err := persistStage2aQualificationPreSignV1(store, session, reservation,
 		launchChallengeSHA, now, machinePub, sign)

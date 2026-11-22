@@ -72,9 +72,11 @@ replacement transcript is not yet bound by the host signature. That test
 grants no physical gate.
 
 The source-only pre-sign issuer verifies the paired framed Q session, distinct
-Q and Machine launch challenges, recorded kernel Q PID/UID/GID, process start,
-executable/argv, and the exact one-use socket path. It signs an index with the
-independently enrolled A Ed25519 key over the raw wire object's digest, the
+Q and A-signed reservation launch challenges, recorded kernel Q PID/UID/GID,
+process start, executable/argv, and the exact one-use socket path and listener
+device/inode/birthtime that A checked before accepting and unlinking it. It
+signs an index with the independently enrolled A Ed25519 key over the raw wire
+object's digest, the
 ordered interleaving of both directions, per-direction hashes and count,
 source/test-plan pins, and run selectors. A separate signature binds the
 finished frame, index envelope, and A-observed clean EOF with no trailing

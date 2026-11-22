@@ -13,11 +13,15 @@ import (
 // pinned executable/code bytes and keep the child under supervision. Kernel
 // peer identity alone never authenticates the observations or grants T credit.
 type stage2aQualificationPeerV1 struct {
-	pid, uid, gid int
-	executable    string
-	argv          []string
-	socketPath    string
-	kernel        soulKernelProcessSnapshot
+	pid, uid, gid      int
+	executable         string
+	argv               []string
+	socketPath         string
+	socketDev          uint64
+	socketInode        uint64
+	socketBirthSeconds int64
+	socketBirthNanos   int64
+	kernel             soulKernelProcessSnapshot
 }
 
 func authenticateStage2aQualificationPeerV1(conn *net.UnixConn, pid, uid, gid int,

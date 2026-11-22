@@ -46,6 +46,10 @@ type stage2aQualificationPreSignIndexV1 struct {
 	QSourceSHA256            string   `json:"q_source_sha256"`
 	TestPlanSHA256           string   `json:"test_plan_sha256"`
 	QSocketPath              string   `json:"q_socket_path"`
+	QSocketDevice            uint64   `json:"q_socket_device"`
+	QSocketInode             uint64   `json:"q_socket_inode"`
+	QSocketBirthSeconds      int64    `json:"q_socket_birth_seconds"`
+	QSocketBirthNanos        int64    `json:"q_socket_birth_nanos"`
 	QPID                     int      `json:"q_pid"`
 	QUID                     int      `json:"q_uid"`
 	QGID                     int      `json:"q_gid"`
@@ -103,6 +107,8 @@ func issueStage2aQualificationPreSignV1(session stage2aQualificationSessionResul
 		p.executable == "" || len(p.argv) < 3 || p.argv[0] != p.executable ||
 		validateSoulExpectedArguments(p.executable, p.argv) != nil ||
 		!stage2aAbsolutePath(p.socketPath) || filepath.Clean(p.socketPath) != p.socketPath ||
+		p.socketDev == 0 || p.socketInode == 0 || p.socketBirthSeconds <= 0 ||
+		p.socketBirthNanos < 0 || p.socketBirthNanos >= 1_000_000_000 ||
 		!stage2aQualificationDigest(launchChallengeSHA256) ||
 		launchChallengeSHA256 == session.challengeSHA256 ||
 		len(machineKey) != ed25519.PublicKeySize || sign == nil || now.IsZero() ||
@@ -149,6 +155,8 @@ func issueStage2aQualificationPreSignV1(session stage2aQualificationSessionResul
 		SessionID: session.begin.SessionID, QChallengeSHA256: session.challengeSHA256,
 		LaunchChallengeSHA256: launchChallengeSHA256, QSourceSHA256: session.sourceSHA256,
 		TestPlanSHA256: session.begin.TestPlanSHA256, QSocketPath: p.socketPath,
+		QSocketDevice: p.socketDev, QSocketInode: p.socketInode,
+		QSocketBirthSeconds: p.socketBirthSeconds, QSocketBirthNanos: p.socketBirthNanos,
 		QPID: p.pid, QUID: p.uid, QGID: p.gid, QParentPID: p.kernel.ParentPID,
 		QProcessGroupID: p.kernel.ProcessGroupID, QStartSeconds: p.kernel.StartSeconds,
 		QStartMicros: p.kernel.StartMicros, QExecutable: p.executable, QArgv: append([]string(nil), p.argv...),
@@ -198,6 +206,7 @@ func persistStage2aQualificationPreSignV1(store stage2aAdminClaimStore,
 	}
 	var reserved stage2aReservationPayload
 	if json.Unmarshal(payload, &reserved) != nil ||
+		launchChallengeSHA256 != reserved.AdmissionChallengeSHA256 ||
 		reserved.Assignment.InstallationID != session.begin.InstallationID ||
 		reserved.Assignment.StartID != session.begin.StartID ||
 		reserved.Assignment.SoulID != session.begin.SoulID ||
