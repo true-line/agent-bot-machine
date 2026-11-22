@@ -350,6 +350,101 @@ its receipt; plan and review only the remaining changes. An affirmative
 live; revocation before finalization leaves a spent `started` claim. This
 operation does not install a launch route or authorize any package to run.
 
+### Dedicated credential bridge for protected Soul launch
+
+The stock-client route needs a credential-sidecar principal in addition to
+the separate untrusted Soul runner. The current shared harness credential UID
+cannot protect a sidecar's broad member token or listener from another process
+with that UID: on macOS 27.0.1, a same-UID process under the network-only
+sidecar fixture read synthetic 0600 token state and unlinked a live 0660 Unix
+listener. [Probe and limits](https://github.com/true-line/agent-bot-machine/pull/638#issuecomment-7069309766).
+
+The protected mapping requires one deterministic `_abm-br-*` bridge
+account and private UID/GID for **each Soul installation**. Its future 0700
+home is under `/var/agent-bot-soul-bridge-*`. The bridge is separate
+from that installation's `_abm-sr-*` package runner, dedicated HQ, Machine and
+keyd, and every shared harness credential account. Two installations cannot
+share either bridge or runner kernel principal. The bridge alone receives the
+HQ broker credential. The runner gets only start-bound relay authority. A
+bridge cannot be reused as a general harness account. The paired
+`--soul-bridge-provision <installations.json>` plan accepts a bounded `bridges`
+array of `soul_id`, `installation_id` and the derived `account`. The owner
+reviews its exact UID/GID, private 0700 home, four fixed endpoint directory
+assignments per installation and digest. The dedicated runner role must
+already exist. The paired HQ must
+add an export for the `soul-bridge-provision` owner-proof purpose before the
+prefix administrator can apply that digest as root. Machine records a one-use
+receipt and rechecks the protected pairing before each account or directory
+creation. An interrupted apply consumes its receipt; plan and review only the
+remaining changes. This operation creates only B and the cross-owned endpoint
+parents; it does not install a socket listener, broker or launch grant. Machine
+must recheck Directory Services aliases and the installed role at every later
+privileged boundary.
+
+At a bridge start, the fixed launcher must select B from the installed
+mapping using the request's installation and installed plan digest, then
+compare B's UID and GID with its kernel UID. A missing, duplicated or changed
+mapping refuses the start; a sibling installation's bridge cannot substitute.
+This selection check is only a contract helper until the fixed launcher and
+reviewed grant are installed.
+
+The fixed endpoint assignment derives a 20-hex directory slot from the
+installation ID. Machine creates its cross-owned parents at provisioning,
+while a separate 20-hex socket basename is derived from each HQ start ID.
+No request may choose either path, and the launcher must refuse an occupied
+socket basename. Only one start per installation may be live. The broker
+remains in the HQ-owned `ipc/<bridge>` directory. The member parent is
+runner-owned with the bridge group; the relay parent is bridge-owned with
+the runner group; the admission parent is HQ-owned with the runner group.
+Each is 2750, with a 0660 socket and an exact kernel peer set:
+
+| Channel | Listener owner | Group and admitted peer | Purpose |
+| --- | --- | --- | --- |
+| HQ broker | HQ | bridge | Broad authenticated broker access for the bridge only |
+| Souls member | runner | runner and bridge | One launch's member operations; protocol separates their authority |
+| HTTP relay | bridge | runner | Narrow, start-bound stock-client relay |
+| HQ admission | HQ | runner | Entry-point control before vendor confinement |
+
+The vendor client may connect only to the member and HTTP relay sockets. The
+bridge may connect only to the HQ broker and member sockets and may bind only
+its assigned HTTP listener. Direct IP and sibling Unix paths remain denied.
+The runner's admission happens before vendor confinement or in a separately
+reviewed control process, never as a third vendor-client outbound path.
+The proposed fixed sudoers rule at
+`/private/etc/sudoers.d/agent-bot-hq-soul-launch` grants dedicated HQ only
+`soul-launch soul-run` as the installation's derived R account and
+`soul-launch soul-bridge` as its derived B account. Both commands pin the
+launcher SHA-256 and use `NOPASSWD: NOSETENV`; no caller-chosen argv, root
+target or shared C target is allowed. Rule rendering alone installs nothing.
+The paired grant installer must verify the launcher, package closure and
+profiles, validate the exact rule with `visudo`, and publish its root receipt
+and rule under the owner approval guard before either command may run.
+Machine's prepared start assignment binds the approved plan ID and digest,
+installation and Soul IDs, Machine and HQ epochs, a start/launch/runtime tuple,
+the R/B/HQ/Machine numeric identities, the reviewed package root and digest,
+and all four derived endpoints. The builder caps its expiry at 30 seconds and
+contains no broker binding or member token. Machine's plan store and start
+assignment use the same bare lowercase 64-hex digest. Only the separate
+bridge/v1 bootstrap and signed v2 host report use `sha256:<same 64 hex>`;
+the nonauthorizing report-format guard hashes canonical installed plan bytes
+and refuses a plan ID or digest mismatch before converting. Its eventual
+signer caller must first verify the installed root receipt. The assignment is
+deliberately not an authorization. The eventual daemon operation must load
+the installed grant and canonical plan, verify the root receipt and live roles,
+then re-derive every R/B identity, package and endpoint field against the live
+start, launch/runtime IDs and current expiry. The component check cannot
+substitute for the root receipt or Machine signature. The daemon must spend
+the start durably and return a response signed by the enrolled Machine key.
+HQ must verify that response and
+recheck current start and B liveness before readiness and raw attach. Neither
+the signed reservation operation nor the installed rule exists yet.
+Machine must prove the reviewed package/code closure, signed one-use HQ start,
+exact kernel UIDs, live HMAC broker bind, token lifetime, stop containment and
+safe retirement before installing a production grant. Platform PDR-0052's
+[approved amendment](https://github.com/true-line/agent-bot-platform/pull/114)
+replaces #111's shared credential-sidecar principal with this dedicated
+bridge; the approval does not install a grant or establish physical T03.
+
 ### What is created
 
 For an HQ account `H` and each listed harness credential account `M`:

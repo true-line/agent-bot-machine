@@ -45,6 +45,7 @@ const (
 	DarwinNoLoginShell       = "/usr/bin/false"
 	darwinHarnessRoleName    = "Agent Bot Harness"
 	darwinSoulRunnerRoleName = "Agent Bot Soul Runner"
+	darwinSoulBridgeRoleName = "Agent Bot Soul Bridge"
 	darwinHQRoleName         = "Agent Bot HQ"
 	// DarwinDir preserves account-only macOS plans and their existing digests.
 	DarwinDir       = "none"
@@ -95,6 +96,7 @@ const (
 type Input struct {
 	HarnessAccounts    bool
 	SoulRunnerAccounts []SoulRunnerAccount
+	SoulBridgeAccounts []SoulBridgeAccount
 	upgradeObservation *upgradeObservation
 	UpgradeFrom        *priorServicePlan
 	HarnessLaunch      *HarnessPolicyRecord
@@ -200,6 +202,7 @@ type Plan struct {
 	Steps       []Step              `json:"steps"`
 	Purpose     string              `json:"purpose,omitempty"`
 	SoulRunners []SoulRunnerAccount `json:"soul_runners,omitempty"`
+	SoulBridges []SoulBridgeAccount `json:"soul_bridges,omitempty"`
 }
 
 // Refusal is a host or request the plan will not touch. Code is one of the
@@ -280,6 +283,9 @@ func Normalize(in Input) (Input, error) {
 
 // Build reads the host and returns the plan for in. It changes nothing.
 func Build(in Input, h Host) (Plan, error) {
+	if in.SoulBridgeAccounts != nil {
+		return buildSoulBridgeAccounts(in, h)
+	}
 	if in.SoulRunnerAccounts != nil {
 		return buildSoulRunnerAccounts(in, h)
 	}

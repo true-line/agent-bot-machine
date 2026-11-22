@@ -23,7 +23,9 @@ type SoulRunner struct {
 	UID            int    `json:"uid"`
 	GID            int    `json:"gid"`
 	PackageRoot    string `json:"package_root"`
-	PackageSHA256  string `json:"package_sha256"`
+	// Proposed review field only. No canonical immutable .soul measurement or
+	// installed package verifier exists yet; this cannot authorize launch.
+	PackageSHA256 string `json:"package_sha256"`
 }
 
 // HQ and Souls accept existing installation IDs in this released form. Do

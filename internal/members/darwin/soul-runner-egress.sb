@@ -1,0 +1,7 @@
+(version 1)
+; Installed launcher supplies the exact member and local HTTP relay sockets
+; for this Soul start. The vendor process gets no broker or IP destination.
+(allow default)
+(deny network*)
+(allow network-outbound (remote unix-socket (path-literal (param "MEMBER_SOCKET"))))
+(allow network-outbound (remote unix-socket (path-literal (param "RELAY_SOCKET"))))

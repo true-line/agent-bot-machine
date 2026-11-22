@@ -189,6 +189,12 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		}
 		return runSoulRunnerAccountApply(saved, approval, owner, h, deps, pairCheck)
 	}
+	if saved.Plan.Purpose == SoulBridgeAccountsPurpose || approval.Purpose == SoulBridgeAccountsPurpose {
+		if platform != PlatformDarwin {
+			return failure(diag.MembersNotApproved, "Soul bridge accounts require macOS")
+		}
+		return runSoulBridgeAccountApply(saved, approval, owner, h, deps, pairCheck)
+	}
 	if saved.Plan.Purpose != "" || approval.Purpose == HarnessAccountsPurpose {
 		return runHarnessAccountApply(saved, approval, platform, owner, h, deps, pairCheck)
 	}

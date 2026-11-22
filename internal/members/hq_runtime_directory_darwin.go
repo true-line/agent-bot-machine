@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -59,15 +60,25 @@ func createLaunchDirectory(path string, uid, gid int) (*os.File, error) {
 }
 
 func createProtectedDirectory(path string, uid, gid int, mode os.FileMode) (_ *os.File, result error) {
-	temp, err := os.MkdirTemp(filepath.Dir(path), ".hq-runtime-*")
+	// The directory becomes accessible to its target UID after Fchown/Chmod.
+	// Keep it below a root-private staging parent until the exclusive rename;
+	// a live process with that UID must not populate or replace it first.
+	private, err := os.MkdirTemp(filepath.Dir(path), ".hq-runtime-*")
 	if err != nil {
 		return nil, err
 	}
+	temp := filepath.Join(private, "directory")
 	defer func() {
 		if result != nil {
-			result = errors.Join(result, syscall.Rmdir(temp))
+			result = errors.Join(result, syscall.Rmdir(temp), syscall.Rmdir(private))
 		}
 	}()
+	if err := checkDarwinACLs([]string{private}); err != nil {
+		return nil, err
+	}
+	if err := os.Mkdir(temp, 0700); err != nil {
+		return nil, err
+	}
 	dir, err := os.OpenFile(temp, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
@@ -95,6 +106,9 @@ func createProtectedDirectory(path string, uid, gid int, mode os.FileMode) (_ *o
 		return nil, err
 	}
 	if err := unix.RenamexNp(temp, path, unix.RENAME_EXCL); err != nil {
+		return nil, err
+	}
+	if err := syscall.Rmdir(private); err != nil {
 		return nil, err
 	}
 	return dir, nil
@@ -131,6 +145,70 @@ func createDarwinBrokerDirectory(p, owner, group string, mode uint32) error {
 
 func (OSRoot) CreateReviewedBrokerDirectory(p, owner, group string, mode uint32, uid, gid int) error {
 	return createDarwinBrokerDirectoryForIDs(p, owner, group, mode, uid, gid)
+}
+
+var soulEndpointSlot = regexp.MustCompile(`^[0-9a-f]{20}$`)
+var soulRunnerRoleAccount = regexp.MustCompile(`^_abm-sr-[0-9a-f]{20}$`)
+var soulBridgeRoleAccount = regexp.MustCompile(`^_abm-br-[0-9a-f]{20}$`)
+
+// CreateReviewedSoulEndpointDirectory is used only by the paired B account
+// plan. The path shape, role names and numeric identities are checked again
+// under root before publishing a cross-owned directory.
+func (OSRoot) CreateReviewedSoulEndpointDirectory(p, owner, group string, mode uint32, reviewedUID, reviewedGID int) error {
+	if p == DarwinBrokerDir || filepath.Dir(p) == DarwinBrokerDir {
+		return createDarwinBrokerDirectoryForIDs(p, owner, group, mode, reviewedUID, reviewedGID)
+	}
+	parent := filepath.Dir(p)
+	base := filepath.Base(p)
+	rootBase := parent == launchRuntimeDir && (base == "m" || base == "s" || base == "r")
+	if rootBase {
+		if owner != "root" || group != "wheel" || mode != 0755 || reviewedUID != 0 || reviewedGID != 0 {
+			return errors.New("unexpected Soul endpoint root")
+		}
+	} else {
+		kind := filepath.Base(parent)
+		if filepath.Dir(parent) != launchRuntimeDir || !soulEndpointSlot.MatchString(base) || mode != 02750 ||
+			!soulRunnerRoleAccount.MatchString(owner) && !soulBridgeRoleAccount.MatchString(owner) && owner != DarwinHQAccount ||
+			!soulRunnerRoleAccount.MatchString(group) && !soulBridgeRoleAccount.MatchString(group) ||
+			reviewedUID < 300 || reviewedUID > 399 || reviewedGID < 300 || reviewedGID > 399 {
+			return errors.New("unexpected Soul endpoint directory")
+		}
+		switch kind {
+		case "m":
+			if !soulRunnerRoleAccount.MatchString(owner) || !soulBridgeRoleAccount.MatchString(group) {
+				return errors.New("unexpected member endpoint roles")
+			}
+		case "s":
+			if !soulBridgeRoleAccount.MatchString(owner) || !soulRunnerRoleAccount.MatchString(group) {
+				return errors.New("unexpected relay endpoint roles")
+			}
+		case "r":
+			if owner != DarwinHQAccount || !soulRunnerRoleAccount.MatchString(group) {
+				return errors.New("unexpected admission endpoint roles")
+			}
+		default:
+			return errors.New("unexpected Soul endpoint kind")
+		}
+		e, ok, err := (OSHost{}).Lstat(parent)
+		if err != nil || !ok || !e.Dir || e.Owner != "root" || e.Group != "wheel" || e.Mode != 0755 {
+			return errors.New("Soul endpoint root changed")
+		}
+	}
+	if err := checkBrokerParent(OSHost{}, launchRuntimeDir); err != nil {
+		return err
+	}
+	if err := checkDarwinACLs(pathAncestry(parent)); err != nil {
+		return err
+	}
+	uid, gid, err := ids(owner, group)
+	if err != nil || uid != reviewedUID || gid != reviewedGID {
+		return errors.New("reviewed Soul endpoint ownership changed")
+	}
+	dir, err := createProtectedDirectory(p, uid, gid, fileMode(mode))
+	if err != nil {
+		return err
+	}
+	return dir.Close()
 }
 
 func createDarwinBrokerDirectoryForIDs(p, owner, group string, mode uint32, reviewedUID, reviewedGID int) error {

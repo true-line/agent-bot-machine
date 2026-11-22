@@ -61,13 +61,7 @@ func RecordUpgradeApproval(state, planID, digest, fingerprint, pair string, now 
 	return RecordPairedPlanApproval(UpgradePurpose, state, planID, digest, fingerprint, pair, now)
 }
 func RecordPairedPlanApproval(purpose, state, planID, digest, fingerprint, pair string, now time.Time) (Approval, error) {
-	if purpose == SoulRunnerAccountsPurpose {
-		if !digestPattern.MatchString(fingerprint) || !digestPattern.MatchString(pair) {
-			return Approval{}, ErrApprovalMalformed
-		}
-		return recordApproval(state, planID, digest, purpose, fingerprint, pair, now)
-	}
-	if (purpose != UpgradePurpose && purpose != HarnessInstall && purpose != HarnessRetire && purpose != HarnessAccountsPurpose && purpose != HarnessQualificationPurpose) || !digestPattern.MatchString(fingerprint) || !digestPattern.MatchString(pair) {
+	if (purpose != UpgradePurpose && purpose != HarnessInstall && purpose != HarnessRetire && purpose != HarnessAccountsPurpose && purpose != SoulRunnerAccountsPurpose && purpose != SoulBridgeAccountsPurpose && purpose != HarnessQualificationPurpose) || !digestPattern.MatchString(fingerprint) || !digestPattern.MatchString(pair) {
 		return Approval{}, ErrApprovalMalformed
 	}
 	return recordApproval(state, planID, digest, purpose, fingerprint, pair, now)

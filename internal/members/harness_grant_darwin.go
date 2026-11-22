@@ -65,31 +65,6 @@ func (f grantFile) stage(id string) string {
 	return filepath.Join(filepath.Dir(f.path), ".harness-"+id+"-"+filepath.Base(f.path))
 }
 
-// Recheck the original live pairing and the exact approval window inside
-// its read lock at each durable privilege transition. Artifact scans and
-// external status commands run outside this callback.
-type harnessBoundary func(func() error) error
-
-func harnessAuthority(a Approval, guard upgradePairGuard, now func() time.Time) harnessBoundary {
-	return func(commit func() error) error {
-		if guard == nil {
-			return errors.New("harness pairing verifier unavailable")
-		}
-		return guard(a, func() error {
-			start, err := time.Parse(approvalTime, a.ApprovedAt)
-			end, endErr := time.Parse(approvalTime, a.ExpiresAt)
-			t := now()
-			if err != nil || endErr != nil || end.Sub(start) != ApprovalTTL || t.Before(start) || !t.Before(end) {
-				return errors.New("harness approval is outside its validity window")
-			}
-			if commit == nil {
-				return nil
-			}
-			return commit()
-		})
-	}
-}
-
 func installGrantFiles(files []grantFile, ledger harnessLedger, ledgerPath string, validate func(string) error, verifyActive func() error, authorize harnessBoundary, finish func() error) error {
 	// Staging names live only in the authenticated fixed directories. Preserve
 	// occupied final names, even identical bytes from a different installation.
