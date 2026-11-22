@@ -237,6 +237,14 @@ provide a root, trusted Sigstore log, signed frozen receipt, measured archive,
 completed-run record or protected launch authority; those still require
 independent Machine verification and owner review.
 
+Keyd's separate v3 policy verification entry point checks the same fixed
+purpose, owner root/key ID, exact canonical bytes, signature, policy shape,
+revocation set and 3,600-second freshness limit before a future v3 report
+issuer can use it. It accepts exactly version 3. The existing witness ledger
+continues to accept only v1/v2 policies, and keyd's v3 host-report signing
+branch remains closed until the one-use A authorization and physical evidence
+verifier are wired. A source-level v3 policy check grants no signing authority.
+
 The offline `VerifyOwnerPolicyV3` source seam accepts only a release-supplied
 Ed25519 public root and exact v3 envelope purpose. It verifies the signature
 over the canonical bytes, the shared revision/digest checkpoint, exact owner

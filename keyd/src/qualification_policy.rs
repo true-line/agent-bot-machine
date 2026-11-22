@@ -717,6 +717,33 @@ pub(crate) fn verify_signed_envelope(
     pinned_id: &str,
     now: OffsetDateTime,
 ) -> Result<AuthenticatedPolicy, String> {
+    verify_signed_envelope_internal(envelope, pinned_root, pinned_id, now, false)
+}
+
+// The v3 host-report issuer will use this exact-version policy check after it
+// has independent A-owned completed-run authorization. The witness ledger is
+// still v1/v2, so its existing verifier deliberately does not accept v3.
+#[allow(dead_code)]
+pub(crate) fn verify_signed_envelope_v3(
+    envelope: &[u8],
+    pinned_root: &[u8; 32],
+    pinned_id: &str,
+    now: OffsetDateTime,
+) -> Result<AuthenticatedPolicy, String> {
+    let policy = verify_signed_envelope_internal(envelope, pinned_root, pinned_id, now, true)?;
+    if policy.version != 3 {
+        return Err("signed policy is not v3".into());
+    }
+    Ok(policy)
+}
+
+fn verify_signed_envelope_internal(
+    envelope: &[u8],
+    pinned_root: &[u8; 32],
+    pinned_id: &str,
+    now: OffsetDateTime,
+    allow_v3: bool,
+) -> Result<AuthenticatedPolicy, String> {
     if envelope.is_empty() || envelope.len() > 2 * MAX_BYTES || !envelope.is_ascii() {
         return Err("signed policy envelope is unavailable".into());
     }
@@ -744,6 +771,7 @@ pub(crate) fn verify_signed_envelope(
     let purpose = match version {
         1 => PURPOSE,
         2 => PURPOSE_V2,
+        3 if allow_v3 => PURPOSE_V3,
         _ => return Err("unsupported signed policy version".into()),
     };
     let id = format!(
@@ -1163,6 +1191,13 @@ mod tests {
         seed.fill(0);
         key.verify(&preimage, &Signature::from_slice(&signature).unwrap())
             .unwrap();
+        assert!(verify_signed_envelope_v3(
+            &envelope,
+            &key.to_bytes(),
+            &id,
+            OffsetDateTime::from(now)
+        )
+        .is_err());
         let mut downgraded: Value = serde_json::from_slice(&v1).unwrap();
         downgraded["policy_revision"] = json!(3);
         assert!(sign(
@@ -1293,6 +1328,40 @@ mod tests {
         verifying
             .verify(&preimage, &Signature::from_slice(&sig).unwrap())
             .unwrap();
+        let root = verifying.to_bytes();
+        let accepted =
+            verify_signed_envelope_v3(&envelope, &root, &id, OffsetDateTime::from(now)).unwrap();
+        assert_eq!(accepted.version, 3);
+        assert_eq!(accepted.revision, 3);
+        assert_eq!(accepted.payload_sha256, digest(&raw));
+        assert!(verify_signed_envelope(&envelope, &root, &id, OffsetDateTime::from(now)).is_err());
+        assert!(verify_signed_envelope_v3(
+            &envelope,
+            &root,
+            &id,
+            OffsetDateTime::from(now + Duration::from_secs(3600))
+        )
+        .is_ok());
+        assert!(verify_signed_envelope_v3(
+            &envelope,
+            &root,
+            &id,
+            OffsetDateTime::from(now + Duration::from_secs(3601))
+        )
+        .is_err());
+        assert!(
+            verify_signed_envelope_v3(&envelope, &[0u8; 32], &id, OffsetDateTime::from(now))
+                .is_err()
+        );
+        let mut wrong_purpose: Value = serde_json::from_slice(&envelope).unwrap();
+        wrong_purpose["purpose"] = json!(PURPOSE_V2);
+        assert!(verify_signed_envelope_v3(
+            &serde_json::to_vec(&wrong_purpose).unwrap(),
+            &root,
+            &id,
+            OffsetDateTime::from(now)
+        )
+        .is_err());
         assert_eq!(
             serde_json::from_slice::<Value>(&store.qualification_policy_state().unwrap().unwrap())
                 .unwrap()["policy_version"],
