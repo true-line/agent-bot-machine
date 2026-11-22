@@ -144,6 +144,9 @@ func stage2aLaunchFiles(files []Stage2aDefinitionRecord) (map[string]bool, error
 	}
 	digests := make(map[string]bool, len(files))
 	aliases := make(map[string]bool, len(files))
+	filesSeen := make(map[string]bool, len(files))
+	directories := make(map[string]bool, len(files))
+	children := map[string]map[string]string{}
 	var previous string
 	var total uint64
 	hostFiles := map[string]bool{"host/adapters.json": false, "host/installation.json": false}
@@ -156,6 +159,29 @@ func stage2aLaunchFiles(files []Stage2aDefinitionRecord) (map[string]bool, error
 			return nil, invalid
 		}
 		total += *file.Size
+		parent := ""
+		parts := strings.Split(file.Path, "/")
+		for partIndex, part := range parts {
+			if children[parent] == nil {
+				children[parent] = map[string]string{}
+			}
+			folded := strings.ToLower(part)
+			if stored, exists := children[parent][folded]; exists && stored != part {
+				return nil, invalid
+			}
+			children[parent][folded] = part
+			parent = path.Join(parent, part)
+			if partIndex < len(parts)-1 {
+				if filesSeen[parent] {
+					return nil, invalid
+				}
+				directories[parent] = true
+			}
+		}
+		if directories[file.Path] {
+			return nil, invalid
+		}
+		filesSeen[file.Path] = true
 		if _, required := hostFiles[file.Path]; required {
 			if *file.Size > 64<<10 {
 				return nil, invalid
@@ -202,7 +228,8 @@ func Stage2aLaunchInputDigest(input Stage2aLaunchInputRecords) (string, []byte, 
 		}
 	}
 	for key, value := range input.Environment {
-		if !stage2aEnvName.MatchString(key) || len(value) > 8192 || strings.ContainsRune(value, 0) {
+		if key == "B_ONLY_TOKEN" || !stage2aEnvName.MatchString(key) ||
+			len(value) > 8192 || strings.ContainsRune(value, 0) {
 			return "", nil, invalid
 		}
 	}

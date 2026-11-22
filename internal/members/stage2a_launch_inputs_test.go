@@ -91,9 +91,11 @@ func TestStage2aLaunchInputRejectsIncompleteOrUnboundedObject(t *testing.T) {
 			v.SelectedCommand = "/private/../node"
 			v.Argv[0] = v.SelectedCommand
 		},
-		"writable file":   func(v *Stage2aLaunchInputRecords) { v.Files[0].Mode = "0777" },
-		"reordered files": func(v *Stage2aLaunchInputRecords) { v.Files[0], v.Files[1] = v.Files[1], v.Files[0] },
-		"oversized file":  func(v *Stage2aLaunchInputRecords) { n := uint64(stage2aMaxFileBytes + 1); v.Files[0].Size = &n },
+		"writable file":            func(v *Stage2aLaunchInputRecords) { v.Files[0].Mode = "0777" },
+		"reordered files":          func(v *Stage2aLaunchInputRecords) { v.Files[0], v.Files[1] = v.Files[1], v.Files[0] },
+		"directory case alias":     func(v *Stage2aLaunchInputRecords) { v.Files[0].Path = "Bin/adapter" },
+		"file directory collision": func(v *Stage2aLaunchInputRecords) { v.Files[0].Path = "bin" },
+		"oversized file":           func(v *Stage2aLaunchInputRecords) { n := uint64(stage2aMaxFileBytes + 1); v.Files[0].Size = &n },
 		"oversized host file": func(v *Stage2aLaunchInputRecords) {
 			for i := range v.Files {
 				if v.Files[i].Path == "host/adapters.json" {
@@ -111,6 +113,7 @@ func TestStage2aLaunchInputRejectsIncompleteOrUnboundedObject(t *testing.T) {
 			}
 		},
 		"bad environment key":   func(v *Stage2aLaunchInputRecords) { v.Environment["BAD-KEY"] = "x" },
+		"bridge-only proof":     func(v *Stage2aLaunchInputRecords) { v.Environment["B_ONLY_TOKEN"] = "synthetic" },
 		"unsupported profile":   func(v *Stage2aLaunchInputRecords) { v.EffectiveConfig["profile"] = "ordinary" },
 		"missing image signing": func(v *Stage2aLaunchInputRecords) { v.SystemImages.Selected[0].SigningRequirement = "" },
 		"duplicate host key": func(v *Stage2aLaunchInputRecords) {
