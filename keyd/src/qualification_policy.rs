@@ -501,23 +501,27 @@ fn clock_time(now: SystemTime) -> Result<OffsetDateTime, String> {
     .map_err(|_| "invalid system clock".into())
 }
 
-pub fn sign<F: Fn() -> SystemTime>(
+#[cfg(test)]
+fn sign<F: Fn() -> SystemTime>(
     store: &Store,
     owner: &dyn Consent,
     policy: &[u8],
     revocations: &[u8],
     clock: F,
 ) -> Result<Vec<u8>, String> {
-    sign_version(store, owner, policy, revocations, clock, 1)
+    sign_version(store, owner, policy, revocations, clock, 1, || {
+        Ok(revocations.to_vec())
+    })
 }
 
-pub fn sign_version<F: Fn() -> SystemTime>(
+fn sign_version<F: Fn() -> SystemTime, R: Fn() -> Result<Vec<u8>, String>>(
     store: &Store,
     owner: &dyn Consent,
     policy: &[u8],
     revocations: &[u8],
     clock: F,
     version: u64,
+    read_revocations: R,
 ) -> Result<Vec<u8>, String> {
     if version != 1 && version != 2 {
         return Err("unsupported qualification policy version".into());
@@ -578,6 +582,13 @@ pub fn sign_version<F: Fn() -> SystemTime>(
         digest(revocations)
     );
     owner.ask(&prompt).map_err(String::from)?;
+    // The owner prompt can take two minutes. A revocation changed during that
+    // time must not be omitted from a newly signed policy. The CLI reopens the
+    // secure-admin ledger under the signing lock, rather than reusing bytes it
+    // read before asking the owner.
+    if read_revocations()?.as_slice() != revocations {
+        return Err("qualification revocation ledger changed during owner approval".into());
+    }
     // An owner prompt can wait for two minutes. Recheck both expiry and the
     // 3,600-second snapshot limit with a fresh clock before using the key.
     validate_version(policy, revocations, &id, clock_time(clock())?, version)?;
@@ -665,7 +676,8 @@ pub fn command(args: &[String]) -> Result<(), String> {
             let policy = read(Path::new(policy_path), false)?;
             let ledger = read(Path::new(revocations_path), true)?;
             let version = if mode == "sign-v2" { 2 } else { 1 };
-            let envelope = sign_version(&store, &DeviceOwner, &policy, &ledger, SystemTime::now, version)?;
+            let envelope = sign_version(&store, &DeviceOwner, &policy, &ledger, SystemTime::now, version,
+                || read(Path::new(revocations_path), true))?;
             let mut out = OpenOptions::new().write(true).create_new(true).mode(0o600).custom_flags(libc::O_NOFOLLOW).open(out_path).map_err(|_| "qualification output already exists or is unavailable")?;
             out.write_all(&envelope).and_then(|_| out.write_all(b"\n")).and_then(|_| out.sync_all()).map_err(|_| "qualification output write failed")?;
             println!("policy-envelope: {}", digest(&envelope));
@@ -757,8 +769,16 @@ mod tests {
         policy["revocation_snapshot"] = ledger.clone();
         let raw = serde_json::to_vec(&policy).unwrap();
         let ledger_raw = serde_json::to_vec(&ledger).unwrap();
-        let envelope =
-            sign_version(&store, &Scripted::new(true), &raw, &ledger_raw, || now, 2).unwrap();
+        let envelope = sign_version(
+            &store,
+            &Scripted::new(true),
+            &raw,
+            &ledger_raw,
+            || now,
+            2,
+            || Ok(ledger_raw.clone()),
+        )
+        .unwrap();
         let signed: Value = serde_json::from_slice(&envelope).unwrap();
         assert_eq!(signed["schema_version"], 2);
         assert_eq!(signed["purpose"], PURPOSE_V2);
@@ -794,7 +814,8 @@ mod tests {
             &serde_json::to_vec(&policy).unwrap(),
             &ledger_raw,
             || now,
-            2
+            2,
+            || Ok(ledger_raw.clone())
         )
         .is_err());
     }
@@ -997,6 +1018,51 @@ mod tests {
         let (_, id) = init_root(&store, &Scripted::new(true)).unwrap();
         let (policy, ledger, now) = fixture(&id, "2026-11-21T21:00:00Z");
         assert!(sign(&store, &RemoveState(memory), &policy, &ledger, || now).is_err());
+    }
+
+    #[test]
+    fn revocation_added_during_owner_prompt_refuses_signature() {
+        use crate::consent::{Consent, Refusal};
+        use std::sync::{Arc, Mutex};
+
+        struct ChangeLedger {
+            current: Arc<Mutex<Vec<u8>>>,
+            changed: Vec<u8>,
+        }
+        impl Consent for ChangeLedger {
+            fn ask(&self, _: &str) -> Result<(), Refusal> {
+                *self.current.lock().unwrap() = self.changed.clone();
+                Ok(())
+            }
+        }
+
+        let store = Store::new(Box::<Memory>::default());
+        let (_, id) = init_root(&store, &Scripted::new(true)).unwrap();
+        let (policy, ledger, now) = fixture(&id, "2026-11-21T21:00:00Z");
+        let mut changed: Value = serde_json::from_slice(&ledger).unwrap();
+        changed["revoked_evidence_signer_ids"] = json!(["fixture-signer"]);
+        let current = Arc::new(Mutex::new(ledger.clone()));
+        let owner = ChangeLedger {
+            current: Arc::clone(&current),
+            changed: serde_json::to_vec(&changed).unwrap(),
+        };
+        let refused = sign_version(
+            &store,
+            &owner,
+            &policy,
+            &ledger,
+            || now,
+            1,
+            || Ok(current.lock().unwrap().clone()),
+        );
+        assert!(refused
+            .unwrap_err()
+            .contains("ledger changed during owner approval"));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&store.qualification_policy_state().unwrap().unwrap())
+                .unwrap()["revision"],
+            0
+        );
     }
 
     #[cfg(target_os = "macos")]
