@@ -62,8 +62,8 @@ type Stage2aMeasurementBinding struct {
 	Snapshots               Stage2aBindingSnapshots `json:"snapshots"`
 }
 
-func stage2aValidSnapshotClaim(s Stage2aSnapshotIdentity) bool {
-	if !stage2aAbsolutePath(s.RootPath) || s.OwnerUID != 0 || !stage2aReadOnlyMode(s.Mode) {
+func stage2aValidSnapshotClaim(s Stage2aSnapshotIdentity, ownerUID uint32) bool {
+	if !stage2aAbsolutePath(s.RootPath) || s.OwnerUID != ownerUID || !stage2aReadOnlyMode(s.Mode) {
 		return false
 	}
 	for _, decimal := range []string{s.Device, s.Inode, s.Generation, s.BirthtimeNS} {
@@ -89,9 +89,17 @@ func stage2aDistinctSnapshotRoots(a, b Stage2aSnapshotIdentity) bool {
 // computes the plain SHA-256 of its RFC 8785 JCS bytes, as in the contract
 // fixture. It does not inspect the claimed snapshots or sign anything.
 func Stage2aBindingDigest(binding Stage2aMeasurementBinding) (string, []byte, error) {
+	return stage2aBindingDigestForOwner(binding, 0)
+}
+
+func stage2aBindingDigestForOwner(binding Stage2aMeasurementBinding, ownerUID uint32) (string, []byte, error) {
 	invalid := errors.New("invalid Stage 2a measurement binding")
-	if binding.Contract != "machine/v1" || binding.Kind != "stage2a-measurement-binding" ||
-		binding.SchemaVersion != 1 ||
+	contract, version := "machine/v1", 1
+	if ownerUID != 0 {
+		contract, version = "machine/v2", 2
+	}
+	if binding.Contract != contract || binding.Kind != "stage2a-measurement-binding" ||
+		binding.SchemaVersion != version ||
 		!stage2aBindingID.MatchString(binding.InstallationID) ||
 		!soulIdentity.MatchString(binding.SoulID) ||
 		!soulStartID.MatchString(binding.StartID) || !soulLaunchID.MatchString(binding.LaunchID) ||
@@ -105,8 +113,8 @@ func Stage2aBindingDigest(binding Stage2aMeasurementBinding) (string, []byte, er
 		!stage2aPrefixedDigest.MatchString(binding.ClaimedDefinitionDigest) ||
 		!stage2aPrefixedDigest.MatchString(binding.DefinitionMeasurement) ||
 		!stage2aPrefixedDigest.MatchString(binding.LaunchInputMeasurement) ||
-		!stage2aValidSnapshotClaim(binding.Snapshots.Definition) ||
-		!stage2aValidSnapshotClaim(binding.Snapshots.LaunchInputs) ||
+		!stage2aValidSnapshotClaim(binding.Snapshots.Definition, ownerUID) ||
+		!stage2aValidSnapshotClaim(binding.Snapshots.LaunchInputs, ownerUID) ||
 		!stage2aDistinctSnapshotRoots(binding.Snapshots.Definition, binding.Snapshots.LaunchInputs) {
 		return "", nil, invalid
 	}

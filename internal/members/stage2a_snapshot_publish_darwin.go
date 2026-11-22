@@ -69,9 +69,18 @@ func stage2aChownNew(fd int, uid, gid uint32) error {
 	if err := unix.Fstat(fd, &st); err != nil {
 		return err
 	}
-	if st.Uid != uid || st.Gid != gid {
-		if err := unix.Fchown(fd, int(uid), int(gid)); err != nil {
+	if st.Uid != uid {
+		return errors.New("Stage 2a staging owner differs from custody UID")
+	}
+	if st.Gid != gid {
+		if err := unix.Fchown(fd, -1, int(gid)); err != nil {
 			return err
+		}
+		if err := unix.Fstat(fd, &st); err != nil {
+			return err
+		}
+		if st.Uid != uid || st.Gid != gid {
+			return errors.New("Stage 2a staging group differs from assigned GID")
 		}
 	}
 	return nil
@@ -204,14 +213,27 @@ func publishStage2aFrozenAt(sourceRoot, destinationParent, name string,
 	if err := unix.Mkdirat(parentFD, tempName, 0700); err != nil {
 		return empty, "", err
 	}
-	tempPath := filepath.Join(destinationParent, tempName)
-	published := false
-	defer func() {
-		if !published {
-			stage2aCleanPrivateStage(tempPath)
-		}
-	}()
-	stageFD, err := unix.Openat(parentFD, tempName, stage2aDirectoryOpenFlags, 0)
+	wrapperPath := filepath.Join(destinationParent, tempName)
+	defer stage2aCleanPrivateStage(wrapperPath)
+	wrapperFD, err := unix.Openat(parentFD, tempName, stage2aDirectoryOpenFlags, 0)
+	if err != nil {
+		return empty, "", err
+	}
+	defer unix.Close(wrapperFD)
+	var wrapper unix.Stat_t
+	if err := unix.Fstat(wrapperFD, &wrapper); err != nil || wrapper.Uid != snapshotUID ||
+		wrapper.Mode != unix.S_IFDIR|0700 {
+		return empty, "", errors.New("Stage 2a staging wrapper is not private")
+	}
+	if err := checkDarwinACLs([]string{wrapperPath}); err != nil {
+		return empty, "", err
+	}
+	const contentName = "snapshot"
+	if err := unix.Mkdirat(wrapperFD, contentName, 0700); err != nil {
+		return empty, "", err
+	}
+	tempPath := filepath.Join(wrapperPath, contentName)
+	stageFD, err := unix.Openat(wrapperFD, contentName, stage2aDirectoryOpenFlags, 0)
 	if err != nil {
 		return empty, "", err
 	}
@@ -272,15 +294,14 @@ func publishStage2aFrozenAt(sourceRoot, destinationParent, name string,
 			return empty, "", err
 		}
 	}
-	if err := unix.Fchmod(stageFD, 0555); err != nil {
+	// Darwin requires owner write permission on a directory moved across
+	// parents. Keep the root A-private until the rename, then seal the same
+	// descriptor before any observer can accept the result.
+	if err := unix.Fchmod(stageFD, 0700); err != nil {
 		return empty, "", err
 	}
 	if err := unix.Fsync(stageFD); err != nil {
 		return empty, "", err
-	}
-	for key, dir := range openDirs {
-		_ = dir.Close()
-		delete(openDirs, key)
 	}
 	var afterSourceRoot unix.Stat_t
 	if err := unix.Fstat(sourceRootFD, &afterSourceRoot); err != nil ||
@@ -291,15 +312,31 @@ func publishStage2aFrozenAt(sourceRoot, destinationParent, name string,
 	if err != nil || afterIdentity != sourceIdentity || afterDigest != approvedDigest {
 		return empty, "", errors.New("Stage 2a source changed during snapshot publication")
 	}
-	if err := unix.RenameatxNp(parentFD, tempName, parentFD, name, unix.RENAME_EXCL); err != nil {
+	if err := unix.Fsync(wrapperFD); err != nil {
 		return empty, "", err
 	}
-	published = true // An uncertain sync or recheck leaves the name occupied, never reusable.
+	if err := unix.RenameatxNp(wrapperFD, contentName, parentFD, name, unix.RENAME_EXCL); err != nil {
+		return empty, "", err
+	}
+	// An uncertain chmod, sync or recheck leaves the destination occupied.
+	if err := unix.Fchmod(stageFD, 0555); err != nil {
+		return empty, "", err
+	}
+	if err := unix.Fsync(stageFD); err != nil {
+		return empty, "", err
+	}
+	if err := unix.Fsync(wrapperFD); err != nil {
+		return empty, "", errors.New("Stage 2a staging directory sync uncertain")
+	}
 	if err := unix.Fsync(parentFD); err != nil {
 		return empty, "", errors.New("Stage 2a snapshot publication sync uncertain")
 	}
+	pinned, _, err := stage2aSnapshotIdentity(stageFD, snapshotUID, snapshotGID)
+	if err != nil {
+		return empty, "", err
+	}
 	identity, digest, err := observeStage2aFrozenAt(filepath.Join(destinationParent, name), snapshotUID, snapshotGID, approved)
-	if err != nil || digest != approvedDigest {
+	if err != nil || identity != pinned || digest != approvedDigest {
 		return empty, "", errors.New("Stage 2a published snapshot does not match approved bytes")
 	}
 	return identity, digest, nil

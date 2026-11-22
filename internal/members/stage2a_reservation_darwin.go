@@ -105,33 +105,37 @@ func stage2aReservationSHA256(raw []byte) string {
 	return fmt.Sprintf("sha256:%x", sha256.Sum256(raw))
 }
 
-func stage2aReservationBindingMatches(m Stage2aMeasurementBinding, a SoulStartAssignment, hostID string) bool {
+func stage2aReservationBindingMatches(m Stage2aMeasurementBinding, a SoulStartAssignment, hostID string, ownerUID, snapshotGID uint32) bool {
 	// machine/v1 permits an omitted Soul artifact for older nonauthorizing
 	// readers. A signed reservation requires the exact installed frozen .soul.
 	if m.SoulArtifactSHA256 == "" {
 		return false
 	}
-	if _, _, err := Stage2aBindingDigest(m); err != nil {
+	if _, _, err := stage2aBindingDigestForOwner(m, ownerUID); err != nil {
 		return false
 	}
 	definition, launch := m.Snapshots.Definition, m.Snapshots.LaunchInputs
-	return m.Contract == "machine/v1" && m.Kind == "stage2a-measurement-binding" && m.SchemaVersion == 1 &&
-		m.HostID == hostID && m.PlanID == a.PlanID && m.InstalledPlanDigest == a.PlanDigest &&
+	return m.HostID == hostID && m.PlanID == a.PlanID && m.InstalledPlanDigest == a.PlanDigest &&
 		m.InstallationID == a.InstallationID && m.SoulID == a.SoulID && m.StartID == a.StartID &&
 		m.LaunchID == a.LaunchID && m.HQEpoch == a.HQEpoch &&
 		m.PackageSHA256 == a.PackageSHA256 &&
 		(m.ProfileInForce == "managed-protected" || m.ProfileInForce == "managed-cooperative") &&
 		definition.Inode != "0" && launch.Inode != "0" &&
 		definition.BirthtimeNS != "0" && launch.BirthtimeNS != "0" &&
-		definition.OwnerGID == uint32(a.RunnerGID) && launch.OwnerGID == uint32(a.RunnerGID) &&
+		definition.OwnerGID == snapshotGID && launch.OwnerGID == snapshotGID &&
 		!strings.EqualFold(definition.RootPath, launch.RootPath) &&
 		(definition.Device != launch.Device || definition.Inode != launch.Inode)
 }
 
 func prepareStage2aReservation(req stage2aReservationRequest, in stage2aReservationInputs, issued time.Time) (stage2aReservationPayload, error) {
+	return prepareStage2aReservationForOwner(req, in, issued, 0, uint32(in.runner.GID))
+}
+
+func prepareStage2aReservationForOwner(req stage2aReservationRequest, in stage2aReservationInputs,
+	issued time.Time, ownerUID, snapshotGID uint32) (stage2aReservationPayload, error) {
 	if !req.start.valid() || !soulLaunchID.MatchString(req.launchID) ||
 		!soulInstallationID.MatchString(in.hostID) || len(in.installedReceipt) == 0 ||
-		in.machineUID > math.MaxUint32 ||
+		in.machineUID > math.MaxUint32 || (ownerUID != 0 && in.machineUID != int(ownerUID)) ||
 		!utf8.ValidString(in.runner.PackageRoot) ||
 		!soulDigest.MatchString(string(in.approvedArtifact)) || in.approvedArtifact != in.installedArtifact ||
 		in.binding.SoulArtifactSHA256 != string(in.installedArtifact) ||
@@ -141,7 +145,7 @@ func prepareStage2aReservation(req stage2aReservationRequest, in stage2aReservat
 	a, err := PrepareSoulStartAssignment(in.runner, in.bridge, in.hqUID, in.machineUID,
 		in.planID, req.start.PlanDigest, req.start.StartID, req.launchID, req.start.HQEpoch, issued, in.expires)
 	if err != nil || CheckSoulStartAssignment(a, in.planID, in.installedPlan, in.runner, in.bridge,
-		in.hqUID, in.machineUID, req.start, req.launchID, issued) != nil || !stage2aReservationBindingMatches(in.binding, a, in.hostID) {
+		in.hqUID, in.machineUID, req.start, req.launchID, issued) != nil || !stage2aReservationBindingMatches(in.binding, a, in.hostID, ownerUID, snapshotGID) {
 		return stage2aReservationPayload{}, errStage2aReservationAuthority
 	}
 	endpoints, err := DeriveSoulBridgeEndpoints(in.runner, in.bridge, in.hqUID, req.start.StartID)
@@ -149,7 +153,7 @@ func prepareStage2aReservation(req stage2aReservationRequest, in stage2aReservat
 		return stage2aReservationPayload{}, errStage2aReservationAuthority
 	}
 	return stage2aReservationPayload{
-		Contract: "machine/v1", Kind: "stage2a-reservation", SchemaVersion: 1, HostID: in.hostID,
+		Contract: in.binding.Contract, Kind: "stage2a-reservation", SchemaVersion: in.binding.SchemaVersion, HostID: in.hostID,
 		IssuedAt: issued.UTC().Format(time.RFC3339Nano), ExpiresAt: a.ExpiresAt,
 		InstalledPlanReceiptSHA256: stage2aReservationSHA256(in.installedReceipt),
 		Assignment:                 stage2aReservationAssignment{SoulStartAssignment: a, SoulArtifactSHA256: in.installedArtifact},
@@ -217,25 +221,7 @@ func reserveStage2aStartIn(dir *os.File, uid, gid uint32, req stage2aReservation
 	if err != nil {
 		return stage2aReservation{}, err
 	}
-	canonical, err := marshalStage2aReservationJCS(payload)
-	if err != nil {
-		return stage2aReservation{}, err
-	}
-	preimage := append([]byte(stage2aReservationPurpose+"\x00"), canonical...)
-	// Do not trust the signer to preserve the bytes supplied to it. Check the
-	// signature over our own independent copy and against the enrolled key.
-	key := bytes.Clone(in.enrolledAdminKey)
-	sig, err := authority.sign(bytes.Clone(preimage))
-	if err != nil || !ed25519.Verify(key, preimage, sig) {
-		return stage2aReservation{}, errStage2aReservationAuthority
-	}
-	envelope, err := marshalStage2aReservationJCS(stage2aSignedReservation{
-		SchemaVersion: 1, Purpose: stage2aReservationPurpose,
-		IssuerPublicKeyBase64URL: base64.RawURLEncoding.EncodeToString(key),
-		PayloadSHA256:            stage2aReservationSHA256(canonical),
-		PayloadBase64URL:         base64.RawURLEncoding.EncodeToString(canonical),
-		SignatureBase64URL:       base64.RawURLEncoding.EncodeToString(sig),
-	})
+	envelope, err := signStage2aReservation(payload, stage2aReservationPurpose, in.enrolledAdminKey, authority.sign)
 	if err != nil {
 		return stage2aReservation{}, err
 	}
@@ -246,6 +232,33 @@ func reserveStage2aStartIn(dir *os.File, uid, gid uint32, req stage2aReservation
 		return stage2aReservation{}, errStage2aReservationExpired
 	}
 	return stage2aReservation{envelope: envelope, sha256: stage2aReservationSHA256(envelope)}, nil
+}
+
+func signStage2aReservation(payload stage2aReservationPayload, purpose string,
+	enrolledKey ed25519.PublicKey, sign func([]byte) ([]byte, error)) ([]byte, error) {
+	canonical, err := marshalStage2aReservationJCS(payload)
+	if err != nil {
+		return nil, err
+	}
+	preimage := append([]byte(purpose+"\x00"), canonical...)
+	// Do not trust the signer to preserve the bytes supplied to it. Check the
+	// signature over our own independent copy and against the enrolled key.
+	key := bytes.Clone(enrolledKey)
+	sig, err := sign(bytes.Clone(preimage))
+	if err != nil || !ed25519.Verify(key, preimage, sig) {
+		return nil, errStage2aReservationAuthority
+	}
+	envelope, err := marshalStage2aReservationJCS(stage2aSignedReservation{
+		SchemaVersion: payload.SchemaVersion, Purpose: purpose,
+		IssuerPublicKeyBase64URL: base64.RawURLEncoding.EncodeToString(key),
+		PayloadSHA256:            stage2aReservationSHA256(canonical),
+		PayloadBase64URL:         base64.RawURLEncoding.EncodeToString(canonical),
+		SignatureBase64URL:       base64.RawURLEncoding.EncodeToString(sig),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return envelope, nil
 }
 
 func checkStage2aReservationFile(fd int, uid, gid uint32, mode uint16) error {

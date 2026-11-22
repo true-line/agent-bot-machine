@@ -295,7 +295,7 @@ func observeStage2aFrozenAt(rootPath string, ownerUID, ownerGID uint32,
 func ObserveStage2aFrozenSnapshot(expected Stage2aSnapshotIdentity,
 	approved []Stage2aDefinitionRecord) (string, error) {
 	if os.Getuid() != 0 || os.Geteuid() != 0 || os.Getgid() != 0 || os.Getegid() != 0 ||
-		!stage2aValidSnapshotClaim(expected) {
+		!stage2aValidSnapshotClaim(expected, 0) {
 		return "", errors.New("Stage 2a frozen observation requires Machine root custody")
 	}
 	if err := trustedPath(OSHost{}, expected.RootPath, true); err != nil {
