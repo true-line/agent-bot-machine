@@ -62,6 +62,9 @@ the finalized Q session to the exact reservation digest, installation, Soul,
 start, host, profile, cohort, path roots, Q source and identity, and test plan.
 It rechecks paired request/response frames and requires a stop record saying
 both dedicated runtime UIDs are idle before atomically storing the bundle.
+A synthetic test invokes the complete sink with a verified owner policy, host
+ES256 envelope, signed A pre/post records and a private A-owned store, then
+refuses a changed Q observation. That test grants no physical gate.
 
 The separate `mm-qualification-verify-release --host-v3` command checks an
 already delivered v3 release entirely offline using the supplied owner root,
@@ -77,11 +80,16 @@ There is no production Q account installation or A spawn/call site in this
 source slice. The composite A bundle is written after the host report and
 post-sign commitment, so it cannot be a pre-sign gate-manifest reference.
 The exact Q session bytes and A identity assertions still need a separate
-durably sealed pre-sign artifact. A must independently corroborate Q's raw
+durably sealed pre-sign artifact. It must bind the exact begin, ready, request,
+response and finished bytes, paired transcript digests, observed Q PID and
+kernel start identity, sequence and count, and A-observed EOF without trailing
+bytes. A must independently corroborate Q's raw
 observations with kernel, filesystem, receipt, and ACP capture facts. The exact per-gate
 A-corroborated artifact format must bind T01, T02, T03, and the distinct
 cooperative T21 run to the signed report `gates` references and be checked by
-the offline verifier. Restart, outage, race, and recovery checks need distinct
+the offline verifier. The current offline diagnostic checks signed gate claims
+and digest references but does not resolve the underlying Q, ACP, or OS bytes.
+Restart, outage, race, and recovery checks need distinct
 spent starts and Q sessions in a reviewed multi-segment aggregation rule;
 the report's top-level run chain covers only its primary segment. An
 authenticated local capture of both owner ACP directions is also missing.
