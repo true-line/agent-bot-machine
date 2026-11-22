@@ -61,8 +61,13 @@ func brewPrefix(target string) string {
 }
 
 func main() {
-	if runtime.GOOS == "darwin" && len(os.Args) == 2 && os.Args[1] == "harness-run" {
-		os.Exit(members.RunHarness())
+	if runtime.GOOS == "darwin" && len(os.Args) == 2 {
+		switch os.Args[1] {
+		case "harness-run":
+			os.Exit(members.RunHarness())
+		case "soul-run", "soul-bridge":
+			os.Exit(members.RunStage2aRole(os.Args[1]))
+		}
 	}
 	getenv := cli.BridgeDarwinEnv(runtime.GOOS, os.Getenv)
 	daemonDeps := daemon.Deps{

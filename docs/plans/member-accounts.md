@@ -198,6 +198,56 @@ an actual release workflow bundle, and physical T01/T02/T03/T21 results are
 still required. No positive production gate is wired; the existing install and
 launch refusals remain in force.
 
+The A-custody Stage 2a `agent-bot/qualification-host-report/v3` candidate
+requires a nonroot `machine/v2` per-start measurement binding in **both**
+protected T01–T03 and cooperative T21 signed payloads. The corresponding
+Contracts successor is still pending; the root-owned `machine/v1` binding
+cannot satisfy this verifier. The v2 snapshot roots require secure-admin UID
+at least 400, one matching nonzero runner primary GID (the protected bridge
+`runner_private_gid`) and exact `0555` modes,
+as in the admin-custody Contracts draft. Its strict
+parser compares host, profile and adapter package digest with the report; for
+protected runs it also compares installation, Soul, start, launch and plan IDs,
+the normalized installed-plan digest, reservation digest and Machine
+observation with the bridge assignment. The report carries reservation and
+post-Hello finalization refs plus a challenge digest, never a completed-record
+digest. A later immutable completed record must bind the exact report digest;
+release evidence references both without a circular hash. The current v3
+parser verifies shape and designated-host signature only. It cannot resolve
+authenticated one-use artifacts, prove the physical result, or authorize
+installation or launch. Its v3 render identifiers must be unique ASCII names
+of 1 to 128 bytes in the `[A-Za-z0-9][A-Za-z0-9._:-]*` grammar;
+numeric and duplicate render entries refuse. v1/v2 substitution refuses.
+
+The separate `agent-bot-keyd qualification-policy sign-v3 --policy FILE
+--revocations FILE --out FILE` ceremony is a source-only extension of the
+secure administrator's owner-present signer. It requires the exact v3 frozen
+Soul/artifact/definition mapping and artifact revocation set for the pilot.
+The frozen `.soul` workflow, template, Sigstore log kind/version, receipt
+mapping and additional revocation sets are checked only when the explicit
+release-provenance flag is enabled in a future owner-reviewed policy. Keyd
+refuses malformed or stale input before the owner prompt, reopens the private
+ledger after the prompt and rechecks the 3,600-second limit. It signs
+`ASCII("agent-bot/qualification-policy/v3") || 0x00 || exact canonical
+policy bytes`, advances the same keychain revision checkpoint as v1/v2, and
+creates a v3 envelope. The prompt names the Soul, artifact and definition;
+it names builder source, trust-root digest and Rekor log ID when provenance is
+enabled. This command does not
+provide a root, trusted Sigstore log, signed frozen receipt, measured archive,
+completed-run record or protected launch authority; those still require
+independent Machine verification and owner review.
+
+The offline `VerifyOwnerPolicyV3` source seam accepts only a release-supplied
+Ed25519 public root and exact v3 envelope purpose. It verifies the signature
+over the canonical bytes, the shared revision/digest checkpoint, exact owner
+mapping and required revocations at a supplied current time. Frozen workflow,
+template, log and receipt fields are verified only in the enabled future
+provenance mode. The host-report v3 verifier now refuses a v2
+policy, and the source-only report-pair checker compares the released frozen
+artifact and measured Soul ID/definition to the owner mapping. This is not a
+positive release or launch decision: trusted-root bytes, installed measurements, immutable completed-run
+records and physical T01/T02/T03/T21 results still require authentication.
+
 ### Owner policy root provisioning ceremony
 
 The keyd command path is implemented for review; no production root has been
@@ -335,6 +385,48 @@ the challenge. Before a protected decision, secure-admin Machine must reread
 the policy and pairing under its admission lock and atomically consume that
 challenge. The current source has no positive installed admission from this
 preflight alone.
+
+For the qualification slice, extend the offline report verifier with a
+versioned v3 purpose and exact canonical bytes. Reuse the release-pinned v2
+owner policy's distinct host designation and 3,600-second revocation-snapshot
+check. Accept a protected or cooperative report only when its own gate shape
+and full per-start binding agree with its signed common fields. A separate
+release verifier must later authenticate the completed record, released
+adapter and Souls bytes, independent runner, HQ-started Soul, measured frozen
+definition and full launch inputs before positive admission. Until that
+producer and release path exist, the installed protected gate remains closed.
+The source-only v3 qualification and Statement parsers require distinct
+protected/cooperative report, signature and completed-run references, a
+matching Souls build claim, an exact qualification subject and a future
+Statement expiry. Those parsers alone do not authenticate a release. The next
+source slice compares both signed reports with the exact qualification record,
+requires a separate protected and cooperative start, and checks the local v3
+DSSE Statement against the release-pinned workflow certificate, trust root,
+transparency proof and signing time before expiry. Its `VerifiedRelease` value
+still grants no launch authority: the Machine lifecycle issuer, completed-run
+bytes, installed inputs and physical results must be
+authenticated by a later composition before a protected decision. The two
+attempts may use different HQ epochs and reviewed plan IDs; each lifecycle
+record must independently authenticate those values before acceptance. The
+separate v3 Souls build receipt verifier reuses the v2 pinned root and workflow
+checks, but its result must also be composed with that final decision when
+release provenance is enabled. The frozen `.soul` receipt verifier is a
+default-off future source seam. When enabled, it requires
+the exact installed archive bytes, owner-pinned receipt and trusted-root
+digests, the pinned workflow certificate and source commit, a DSSE Statement
+for the archive and template, and local Rekor, SCT and observer-time proof.
+An unsigned or reserialized receipt cannot mint a verified frozen Soul; no
+real signed frozen receipt or positive installed admission is present yet.
+The uncalled keyd v3 host-report transport keeps the Machine-signed paired
+transcript and secure-admin P-256 key custody. It accepts only exact canonical
+ASCII v3 report bytes in its safe-integer JCS subset with a typed measurement
+binding and separate reservation, finalization and challenge references, then
+signs the fixed v3 purpose and bytes. That signer must not be called until the
+Machine lifecycle issuer has authenticated the completed run, designated-host
+owner policy, measured candidate and installed inputs, and physical results.
+The separate qualification release attestation is issued after verification
+of the signed host report. Shape checks in keyd do not turn a referenced run
+into a verified one.
 
 On macOS, `members plan` without an account list retains the HQ-only plan.
 Pass `--hq-config` to plan one role for each distinct credential account in
@@ -529,8 +621,8 @@ spent claim. A future Machine-authenticated post-Hello finalization must bind
 both to the earlier signed and spent reservation, independently observed
 runner PID/start/UID and process chain, exact endpoint inodes, one-use
 admission challenge and live B bind before HQ records a protected launch or
-opens ACP. The finalization producer and signed reservation operation do not
-exist, and the installed rule remains absent.
+opens ACP. The production finalization producer, reservation entry point and
+installed rule remain absent.
 The Darwin observation helper samples a live PID's kernel start time, parent,
 process group and real/effective/saved UID/GID and groups before and after a
 bounded `kern.procargs2` argv read. It refuses PID reuse, changed credentials,
@@ -582,6 +674,119 @@ descriptor/process observations before using it in a reservation.
 The host-projection check separately matches the descriptor-read raw JSON
 bytes and their file-record hashes to the two parsed values in that object;
 it does not substitute for descriptor custody or a root snapshot receipt.
+
+The Stage 2a per-start binding helper checks the contract's complete canonical
+object and both host-local snapshot identity shapes, then compares measured
+definition and launch-input digests, the selected command's listed executable
+record, the prepared assignment identity, declared host and SoulLock claim.
+It rejects aliases between the two snapshot roots and noncanonical or unknown
+binding fields. These are claims and portable comparisons until a root-owned
+producer observes both snapshots through no-follow descriptors, verifies the
+owner's accepted definition mapping, and carries the same binding through a
+spent Machine-signed reservation and authenticated finalization.
+
+The Darwin frozen-tree observer is a read-only pre-exec building block. Under
+Machine root custody it opens the claimed snapshot root and every `Contents/`
+component with no-follow descriptors, rejects unlisted root and frozen paths,
+links, writable modes and ACL allows, checks the bounded metadata inventory
+before hashing, then reopens each file through directory descriptors and
+compares identity and exact bytes with the approved records. It also compares
+the claimed root device, inode, generation, birth time, owner and mode with
+its opened descriptor. The separate Darwin frozen-source publisher uses that
+observation before and after copying through no-follow file descriptors. It
+syncs staged files and directories, exclusively renames one root-owned,
+read-only private tree, syncs the parent and re-observes the published bytes.
+The fixed common snapshot parent is root:wheel `0711`; each installation gets
+its own deterministic root:runner-primary-group `0750` namespace, so its R
+account can traverse and read the staged definition while sibling R accounts
+cannot traverse that namespace. Machine must verify the actual two-account
+kernel access/refusal on the designated host before claiming enforcement.
+The publisher preserves each approved entry mode and refuses any directory
+without runner-group read and search bits or file without runner-group read.
+This prevents an owner-approved root-only source from becoming an unreadable
+runner package after publication; the owner must approve a readable source
+inventory rather than have Machine silently change its measured modes.
+An uncertain sync or post-publish check leaves the name occupied. Neither
+helper has an owner-approved installed-plan caller yet, proves the selected
+process loaded these bytes, or authorizes a Soul launch. The installer must
+bind source, inventory, snapshot name and root receipt to the exact approval;
+the pre-exec caller must recheck both snapshots and the one-use lifecycle.
+
+The source-only Darwin reservation producer consumes the shared typed
+`Stage2aMeasurementBinding` rather than maintaining a second wire shape. It
+requires a nonempty bare frozen `.soul` SHA-256 in both the signed assignment
+and measurement binding, equal to the authenticated owner mapping and installed
+artifact receipt. That requirement is stricter than the optional additive
+field allowed to older nonauthorizing machine/v1 binding readers. The legacy
+package digest, adapter package and Souls runtime archive digests remain
+separate. Its synthetic vector fixes the exact RFC 8785 JCS payload and
+six-field envelope bytes for an HQ verifier; it is not installed evidence.
+Both claimed frozen snapshot group IDs must equal the assigned runner's
+dedicated primary group; a root:wheel fixture cannot stand in for runner
+readability or sibling isolation.
+
+Before Hello, the producer derives the exact R/B member endpoint from the
+reviewed assignment and signs the UTF-8 purpose
+`agent-bot/stage2a-reservation/v1`, one NUL byte, and the canonical
+machine/v1 reservation payload with the enrolled administrator Ed25519 key.
+The envelope carries schema version, purpose, issuer public key, payload
+digest, payload and signature; the key, payload and signature use unpadded
+base64url. The signed payload includes the complete member endpoint fragment,
+host, HQ epoch, installation, start, launch, installed plan receipt digest,
+measurement binding, expiry and digest of a private 32-byte admission
+challenge. It contains no runtime ID, observed process or socket inode, or B
+broker material. Machine hashes the exact canonical envelope as the
+reservation digest.
+
+A root-private per-installation lock and exclusive `0600` claim spend the
+installation/start before bytes return to HQ. A concurrent retry, changed
+epoch or launch, lost response, post-publication expiry, or uncertain sync
+cannot reopen that start. The source has no production caller, authenticated
+installed authority loader or purpose-limited secure-administrator signer.
+Those, the live HQ pairing, descriptor-verified frozen bytes and owner-approved
+mapping must exist before this producer can authorize anything. Post-Hello
+Machine finalization must independently bind kernel PID/start/UID and process
+chain, endpoint inodes, one-use admission and live B bind. The immutable
+completed-run record and signed v3 host report are separate later evidence.
+
+### Stage 2a installed authority candidate
+
+`members plan --soul-protected-launch-install <request.json>` records one
+owner-reviewed installation, its A/H/R/B identities, frozen `.soul` artifact
+hash, complete definition and launch-input inventories, bridge executable,
+provider fixture and fixed rule. Paired owner proof is required before root
+copies the exact bytes, publishes A-owned read-only snapshots and policy,
+installs the per-Soul sudo rule, and writes the final applied root receipt.
+A reopens that root receipt and compares the policy to the exact approved plan
+on each use. Owner-writable source files may be copied only when no source
+component is writable by group or others and all inventory hashes match.
+The installed artifact is checked again at each reservation. One runner OS
+account and one bridge OS account belong to each Soul installation.
+
+Paired `stage2a-list` and `stage2a-lookup` return only installed selectors.
+`stage2a-reserve` signs the A-owned `machine/v2` snapshot binding after a
+durable installation/start spend. `stage2a-exec` grants each fixed launcher
+role once to the observed real, effective and saved kernel UID/GID and PID.
+R receives the signed reservation on FD3 and a sandbox limited to its own
+admission and relay Unix sockets. Its policy denies direct IP and sibling
+sockets. B receives only its assigned H broker and R relay paths, a one-use
+proof key in A:B custody, and a root-pinned native executable. `stage2a-verify-b`
+spends the HMAC broker bind; `stage2a-finalize-b` signs HQ's exact bind receipt
+and relay socket observation only after the live B launcher and spent bind
+claim match. `stage2a-live` renews a short lease while the installed authority,
+active claim and role processes still match. The local `stage2a-provider`
+fixture reveals its reviewed response only once after finalization and a
+durable spend. It does not establish physical T03.
+
+`stage2a-stop` waits for both dedicated role UIDs to be kernel idle, revokes
+the B proof, retires the active claim, then signs and atomically publishes a
+cutoff receipt. Stop remains available after launch approval expiry. A
+separate `members plan --soul-protected-launch-retire <installed-plan-id>`
+requires paired owner proof, checks both UIDs idle, disables that exact A
+policy and sudo rule under the installation lock, and preserves claims,
+snapshots and receipts. A root retirement can safely retire an abandoned
+active claim after an A daemon crash. This candidate still needs an applied
+two-Soul macOS run with T01/T02/T03/T21 evidence before protected release.
 
 ### What is created
 
@@ -1070,6 +1275,17 @@ this read-only function; no test may count that as challenge consumption or
 as a protected launch. Installed acceptance still requires the separate
 atomic challenge claim and physical host evidence.
 
+- The synthetic v3 protected and cooperative contract vectors verify under
+  an owner-designated test host key, while v1/v2 purpose substitution, a v1
+  policy, missing or extra binding fields, changed host/package/profile,
+  aliased snapshot roots, mismatched protected bridge start and reservation,
+  and cooperative gate substitution refuse. This is verifier evidence only;
+  no fixture counts as physical T01/T02/T03/T21 or a release qualification.
+- A synthetic v3 qualification and Statement pair agrees on exact references
+  and subject digest. Old purpose, missing or reused completed-run reference,
+  future qualification date and expiry at verification time refuse. These
+  parser results grant no release or launch authority.
+
 On real accounts in CI (Linux), as in agent-bot-hq's member accounts step:
 
 - `plan` changes nothing and its digest is stable across two runs.
@@ -1120,6 +1336,15 @@ completed-run/report producer out of this portable preflight.
 4. Gate: `gofmt -l . && go vet ./... && go test ./...`.
 5. Update the closed verb set in [machine-daemon.md](machine-daemon.md) in
    the change that adds `approve-members`.
+6. For the v3 qualification verifier, run the focused contract-vector and
+   refusal tests in `internal/qualification`, then the repository Go test and
+   vet gates. Recheck the two signed report envelopes against the eventual
+   completed-run/release artifacts before any protected acceptance; the
+   current source-only verifier must continue to refuse positive admission.
+   The v3 qualification/Statement parser vectors are
+   `TestMeasuredV3StatementAndQualificationParsing`; they do not replace the
+   separately authenticated completed-run, signing-time or installed-byte
+   checks.
 
 ### Opt-in Linux HQ service
 

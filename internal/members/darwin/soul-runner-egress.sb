@@ -1,7 +1,8 @@
 (version 1)
-; Installed launcher supplies the exact member and local HTTP relay sockets
-; for this Soul start. The vendor process gets no broker or IP destination.
+; Installed launcher supplies the exact HQ admission and B relay sockets
+; for this Soul start. R binds only its assigned Souls member socket.
 (allow default)
 (deny network*)
-(allow network-outbound (remote unix-socket (path-literal (param "MEMBER_SOCKET"))))
+(allow network-outbound (remote unix-socket (path-literal (param "ADMISSION_SOCKET"))))
 (allow network-outbound (remote unix-socket (path-literal (param "RELAY_SOCKET"))))
+(allow network-bind (local unix-socket (path-literal (param "MEMBER_SOCKET"))))

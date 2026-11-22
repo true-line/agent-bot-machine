@@ -33,6 +33,17 @@ type Request struct {
 	ReceiptJTI       string `json:"receipt_jti,omitempty"`
 	ReceiptKID       string `json:"receipt_kid,omitempty"`
 	ReceiptSignature string `json:"receipt_signature,omitempty"`
+	Stage2aRequest   string `json:"stage2a_request,omitempty"`
+	stage2aReserve   members.Stage2aReserveRequest
+	stage2aExec      stage2aExecRequest
+	stage2aVerifyB   members.Stage2aVerifyBRequest
+	stage2aPrepareB  members.Stage2aPrepareBRequest
+	stage2aStop      members.Stage2aStopRequest
+	stage2aFinalizeB members.Stage2aFinalizeBRequest
+	stage2aLive      members.Stage2aStopRequest
+	stage2aProvider  members.Stage2aProviderRequest
+	stage2aLookup    members.Stage2aLookupRequest
+	stage2aEpoch     string
 	peerUID          int
 	ChallengeNonce   string           `json:"challenge_nonce,omitempty"`
 	OwnerSignature   string           `json:"owner_signature,omitempty"`
@@ -177,9 +188,12 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if id, msg := membersFields(req, raw); id != "" {
 		return req, id, msg
 	}
+	if id, msg := stage2aFields(&req, raw); id != "" {
+		return req, id, msg
+	}
 	if g.Dir != "" {
 		readPairing := loadPairing
-		if req.Verb == deviceVerb {
+		if req.Verb == deviceVerb || isStage2aVerb(req.Verb) {
 			readPairing = currentDevicePairing
 		}
 		pairing, err := readPairing(g.Dir)
@@ -194,13 +208,20 @@ func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
 	if req.Verb == deviceVerb && !devicePairAllows(g.Pairing, peerUID, ed25519.PublicKey(pub)) {
 		return req, diag.DaemonPeerRefused, "HQ device custody requires the approved HQ pairing"
 	}
-	if req.Verb == membersPlansVerb || pairedServiceVerb(req.Verb) {
+	if req.Verb == membersPlansVerb || pairedServiceVerb(req.Verb) || isStage2aVerb(req.Verb) {
 		p := g.Pairing
 		if !p.AgentDaemonBound || p.AgentDaemonUID != peerUID || !p.AgentDaemon.Equal(ed25519.PublicKey(pub)) || !dedicatedMembersPlanPeer(peerUID) {
 			return req, diag.DaemonPeerRefused, "this command requires the enrolled HQ service account"
 		}
 	}
-	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" && req.Verb != membersPlansVerb && !pairedServiceVerb(req.Verb) && req.Verb != deviceVerb {
+	if isStage2aVerb(req.Verb) {
+		if runtime.GOOS != "darwin" || !devicePairAllows(g.Pairing, peerUID, ed25519.PublicKey(pub)) ||
+			g.Pairing.HQEpoch == "" || req.Verb == stage2aReserveVerb && req.stage2aReserve.HQEpoch != g.Pairing.HQEpoch {
+			return req, diag.DaemonPeerRefused, "Stage 2a requires the current protected HQ pairing epoch"
+		}
+		req.stage2aEpoch = g.Pairing.HQEpoch
+	}
+	if g.Pairing.OwnerPresenceRequired && req.Verb != "status" && req.Verb != "receipts" && req.Verb != membersPlansVerb && !pairedServiceVerb(req.Verb) && req.Verb != deviceVerb && !isStage2aVerb(req.Verb) {
 		return req, diag.DaemonPeerRefused, "this command requires its own owner presence proof"
 	}
 	if req.Verb == "bootstrap" {
@@ -256,7 +277,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, deviceVerb, approveMembersVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose, deviceVerb, approveMembersVerb, stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aLiveVerb, stage2aFinalizeBVerb, stage2aProviderVerb, "bootstrap":
 		return true
 	default:
 		return false
@@ -369,6 +390,9 @@ func canonical(r Request) []byte {
 	}
 	if r.OwnerSignature != "" {
 		parts = append(parts, "owner_signature", r.OwnerSignature)
+	}
+	if isStage2aVerb(r.Verb) {
+		parts = append(parts, "stage2a_request", r.Stage2aRequest)
 	}
 	if r.Verb == deviceVerb && r.Option != "identity" {
 		parts = append(parts, "hq_epoch", r.HQEpoch)
