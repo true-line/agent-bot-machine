@@ -10,7 +10,6 @@ import (
 // per-start relay path and its private temporary directories. In particular,
 // an install plan cannot choose a Unix socket or inject arbitrary child env.
 const stage2aAdapterChildEnvSchema = "agent-bot-souls/adapter-child-env/v1"
-const stage2aFixtureClientKeySHA256 = "sha256:da4fec28d868ca5cf8f00f43869f703f138bd4211683b8637a751b904860ddf0"
 
 func stage2aAdapterChildEnv(input Stage2aLaunchInputRecords, qualification *Stage2aBridgeQualification, root string) error {
 	invalid := errors.New("invalid protected adapter child environment")

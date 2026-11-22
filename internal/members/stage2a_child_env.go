@@ -5,6 +5,10 @@ import (
 	"path/filepath"
 )
 
+// SHA-256 of the literal fixture key "ssh-placeholder"; it contains no
+// provider credential and is shared by Darwin validation and portable plans.
+const stage2aFixtureClientKeySHA256 = "sha256:da4fec28d868ca5cf8f00f43869f703f138bd4211683b8637a751b904860ddf0"
+
 // A and the R-UID launcher derive these bytes from the same installed
 // qualification and Machine-derived relay. No caller-supplied environment is
 // merged into the stock adapter process.
