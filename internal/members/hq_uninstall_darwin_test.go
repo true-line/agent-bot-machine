@@ -595,10 +595,17 @@ func TestHQUninstallReceiptDiscoveryBeforeFirstApply(t *testing.T) {
 }
 
 func TestUninstallHarnessLaunchFileVisibility(t *testing.T) {
+	if os.Geteuid() != 0 {
+		if err := CheckDarwinProtectedLaunchRemoval(); err == nil || !strings.Contains(err.Error(), "root required") {
+			t.Fatalf("nonroot caller could claim protected rule absence: %v", err)
+		}
+	}
 	dir := t.TempDir()
 	const runtimeDir = "/Library/Application Support/ai.true-line.agent-bot-hq"
 	const rule = "/private/etc/sudoers.d/agent-bot-hq-harness-launch"
-	files := []string{runtimeDir + "/harness-launch", runtimeDir + "/harness-egress.sb", runtimeDir + "/harness-launch-policy.json", rule}
+	files := []string{runtimeDir + "/harness-launch", runtimeDir + "/harness-egress.sb", runtimeDir + "/harness-launch-policy.json", rule,
+		runtimeDir + "/soul-launch", runtimeDir + "/soul-runner-egress.sb", runtimeDir + "/soul-bridge-egress.sb", runtimeDir + "/soul-launch-policy.json",
+		"/private/etc/sudoers.d/agent-bot-hq-soul-launch"}
 	local := func(path string) string { return filepath.Join(dir, strings.TrimPrefix(path, "/")) }
 	var denied string
 	lstat := func(path string) (os.FileInfo, error) {
@@ -657,6 +664,20 @@ func TestUninstallHarnessLaunchFileVisibility(t *testing.T) {
 		}
 		if target, err := os.Readlink(staged); err != nil || target != "missing" {
 			t.Fatal("changed staged link", err)
+		}
+		if err := os.Remove(staged); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range files[4:] {
+		staged := filepath.Join(filepath.Dir(local(path)), ".soul-"+id+"-"+filepath.Base(path))
+		if err := os.Symlink("missing", staged); err != nil {
+			t.Fatal(err)
+		}
+		for _, root := range []bool{false, true} {
+			if err := check(root); err == nil || !strings.Contains(err.Error(), "staged") {
+				t.Fatal("overlooked staged Soul file", filepath.Base(path), root, err)
+			}
 		}
 		if err := os.Remove(staged); err != nil {
 			t.Fatal(err)
