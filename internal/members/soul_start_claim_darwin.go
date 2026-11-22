@@ -24,7 +24,6 @@ type soulStartClaim struct {
 	InstallationID   string `json:"installation_id"`
 	StartID          string `json:"start_id"`
 	LaunchID         string `json:"launch_id"`
-	RuntimeID        string `json:"runtime_id"`
 	HQEpoch          string `json:"hq_epoch"`
 	AssignmentSHA256 string `json:"assignment_sha256"`
 	StartedAt        string `json:"started_at"`
@@ -35,6 +34,8 @@ type soulStartClaim struct {
 const soulStartClaimsDir = "/private/var/db/managed-machine/soul-starts/claims"
 
 func soulStartClaimName(installationID, startID string) string {
+	// Keep the name domain stable across record schema upgrades. A spent start
+	// must not gain a fresh pathname merely because its record shape changes.
 	key := sha256.Sum256([]byte("agent-bot-soul-start-claim/v1\x00" + installationID + "\x00" + startID))
 	return fmt.Sprintf("%x.json", key)
 }
@@ -48,9 +49,9 @@ func soulStartClaimPath(installationID, startID string) string {
 // but their root receipt and pairing still require an independent caller.
 func prepareSoulStartClaim(assignment SoulStartAssignment, installedID string, installedCanonical []byte,
 	runner SoulRunner, bridge SoulBridge, hqUID, machineUID int,
-	live SoulRunRequest, launchID, runtimeID string, now time.Time) (soulStartClaim, error) {
+	live SoulRunRequest, launchID string, now time.Time) (soulStartClaim, error) {
 	if CheckSoulStartAssignment(assignment, installedID, installedCanonical,
-		runner, bridge, hqUID, machineUID, live, launchID, runtimeID, now) != nil {
+		runner, bridge, hqUID, machineUID, live, launchID, now) != nil {
 		return soulStartClaim{}, errors.New("Soul start claim differs from installed and live state")
 	}
 	assignmentBytes, err := json.Marshal(assignment)
@@ -58,10 +59,10 @@ func prepareSoulStartClaim(assignment SoulStartAssignment, installedID string, i
 		return soulStartClaim{}, err
 	}
 	return soulStartClaim{
-		Schema: "agent-bot-machine/soul-start-claim/v1", PlanID: assignment.PlanID,
+		Schema: "agent-bot-machine/soul-start-claim/v2", PlanID: assignment.PlanID,
 		PlanDigest: assignment.PlanDigest, InstallationID: assignment.InstallationID,
 		StartID: assignment.StartID, LaunchID: assignment.LaunchID,
-		RuntimeID: assignment.RuntimeID, HQEpoch: assignment.HQEpoch,
+		HQEpoch:          assignment.HQEpoch,
 		AssignmentSHA256: fmt.Sprintf("%x", sha256.Sum256(assignmentBytes)),
 		StartedAt:        now.UTC().Format(time.RFC3339Nano), ExpiresAt: assignment.ExpiresAt,
 		State: "started",
@@ -69,10 +70,10 @@ func prepareSoulStartClaim(assignment SoulStartAssignment, installedID string, i
 }
 
 func (c soulStartClaim) valid(path string) bool {
-	if c.Schema != "agent-bot-machine/soul-start-claim/v1" || c.State != "started" ||
+	if c.Schema != "agent-bot-machine/soul-start-claim/v2" || c.State != "started" ||
 		!ValidApproval(c.PlanID, c.PlanDigest) || !soulInstallationID.MatchString(c.InstallationID) ||
 		!soulStartID.MatchString(c.StartID) || !soulLaunchID.MatchString(c.LaunchID) ||
-		!soulInstallationID.MatchString(c.RuntimeID) || !soulHQEpoch.MatchString(c.HQEpoch) ||
+		!soulHQEpoch.MatchString(c.HQEpoch) ||
 		!soulDigest.MatchString(c.AssignmentSHA256) || !filepath.IsAbs(path) ||
 		filepath.Clean(path) != path || filepath.Base(path) != soulStartClaimName(c.InstallationID, c.StartID) {
 		return false
