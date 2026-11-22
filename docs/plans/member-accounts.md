@@ -466,9 +466,10 @@ target or shared C target is allowed. Rule rendering alone installs nothing.
 The paired grant installer must verify the launcher, package closure and
 profiles, validate the exact rule with `visudo`, and publish its root receipt
 and rule under the owner approval guard before either command may run.
-Machine's prepared start assignment binds the approved plan ID and digest,
-installation and Soul IDs, Machine and HQ epochs, a start/launch/runtime tuple,
-the R/B/HQ/Machine numeric identities, the reviewed package root and digest,
+Machine's prepared pre-Hello start assignment v2 binds the approved plan ID
+and digest, installation and Soul IDs, Machine and HQ epochs, the start and
+launch IDs, the R/B/HQ/Machine numeric identities, the reviewed package root
+and digest,
 and all four derived endpoints. The builder caps its expiry at 30 seconds and
 contains no broker binding or member token. Machine's plan store and start
 assignment use the same bare lowercase 64-hex digest. Only the separate
@@ -479,22 +480,29 @@ signer caller must first verify the installed root receipt. The assignment is
 deliberately not an authorization. The eventual daemon operation must load
 the installed grant and canonical plan, verify the root receipt and live roles,
 then re-derive every R/B identity, package and endpoint field against the live
-start, launch/runtime IDs and current expiry. The component check cannot
+start and launch IDs and current expiry. The component check cannot
 substitute for the root receipt or Machine signature. The daemon must spend
 the start durably and return a response signed by the enrolled Machine key.
-HQ must verify that response and
-recheck current start and B liveness before readiness and raw attach. Neither
-the signed reservation operation nor the installed rule exists yet.
+HQ must verify that response and recheck current start and B liveness before
+readiness and raw attach. HQ mints `runtime_id` and a distinct
+`installation_epoch` only after Hello on the start-bound admission channel.
+Neither value can be asserted in the prestart assignment or its root-private
+spent claim. A future Machine-authenticated post-Hello finalization must bind
+both to the earlier signed and spent reservation, independently observed
+runner PID/start/UID and process chain, exact endpoint inodes, one-use
+admission challenge and live B bind before HQ records a protected launch or
+opens ACP. The finalization producer and signed reservation operation do not
+exist, and the installed rule remains absent.
 The Darwin observation helper samples a live PID's kernel start time, parent,
 process group and real/effective/saved UID/GID and groups before and after a
 bounded `kern.procargs2` argv read. It refuses PID reuse, changed credentials,
 incomplete argument data, empty argv entries and non-live process states.
 The sysctl may copy environment bytes into a temporary buffer; Machine clears
 that buffer before returning and never returns or logs the environment. This
-supporting observation is not called by an installed
-launcher or completion producer. The exec path in that argument area is not
-an executable vnode measurement; active Seatbelt profile, endpoints, parent
-chain, and authenticated HQ start still require independent proof.
+supporting observation is not called by an installed launcher or completion
+producer. The exec path in that argument area is not an executable vnode
+measurement; active Seatbelt profile, endpoints, parent chain, and
+authenticated HQ start still require independent proof.
 Machine must prove the reviewed package/code closure, signed one-use HQ start,
 exact kernel UIDs, live HMAC broker bind, token lifetime, stop containment and
 safe retirement before installing a production grant. Platform PDR-0052's

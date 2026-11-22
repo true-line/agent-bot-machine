@@ -19,7 +19,6 @@ type SoulStartAssignment struct {
 	SoulID         string            `json:"soul_id"`
 	StartID        string            `json:"start_id"`
 	LaunchID       string            `json:"launch_id"`
-	RuntimeID      string            `json:"runtime_id"`
 	PlanID         string            `json:"plan_id"`
 	PlanDigest     string            `json:"plan_digest"` // installed bare 64-hex digest
 	HQEpoch        string            `json:"hq_epoch"`
@@ -58,19 +57,21 @@ func startEndpoint(e SoulEndpoint) SoulStartEndpoint {
 
 var soulLaunchID = regexp.MustCompile(`^ln_[0-9a-f]{24}$`)
 
-// PrepareSoulStartAssignment binds a short-lived start to the two reviewed
-// principals and Machine-derived endpoint names. PackageSHA256 is copied from
-// a proposed review field, not measured from a canonical .soul artifact.
+// PrepareSoulStartAssignment binds a pre-Hello start to the two reviewed
+// principals and Machine-derived endpoint names. HQ mints runtime_id only
+// after the runner's Hello, so it cannot appear in this prestart body.
+// PackageSHA256 is copied from a proposed review field, not measured from a
+// canonical .soul artifact.
 // The caller must first load the installed plan and verify its root receipt,
 // accepted owner policy and live roles; the eventual
 // reservation operation must additionally consume this start durably before
 // returning a Machine-signed response. No such operation exists yet.
 func PrepareSoulStartAssignment(r SoulRunner, b SoulBridge, hqUID, machineUID int,
-	planID, planDigest, startID, launchID, runtimeID, hqEpoch string,
+	planID, planDigest, startID, launchID, hqEpoch string,
 	now, expires time.Time) (SoulStartAssignment, error) {
 	invalid := errors.New("invalid protected Soul start assignment")
 	if !ValidApproval(planID, planDigest) || !soulStartID.MatchString(startID) ||
-		!soulLaunchID.MatchString(launchID) || !soulInstallationID.MatchString(runtimeID) ||
+		!soulLaunchID.MatchString(launchID) ||
 		!soulHQEpoch.MatchString(hqEpoch) || machineUID <= 399 ||
 		machineUID == hqUID || machineUID == r.UID || machineUID == b.UID ||
 		now.IsZero() || expires.IsZero() || !expires.After(now) || expires.Sub(now) > 30*time.Second {
@@ -81,8 +82,8 @@ func PrepareSoulStartAssignment(r SoulRunner, b SoulBridge, hqUID, machineUID in
 		return SoulStartAssignment{}, invalid
 	}
 	return SoulStartAssignment{
-		Schema: "agent-bot-machine/soul-start-assignment/v1", InstallationID: r.InstallationID,
-		SoulID: r.SoulID, StartID: startID, LaunchID: launchID, RuntimeID: runtimeID,
+		Schema: "agent-bot-machine/soul-start-assignment/v2", InstallationID: r.InstallationID,
+		SoulID: r.SoulID, StartID: startID, LaunchID: launchID,
 		PlanID: planID, PlanDigest: planDigest, HQEpoch: hqEpoch,
 		ExpiresAt:     expires.UTC().Format(time.RFC3339Nano),
 		RunnerAccount: r.Account, RunnerUID: r.UID, RunnerGID: r.GID,
@@ -100,7 +101,7 @@ func PrepareSoulStartAssignment(r SoulRunner, b SoulBridge, hqUID, machineUID in
 // verify its root receipt before using this value in a signer.
 func SoulReportPlanDigest(assignment SoulStartAssignment, installedID string, installedCanonical []byte) (string, error) {
 	installedDigest := fmt.Sprintf("%x", sha256.Sum256(installedCanonical))
-	if assignment.Schema != "agent-bot-machine/soul-start-assignment/v1" ||
+	if assignment.Schema != "agent-bot-machine/soul-start-assignment/v2" ||
 		len(installedCanonical) == 0 ||
 		!ValidApproval(assignment.PlanID, assignment.PlanDigest) ||
 		!ValidApproval(installedID, installedDigest) ||
@@ -117,7 +118,7 @@ func SoulReportPlanDigest(assignment SoulStartAssignment, installedID string, in
 // cannot grant launch authority by itself.
 func CheckSoulStartAssignment(assignment SoulStartAssignment, installedID string, installedCanonical []byte,
 	runner SoulRunner, bridge SoulBridge, hqUID, machineUID int,
-	live SoulRunRequest, launchID, runtimeID string, now time.Time) error {
+	live SoulRunRequest, launchID string, now time.Time) error {
 	invalid := errors.New("Soul start assignment differs from installed authority")
 	if !live.valid() || live.InstallationID != runner.InstallationID ||
 		live.PlanDigest != assignment.PlanDigest {
@@ -132,7 +133,7 @@ func CheckSoulStartAssignment(assignment SoulStartAssignment, installedID string
 	}
 	want, err := PrepareSoulStartAssignment(runner, bridge, hqUID, machineUID,
 		installedID, live.PlanDigest, live.StartID, launchID,
-		runtimeID, live.HQEpoch, now, expires)
+		live.HQEpoch, now, expires)
 	if err != nil || !reflect.DeepEqual(assignment, want) {
 		return invalid
 	}
