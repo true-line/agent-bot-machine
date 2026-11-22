@@ -139,12 +139,22 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 			t.Errorf("go-core.yml job %s has unexpected permissions %v", jobID, job.Permissions)
 		}
 		for i, step := range job.Steps {
+			if strings.Contains(step.Run, "git fetch --tags") {
+				t.Errorf("go-core.yml job %s step %d fetches tags after checkout without persisted credentials", jobID, i+1)
+			}
 			if strings.HasPrefix(step.Uses, "actions/checkout@") {
 				if v, ok := step.With["persist-credentials"]; !ok || v != false {
 					t.Errorf("go-core.yml job %s step %d checkout persist-credentials = %v, want false", jobID, i+1, v)
 				}
 			}
 		}
+	}
+	coreJob, ok := goCore.Jobs["core"]
+	if !ok {
+		t.Fatal("go-core.yml missing core job")
+	}
+	if len(coreJob.Steps) == 0 || !strings.HasPrefix(coreJob.Steps[0].Uses, "actions/checkout@") || coreJob.Steps[0].With["fetch-tags"] != true {
+		t.Error("core job must fetch release tags during checkout")
 	}
 	rgJob, ok := goCore.Jobs["release-gate"]
 	if !ok {
@@ -156,8 +166,18 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	if rgJob.Needs != "build" {
 		t.Errorf("release-gate.needs = %v, want build", rgJob.Needs)
 	}
-	var sawDistDL, sawRGUpload bool
+	if len(rgJob.Steps) == 0 || !strings.HasPrefix(rgJob.Steps[0].Uses, "actions/checkout@") ||
+		rgJob.Steps[0].With["fetch-depth"] != "${{ matrix.os == 'darwin' && '0' || '1' }}" ||
+		rgJob.Steps[0].With["fetch-tags"] != true {
+		t.Error("release-gate must fetch full history and tags on Darwin during checkout; numeric 0 would fall through to depth 1")
+	}
+	var sawDistDL, sawRGUpload, sawHistoricalCheckout bool
 	for _, step := range rgJob.Steps {
+		if step.Name == "Verify historical release checkout (macOS)" && step.If == "matrix.os == 'darwin'" &&
+			strings.Contains(step.Run, "git show v0.9.0:Formula/managed-machine.rb") &&
+			strings.Contains(step.Run, "git rev-list --count HEAD -- Formula/managed-machine.rb") {
+			sawHistoricalCheckout = true
+		}
 		if strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.With["name"] == "dist" {
 			sawDistDL = true
 		}
@@ -165,8 +185,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 			sawRGUpload = true
 		}
 	}
-	if !sawDistDL || !sawRGUpload {
-		t.Errorf("release-gate artifacts: dist download=%v, release-gate upload=%v", sawDistDL, sawRGUpload)
+	if !sawDistDL || !sawRGUpload || !sawHistoricalCheckout {
+		t.Errorf("release-gate preparation: dist download=%v, release-gate upload=%v, historical checkout=%v", sawDistDL, sawRGUpload, sawHistoricalCheckout)
 	}
 	s6Job, ok := goCore.Jobs["s6-gate"]
 	if !ok {
