@@ -40,6 +40,8 @@ type stage2aLiveReservation struct {
 	finalizationEnvelope []byte
 	bindReceiptSHA256    string
 	runnerPID, bridgePID int
+	runnerProcess        soulKernelProcessSnapshot
+	bridgeProcess        soulKernelProcessSnapshot
 }
 
 func NewStage2aService(key ed25519.PrivateKey) *Stage2aService {
@@ -218,7 +220,8 @@ func (s *Stage2aService) Exec(hqUID int, epoch, digest, role, nonce string, pid 
 		}
 		roleUID, roleGID = p.Bridge.UID, p.Bridge.GID
 	}
-	if err := checkStage2aRoleProcess(pid, roleUID, roleGID, role); err != nil {
+	roleProcess, err := observeStage2aRoleProcess(pid, roleUID, roleGID, role)
+	if err != nil {
 		return reply, errStage2aReservationAuthority
 	}
 	store, snapshots := p.stores()
@@ -246,7 +249,8 @@ func (s *Stage2aService) Exec(hqUID int, epoch, digest, role, nonce string, pid 
 	if err := observeInstalledStage2aLaunchInputs(snapshots, p.Binding, p.LaunchInputs); err != nil {
 		return reply, err
 	}
-	if !time.Now().Before(expires) || checkStage2aRoleProcess(pid, roleUID, roleGID, role) != nil {
+	nextProcess, err := observeStage2aRoleProcess(pid, roleUID, roleGID, role)
+	if !time.Now().Before(expires) || err != nil || !sameSoulKernelProcess(roleProcess, nextProcess) {
 		return reply, errStage2aReservationExpired
 	}
 	invocation := Stage2aRoleInvocation{
@@ -297,15 +301,32 @@ func (s *Stage2aService) Exec(hqUID int, epoch, digest, role, nonce string, pid 
 	if len(reply.EnvelopeBase64URL)+len(reply.InvocationBase64URL) > stage2aExecMaxFrame-1024 {
 		return Stage2aExecReply{}, errStage2aReservationAuthority
 	}
+	if checkStage2aGrantedRoleProcess(pid, roleUID, roleGID, role, roleProcess) != nil {
+		return Stage2aExecReply{}, errStage2aReservationAuthority
+	}
 	if role == "runner" {
 		r.runnerPID = pid
+		r.runnerProcess = roleProcess
 	} else {
 		r.bridgePID = pid
+		r.bridgeProcess = roleProcess
 	}
 	return reply, nil
 }
 
-func checkStage2aRoleProcess(pid, uid, gid int, role string) error {
+func checkStage2aGrantedRoleProcess(pid, uid, gid int, role string, granted soulKernelProcessSnapshot) error {
+	observed, err := observeStage2aRoleProcess(pid, uid, gid, role)
+	return checkStage2aGrantedRoleSnapshot(granted, observed, err)
+}
+
+func checkStage2aGrantedRoleSnapshot(granted, observed soulKernelProcessSnapshot, observationErr error) error {
+	if observationErr != nil || !sameSoulKernelProcess(granted, observed) {
+		return errStage2aReservationAuthority
+	}
+	return nil
+}
+
+func observeStage2aRoleProcess(pid, uid, gid int, role string) (soulKernelProcessSnapshot, error) {
 	command := "soul-run"
 	if role == "bridge" {
 		command = "soul-bridge"
@@ -315,9 +336,9 @@ func checkStage2aRoleProcess(pid, uid, gid int, role string) error {
 		observed.Kernel.EffectiveUID != uint32(uid) || observed.Kernel.SavedUID != uint32(uid) ||
 		observed.Kernel.RealGID != uint32(gid) || observed.Kernel.PrimaryGroupGID != uint32(gid) ||
 		observed.Kernel.SavedGID != uint32(gid) {
-		return errStage2aReservationAuthority
+		return soulKernelProcessSnapshot{}, errStage2aReservationAuthority
 	}
-	return nil
+	return observed.Kernel, nil
 }
 
 // VerifyB accepts one live broker challenge proved with the per-reservation
@@ -334,6 +355,7 @@ func (s *Stage2aService) VerifyB(hqUID int, epoch string, q Stage2aVerifyBReques
 	if err != nil || r.proofDigest != stage2aReservationSHA256(r.bridgeProof[:]) ||
 		len(r.bridgeAssignment) == 0 ||
 		p.Binding.InstallationID != q.InstallationID ||
+		checkStage2aGrantedRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge", r.bridgeProcess) != nil ||
 		verifyStage2aBridgeBind(r.bridgeProof[:], q, r.payload.Assignment.SoulStartAssignment) != nil {
 		return reply, errStage2aReservationAuthority
 	}

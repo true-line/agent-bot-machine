@@ -43,7 +43,7 @@ func (s *Stage2aService) FinalizeB(hqUID int, epoch string, q Stage2aFinalizeBRe
 	r, p, expires, err := s.current(hqUID, epoch, q.ReservationSHA256)
 	if err != nil || !stage2aMatchesStopSelectors(r, q.Stage2aStopRequest, hqUID) ||
 		len(r.finalizationEnvelope) != 0 || len(r.bridgeAssignment) == 0 || r.bridgePID <= 1 ||
-		checkStage2aRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge") != nil {
+		checkStage2aGrantedRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge", r.bridgeProcess) != nil {
 		return reply, errStage2aReservationAuthority
 	}
 	endpoints, err := DeriveSoulBridgeEndpoints(p.Runner, p.Bridge, p.HQUID, q.StartID)
@@ -81,7 +81,7 @@ func (s *Stage2aService) FinalizeB(hqUID int, epoch string, q Stage2aFinalizeBRe
 	envelope, err := signStage2aEnvelope(payload, 1, Stage2aFinalizationPurpose,
 		s.key.Public().(ed25519.PublicKey), s.sign)
 	if err != nil || !time.Now().Before(expires) ||
-		checkStage2aRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge") != nil {
+		checkStage2aGrantedRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge", r.bridgeProcess) != nil {
 		return reply, errStage2aReservationAuthority
 	}
 	if err := commitStage2aReservation(dir, name, envelope); err != nil {
@@ -127,8 +127,8 @@ func (s *Stage2aService) Live(hqUID int, epoch string, q Stage2aStopRequest) (St
 		stage2aCheckSpentClaim(dir, stage2aActiveClaimName(q.InstallationID), store.uid, store.gid) != nil {
 		return reply, errStage2aReservationAuthority
 	}
-	if r.bridgePID > 1 && checkStage2aRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge") != nil ||
-		r.runnerPID > 1 && checkStage2aRoleProcess(r.runnerPID, p.Runner.UID, p.Runner.GID, "runner") != nil {
+	if r.bridgePID > 1 && checkStage2aGrantedRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge", r.bridgeProcess) != nil ||
+		r.runnerPID > 1 && checkStage2aGrantedRoleProcess(r.runnerPID, p.Runner.UID, p.Runner.GID, "runner", r.runnerProcess) != nil {
 		return reply, errStage2aReservationAuthority
 	}
 	reply = Stage2aLiveReply{ReservationSHA256: q.ReservationSHA256, Phase: "prebind",

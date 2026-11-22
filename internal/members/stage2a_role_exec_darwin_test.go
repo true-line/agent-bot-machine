@@ -7,10 +7,32 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestStage2aGrantedRoleRejectsReusedPID(t *testing.T) {
+	granted := soulKernelProcessSnapshot{
+		PID: 4321, ParentPID: 300, ProcessGroupID: 4321,
+		StartSeconds: 1795356916, StartMicros: 123456,
+		RealUID: 310, EffectiveUID: 310, SavedUID: 310,
+		RealGID: 310, PrimaryGroupGID: 310, SavedGID: 310,
+		Groups: []uint32{310},
+	}
+	if err := checkStage2aGrantedRoleSnapshot(granted, granted, nil); err != nil {
+		t.Fatalf("same granted role refused: %v", err)
+	}
+	replacement := granted
+	replacement.StartMicros++
+	if err := checkStage2aGrantedRoleSnapshot(granted, replacement, nil); err == nil {
+		t.Fatal("reused PID inherited the earlier role grant")
+	}
+	if err := checkStage2aGrantedRoleSnapshot(granted, granted, errors.New("observation failed")); err == nil {
+		t.Fatal("unobserved role retained the grant")
+	}
+}
 
 func TestStage2aRoleGrantBindsLiveChallengeAndInvocation(t *testing.T) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)

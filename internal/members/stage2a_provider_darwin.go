@@ -29,9 +29,9 @@ func (s *Stage2aService) Provider(hqUID int, epoch string, q Stage2aProviderRequ
 		q.Model != p.BridgeQualification.Model || q.PromptSHA256 != p.BridgeQualification.RequestSHA256 ||
 		q.BindReceiptSHA256 != r.bindReceiptSHA256 || len(r.finalizationEnvelope) == 0 ||
 		!stage2aProviderRunnerLive(live, r.runnerPID, func(pid int) error {
-			return checkStage2aRoleProcess(pid, p.Runner.UID, p.Runner.GID, "runner")
+			return checkStage2aGrantedRoleProcess(pid, p.Runner.UID, p.Runner.GID, "runner", r.runnerProcess)
 		}) ||
-		r.bridgePID <= 1 || checkStage2aRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge") != nil {
+		r.bridgePID <= 1 || checkStage2aGrantedRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge", r.bridgeProcess) != nil {
 		return reply, errStage2aReservationAuthority
 	}
 	config, digest, err := stage2aProviderConfig(p.BridgeQualification)
