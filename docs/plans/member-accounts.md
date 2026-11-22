@@ -1121,10 +1121,14 @@ Machine checks the matching versioned capability as the dedicated HQ account
 and queries the running endpoint as the approved owner. Both layouts use a
 root-owned socket at mode `0666`. During bootstrap, Machine waits up to three
 seconds for launchd to bind the socket and apply that mode. It can observe the
-same root-owned socket at its initial private mode `0700` during this window.
-It refuses a changed inode, disappearance after publication begins, an unexpected
-type or owner, or any other mode. It queries HQ only after the socket reaches
-`0666`. The existing signed plan and pairing
+same root-owned socket at pending mode `0700` or `0755` during this window;
+neither permits other accounts to write to it. It refuses a changed inode,
+disappearance after publication begins, an unexpected type or owner, or any
+other mode. It queries HQ only after the socket reaches `0666`. During upgrade
+rollback, Machine gives that same socket publication a bounded wait and waits
+up to three seconds for the exact approved loaded job to publish a positive
+PID. It still checks the reviewed plist, dedicated UID and socket inode before
+recording or issuing bootout. The existing signed plan and pairing
 continue to refer to their original subject. Changing an installed service's
 layout or release requires an explicit cutover. A second approved apply
 verifies the same loaded job. The experimental v2 layout requires installation

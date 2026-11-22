@@ -358,9 +358,10 @@ func waitForLaunchSocket(path string, expectedUID uint32, limit time.Duration) (
 			if mode == os.ModeSocket|0666 {
 				return info, nil
 			}
-			// Darwin binds under umask 0077 before applying SockPathMode.
-			// Wait only for that private initial mode on the original inode.
-			if mode != os.ModeSocket|0700 {
+			// A hosted launch transition also exposed 0755. Neither
+			// pending mode grants a peer write access. Require the exact
+			// final mode on this same inode before use.
+			if mode != os.ModeSocket|0700 && mode != os.ModeSocket|0755 {
 				return nil, fmt.Errorf("%s: mode %04o, expected 0666", invalid, stat.Mode&07777)
 			}
 			pending = info
