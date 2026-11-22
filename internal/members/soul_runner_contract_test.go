@@ -31,6 +31,8 @@ func TestSoulRunnerMappingRequiresOnePrincipalPerInstallation(t *testing.T) {
 		"parent path":    func(r []SoulRunner) { r[1].PackageRoot = "/Library/x/../agent-bot" },
 		"shared package": func(r []SoulRunner) { r[1].PackageRoot = r[0].PackageRoot },
 		"nested package": func(r []SoulRunner) { r[1].PackageRoot = r[0].PackageRoot + "/nested" },
+		"root first":     func(r []SoulRunner) { r[0].PackageRoot = "/" },
+		"root second":    func(r []SoulRunner) { r[1].PackageRoot = "/" },
 		"digest":         func(r []SoulRunner) { r[1].PackageSHA256 = "unreviewed" },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -40,6 +42,11 @@ func TestSoulRunnerMappingRequiresOnePrincipalPerInstallation(t *testing.T) {
 				t.Fatal("accepted an unisolated or unreviewed mapping")
 			}
 		})
+	}
+	rootOnly := []SoulRunner{base[0]}
+	rootOnly[0].PackageRoot = "/"
+	if ValidateSoulRunners(rootOnly, 309, nil) == nil {
+		t.Fatal("accepted the filesystem root as a package")
 	}
 }
 
