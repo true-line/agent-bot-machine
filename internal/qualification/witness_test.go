@@ -89,6 +89,16 @@ func TestAcceptanceWitnessSignatureAndIndependentState(t *testing.T) {
 	if err := VerifyAcceptanceWitnessPreflight(witness, owner, ctx, now); err != nil {
 		t.Fatal(err)
 	}
+	otherHost := ctx
+	otherHost.HostID = "other-host"
+	otherPayload := make(map[string]any, len(payload))
+	for k, v := range payload {
+		otherPayload[k] = v
+	}
+	otherPayload["host_id"] = otherHost.HostID
+	if VerifyAcceptanceWitnessPreflight(signedAcceptanceWitness(t, otherPayload, key, ctx.WitnessKeyID), owner, otherHost, now) == nil {
+		t.Fatal("signed witness for a host absent from owner policy was accepted")
+	}
 
 	for _, tc := range []struct {
 		name   string

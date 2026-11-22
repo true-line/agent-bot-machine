@@ -143,11 +143,27 @@ func VerifyAcceptanceWitnessPreflight(envelope, ownerPolicyEnvelope []byte, ctx 
 	if err != nil || policy.version != ctx.AcceptedVersion || policy.value.PolicyRevision != ctx.AcceptedRevision || policy.payloadSHA256 != ctx.AcceptedSHA256 {
 		return ErrUnqualified
 	}
+	designatedHost := false
 	for _, signer := range policy.value.EvidenceSigners {
+		if signer.HostID == ctx.HostID {
+			revoked := false
+			for _, id := range policy.value.RevocationSnapshot.RevokedEvidenceSignerIDs {
+				if id == signer.ID {
+					revoked = true
+					break
+				}
+			}
+			if !revoked {
+				designatedHost = true
+			}
+		}
 		der, valid := canonicalStandardKey(signer.PublicKeySPKIDERBase64, len(ctx.WitnessSPKIDER))
 		if valid && bytesEqual(der, ctx.WitnessSPKIDER) {
 			return ErrUnqualified
 		}
+	}
+	if !designatedHost {
+		return ErrUnqualified
 	}
 	fields, err := strictObject(envelope, maxWitnessEnvelopeBytes)
 	if err != nil || !hasFields(fields, "schema_version", "purpose", "witness_key_id", "payload_sha256", "payload_base64url", "signature_base64url") {
