@@ -110,6 +110,26 @@ The statement must name exactly one `qualification.json` subject digest and
 the fixed qualification predicate. Its host-report references must match the
 designated-host signed reports, the protected record and all four fixed gates.
 The verifier reads only supplied local bytes and has no network fallback.
+
+The release producer has a separate `mm-qualification-preflight` command built
+from an exact reviewed Machine commit. It requires `-owner-root` (a file with
+the pinned Ed25519 public key as 64 lowercase hex characters),
+`-owner-key-id`, `-policy-envelope`, `-qualification`,
+`-protected-envelope`, and `-cooperative-envelope` file inputs. The command
+uses real current time with no caller clock override and bounded local reads.
+It verifies the owner policy signature, expiry and 3,600-second revocation
+snapshot, then the two designated-host signatures, exact qualification bytes,
+the adapter, launch, harness, runner and host values shared across the signed
+reports and qualification, and protected/cooperative gate assignment. On success
+it emits JSON with `schema_version: 1`, each report's exact raw SHA-256 digest,
+and explicit `managed-protected` and `managed-cooperative` profile fields; an
+invalid or incomplete input exits nonzero without digests. The producer uses
+only those verified digests in its release Statement. This preflight does not
+persist a highest accepted policy revision or verify a release bundle, and a
+past preflight success cannot be replayed as a Machine acceptance decision.
+Machine independently rechecks policy rollback state, the signed final bundle,
+installed bytes and live physical evidence before any qualification can count.
+
 These are components of the production verifier, not permission to install.
 The one-use `started` receipt is never a completed physical run. A separate
 Machine-authored completion and HQ-start process observation, released adapter
