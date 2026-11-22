@@ -169,10 +169,24 @@ func verifyDeviceCode(ctx context.Context, directory, name, requirement string) 
 	return verify.Run()
 }
 
-type keydOutput struct{ buf bytes.Buffer }
+type keydOutput struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func deviceKeydLimits(option string) (input, output int) {
+	if option == "qualification-host-report" {
+		return 2 * 1024 * 1024, 2 * 1024 * 1024
+	}
+	return 16384, 8192
+}
 
 func (b *keydOutput) Write(p []byte) (int, error) {
-	if b.buf.Len()+len(p) > 8192 {
+	limit := b.limit
+	if limit == 0 {
+		limit = 8192
+	}
+	if b.buf.Len()+len(p) > limit {
 		return 0, errHQDevice
 	}
 	return b.buf.Write(p)
@@ -199,11 +213,15 @@ func runDeviceKeyd(ctx context.Context, home string, envelope deviceDelegation) 
 	if err != nil {
 		return nil, errHQDevice
 	}
+	inputLimit, outputLimit := deviceKeydLimits(envelope.Option)
+	if len(buf) > inputLimit {
+		return nil, errHQDevice
+	}
 	cmd := exec.CommandContext(ctx, "./agent-bot-keyd", "hq-device")
 	cmd.Dir = cwd
 	cmd.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
 	cmd.Stdin = bytes.NewReader(append(buf, '\n'))
-	var out keydOutput
+	out := keydOutput{limit: outputLimit}
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
 		return nil, errHQDevice
