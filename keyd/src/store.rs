@@ -1111,7 +1111,9 @@ pub mod keychain {
     /// may hand back. The managed device record also anchors an existing
     /// identity and its enrollment, and must survive an unverifiable ACL intact.
     fn recreatable(service: &str) -> bool {
-        service != PIN_SERVICE && service != crate::hq_device::SERVICE
+        service != PIN_SERVICE
+            && service != crate::hq_device::SERVICE
+            && service != crate::qualification_witness::SERVICE
     }
 
     fn read_existing(
@@ -1223,7 +1225,9 @@ pub mod keychain {
             let found = self
                 .find(&keychain, service, account)?
                 .map(|(_, item)| item);
-            if service == crate::hq_device::SERVICE {
+            if service == crate::hq_device::SERVICE
+                || service == crate::qualification_witness::SERVICE
+            {
                 return update_device_item(found, access_is_keyd_only, |item| {
                     modify(item, value).map_err(|status| {
                         format!("the keychain item could not be written ({status})")
@@ -1376,21 +1380,22 @@ pub mod keychain {
         }
 
         #[test]
-        fn device_custody_reads_never_repair_the_record() {
+        fn protected_custody_reads_never_repair_the_record() {
             use super::read_existing;
             let bytes = b"disposable enrolled record";
-            for trusted in [true, false] {
-                let result = read_existing(
-                    crate::hq_device::SERVICE,
-                    "managed-device",
-                    trusted,
-                    bytes,
-                    |_| panic!("device read triggered record replacement"),
-                );
-                if trusted {
-                    assert_eq!(result.unwrap(), bytes);
-                } else {
-                    assert!(result.unwrap_err().is_untrusted());
+            for service in [
+                crate::hq_device::SERVICE,
+                crate::qualification_witness::SERVICE,
+            ] {
+                for trusted in [true, false] {
+                    let result = read_existing(service, "managed-device", trusted, bytes, |_| {
+                        panic!("protected custody read triggered record replacement")
+                    });
+                    if trusted {
+                        assert_eq!(result.unwrap(), bytes);
+                    } else {
+                        assert!(result.unwrap_err().is_untrusted());
+                    }
                 }
             }
             let mut repaired = false;
@@ -1931,6 +1936,29 @@ pub mod tests {
                     Some(b"value".as_slice()),
                     "keyd still reads what it made"
                 );
+            }
+
+            // The qualification witness reference and accepted-policy ledger
+            // are create-only at enrollment and update-only thereafter. An
+            // untrusted replacement must never be repaired or read.
+            for account in ["secure-enclave-reference", "accepted-owner-policy"] {
+                let service = crate::qualification_witness::SERVICE;
+                assert!(items.insert(service, account, b"synthetic").unwrap());
+                assert!(items.trusts_only_keyd(service, account).unwrap());
+                items.write(service, account, b"updated").unwrap();
+                assert_eq!(
+                    items.read(service, account).unwrap().as_deref(),
+                    Some(b"updated".as_slice())
+                );
+                items.remove(service, account).unwrap();
+                keychain
+                    .add_generic_password(service, account, b"untrusted")
+                    .unwrap();
+                assert!(matches!(
+                    items.read(service, account),
+                    Err(StoreError::Untrusted { .. })
+                ));
+                assert!(items.write(service, account, b"replacement").is_err());
             }
 
             // An App key from before the lock is one any process in this

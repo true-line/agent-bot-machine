@@ -36,6 +36,10 @@ mod paths;
 mod pins;
 mod presence;
 mod qualification_policy;
+#[cfg(target_os = "macos")]
+mod qualification_witness;
+#[cfg(target_os = "macos")]
+mod qualification_witness_darwin;
 mod relay;
 mod server;
 #[cfg(target_os = "macos")]
@@ -151,6 +155,27 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("qualification-witness") {
+        #[cfg(target_os = "macos")]
+        return match args.as_slice() {
+            [_, mode] => match qualification_witness_darwin::command(mode) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("agent-bot-keyd: {error}");
+                    ExitCode::FAILURE
+                }
+            },
+            _ => {
+                eprintln!("agent-bot-keyd: usage: qualification-witness init|sign|pin");
+                ExitCode::FAILURE
+            }
+        };
+        #[cfg(not(target_os = "macos"))]
+        {
+            eprintln!("agent-bot-keyd: qualification witness custody requires macOS");
+            return ExitCode::FAILURE;
+        }
+    }
     if args.first().map(String::as_str) == Some("qualification-policy") {
         #[cfg(target_os = "macos")]
         return match qualification_policy::command(&args[1..]) {
