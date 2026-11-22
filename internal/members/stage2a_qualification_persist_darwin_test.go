@@ -296,7 +296,7 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 		bundle.FinishedFrameBase64URL != base64.RawURLEncoding.EncodeToString(session.finishedFrame) {
 		t.Fatal("stored bundle lost the exact Q finished frame")
 	}
-	// A post-sign Q transcript change must not create another valid bundle.
+	// A changed Q observation with stale transcript and finished digests is refused.
 	tampered := bytes.Replace(session.observationFrames, []byte(`"event_id":"event-1"`),
 		[]byte(`"event_id":"event-2"`), 1)
 	if bytes.Equal(tampered, session.observationFrames) {
@@ -306,6 +306,6 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 	if _, _, err := persistStage2aQualificationBundleV3(store, q, binding, session,
 		sourceSHA, testPlanSHA, "reviewed-cohort", []string{"/private/tmp"}, 650, 651,
 		reservation, finalization, stop, pre, host, post, policy, machinePub, now); err == nil {
-		t.Fatal("changed Q observation after host signing accepted")
+		t.Fatal("changed Q observation with stale digests accepted")
 	}
 }

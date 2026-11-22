@@ -64,7 +64,9 @@ It rechecks paired request/response frames and requires a stop record saying
 both dedicated runtime UIDs are idle before atomically storing the bundle.
 A synthetic test invokes the complete sink with a verified owner policy, host
 ES256 envelope, signed A pre/post records and a private A-owned store, then
-refuses a changed Q observation. That test grants no physical gate.
+refuses a changed Q observation with stale transcript digests. A coherent
+replacement transcript is not yet bound by the host signature. That test
+grants no physical gate.
 
 The separate `mm-qualification-verify-release --host-v3` command checks an
 already delivered v3 release entirely offline using the supplied owner root,
