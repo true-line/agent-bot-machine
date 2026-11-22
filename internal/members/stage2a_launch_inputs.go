@@ -138,6 +138,87 @@ func stage2aJSONSize(value any, max int) bool {
 	return err == nil && len(raw) <= max
 }
 
+// encoding/json replaces invalid UTF-8 in Go strings with U+FFFD. Validate
+// every free-form string before marshalling so distinct observed exec or host
+// bytes cannot collapse onto the owner's approved replacement character.
+// Host projections and effective config are parsed JSON values; custom
+// marshalers are refused because their source strings cannot be inspected.
+func stage2aValidJSONStrings(value any, depth int, nodes *int) bool {
+	if depth > 16 || *nodes >= 4096 {
+		return false
+	}
+	(*nodes)++
+	switch v := value.(type) {
+	case nil, bool, float32, float64,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64:
+		return true
+	case string:
+		return utf8.ValidString(v)
+	case json.Number:
+		return utf8.ValidString(string(v))
+	case json.RawMessage:
+		return stage2aStrictJSON(v) == nil
+	case []any:
+		for _, item := range v {
+			if !stage2aValidJSONStrings(item, depth+1, nodes) {
+				return false
+			}
+		}
+		return true
+	case []string:
+		for _, item := range v {
+			if !stage2aValidJSONStrings(item, depth+1, nodes) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		for key, item := range v {
+			if !utf8.ValidString(key) || !stage2aValidJSONStrings(item, depth+1, nodes) {
+				return false
+			}
+		}
+		return true
+	case map[string]string:
+		for key, item := range v {
+			if !utf8.ValidString(key) || !stage2aValidJSONStrings(item, depth+1, nodes) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func stage2aValidLaunchStrings(input Stage2aLaunchInputRecords) bool {
+	for _, arg := range input.Argv {
+		if !utf8.ValidString(arg) {
+			return false
+		}
+	}
+	for key, value := range input.Environment {
+		if !utf8.ValidString(key) || !utf8.ValidString(value) {
+			return false
+		}
+	}
+	images := input.SystemImages
+	if !utf8.ValidString(images.ProductVersion) || !utf8.ValidString(images.BuildVersion) ||
+		!utf8.ValidString(images.DarwinKernel) {
+		return false
+	}
+	for _, image := range images.Selected {
+		if !utf8.ValidString(image.SigningRequirement) {
+			return false
+		}
+	}
+	nodes := 0
+	return stage2aValidJSONStrings(input.HostProjection.Adapters, 0, &nodes) &&
+		stage2aValidJSONStrings(input.HostProjection.Installation, 0, &nodes) &&
+		stage2aValidJSONStrings(input.EffectiveConfig, 0, &nodes)
+}
+
 func stage2aLaunchFiles(files []Stage2aDefinitionRecord) (map[string]bool, error) {
 	invalid := errors.New("invalid Stage 2a launch-input file records")
 	if len(files) == 0 || len(files) > 64 {
@@ -208,6 +289,7 @@ func stage2aLaunchFiles(files []Stage2aDefinitionRecord) (map[string]bool, error
 func Stage2aLaunchInputDigest(input Stage2aLaunchInputRecords) (string, []byte, error) {
 	invalid := errors.New("invalid Stage 2a launch-input records")
 	digests, err := stage2aLaunchFiles(input.Files)
+	images := input.SystemImages
 	if err != nil || !stage2aAbsolutePath(input.SelectedCommand) ||
 		len(input.Argv) == 0 || len(input.Argv) > 128 || input.Argv[0] != input.SelectedCommand ||
 		len(input.Environment) > 256 || input.Environment == nil ||
@@ -216,6 +298,8 @@ func Stage2aLaunchInputDigest(input Stage2aLaunchInputRecords) (string, []byte, 
 		len(input.EffectiveConfig) > 256 || input.EffectiveConfig == nil ||
 		(input.EffectiveConfig["profile"] != "managed-protected" &&
 			input.EffectiveConfig["profile"] != "managed-cooperative") ||
+		len(images.Selected) == 0 || len(images.Selected) > 256 ||
+		!stage2aValidLaunchStrings(input) ||
 		!stage2aJSONSize(input.HostProjection.Adapters, 64<<10) ||
 		!stage2aJSONSize(input.HostProjection.Installation, 64<<10) ||
 		!stage2aJSONSize(input.EffectiveConfig, 64<<10) ||
@@ -234,11 +318,9 @@ func Stage2aLaunchInputDigest(input Stage2aLaunchInputRecords) (string, []byte, 
 			return "", nil, invalid
 		}
 	}
-	images := input.SystemImages
 	if len(images.ProductVersion) == 0 || len(images.ProductVersion) > 128 ||
 		len(images.BuildVersion) == 0 || len(images.BuildVersion) > 128 ||
 		len(images.DarwinKernel) == 0 || len(images.DarwinKernel) > 128 ||
-		len(images.Selected) == 0 || len(images.Selected) > 256 ||
 		!stage2aJSONSize(images, 512<<10) {
 		return "", nil, invalid
 	}

@@ -154,6 +154,52 @@ func TestStage2aLaunchInputRejectsIncompleteOrUnboundedObject(t *testing.T) {
 	}
 }
 
+func TestStage2aLaunchInputRejectsInvalidUTF8BeforeMarshal(t *testing.T) {
+	invalid := string([]byte{0xff})
+	replacement := "\ufffd"
+	for name, edit := range map[string]func(*Stage2aLaunchInputRecords, string){
+		"argv": func(v *Stage2aLaunchInputRecords, value string) {
+			v.Argv[1] = value
+		},
+		"environment": func(v *Stage2aLaunchInputRecords, value string) {
+			v.Environment["TMPDIR"] = value
+		},
+		"host projection key": func(v *Stage2aLaunchInputRecords, value string) {
+			v.HostProjection.Adapters = map[string]any{value: "fixture-adapter"}
+		},
+		"host projection nested value": func(v *Stage2aLaunchInputRecords, value string) {
+			v.HostProjection.Installation["nested"] = map[string]any{"items": []any{value}}
+		},
+		"effective config nested key": func(v *Stage2aLaunchInputRecords, value string) {
+			v.EffectiveConfig["nested"] = map[string]any{value: "same"}
+		},
+		"effective config nested value": func(v *Stage2aLaunchInputRecords, value string) {
+			v.EffectiveConfig["nested"] = map[string]any{"value": value}
+		},
+		"image signing requirement": func(v *Stage2aLaunchInputRecords, value string) {
+			v.SystemImages.Selected[0].SigningRequirement = value
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			observed := stage2aLaunchFixture(t)
+			approved := stage2aLaunchFixture(t)
+			edit(&observed, invalid)
+			edit(&approved, replacement)
+			observedJSON, observedErr := json.Marshal(observed)
+			approvedJSON, approvedErr := json.Marshal(approved)
+			if observedErr != nil || approvedErr != nil || string(observedJSON) != string(approvedJSON) {
+				t.Fatalf("fixture no longer demonstrates JSON replacement: observed=%v approved=%v", observedErr, approvedErr)
+			}
+			if _, _, err := Stage2aLaunchInputDigest(observed); err == nil {
+				t.Fatal("invalid UTF-8 source bytes were accepted")
+			}
+			if _, err := CheckStage2aApprovedLaunchInputs(observed, approved); err == nil {
+				t.Fatal("invalid observed source bytes matched approved replacement character")
+			}
+		})
+	}
+}
+
 func TestStage2aHostProjectionBindsRawFilesAndParsedValues(t *testing.T) {
 	input := stage2aLaunchFixture(t)
 	adapters := []byte(`{"selected":"fixture-adapter"}`)
