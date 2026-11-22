@@ -309,6 +309,28 @@ apply it to the child running as its provisioned harness account and verify
 the operation with distinct accounts. Track the design
 and its implementation status in [Platform #96](https://github.com/true-line/agent-bot-platform/pull/96).
 
+### Soul runner principal (Stage 2a follow-up)
+
+The owner selected one separate untrusted OS account per Soul installation in
+[Machine #630](https://github.com/true-line/agent-bot-machine/issues/630).
+These accounts are not the harness credential accounts above. Two installations
+of the same Soul still require distinct UIDs, GIDs, private homes and state.
+Machine's reviewed runner mapping rejects an HQ or harness UID/account, a
+duplicate installation identity, a shared runner principal, and an unpinned
+package. It also refuses protected macOS group names as account names, since
+each runner needs a private same-name primary group. A start header selects
+only the reviewed installation and carries a start instance and HQ epoch; it
+cannot supply a command, package path or UID.
+
+This mapping and header parser are contract checks for the forthcoming fixed
+launcher. They do not install a sudoers rule or make a production runner
+available. Packaged HQ still needs runner-specific admission and broker
+endpoints because its current 0600 admission socket is in the HQ account's
+private home. Machine must verify the immutable package/code inputs, live HQ
+start record, exact kernel UID and process group closure before the protected
+route can open. The two-account fixture remains component evidence; protected
+T03 requires the separately qualified physical host run.
+
 ### What is created
 
 For an HQ account `H` and each listed harness credential account `M`:
