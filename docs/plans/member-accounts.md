@@ -428,6 +428,18 @@ The separate qualification release attestation is issued after verification
 of the signed host report. Shape checks in keyd do not turn a referenced run
 into a verified one.
 
+The source-only `mm-qualification-preflight --host-v3` path requires an owner
+v3 policy, a release-pinned Machine public key, two distinct signed pre-sign
+execution completions and post-sign report commitments, both signed host
+envelopes, and the authenticated Souls build bundle. Its JSON binds the exact
+qualification, policy, report, envelope, completion, completed-run, Soul
+artifact, Souls build and source-tree digests for a future Statement builder.
+The record builders accept an A signer callback only after their caller has
+authenticated the physical observation, installed bytes and one-use
+lifecycle. There is no such production A caller or independent physical
+observer in this candidate. The preflight output alone grants no release or
+protected launch authority.
+
 On macOS, `members plan` without an account list retains the HQ-only plan.
 Pass `--hq-config` to plan one role for each distinct credential account in
 `harnesses.accounts`, or `--members` to supply the account names directly.

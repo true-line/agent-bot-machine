@@ -104,7 +104,7 @@ func TestReleasedReportsV3RequiresBothRunChains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, refs, _, _, err := qualificationObjectV3(qualificationRaw, now)
+	_, refs, claim, _, err := qualificationObjectV3(qualificationRaw, now)
 	if err != nil {
 		t.Fatal("qualification fixture and report refs", err)
 	}
@@ -133,6 +133,19 @@ func TestReleasedReportsV3RequiresBothRunChains(t *testing.T) {
 	}
 	if err := verify(release, qualificationRaw, runs[0], runs[1]); err != nil {
 		t.Fatal("valid synthetic released two-run set refused", err)
+	}
+	producer, err := VerifyHostReportsForReleaseV3(verified, qualificationRaw,
+		runs[0].report, runs[1].report, runs[0].execution, runs[1].execution,
+		runs[0].commitment, runs[1].commitment, VerifiedSoulsBuild{verified: true, build: claim}, machinePub, now)
+	if err != nil || producer.ProtectedCompletedRunSHA256 != refs.ProtectedReport.CompletedRun.SHA256 ||
+		producer.CooperativeCompletedRunSHA256 != refs.CooperativeReport.CompletedRun.SHA256 ||
+		producer.SoulsSourceTree != claim.SourceTree {
+		t.Fatal("valid synthetic producer preflight refused", err)
+	}
+	if _, err := VerifyHostReportsForReleaseV3(verified, qualificationRaw,
+		runs[0].report, runs[1].report, runs[0].execution, runs[0].execution,
+		runs[0].commitment, runs[1].commitment, VerifiedSoulsBuild{verified: true, build: claim}, machinePub, now); err == nil {
+		t.Fatal("producer preflight accepted reused completion")
 	}
 	if verify(release, qualificationRaw, runs[0], chain{report: runs[1].report, execution: runs[0].execution, commitment: runs[1].commitment}) == nil {
 		t.Fatal("reused protected completion accepted for cooperative run")
