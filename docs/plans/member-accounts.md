@@ -548,6 +548,17 @@ safe retirement before installing a production grant. Platform PDR-0052's
 replaces #111's shared credential-sidecar principal with this dedicated
 bridge; the approval does not install a grant or establish physical T03.
 
+Machine's Stage 2a definition record digest helper now validates the portable
+read-only `Contents/` record array and compares every entry with an exact
+owner-approved inventory before computing PDR-0102's domain-separated JCS
+measurement. Its synthetic five-file byte vector matches the Platform rule. This
+helper receives records, not opened descriptors; it does not establish the
+root-owned snapshot, prevent a path swap, validate a SoulLock claim, install
+the protected grant, or authorize a start. The future root producer must copy
+and measure through no-follow descriptors, publish and recheck an immutable
+snapshot, then bind both definition and launch-input measurements to a spent
+signed reservation and the later authenticated finalization.
+
 ### What is created
 
 For an HQ account `H` and each listed harness credential account `M`:
