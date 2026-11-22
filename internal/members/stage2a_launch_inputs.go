@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 )
@@ -71,7 +72,7 @@ func stage2aAbsolutePath(p string) bool {
 // JSON shape after a typed producer has serialized its object. This avoids
 // accepting a RawMessage hidden in an otherwise ordinary map value.
 func stage2aStrictJSON(raw []byte) error {
-	if len(raw) == 0 || len(raw) > 1<<20 || !json.Valid(raw) {
+	if len(raw) == 0 || len(raw) > 1<<20 || !utf8.Valid(raw) || !json.Valid(raw) {
 		return errors.New("invalid Stage 2a JSON")
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))

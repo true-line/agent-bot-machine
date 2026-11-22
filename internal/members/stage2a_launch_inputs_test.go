@@ -143,6 +143,9 @@ func TestStage2aLaunchInputRejectsIncompleteOrUnboundedObject(t *testing.T) {
 	if stage2aStrictJSON([]byte(`{"value":9007199254740993}`)) == nil {
 		t.Fatal("inexact JCS number accepted")
 	}
+	if stage2aStrictJSON([]byte{'{', '"', 'x', '"', ':', '"', 0xff, '"', '}'}) == nil {
+		t.Fatal("invalid UTF-8 JSON accepted")
+	}
 	// The object hash is domain separated from a plain JCS SHA-256.
 	_, canonical, _ := Stage2aLaunchInputDigest(base)
 	plain := sha256.Sum256(canonical)
