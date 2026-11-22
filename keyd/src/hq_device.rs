@@ -21,11 +21,15 @@ const WINDOW: u64 = 30;
 const MAX_RECENT: usize = 256;
 const HOST_REPORT_PURPOSE: &str = "agent-bot/qualification-host-report/v1";
 const HOST_REPORT_PURPOSE_V2: &str = "agent-bot/qualification-host-report/v2";
+const HOST_REPORT_PURPOSE_V3: &str = "agent-bot/qualification-host-report/v3";
 
 use crate::store::{keychain_read_interaction_denied, Items};
 
 pub(crate) trait Enclave {
     fn check_live(&self) -> Result<(), &'static str>;
+    fn custody_uid(&self) -> Result<u32, &'static str> {
+        Err(UNAVAILABLE)
+    }
     fn proof_time(&self) -> Result<u64, &'static str> {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -98,6 +102,7 @@ impl Request {
                     | "whoami"
                     | "qualification-host-report"
                     | "qualification-host-report-v2"
+                    | "qualification-host-report-v3"
             )
         {
             return Err(UNAVAILABLE);
@@ -146,7 +151,9 @@ impl Request {
             }
         }
         match self.option.as_str() {
-            "qualification-host-report" | "qualification-host-report-v2" => {
+            "qualification-host-report"
+            | "qualification-host-report-v2"
+            | "qualification-host-report-v3" => {
                 for (label, value) in [
                     ("report_base64url", &self.report_base64url),
                     ("host_id", &self.host_id),
@@ -289,6 +296,189 @@ fn bridge_id(value: &Value) -> bool {
             && s.bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
     })
+}
+
+fn bare_sha(value: &Value) -> bool {
+    value.as_str().is_some_and(|s| {
+        s.len() == 64
+            && s.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
+fn v3_renders(value: &Value) -> bool {
+    let Some(renders) = value.as_array() else {
+        return false;
+    };
+    let mut seen = std::collections::HashSet::new();
+    renders.iter().all(|value| {
+        value.as_str().is_some_and(|name| {
+            (1..=128).contains(&name.len())
+                && name
+                    .bytes()
+                    .next()
+                    .is_some_and(|b| b.is_ascii_alphanumeric())
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+                && seen.insert(name)
+        })
+    })
+}
+
+fn snapshot_identity(value: &Value) -> bool {
+    if !exact_fields(
+        value,
+        &[
+            "root_path",
+            "device",
+            "inode",
+            "generation",
+            "birthtime_ns",
+            "owner_uid",
+            "owner_gid",
+            "mode",
+        ],
+    ) || !report_path(&value["root_path"])
+        || value["root_path"]
+            .as_str()
+            .is_some_and(|s| s.contains('\\'))
+        || bridge_uid(&value["owner_uid"]).is_none_or(|uid| uid == 0)
+        || bridge_uid(&value["owner_gid"]).is_none_or(|gid| gid == 0)
+        || !["device", "inode", "generation", "birthtime_ns"]
+            .iter()
+            .all(|name| {
+                value[*name].as_str().is_some_and(|s| {
+                    !s.is_empty()
+                        && s.len() <= 20
+                        && (s == "0" || !s.starts_with('0'))
+                        && s.bytes().all(|b| b.is_ascii_digit())
+                        && s.parse::<u64>().is_ok()
+                })
+            })
+    {
+        return false;
+    }
+    value["mode"].as_str().is_some_and(|mode| {
+        mode.len() == 4
+            && mode.starts_with('0')
+            && mode.bytes().all(|b| (b'0'..=b'7').contains(&b))
+            && (mode.as_bytes()[1] - b'0') & 2 == 0
+            && (mode.as_bytes()[2] - b'0') & 2 == 0
+            && (mode.as_bytes()[3] - b'0') & 2 == 0
+    })
+}
+
+fn v3_binding_shape(report: &Value, custody_uid: u32, paired_epoch: &str) -> bool {
+    let binding = &report["measurement_binding"];
+    let run = &report["run_evidence"];
+    let snapshots = &binding["snapshots"];
+    if !exact_fields(
+        binding,
+        &[
+            "contract",
+            "kind",
+            "schema_version",
+            "installation_id",
+            "soul_id",
+            "start_id",
+            "launch_id",
+            "host_id",
+            "hq_epoch",
+            "plan_id",
+            "installed_plan_digest",
+            "package_sha256",
+            "soul_artifact_sha256",
+            "profile_in_force",
+            "claimed_definition_digest",
+            "definition_measurement",
+            "launch_input_measurement",
+            "snapshots",
+        ],
+    ) || binding["contract"] != "machine/v2"
+        || binding["kind"] != "stage2a-measurement-binding"
+        || binding["schema_version"] != 2
+        || !bridge_id(&binding["installation_id"])
+        || !bridge_soul_id(&binding["soul_id"])
+        || !bridge_id(&binding["host_id"])
+        || !bridge_id(&binding["plan_id"])
+        || !bare_sha(&binding["hq_epoch"])
+        || binding["hq_epoch"] != paired_epoch
+        || !bare_sha(&binding["installed_plan_digest"])
+        || !bare_sha(&binding["package_sha256"])
+        || !bare_sha(&binding["soul_artifact_sha256"])
+        || !report_sha(&binding["claimed_definition_digest"])
+        || !report_sha(&binding["definition_measurement"])
+        || !report_sha(&binding["launch_input_measurement"])
+        || binding["host_id"] != report["host"]["id"]
+        || binding["profile_in_force"] != report["profile_in_force"]
+        || ![
+            (&binding["start_id"], "st_"),
+            (&binding["launch_id"], "ln_"),
+        ]
+        .iter()
+        .all(|(value, prefix)| {
+            value.as_str().is_some_and(|s| {
+                s.strip_prefix(prefix).is_some_and(|hex| {
+                    hex.len() == 24
+                        && hex
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                })
+            })
+        })
+        || !exact_fields(snapshots, &["definition", "launch_inputs"])
+        || !snapshot_identity(&snapshots["definition"])
+        || !snapshot_identity(&snapshots["launch_inputs"])
+        || custody_uid < 400
+        || snapshots["definition"]["owner_uid"] != custody_uid
+        || snapshots["definition"]["owner_uid"] != snapshots["launch_inputs"]["owner_uid"]
+        || snapshots["definition"]["owner_gid"] != snapshots["launch_inputs"]["owner_gid"]
+        || snapshots["definition"]["mode"] != "0555"
+        || snapshots["launch_inputs"]["mode"] != "0555"
+        || snapshots["definition"]["root_path"] == snapshots["launch_inputs"]["root_path"]
+        || !exact_fields(
+            run,
+            &[
+                "reservation",
+                "finalization",
+                "challenge_sha256",
+                "execution_completion",
+            ],
+        )
+        || !report_evidence(&run["reservation"])
+        || !report_evidence(&run["finalization"])
+        || !report_evidence(&run["execution_completion"])
+        || !report_sha(&run["challenge_sha256"])
+        || run["reservation"]["uri"] == run["finalization"]["uri"]
+        || run["reservation"]["sha256"] == run["finalization"]["sha256"]
+        || run["execution_completion"]["uri"] == run["reservation"]["uri"]
+        || run["execution_completion"]["uri"] == run["finalization"]["uri"]
+        || run["execution_completion"]["sha256"] == run["reservation"]["sha256"]
+        || run["execution_completion"]["sha256"] == run["finalization"]["sha256"]
+    {
+        return false;
+    }
+    if report["profile_in_force"] == "managed-protected" {
+        let assignment = &report["bridge"]["assignment"];
+        report["bridge"]["principals"]["machine_uid"] == snapshots["definition"]["owner_uid"]
+            && report["bridge"]["principals"]["runner_private_gid"]
+                == snapshots["definition"]["owner_gid"]
+            && assignment["installation_id"] == binding["installation_id"]
+            && assignment["soul_id"] == binding["soul_id"]
+            && assignment["start_id"] == binding["start_id"]
+            && assignment["launch_id"] == binding["launch_id"]
+            && assignment["plan_id"] == binding["plan_id"]
+            && assignment["plan_digest"]
+                == format!(
+                    "sha256:{}",
+                    binding["installed_plan_digest"].as_str().unwrap_or("")
+                )
+            && assignment["machine_reservation_sha256"] == run["reservation"]["sha256"]
+            && assignment["machine_observation"] == report["soul_start"]["machine_observation"]
+    } else {
+        report["profile_in_force"] == "managed-cooperative"
+    }
 }
 
 fn bridge_soul_id(value: &Value) -> bool {
@@ -522,10 +712,35 @@ fn bridge_shape(value: &Value) -> bool {
 }
 
 fn fixed_host_report(request: &Request) -> Result<Vec<u8>, &'static str> {
-    fixed_host_report_version(request, 1)
+    fixed_host_report_version(request, 1, 0)
 }
 
-fn fixed_host_report_version(request: &Request, version: u64) -> Result<Vec<u8>, &'static str> {
+// The Machine verifier accepts the ASCII, integer-only JCS subset. Serde's
+// JSON writer preserves 1.0 as 1.0, while JCS would emit 1. Limit numbers to
+// exact IEEE-754 integers before comparing the exact serialized bytes.
+fn integer_only_json(value: &Value) -> bool {
+    const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+    match value {
+        Value::Number(number) => {
+            number
+                .as_i64()
+                .is_some_and(|n| n.unsigned_abs() <= MAX_SAFE_INTEGER)
+                || number.as_u64().is_some_and(|n| n <= MAX_SAFE_INTEGER)
+        }
+        Value::Array(values) => values.iter().all(integer_only_json),
+        Value::Object(values) => values.values().all(integer_only_json),
+        _ => true,
+    }
+}
+
+fn fixed_host_report_version(
+    request: &Request,
+    version: u64,
+    custody_uid: u32,
+) -> Result<Vec<u8>, &'static str> {
+    if !(1..=3).contains(&version) {
+        return Err(UNAVAILABLE);
+    }
     let encoded = request.report_base64url.as_ref().ok_or(UNAVAILABLE)?;
     let raw = URL.decode(encoded).map_err(|_| UNAVAILABLE)?;
     if raw.is_empty() || raw.len() > 1024 * 1024 || URL.encode(&raw) != *encoded || !raw.is_ascii()
@@ -533,7 +748,9 @@ fn fixed_host_report_version(request: &Request, version: u64) -> Result<Vec<u8>,
         return Err(UNAVAILABLE);
     }
     let report: Value = serde_json::from_slice(&raw).map_err(|_| UNAVAILABLE)?;
-    if serde_json::to_vec(&report).map_err(|_| UNAVAILABLE)? != raw {
+    if (version == 3 && !integer_only_json(&report))
+        || serde_json::to_vec(&report).map_err(|_| UNAVAILABLE)? != raw
+    {
         return Err(UNAVAILABLE);
     }
     let mut keys = vec![
@@ -555,8 +772,11 @@ fn fixed_host_report_version(request: &Request, version: u64) -> Result<Vec<u8>,
         "soul_start",
         "suite_revision",
     ];
-    if version == 2 {
+    if version == 2 || (version == 3 && report["profile_in_force"] == "managed-protected") {
         keys.push("bridge");
+    }
+    if version == 3 {
+        keys.extend(["measurement_binding", "run_evidence"]);
     }
     let fields = report.as_object().ok_or(UNAVAILABLE)?;
     if fields.len() != keys.len()
@@ -629,6 +849,7 @@ fn fixed_host_report_version(request: &Request, version: u64) -> Result<Vec<u8>,
         || !report["soul_start"]["machine_observation"].is_object()
         || !report["soul_start"]["hq_launch_receipt"].is_object()
         || !report["renders"].is_array()
+        || (version == 3 && !v3_renders(&report["renders"]))
         || !report["evaluation_cells"].as_array().is_some_and(|cells| {
             !cells.is_empty()
                 && cells.iter().all(|cell| {
@@ -704,12 +925,15 @@ fn fixed_host_report_version(request: &Request, version: u64) -> Result<Vec<u8>,
     {
         return Err(UNAVAILABLE);
     }
-    if version == 2
+    if (version == 2 || (version == 3 && report["profile_in_force"] == "managed-protected"))
         && (report["profile_in_force"] != "managed-protected"
             || !bridge_shape(&report["bridge"])
             || report["bridge"]["assignment"]["machine_observation"]
                 != report["soul_start"]["machine_observation"])
     {
+        return Err(UNAVAILABLE);
+    }
+    if version == 3 && !v3_binding_shape(&report, custody_uid, &request.hq_epoch) {
         return Err(UNAVAILABLE);
     }
     Ok(raw)
@@ -1171,7 +1395,7 @@ fn execute(
             });
         }
         "qualification-host-report-v2" => {
-            let raw = fixed_host_report_version(&request, 2)?;
+            let raw = fixed_host_report_version(&request, 2, 0)?;
             let mut message = HOST_REPORT_PURPOSE_V2.as_bytes().to_vec();
             message.push(0);
             message.extend_from_slice(&raw);
@@ -1179,6 +1403,22 @@ fn execute(
             result = json!({
                 "schema_version": 2,
                 "purpose": HOST_REPORT_PURPOSE_V2,
+                "host_id": request.host_id.as_ref().ok_or(UNAVAILABLE)?,
+                "signer_id": request.signer_id.as_ref().ok_or(UNAVAILABLE)?,
+                "report_sha256": format!("sha256:{}", digest(&raw)),
+                "report_base64url": URL.encode(&raw),
+                "signature_base64url": URL.encode(signature),
+            });
+        }
+        "qualification-host-report-v3" => {
+            let raw = fixed_host_report_version(&request, 3, provider.custody_uid()?)?;
+            let mut message = HOST_REPORT_PURPOSE_V3.as_bytes().to_vec();
+            message.push(0);
+            message.extend_from_slice(&raw);
+            let signature = provider.sign(&reference, &message)?;
+            result = json!({
+                "schema_version": 3,
+                "purpose": HOST_REPORT_PURPOSE_V3,
                 "host_id": request.host_id.as_ref().ok_or(UNAVAILABLE)?,
                 "signer_id": request.signer_id.as_ref().ok_or(UNAVAILABLE)?,
                 "report_sha256": format!("sha256:{}", digest(&raw)),

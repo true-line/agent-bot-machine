@@ -10,6 +10,31 @@ cannot select this purpose. Until Machine independently observes the physical
 run, binds a completed-run receipt and verifies owner-signed designation,
 there is no public route to this operation and protected launch stays closed.
 
+The local `qualification-policy sign-v3` command is a separate, owner-present
+policy ceremony under the secure admin account. The pilot checks the exact
+Soul/artifact/definition mapping and artifact revocation. Frozen `.soul`
+workflow, receipt and additional revocations are a default-off future
+provenance mode. It also checks shared
+revision state and 3,600-second snapshot freshness before signing the fixed
+v3 policy purpose. It does not make the host-report signing route available:
+Machine must first authenticate the immutable completed run, the designated
+host signer in owner policy, the measured candidate and installed inputs, and
+the physical results. The separate qualification release attestation is issued
+only after the signed host report is verified.
+
+The uncalled `qualification-host-report-v3` paired-Machine request has a
+distinct `agent-bot/qualification-host-report/v3` purpose. keyd accepts at most
+2 MiB for the Machine-signed request, requires at most 1 MiB of exact canonical
+ASCII report bytes in its safe-integer JCS subset, validates the v3 measurement
+binding and run references, and signs
+`ASCII(purpose) || 0x00 || exact report bytes` with the same secure-admin Secure
+Enclave P-256 custody. It returns a schema-version-3 ES256 envelope. This
+request shape does **not** authenticate the referenced Machine completed run,
+owner policy, measured inputs or physical results by itself. There is no public
+Machine caller until those records are independently verified and bound to the
+exact report. The signed report is then an input to the separate release
+attestation; protected launch stays closed until that attestation verifies.
+
 A native MCP server that holds souls' GitHub App keys
 ([agent-bot-identity #397](https://github.com/qwts/agent-bot-identity/issues/397)).
 agent-bot-machine builds it and signs it with the agent-machine Developer ID.
