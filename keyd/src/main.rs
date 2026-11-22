@@ -35,6 +35,7 @@ mod ids;
 mod paths;
 mod pins;
 mod presence;
+mod qualification_policy;
 mod relay;
 mod server;
 #[cfg(target_os = "macos")]
@@ -150,6 +151,21 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("qualification-policy") {
+        #[cfg(target_os = "macos")]
+        return match qualification_policy::command(&args[1..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("agent-bot-keyd: {error}");
+                ExitCode::FAILURE
+            }
+        };
+        #[cfg(not(target_os = "macos"))]
+        {
+            eprintln!("agent-bot-keyd: qualification policy custody requires macOS");
+            return ExitCode::FAILURE;
+        }
+    }
     if matches!(
         args.first().map(String::as_str),
         Some("hq-device" | "hq-device-init")
