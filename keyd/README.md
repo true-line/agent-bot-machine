@@ -1,5 +1,15 @@
 # agent-bot-keyd
 
+The paired Machine may use the fixed `qualification-host-report` custody
+purpose after its independent one-use qualification runner has completed.
+keyd verifies the Machine-signed request and fixed canonical report shape,
+then signs `agent-bot/qualification-host-report/v1`, a zero byte and the exact
+report bytes with its administrator-account Secure Enclave P-256 key. It
+returns an ES256 `r || s` signature envelope. Ordinary HQ device requests
+cannot select this purpose. Until Machine independently observes the physical
+run, binds a completed-run receipt and verifies owner-signed designation,
+there is no public route to this operation and protected launch stays closed.
+
 A native MCP server that holds souls' GitHub App keys
 ([agent-bot-identity #397](https://github.com/qwts/agent-bot-identity/issues/397)).
 agent-bot-machine builds it and signs it with the agent-machine Developer ID.

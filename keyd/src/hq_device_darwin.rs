@@ -297,13 +297,16 @@ pub(crate) fn command(init: bool) -> Result<(), &'static str> {
     let mut raw = Vec::new();
     std::io::stdin()
         .lock()
-        .take(16385)
+        .take(2 * 1024 * 1024 + 1)
         .read_to_end(&mut raw)
         .map_err(|_| UNAVAILABLE)?;
-    if raw.len() > 16384 {
+    if raw.len() > 2 * 1024 * 1024 {
         return Err(UNAVAILABLE);
     }
-    let request = serde_json::from_slice(&raw).map_err(|_| UNAVAILABLE)?;
+    let request: hq_device::Request = serde_json::from_slice(&raw).map_err(|_| UNAVAILABLE)?;
+    if request.option != "qualification-host-report" && raw.len() > 16384 {
+        return Err(UNAVAILABLE);
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| UNAVAILABLE)?;
