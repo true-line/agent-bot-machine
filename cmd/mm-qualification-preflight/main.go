@@ -6,6 +6,7 @@ package main
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -80,11 +81,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	result := struct {
 		SchemaVersion      int    `json:"schema_version"`
+		QualificationSHA   string `json:"qualification_sha256"`
 		ProtectedProfile   string `json:"protected_profile"`
 		ProtectedSHA       string `json:"protected_report_sha256"`
 		CooperativeProfile string `json:"cooperative_profile"`
 		CooperativeSHA     string `json:"cooperative_report_sha256"`
-	}{1, "managed-protected", protectedSHA, "managed-cooperative", cooperativeSHA}
+	}{1, "", "managed-protected", protectedSHA, "managed-cooperative", cooperativeSHA}
+	qualificationDigest := sha256.Sum256(qualificationJSON)
+	result.QualificationSHA = "sha256:" + hex.EncodeToString(qualificationDigest[:])
 	if json.NewEncoder(stdout).Encode(result) != nil {
 		fmt.Fprintln(stderr, qualification.ErrUnqualified)
 		return 1
