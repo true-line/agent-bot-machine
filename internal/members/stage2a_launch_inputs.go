@@ -242,12 +242,15 @@ func Stage2aLaunchInputDigest(input Stage2aLaunchInputRecords) (string, []byte, 
 		return "", nil, invalid
 	}
 	previous := ""
+	imageAliases := make(map[string]bool, len(images.Selected))
 	for i, image := range images.Selected {
 		if !stage2aAbsolutePath(image.Path) || (i != 0 && image.Path <= previous) ||
+			imageAliases[strings.ToLower(image.Path)] ||
 			len(image.SigningRequirement) == 0 || len(image.SigningRequirement) > 4096 ||
 			!stage2aCDHash.MatchString(image.CDHash) {
 			return "", nil, invalid
 		}
+		imageAliases[strings.ToLower(image.Path)] = true
 		previous = image.Path
 	}
 	for _, arg := range []string{"machine", "hq", "souls", "bridge", "comms_broker", "adapter", "harness", "test_provider"} {

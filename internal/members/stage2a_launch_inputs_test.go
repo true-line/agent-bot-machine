@@ -116,6 +116,11 @@ func TestStage2aLaunchInputRejectsIncompleteOrUnboundedObject(t *testing.T) {
 		"bridge-only proof":     func(v *Stage2aLaunchInputRecords) { v.Environment["B_ONLY_TOKEN"] = "synthetic" },
 		"unsupported profile":   func(v *Stage2aLaunchInputRecords) { v.EffectiveConfig["profile"] = "ordinary" },
 		"missing image signing": func(v *Stage2aLaunchInputRecords) { v.SystemImages.Selected[0].SigningRequirement = "" },
+		"image path case alias": func(v *Stage2aLaunchInputRecords) {
+			alias := v.SystemImages.Selected[0]
+			alias.Path = strings.ToUpper(alias.Path)
+			v.SystemImages.Selected = append([]Stage2aSystemImage{alias}, v.SystemImages.Selected...)
+		},
 		"duplicate host key": func(v *Stage2aLaunchInputRecords) {
 			v.HostProjection.Installation["raw"] = json.RawMessage(`{"x":1,"x":2}`)
 		},
