@@ -792,6 +792,15 @@ active claim and role processes still match. The local `stage2a-provider`
 fixture reveals its reviewed response only once after finalization and a
 durable spend. It does not establish physical T03.
 
+Each finalized `stage2a-live` response carries an A-signed, at most five
+second lease envelope, bound to the spent reservation, signed B finalization,
+bind receipt, exact R/B kernel PID and start identities, and an increasing
+sequence. The paired HQ relays that envelope over R's assigned admission
+socket while ACP uses the separate stdin stream. R must verify the enrolled A
+key, selectors, process identity, sequence and deadline, and stop its stock
+child on missing, stale or rejected renewal. An A restart loses the active
+in-memory reservation and cannot resume signing the already spent start.
+
 The owner-approved launch inputs also contain a bounded
 `effective_config.adapter_child_env` object for the stock Claude ACP child.
 The install plan compares its model, HTTP host, exact Messages query and test
@@ -806,6 +815,17 @@ fixed three-variable launcher environment. This measured object alone does
 not start the stock client. The reviewed R-owned child argv, B-ready gate,
 HQ ACP stream and stop observation must be connected before a protected T03
 run can be claimed; the generic shared-account C launcher is ineligible.
+
+A separate measured `effective_config.adapter_child_sandbox` pins the
+root-installed child Seatbelt profile and its frozen inventory bytes. A
+Machine-granted child launch must invoke the one reviewed adapter executable
+through fixed `sandbox-exec` arguments using the signed B relay path. The
+child profile permits only that relay; it denies HQ admission, the member
+socket, siblings and direct IP. Machine must supervise its separate child
+process group and verify cutoff. On local macOS 27, a second `sandbox-exec`
+inside the outer R sandbox failed with `sandbox_apply: Operation not permitted`,
+so the R process cannot spawn this profile itself. The standalone child profile
+fixture tests path denials; only a separate installed R child can prove T03.
 
 `stage2a-stop` waits for both dedicated role UIDs to be kernel idle, revokes
 the B proof, retires the active claim, then signs and atomically publishes a

@@ -94,7 +94,12 @@ func TestStage2aReserveBoundHQOnly(t *testing.T) {
 		PlanID: proof.PlanID, PlanDigest: proof.PlanDigest, HQEpoch: proof.HQEpoch}
 	selectorRaw, _ := json.Marshal(selectors)
 	for _, verb := range []string{stage2aStopVerb, stage2aLiveVerb} {
-		candidate := Request{Verb: verb, Stage2aRequest: base64.RawURLEncoding.EncodeToString(selectorRaw),
+		requestRaw := selectorRaw
+		if verb == stage2aLiveVerb {
+			requestRaw, _ = json.Marshal(members.Stage2aLiveRequest{Stage2aStopRequest: selectors,
+				Challenge: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("x", 32)))})
+		}
+		candidate := Request{Verb: verb, Stage2aRequest: base64.RawURLEncoding.EncodeToString(requestRaw),
 			Timestamp: time.Now().Unix(), Nonce: verb + "-1"}
 		if _, id, _ := (&Gate{Pairing: pairing}).verify(777, signed(t, key, candidate)); id != "" {
 			t.Fatalf("paired %s request refused: %q", verb, id)

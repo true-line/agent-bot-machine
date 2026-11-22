@@ -12,7 +12,7 @@ import (
 // It is a fixture result, not physical provider traffic or T03 evidence.
 func (s *Stage2aService) Provider(hqUID int, epoch string, q Stage2aProviderRequest) (Stage2aProviderReply, error) {
 	var reply Stage2aProviderReply
-	live, err := s.Live(hqUID, epoch, q.Stage2aStopRequest)
+	live, err := s.live(hqUID, epoch, q.Stage2aStopRequest, "")
 	if err != nil || live.Phase != "finalized" || live.BindReceiptSHA256 != q.BindReceiptSHA256 ||
 		live.FinalizedLiveExpiresAt <= time.Now().UnixMilli() || live.RunnerPID <= 1 {
 		return reply, errStage2aReservationAuthority

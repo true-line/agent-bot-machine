@@ -40,7 +40,7 @@ type Request struct {
 	stage2aPrepareB  members.Stage2aPrepareBRequest
 	stage2aStop      members.Stage2aStopRequest
 	stage2aFinalizeB members.Stage2aFinalizeBRequest
-	stage2aLive      members.Stage2aStopRequest
+	stage2aLive      members.Stage2aLiveRequest
 	stage2aProvider  members.Stage2aProviderRequest
 	stage2aLookup    members.Stage2aLookupRequest
 	stage2aEpoch     string

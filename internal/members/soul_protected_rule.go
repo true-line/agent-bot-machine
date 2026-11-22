@@ -10,6 +10,7 @@ const (
 	SoulLauncher      = launchRuntimeDir + "/soul-launch"
 	SoulRunnerSandbox = launchRuntimeDir + "/soul-runner-egress.sb"
 	SoulBridgeSandbox = launchRuntimeDir + "/soul-bridge-egress.sb"
+	SoulChildSandbox  = launchRuntimeDir + "/soul-child-egress.sb"
 	SoulBridgeBinary  = launchRuntimeDir + "/soul-bridge"
 	SoulLaunchRule    = "/private/etc/sudoers.d/agent-bot-hq-soul-launch"
 )

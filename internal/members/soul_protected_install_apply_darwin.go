@@ -225,6 +225,7 @@ func stage2aInstallFiles(s Saved, request *SoulProtectedLaunchInstall, p *stage2
 	}{
 		{SoulAuthorityPin, key, 0444}, {SoulLauncher, manager, 0755},
 		{SoulRunnerSandbox, soulRunnerProfile, 0444}, {SoulBridgeSandbox, soulBridgeProfile, 0444},
+		{SoulChildSandbox, soulChildProfile, 0444},
 		{SoulBridgeBinary, bridgeBinary, 0755},
 		{p.ArtifactPath, artifact, 0444},
 	} {

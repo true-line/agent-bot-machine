@@ -18,7 +18,24 @@ func stage2aAdapterChildEnv(input Stage2aLaunchInputRecords, qualification *Stag
 		return invalid
 	}
 	raw, ok := input.EffectiveConfig["adapter_child_env"].(map[string]any)
-	if !ok || len(raw) != 8 || len(input.EffectiveConfig) != 3 {
+	if !ok || len(raw) != 8 || len(input.EffectiveConfig) != 4 {
+		return invalid
+	}
+	sandbox, ok := input.EffectiveConfig["adapter_child_sandbox"].(map[string]any)
+	if !ok || len(sandbox) != 2 || sandbox["path"] != SoulChildSandbox ||
+		sandbox["sha256"] != "sha256:"+harnessSHA(soulChildProfile) ||
+		!stage2aSystemImageSelected(input, "/usr/bin/sandbox-exec") {
+		return invalid
+	}
+	measuredSandbox := false
+	for _, file := range input.Files {
+		if file.Path == "policy/soul-child-egress.sb" && file.Kind == "regular" &&
+			file.Mode == "0444" && "sha256:"+file.SHA256 == sandbox["sha256"] &&
+			file.Size != nil && *file.Size == uint64(len(soulChildProfile)) {
+			measuredSandbox = true
+		}
+	}
+	if !measuredSandbox {
 		return invalid
 	}
 	adapterID, adapterOK := input.EffectiveConfig["adapter_id"].(string)

@@ -11,3 +11,6 @@ var soulRunnerProfile []byte
 
 //go:embed darwin/soul-bridge-egress.sb
 var soulBridgeProfile []byte
+
+//go:embed darwin/soul-child-egress.sb
+var soulChildProfile []byte

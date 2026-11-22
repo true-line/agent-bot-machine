@@ -42,6 +42,7 @@ type stage2aLiveReservation struct {
 	runnerPID, bridgePID int
 	runnerProcess        soulKernelProcessSnapshot
 	bridgeProcess        soulKernelProcessSnapshot
+	liveSequence         uint64
 }
 
 func NewStage2aService(key ed25519.PrivateKey) *Stage2aService {

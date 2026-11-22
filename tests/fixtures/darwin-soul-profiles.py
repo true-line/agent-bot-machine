@@ -1,4 +1,4 @@
-"""Native network sandbox fixture for the two proposed Soul process roles.
+"""Native network sandbox fixture for the protected Soul process roles.
 
 Both children run under this test account. This proves path rules only, not
 kernel UID separation, an installed launch grant, broker authentication or T03.
@@ -20,6 +20,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "internal/members/darwin/soul-runner-egress.sb"
 BRIDGE = ROOT / "internal/members/darwin/soul-bridge-egress.sb"
+CHILD = ROOT / "internal/members/darwin/soul-child-egress.sb"
 REQUEST = b"GET fixture\n"
 REPLY = b"fixture ready\n"
 
@@ -103,6 +104,13 @@ def runner_child(port4, port6, broker, admission, member, sibling, relay, other_
             raise AssertionError("runner could not reach its assigned relay")
 
 
+def stock_child(port4, port6, broker, admission, member, sibling, relay, other_bind):
+    check_denials(port4, port6, broker, admission, member, sibling)
+    denied_bind(socket.AF_UNIX, other_bind)
+    if exchange(socket.AF_UNIX, relay) != REPLY:
+        raise AssertionError("stock child could not reach its assigned B relay")
+
+
 class Listener:
     def __init__(self, family, address):
         self.socket = socket.socket(family, socket.SOCK_STREAM)
@@ -144,6 +152,33 @@ class Listener:
 
 @unittest.skipUnless(sys.platform == "darwin", "requires the Darwin process sandbox")
 class DarwinSoulProfiles(unittest.TestCase):
+    def test_stock_child_profile_only_reaches_assigned_relay(self):
+        with tempfile.TemporaryDirectory(dir="/private/tmp", prefix="soul child egress-") as tmp, ExitStack() as stack:
+            def listen(family, address):
+                service = Listener(family, address)
+                stack.callback(service.close)
+                return service
+
+            v4 = listen(socket.AF_INET, ("127.0.0.1", 0))
+            v6 = listen(socket.AF_INET6, ("::1", 0))
+            broker = listen(socket.AF_UNIX, str(Path(tmp) / "broker.sock"))
+            admission = listen(socket.AF_UNIX, str(Path(tmp) / "admission.sock"))
+            member = listen(socket.AF_UNIX, str(Path(tmp) / "member.sock"))
+            sibling = listen(socket.AF_UNIX, str(Path(tmp) / "sibling.sock"))
+            relay = listen(socket.AF_UNIX, str(Path(tmp) / "relay.sock"))
+            other_bind = str(Path(tmp) / "other-bind.sock")
+            command = [
+                "/usr/bin/sandbox-exec", "-D", "RELAY_SOCKET=" + relay.address,
+                "-f", str(CHILD),
+                sys.executable, "-I", str(Path(__file__).resolve()), "--child",
+                str(v4.address[1]), str(v6.address[1]), broker.address, admission.address,
+                member.address, sibling.address, relay.address, other_bind,
+            ]
+            subprocess.run(command, check=True, timeout=10)
+            self.assertEqual((broker.count, admission.count, member.count, sibling.count,
+                              relay.count, v4.count, v6.count), (0, 0, 0, 0, 1, 0, 0))
+            self.assertFalse(Path(other_bind).exists())
+
     def test_assigned_socket_symlink_replacement_is_refused(self):
         with tempfile.TemporaryDirectory(dir="/private/tmp", prefix="soul replacement-") as tmp, ExitStack() as stack:
             sibling = Listener(socket.AF_UNIX, str(Path(tmp) / "sibling.sock"))
@@ -219,6 +254,8 @@ if __name__ == "__main__":
         bridge_child(*sys.argv[2:])
     elif sys.argv[1:2] == ["--runner"]:
         runner_child(*sys.argv[2:])
+    elif sys.argv[1:2] == ["--child"]:
+        stock_child(*sys.argv[2:])
     elif sys.argv[1:2] == ["--replacement"]:
         sys.stdin.readline()
         denied_connect(socket.AF_UNIX, sys.argv[2])

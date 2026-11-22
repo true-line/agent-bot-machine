@@ -1,0 +1,6 @@
+(version 1)
+; The stock ACP child inherits R's outer sandbox and may reach only B's
+; per-start relay. HQ admission belongs to the supervising Souls process.
+(allow default)
+(deny network*)
+(allow network-outbound (remote unix-socket (path-literal (param "RELAY_SOCKET"))))

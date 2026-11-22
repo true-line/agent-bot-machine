@@ -90,16 +90,20 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 		req.stage2aPrepareB = parsed
 		return "", ""
 	}
-	if req.Verb == stage2aStopVerb || req.Verb == stage2aLiveVerb {
+	if req.Verb == stage2aStopVerb {
 		parsed, err := members.ParseStage2aStopRequest(decoded)
 		if err != nil {
 			return diag.DaemonUndeclared, "invalid Stage 2a stop request"
 		}
-		if req.Verb == stage2aStopVerb {
-			req.stage2aStop = parsed
-		} else {
-			req.stage2aLive = parsed
+		req.stage2aStop = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aLiveVerb {
+		parsed, err := members.ParseStage2aLiveRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a Live request"
 		}
+		req.stage2aLive = parsed
 		return "", ""
 	}
 	if req.Verb == stage2aFinalizeBVerb {

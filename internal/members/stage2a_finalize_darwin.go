@@ -97,7 +97,16 @@ func (s *Stage2aService) FinalizeB(hqUID int, epoch string, q Stage2aFinalizeBRe
 // Live is a paired, short lease check. After finalization it can renew beyond
 // the launch lease only while the installed policy, active claim, B bind claim,
 // and kernel role processes still match. Stop removes the active claim.
-func (s *Stage2aService) Live(hqUID int, epoch string, q Stage2aStopRequest) (Stage2aLiveReply, error) {
+func (s *Stage2aService) Live(hqUID int, epoch string, q Stage2aLiveRequest) (Stage2aLiveReply, error) {
+	if !validStage2aLiveChallenge(q.Challenge) {
+		return Stage2aLiveReply{}, errStage2aReservationAuthority
+	}
+	return s.live(hqUID, epoch, q.Stage2aStopRequest, q.Challenge)
+}
+
+// Provider's A-internal status check does not issue an R lease. Only the
+// paired Live request with a fresh R challenge can receive a signed renewal.
+func (s *Stage2aService) live(hqUID int, epoch string, q Stage2aStopRequest, challenge string) (Stage2aLiveReply, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var reply Stage2aLiveReply
@@ -141,6 +150,7 @@ func (s *Stage2aService) Live(hqUID int, epoch string, q Stage2aStopRequest) (St
 		return reply, nil
 	}
 	if r.bridgePID <= 1 || r.bindReceiptSHA256 == "" ||
+		r.runnerPID <= 1 || r.runnerProcess.PID != r.runnerPID || r.bridgeProcess.PID != r.bridgePID ||
 		stage2aCheckSpentClaim(dir, ".stage2a-b-bind-"+soulStartClaimName(q.InstallationID, q.StartID), store.uid, store.gid) != nil {
 		return Stage2aLiveReply{}, errStage2aReservationAuthority
 	}
@@ -148,16 +158,60 @@ func (s *Stage2aService) Live(hqUID int, epoch string, q Stage2aStopRequest) (St
 	if stage2aCheckFinalizationFile(dir, finalName, store.uid, store.gid, r.finalizationEnvelope) != nil {
 		return Stage2aLiveReply{}, errStage2aReservationAuthority
 	}
+	issued := time.Now()
 	approvedUntil, _ := time.Parse(time.RFC3339Nano, p.ApprovedUntil)
-	lease := minStage2aTime(approvedUntil, time.Now().Add(stage2aLiveLease))
-	if !lease.After(time.Now()) {
+	lease := minStage2aTime(approvedUntil, issued.Add(stage2aLiveLease))
+	if !lease.After(issued) || lease.UnixMilli() <= issued.UnixMilli() ||
+		(challenge != "" && r.liveSequence >= (1<<53)-1) {
 		return Stage2aLiveReply{}, errStage2aReservationExpired
 	}
 	reply.Phase = "finalized"
 	reply.FinalizationSHA256 = stage2aReservationSHA256(r.finalizationEnvelope)
 	reply.BindReceiptSHA256 = r.bindReceiptSHA256
 	reply.FinalizedLiveExpiresAt = lease.UnixMilli()
+	if challenge == "" {
+		return reply, nil
+	}
+	sequence := r.liveSequence + 1
+	envelope, err := signStage2aLiveLease(q, challenge, r, sequence, issued, lease,
+		s.key.Public().(ed25519.PublicKey), s.sign)
+	if err != nil || len(envelope) == 0 || len(envelope) > 8192 || !time.Now().Before(lease) {
+		return Stage2aLiveReply{}, errStage2aReservationAuthority
+	}
+	r.liveSequence = sequence
+	reply.LeaseEnvelopeBase64URL = base64.RawURLEncoding.EncodeToString(envelope)
+	reply.LeaseSHA256 = stage2aReservationSHA256(envelope)
+	reply.LeaseSequence = sequence
 	return reply, nil
+}
+
+func signStage2aLiveLease(q Stage2aStopRequest, challenge string, r *stage2aLiveReservation,
+	sequence uint64, issued, expires time.Time, key ed25519.PublicKey,
+	sign func([]byte) ([]byte, error)) ([]byte, error) {
+	if r == nil || !validStage2aStopRequest(q) || r.digest != q.ReservationSHA256 ||
+		!validStage2aLiveChallenge(challenge) || sequence == 0 || sequence > (1<<53)-1 ||
+		sequence != r.liveSequence+1 || r.runnerPID <= 1 || r.bridgePID <= 1 ||
+		r.runnerProcess.PID != r.runnerPID || r.bridgeProcess.PID != r.bridgePID ||
+		r.runnerProcess.StartSeconds <= 0 || r.bridgeProcess.StartSeconds <= 0 ||
+		r.runnerProcess.EffectiveUID == 0 || r.bridgeProcess.EffectiveUID == 0 ||
+		!stage2aPrefixedDigest.MatchString(r.bindReceiptSHA256) || len(r.finalizationEnvelope) == 0 ||
+		!expires.After(issued) || expires.Sub(issued) > stage2aLiveLease ||
+		expires.UnixMilli() <= issued.UnixMilli() {
+		return nil, errStage2aReservationAuthority
+	}
+	payload := Stage2aLiveLeasePayload{
+		Schema: "agent-bot-machine/stage2a-live-lease/v1", Stage2aStopRequest: q,
+		FinalizationSHA256: stage2aReservationSHA256(r.finalizationEnvelope),
+		BindReceiptSHA256:  r.bindReceiptSHA256, Challenge: challenge,
+		Runner: stage2aLiveRoleIdentity(r.runnerProcess), Bridge: stage2aLiveRoleIdentity(r.bridgeProcess),
+		Sequence: sequence, IssuedAtMS: issued.UnixMilli(), ExpiresAtMS: expires.UnixMilli(),
+	}
+	return signStage2aEnvelope(payload, 1, Stage2aLiveLeasePurpose, key, sign)
+}
+
+func stage2aLiveRoleIdentity(proc soulKernelProcessSnapshot) Stage2aLiveRoleIdentity {
+	return Stage2aLiveRoleIdentity{PID: proc.PID, UID: proc.EffectiveUID,
+		GID: proc.PrimaryGroupGID, StartSeconds: proc.StartSeconds, StartMicros: proc.StartMicros}
 }
 
 func stage2aCheckFinalizationFile(dir *os.File, name string, uid, gid uint32, expected []byte) error {

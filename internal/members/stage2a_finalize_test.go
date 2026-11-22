@@ -1,6 +1,7 @@
 package members
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -33,6 +34,33 @@ func TestStage2aFinalizeBRequestRejectsUnboundRelayClaim(t *testing.T) {
 	} {
 		if _, err := ParseStage2aFinalizeBRequest([]byte(bad)); err == nil {
 			t.Fatalf("accepted invalid relay claim: %s", bad)
+		}
+	}
+}
+
+func TestStage2aLiveRequestRequiresFreshCanonicalChallenge(t *testing.T) {
+	q := Stage2aLiveRequest{Stage2aStopRequest: Stage2aStopRequest{
+		ReservationSHA256: "sha256:" + strings.Repeat("a", 64),
+		InstallationID:    "soul-one", StartID: "st_0123456789abcdef01234567",
+		LaunchID: "ln_0123456789abcdef01234567", PlanID: "plan-20261122T120000Z-abcd",
+		PlanDigest: strings.Repeat("b", 64), HQEpoch: strings.Repeat("c", 64),
+	}, Challenge: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("x", 32)))}
+	raw, err := json.Marshal(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ParseStage2aLiveRequest(raw); err != nil || got != q {
+		t.Fatalf("valid R challenge refused: %+v %v", got, err)
+	}
+	for _, bad := range []string{
+		strings.Replace(string(raw), q.Challenge, "", 1),
+		strings.Replace(string(raw), q.Challenge, q.Challenge+"=", 1),
+		strings.Replace(string(raw), q.Challenge, base64.RawURLEncoding.EncodeToString([]byte("short")), 1),
+		strings.TrimSuffix(string(raw), "}") + `,"unknown":true}`,
+		strings.TrimSuffix(string(raw), "}") + `,"challenge":"` + q.Challenge + `"}`,
+	} {
+		if _, err := ParseStage2aLiveRequest([]byte(bad)); err == nil {
+			t.Fatal("invalid Live challenge or fields accepted")
 		}
 	}
 }

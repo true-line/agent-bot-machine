@@ -79,6 +79,16 @@ func runStage2aRunner(ctx context.Context, request SoulRunRequest, start SoulSta
 	if err != nil || profile.Close() != nil {
 		return harnessRefused
 	}
+	if err := trustedPath(OSHost{}, SoulChildSandbox, false); err != nil {
+		return harnessRefused
+	}
+	if err := checkDarwinACLs(pathAncestry(SoulChildSandbox)); err != nil {
+		return harnessRefused
+	}
+	childProfile, err := openPinnedFile(SoulChildSandbox, harnessSHA(soulChildProfile))
+	if err != nil || childProfile.Close() != nil {
+		return harnessRefused
+	}
 
 	endpoints, err := DeriveSoulBridgeEndpoints(runner, bridge, start.HQUID, request.StartID)
 	if err != nil || ctx.Err() != nil || !time.Now().Before(expires) {

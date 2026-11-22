@@ -10,7 +10,19 @@ func stage2aChildEnvFixture(t *testing.T) (Stage2aLaunchInputRecords, Stage2aBri
 	input := stage2aLaunchFixture(t)
 	root := "/private/stage2a/snapshot-launch"
 	input.Files[0].Path = "bin/claude-agent-acp"
+	childSize := uint64(len(soulChildProfile))
+	input.Files = append(input.Files, Stage2aDefinitionRecord{
+		Path: "policy/soul-child-egress.sb", Kind: "regular", Mode: "0444",
+		Size: &childSize, SHA256: harnessSHA(soulChildProfile),
+	})
 	sort.Slice(input.Files, func(i, j int) bool { return input.Files[i].Path < input.Files[j].Path })
+	input.SystemImages.Selected = append(input.SystemImages.Selected, Stage2aSystemImage{
+		Path: "/usr/bin/sandbox-exec", SigningRequirement: "anchor apple",
+		CDHash: "3333333333333333333333333333333333333333",
+	})
+	sort.Slice(input.SystemImages.Selected, func(i, j int) bool {
+		return input.SystemImages.Selected[i].Path < input.SystemImages.Selected[j].Path
+	})
 	input.HostProjection.Adapters = map[string]any{
 		"fixture-adapter": map[string]any{
 			"command": []any{root + "/bin/claude-agent-acp"}, "env": map[string]any{},
@@ -26,6 +38,9 @@ func stage2aChildEnvFixture(t *testing.T) (Stage2aLaunchInputRecords, Stage2aBri
 		"base_url": "http://fixture.invalid", "http_host": q.HTTPHost,
 		"client_key_sha256": q.ClientKeySHA256, "model": q.Model,
 		"messages_query": q.MessagesQuery, "disable_nonessential_traffic": true,
+	}
+	input.EffectiveConfig["adapter_child_sandbox"] = map[string]any{
+		"path": SoulChildSandbox, "sha256": "sha256:" + harnessSHA(soulChildProfile),
 	}
 	return input, q
 }
@@ -64,6 +79,19 @@ func TestStage2aProtectedAdapterChildEnvMatchesOwnerQualification(t *testing.T) 
 		},
 		"extra effective config": func(v *Stage2aLaunchInputRecords, _ *Stage2aBridgeQualification) {
 			v.EffectiveConfig["arbitrary"] = true
+		},
+		"child sandbox path": func(v *Stage2aLaunchInputRecords, _ *Stage2aBridgeQualification) {
+			v.EffectiveConfig["adapter_child_sandbox"].(map[string]any)["path"] = "/tmp/child.sb"
+		},
+		"child sandbox digest": func(v *Stage2aLaunchInputRecords, _ *Stage2aBridgeQualification) {
+			v.EffectiveConfig["adapter_child_sandbox"].(map[string]any)["sha256"] = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		},
+		"child sandbox inventory": func(v *Stage2aLaunchInputRecords, _ *Stage2aBridgeQualification) {
+			for i := range v.Files {
+				if v.Files[i].Path == "policy/soul-child-egress.sb" {
+					v.Files[i].SHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+				}
+			}
 		},
 		"different B qualification": func(_ *Stage2aLaunchInputRecords, q *Stage2aBridgeQualification) {
 			q.ClientKeySHA256 = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
