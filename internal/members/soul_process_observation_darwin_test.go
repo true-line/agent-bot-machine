@@ -91,38 +91,46 @@ func TestSoulProcessArgumentsRefusesLiveEmptyArgv(t *testing.T) {
 		{name: "empty argv one", path: "/usr/bin/yes", args: []string{"/usr/bin/yes", ""}},
 	} {
 		t.Run(example.name, func(t *testing.T) {
-			child := exec.Command(example.path)
-			child.Args = example.args
-			child.Env = []string{"ABM_SECRET_TEST=not-for-output"}
-			if err := child.Start(); err != nil {
-				t.Fatal(err)
+			attempts := 1
+			if example.name == "empty argv one" {
+				attempts = 500 // diagnostic only: the hosted macOS 15 failure is intermittent
 			}
-			defer func() {
-				_ = child.Process.Kill()
-				_ = child.Wait()
-			}()
-			if _, err := observeSoulKernelProcess(child.Process.Pid); err != nil {
-				t.Fatalf("child was not live before argv check: %v", err)
-			}
-			if observed, err := observeSoulProcessArguments(child.Process.Pid); err == nil {
-				// A hosted Darwin kernel may represent the empty argument
-				// differently. Capture structure only; never log argv or the
-				// environment that kern.procargs2 can include.
-				raw, rawErr := unix.SysctlRaw("kern.procargs2", child.Process.Pid)
-				rawArgc := -1
-				if len(raw) >= 4 {
-					rawArgc = int(int32(binary.NativeEndian.Uint32(raw[:4])))
-				}
-				clear(raw)
-				lengths := make([]int, len(observed.Argv))
-				for i, arg := range observed.Argv {
-					lengths[i] = len(arg)
-				}
-				firstExpected := len(observed.Argv) > 0 && observed.Argv[0] == example.args[0]
-				lastIsEnvironment := len(observed.Argv) > 0 &&
-					observed.Argv[len(observed.Argv)-1] == child.Env[0]
-				t.Fatalf("empty argv was accepted: raw_argc=%d raw_read_error=%t parsed_count=%d parsed_lengths=%v first_expected=%t last_is_environment=%t",
-					rawArgc, rawErr != nil, len(observed.Argv), lengths, firstExpected, lastIsEnvironment)
+			for attempt := 1; attempt <= attempts; attempt++ {
+				func() {
+					child := exec.Command(example.path)
+					child.Args = example.args
+					child.Env = []string{"ABM_SECRET_TEST=not-for-output"}
+					if err := child.Start(); err != nil {
+						t.Fatal(err)
+					}
+					defer func() {
+						_ = child.Process.Kill()
+						_ = child.Wait()
+					}()
+					if _, err := observeSoulKernelProcess(child.Process.Pid); err != nil {
+						t.Fatalf("child was not live before argv check: %v", err)
+					}
+					if observed, err := observeSoulProcessArguments(child.Process.Pid); err == nil {
+						// A hosted Darwin kernel may represent the empty argument
+						// differently. Capture structure only; never log argv or the
+						// environment that kern.procargs2 can include.
+						raw, rawErr := unix.SysctlRaw("kern.procargs2", child.Process.Pid)
+						rawArgc := -1
+						if len(raw) >= 4 {
+							rawArgc = int(int32(binary.NativeEndian.Uint32(raw[:4])))
+						}
+						clear(raw)
+						lengths := make([]int, len(observed.Argv))
+						for i, arg := range observed.Argv {
+							lengths[i] = len(arg)
+						}
+						firstExpected := len(observed.Argv) > 0 && observed.Argv[0] == example.args[0]
+						lastIsEnvironment := len(observed.Argv) > 0 &&
+							observed.Argv[len(observed.Argv)-1] == child.Env[0]
+						t.Fatalf("empty argv was accepted: attempt=%d raw_argc=%d raw_read_error=%t parsed_count=%d parsed_lengths=%v first_expected=%t last_is_environment=%t",
+							attempt, rawArgc, rawErr != nil, len(observed.Argv), lengths, firstExpected, lastIsEnvironment)
+					}
+				}()
 			}
 		})
 	}
