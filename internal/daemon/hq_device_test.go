@@ -34,6 +34,15 @@ func fixtureDeviceKey(t *testing.T) (*ecdsa.PrivateKey, keydIdentity) {
 	return key, keydIdentity{JWK: j, Thumbprint: j.thumbprint(), Storage: "hardware", Generation: 1}
 }
 
+func TestBridgeV2DelegationBindsReportFields(t *testing.T) {
+	d := deviceDelegation{Option: "qualification-host-report-v2", Epoch: "epoch", ReportBase64URL: "cmVwb3J0", HostID: "host", SignerID: "signer"}
+	transcript := string(d.transcript())
+	if !strings.Contains(transcript, "qualification-host-report-v2") ||
+		!strings.HasSuffix(transcript, "report_base64url\ncmVwb3J0\nhost_id\nhost\nsigner_id\nsigner") {
+		t.Fatal("v2 report bytes or host identity are not signed into delegation")
+	}
+}
+
 func fixtureDeviceProof(t *testing.T, key *ecdsa.PrivateKey, id keydIdentity, at time.Time, audience string) string {
 	t.Helper()
 	jti, err := newNonce()

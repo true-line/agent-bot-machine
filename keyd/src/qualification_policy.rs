@@ -10,6 +10,7 @@ use std::time::SystemTime;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const PURPOSE: &str = "agent-bot/qualification-policy/v1";
+const PURPOSE_V2: &str = "agent-bot/qualification-policy/v2";
 const MAX_BYTES: usize = 1 << 20;
 
 #[cfg(target_os = "macos")]
@@ -262,23 +263,34 @@ fn validate(
     expected_id: &str,
     now: OffsetDateTime,
 ) -> Result<u64, String> {
+    validate_version(raw, revocations, expected_id, now, 1)
+}
+
+fn validate_version(
+    raw: &[u8],
+    revocations: &[u8],
+    expected_id: &str,
+    now: OffsetDateTime,
+    version: u64,
+) -> Result<u64, String> {
     let value = canonical(raw)?;
-    let p = fields(
-        &value,
-        &[
-            "contract",
-            "kind",
-            "policy_revision",
-            "owner_key_id",
-            "issued_at",
-            "expires_at",
-            "release_workflow",
-            "evidence_signers",
-            "revocation_snapshot",
-            "max_revocation_age_seconds",
-        ],
-    )?;
-    if string(p, "contract")? != "control/v1"
+    let mut names = vec![
+        "contract",
+        "kind",
+        "policy_revision",
+        "owner_key_id",
+        "issued_at",
+        "expires_at",
+        "release_workflow",
+        "evidence_signers",
+        "revocation_snapshot",
+        "max_revocation_age_seconds",
+    ];
+    if version == 2 {
+        names.push("souls_build_workflow");
+    }
+    let p = fields(&value, &names)?;
+    if string(p, "contract")? != format!("control/v{version}")
         || string(p, "kind")? != "qualification-trust-policy"
         || string(p, "owner_key_id")? != expected_id
         || p.get("max_revocation_age_seconds").and_then(Value::as_u64) != Some(3600)
@@ -332,6 +344,60 @@ fn validate(
     {
         return Err("release workflow identity is invalid".into());
     }
+    if version == 2 {
+        let build = fields(
+            &p["souls_build_workflow"],
+            &[
+                "id",
+                "repository",
+                "workflow_path",
+                "source_commit",
+                "source_tree",
+                "oidc_issuer",
+                "certificate_identity",
+                "trust_root_sha256",
+                "builder_sha256",
+                "toolchain_sha256",
+                "receipt_predicate_type",
+                "bundle_media_type",
+                "dsse_payload_type",
+            ],
+        )?;
+        let build_path = string(build, "workflow_path")?;
+        let build_basename = build_path
+            .strip_prefix(".github/workflows/")
+            .ok_or("invalid Souls build workflow path")?;
+        let build_basename = build_basename
+            .strip_suffix(".yaml")
+            .or_else(|| build_basename.strip_suffix(".yml"))
+            .ok_or("invalid Souls build workflow path")?;
+        let valid_hex40 = |s: &str| {
+            s.len() == 40
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        };
+        if !identifier(string(build, "id")?)
+            || string(build, "repository")? != "true-line/agent-bot-souls"
+            || build_basename.is_empty()
+            || !build_basename
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+            || !valid_hex40(string(build, "source_commit")?)
+            || !valid_hex40(string(build, "source_tree")?)
+            || !https_url(string(build, "oidc_issuer")?)
+            || !https_url(string(build, "certificate_identity")?)
+            || !sha(string(build, "trust_root_sha256")?)
+            || !sha(string(build, "builder_sha256")?)
+            || !sha(string(build, "toolchain_sha256")?)
+            || string(build, "receipt_predicate_type")?
+                != "https://true-line.ai/soul-contracts/adapter/v2/souls-build"
+            || string(build, "bundle_media_type")?
+                != "application/vnd.dev.sigstore.bundle.v0.3+json"
+            || string(build, "dsse_payload_type")? != "application/vnd.in-toto+json"
+        {
+            return Err("Souls build workflow identity is invalid".into());
+        }
+    }
     let signers = p["evidence_signers"]
         .as_array()
         .filter(|v| !v.is_empty())
@@ -357,15 +423,19 @@ fn validate(
         }
     }
     let source = canonical(revocations)?;
-    let snapshot = fields(
-        &source,
-        &[
-            "updated_at",
-            "revoked_attestation_sha256",
-            "revoked_evidence_signer_ids",
-            "revoked_release_workflow_ids",
-        ],
-    )?;
+    let mut snapshot_names = vec![
+        "updated_at",
+        "revoked_attestation_sha256",
+        "revoked_evidence_signer_ids",
+        "revoked_release_workflow_ids",
+    ];
+    if version == 2 {
+        snapshot_names.extend([
+            "revoked_souls_build_workflow_ids",
+            "revoked_souls_build_receipt_sha256",
+        ]);
+    }
+    let snapshot = fields(&source, &snapshot_names)?;
     if p["revocation_snapshot"] != source {
         return Err("policy revocations differ from owner ledger".into());
     }
@@ -373,11 +443,24 @@ fn validate(
     if updated < issued || updated > now || now - updated > time::Duration::seconds(3600) {
         return Err("revocation snapshot is outside the 3600-second window".into());
     }
-    for (name, check) in [
+    let mut revocation_lists = vec![
         ("revoked_attestation_sha256", sha as fn(&str) -> bool),
         ("revoked_evidence_signer_ids", identifier),
         ("revoked_release_workflow_ids", identifier),
-    ] {
+    ];
+    if version == 2 {
+        revocation_lists.extend([
+            (
+                "revoked_souls_build_workflow_ids",
+                identifier as fn(&str) -> bool,
+            ),
+            (
+                "revoked_souls_build_receipt_sha256",
+                sha as fn(&str) -> bool,
+            ),
+        ]);
+    }
+    for (name, check) in revocation_lists {
         let list = snapshot[name].as_array().ok_or("invalid revocation set")?;
         let mut unique = std::collections::HashSet::new();
         for member in list {
@@ -394,6 +477,15 @@ fn validate(
         .any(|v| v.as_str() == Some(string(workflow, "id").unwrap_or("")))
     {
         return Err("release workflow is revoked".into());
+    }
+    if version == 2
+        && snapshot["revoked_souls_build_workflow_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str() == Some(p["souls_build_workflow"]["id"].as_str().unwrap_or("")))
+    {
+        return Err("Souls build workflow is revoked".into());
     }
     Ok(revision)
 }
@@ -416,17 +508,46 @@ pub fn sign<F: Fn() -> SystemTime>(
     revocations: &[u8],
     clock: F,
 ) -> Result<Vec<u8>, String> {
+    sign_version(store, owner, policy, revocations, clock, 1)
+}
+
+pub fn sign_version<F: Fn() -> SystemTime>(
+    store: &Store,
+    owner: &dyn Consent,
+    policy: &[u8],
+    revocations: &[u8],
+    clock: F,
+    version: u64,
+) -> Result<Vec<u8>, String> {
+    if version != 1 && version != 2 {
+        return Err("unsupported qualification policy version".into());
+    }
     let mut seed = store.qualification_policy_seed().map_err(String::from)?;
     let key = SigningKey::from_bytes(&seed);
     seed.fill(0);
     let id = key_id(&key);
-    let revision = validate(policy, revocations, &id, clock_time(clock())?)?;
+    let revision = validate_version(policy, revocations, &id, clock_time(clock())?, version)?;
     let prior_raw = store
         .qualification_policy_state()?
         .ok_or("qualification policy state is missing")?;
     let prior: Value =
         serde_json::from_slice(&prior_raw).map_err(|_| "malformed qualification policy state")?;
-    let state = fields(&prior, &["revision", "policy_sha256"])?;
+    let prior_version = if prior
+        .as_object()
+        .is_some_and(|v| v.contains_key("policy_version"))
+    {
+        2
+    } else {
+        1
+    };
+    let state = if prior_version == 2 {
+        fields(&prior, &["revision", "policy_sha256", "policy_version"])?
+    } else {
+        fields(&prior, &["revision", "policy_sha256"])?
+    };
+    if prior_version == 2 && (state["policy_version"] != 2 || version != 2) {
+        return Err("qualification policy version cannot roll back".into());
+    }
     let prior_revision = state["revision"]
         .as_u64()
         .ok_or("malformed qualification policy state")?;
@@ -441,14 +562,25 @@ pub fn sign<F: Fn() -> SystemTime>(
         return Err("policy revision must increase".into());
     }
     let policy_digest = digest(policy);
+    let source_tree = if version == 2 {
+        let value: Value = serde_json::from_slice(policy).map_err(|_| "invalid policy JSON")?;
+        format!(
+            ", Souls tree {}",
+            value["souls_build_workflow"]["source_tree"]
+                .as_str()
+                .ok_or("missing Souls source tree")?
+        )
+    } else {
+        String::new()
+    };
     let prompt = format!(
-        "Sign qualification policy revision {revision}, {policy_digest}, ledger {}",
+        "Sign qualification policy v{version} revision {revision}{source_tree}, {policy_digest}, ledger {}",
         digest(revocations)
     );
     owner.ask(&prompt).map_err(String::from)?;
     // An owner prompt can wait for two minutes. Recheck both expiry and the
     // 3,600-second snapshot limit with a fresh clock before using the key.
-    validate(policy, revocations, &id, clock_time(clock())?)?;
+    validate_version(policy, revocations, &id, clock_time(clock())?, version)?;
     if store.qualification_policy_state()?.as_deref() != Some(prior_raw.as_slice())
         || public_root(store)?.1 != id
     {
@@ -457,18 +589,23 @@ pub fn sign<F: Fn() -> SystemTime>(
     // The caller serializes this operation with the secure-admin lock. State
     // is advanced before returning signature bytes, so a failed output write
     // consumes a revision instead of allowing an unattended replay.
-    let mut preimage = PURPOSE.as_bytes().to_vec();
+    let purpose = if version == 2 { PURPOSE_V2 } else { PURPOSE };
+    let mut preimage = purpose.as_bytes().to_vec();
     preimage.push(0);
     preimage.extend_from_slice(policy);
     let signature = key.sign(&preimage);
-    let state = serde_json::to_vec(&json!({"revision": revision, "policy_sha256": policy_digest}))
-        .map_err(|_| "invalid policy state")?;
+    let next_state = if version == 2 {
+        json!({"revision": revision, "policy_sha256": policy_digest, "policy_version": 2})
+    } else {
+        json!({"revision": revision, "policy_sha256": policy_digest})
+    };
+    let state = serde_json::to_vec(&next_state).map_err(|_| "invalid policy state")?;
     store
         .put_qualification_policy_state(&state)
         .map_err(String::from)?;
     serde_json::to_vec(&json!({
-        "schema_version": 1,
-        "purpose": PURPOSE,
+        "schema_version": version,
+        "purpose": purpose,
         "owner_key_id": id,
         "policy_sha256": policy_digest,
         "policy_base64url": URL_SAFE_NO_PAD.encode(policy),
@@ -503,7 +640,7 @@ pub fn command(args: &[String]) -> Result<(), String> {
             println!("owner-root.hex: {root}\nowner-key-id.txt: {id}");
         }
         [mode, a, policy_path, b, revocations_path, c, out_path]
-            if mode == "sign" && a == "--policy" && b == "--revocations" && c == "--out" =>
+            if (mode == "sign" || mode == "sign-v2") && a == "--policy" && b == "--revocations" && c == "--out" =>
         {
             if Path::new(revocations_path) != dir.join("revocations.json") {
                 return Err("revocations must be the fixed secure-admin ledger".into());
@@ -527,12 +664,13 @@ pub fn command(args: &[String]) -> Result<(), String> {
             };
             let policy = read(Path::new(policy_path), false)?;
             let ledger = read(Path::new(revocations_path), true)?;
-            let envelope = sign(&store, &DeviceOwner, &policy, &ledger, SystemTime::now)?;
+            let version = if mode == "sign-v2" { 2 } else { 1 };
+            let envelope = sign_version(&store, &DeviceOwner, &policy, &ledger, SystemTime::now, version)?;
             let mut out = OpenOptions::new().write(true).create_new(true).mode(0o600).custom_flags(libc::O_NOFOLLOW).open(out_path).map_err(|_| "qualification output already exists or is unavailable")?;
             out.write_all(&envelope).and_then(|_| out.write_all(b"\n")).and_then(|_| out.sync_all()).map_err(|_| "qualification output write failed")?;
             println!("policy-envelope: {}", digest(&envelope));
         }
-        _ => return Err("usage: agent-bot-keyd qualification-policy init-root | public-root | sign --policy FILE --revocations FILE --out FILE".into()),
+        _ => return Err("usage: agent-bot-keyd qualification-policy init-root | public-root | sign|sign-v2 --policy FILE --revocations FILE --out FILE".into()),
     }
     Ok(())
 }
@@ -587,6 +725,78 @@ mod tests {
             serde_json::to_vec(&snapshot).unwrap(),
             SystemTime::UNIX_EPOCH + Duration::from_secs(when.unix_timestamp() as u64),
         )
+    }
+
+    #[test]
+    fn v2_signing_pins_separate_souls_build_and_prevents_downgrade() {
+        let store = Store::new(Box::<Memory>::default());
+        let (_, id) = init_root(&store, &Scripted::new(true)).unwrap();
+        let (v1, v1_ledger, now) = fixture(&id, "2026-11-21T21:00:00Z");
+        sign(&store, &Scripted::new(true), &v1, &v1_ledger, || now).unwrap();
+        let mut policy: Value = serde_json::from_slice(&v1).unwrap();
+        let mut ledger: Value = serde_json::from_slice(&v1_ledger).unwrap();
+        policy["contract"] = json!("control/v2");
+        policy["policy_revision"] = json!(2);
+        policy["souls_build_workflow"] = json!({
+            "id": "souls-build-fixture",
+            "repository": "true-line/agent-bot-souls",
+            "workflow_path": ".github/workflows/release.yml",
+            "source_commit": "1111111111111111111111111111111111111111",
+            "source_tree": "2222222222222222222222222222222222222222",
+            "oidc_issuer": "https://token.actions.githubusercontent.com",
+            "certificate_identity": "https://github.com/true-line/agent-bot-souls/.github/workflows/release.yml@refs/heads/main",
+            "trust_root_sha256": format!("sha256:{}", "3".repeat(64)),
+            "builder_sha256": format!("sha256:{}", "4".repeat(64)),
+            "toolchain_sha256": format!("sha256:{}", "5".repeat(64)),
+            "receipt_predicate_type": "https://true-line.ai/soul-contracts/adapter/v2/souls-build",
+            "bundle_media_type": "application/vnd.dev.sigstore.bundle.v0.3+json",
+            "dsse_payload_type": "application/vnd.in-toto+json"
+        });
+        ledger["revoked_souls_build_workflow_ids"] = json!([]);
+        ledger["revoked_souls_build_receipt_sha256"] = json!([]);
+        policy["revocation_snapshot"] = ledger.clone();
+        let raw = serde_json::to_vec(&policy).unwrap();
+        let ledger_raw = serde_json::to_vec(&ledger).unwrap();
+        let envelope =
+            sign_version(&store, &Scripted::new(true), &raw, &ledger_raw, || now, 2).unwrap();
+        let signed: Value = serde_json::from_slice(&envelope).unwrap();
+        assert_eq!(signed["schema_version"], 2);
+        assert_eq!(signed["purpose"], PURPOSE_V2);
+        let signature = URL_SAFE_NO_PAD
+            .decode(signed["signature_base64url"].as_str().unwrap())
+            .unwrap();
+        let mut preimage = PURPOSE_V2.as_bytes().to_vec();
+        preimage.push(0);
+        preimage.extend_from_slice(&raw);
+        let mut seed = store.qualification_policy_seed().unwrap();
+        let key = SigningKey::from_bytes(&seed).verifying_key();
+        seed.fill(0);
+        key.verify(&preimage, &Signature::from_slice(&signature).unwrap())
+            .unwrap();
+        let mut downgraded: Value = serde_json::from_slice(&v1).unwrap();
+        downgraded["policy_revision"] = json!(3);
+        assert!(sign(
+            &store,
+            &Scripted::new(true),
+            &serde_json::to_vec(&downgraded).unwrap(),
+            &v1_ledger,
+            || now
+        )
+        .is_err());
+        policy["souls_build_workflow"]
+            .as_object_mut()
+            .unwrap()
+            .remove("source_tree");
+        policy["policy_revision"] = json!(3);
+        assert!(sign_version(
+            &store,
+            &Scripted::new(true),
+            &serde_json::to_vec(&policy).unwrap(),
+            &ledger_raw,
+            || now,
+            2
+        )
+        .is_err());
     }
 
     #[test]
