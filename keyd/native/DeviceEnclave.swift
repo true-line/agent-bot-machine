@@ -6,6 +6,14 @@ import LocalAuthentication
 import Security
 import Darwin
 
+// Policy signing pins designated host keys as DER SubjectPublicKeyInfo.
+// CryptoKit rejects wrong curves, malformed DER and invalid P-256 points.
+@_cdecl("keyd_qualification_valid_spki")
+public func keydQualificationValidSPKI(_ bytes: UnsafePointer<UInt8>?, _ count: Int) -> Int32 {
+    guard let bytes, count > 0, count <= 8192 else { return 0 }
+    return (try? P256.Signing.PublicKey(derRepresentation: Data(bytes: bytes, count: count))) == nil ? 0 : 1
+}
+
 private typealias DeviceKey = SecureEnclave.P256.Signing.PrivateKey
 
 // Return only a reference on create, public point on inspect, or raw signature

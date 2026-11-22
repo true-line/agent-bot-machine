@@ -12,6 +12,24 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 const PURPOSE: &str = "agent-bot/qualification-policy/v1";
 const MAX_BYTES: usize = 1 << 20;
 
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn keyd_qualification_valid_spki(bytes: *const u8, count: isize) -> i32;
+}
+
+fn valid_p256_spki(der: &[u8]) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        der.len() <= 8192
+            && unsafe { keyd_qualification_valid_spki(der.as_ptr(), der.len() as isize) == 1 }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = der;
+        false
+    }
+}
+
 fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut result = String::with_capacity(bytes.len() * 2);
@@ -47,6 +65,11 @@ pub fn init_root(store: &Store, owner: &dyn Consent) -> Result<(String, String),
         .map_err(String::from)?;
     let key = SigningKey::from_bytes(&seed);
     seed.fill(0);
+    // A root without its revision marker is deliberately unusable. If this
+    // write fails after root creation, recovery requires a reviewed rotation.
+    store
+        .put_qualification_policy_state(br#"{"policy_sha256":null,"revision":0}"#)
+        .map_err(String::from)?;
     Ok((hex(key.verifying_key().as_bytes()), key_id(&key)))
 }
 
@@ -183,6 +206,20 @@ fn sha(s: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+fn https_url(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("https://") else {
+        return false;
+    };
+    if value.contains('#') || value.bytes().any(|b| b <= 0x20 || b == 0x7f) {
+        return false;
+    }
+    let authority = rest.split(['/', '?']).next().unwrap_or("");
+    !authority.is_empty()
+        && !authority.contains('@')
+        && authority != ":"
+        && !authority.starts_with(':')
+}
+
 fn validate(
     raw: &[u8],
     revocations: &[u8],
@@ -235,21 +272,27 @@ fn validate(
         ],
     )?;
     let source_commit = string(workflow, "source_commit")?;
-    if !identifier(string(workflow, "id")?)
+    let workflow_path = string(workflow, "workflow_path")?;
+    let basename = workflow_path
+        .strip_prefix(".github/workflows/")
+        .ok_or("invalid workflow path")?;
+    let basename = basename
+        .strip_suffix(".yaml")
+        .or_else(|| basename.strip_suffix(".yml"))
+        .ok_or("invalid workflow path")?;
+    if basename.is_empty()
+        || !basename
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        || !identifier(string(workflow, "id")?)
         || string(workflow, "repository")? != "true-line/soul-adapters"
-        || !string(workflow, "workflow_path")?.starts_with(".github/workflows/")
-        || ![".yml", ".yaml"].iter().any(|suffix| {
-            string(workflow, "workflow_path")
-                .unwrap_or("")
-                .ends_with(suffix)
-        })
         || source_commit.len() != 40
         || !source_commit
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         || !sha(string(workflow, "trust_root_sha256")?)
-        || !string(workflow, "oidc_issuer")?.starts_with("https://")
-        || !string(workflow, "certificate_identity")?.starts_with("https://")
+        || !https_url(string(workflow, "oidc_issuer")?)
+        || !https_url(string(workflow, "certificate_identity")?)
     {
         return Err("release workflow identity is invalid".into());
     }
@@ -263,13 +306,16 @@ fn validate(
             signer,
             &["id", "host_id", "algorithm", "public_key_spki_der_base64"],
         )?;
-        if !identifier(string(s, "id")?)
+        let spki = base64::engine::general_purpose::STANDARD
+            .decode(string(s, "public_key_spki_der_base64")?)
+            .map_err(|_| "invalid evidence signer SPKI")?;
+        if base64::engine::general_purpose::STANDARD.encode(&spki)
+            != string(s, "public_key_spki_der_base64")?
+            || !valid_p256_spki(&spki)
+            || !identifier(string(s, "id")?)
             || !seen.insert(string(s, "id")?)
             || !identifier(string(s, "host_id")?)
             || string(s, "algorithm")? != "ES256"
-            || base64::engine::general_purpose::STANDARD
-                .decode(string(s, "public_key_spki_der_base64")?)
-                .is_err()
         {
             return Err("invalid evidence signer".into());
         }
@@ -316,46 +362,45 @@ fn validate(
     Ok(revision)
 }
 
-pub fn sign(
+fn clock_time(now: SystemTime) -> Result<OffsetDateTime, String> {
+    let nanoseconds = now
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|_| "invalid system clock")?
+        .as_nanos();
+    OffsetDateTime::from_unix_timestamp_nanos(
+        i128::try_from(nanoseconds).map_err(|_| "invalid system clock")?,
+    )
+    .map_err(|_| "invalid system clock".into())
+}
+
+pub fn sign<F: Fn() -> SystemTime>(
     store: &Store,
     owner: &dyn Consent,
     policy: &[u8],
     revocations: &[u8],
-    now: SystemTime,
+    clock: F,
 ) -> Result<Vec<u8>, String> {
     let mut seed = store.qualification_policy_seed().map_err(String::from)?;
     let key = SigningKey::from_bytes(&seed);
     seed.fill(0);
     let id = key_id(&key);
-    let nanoseconds = now
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|_| "invalid system clock")?
-        .as_nanos();
-    let now = OffsetDateTime::from_unix_timestamp_nanos(
-        i128::try_from(nanoseconds).map_err(|_| "invalid system clock")?,
-    )
-    .map_err(|_| "invalid system clock")?;
-    let revision = validate(policy, revocations, &id, now)?;
+    let revision = validate(policy, revocations, &id, clock_time(clock())?)?;
     let prior = store
         .qualification_policy_state()?
-        .map(|raw| {
-            serde_json::from_slice::<Value>(&raw)
-                .map_err(|_| "malformed qualification policy state".to_owned())
-        })
-        .transpose()?;
-    let prior_revision = match prior.as_ref() {
-        Some(value) => {
-            let state = fields(value, &["revision", "policy_sha256"])?;
-            if !sha(string(state, "policy_sha256")?) {
-                return Err("malformed qualification policy state".into());
-            }
-            state["revision"]
-                .as_u64()
-                .filter(|revision| *revision > 0)
-                .ok_or("malformed qualification policy state")?
+        .ok_or("qualification policy state is missing")?;
+    let prior: Value =
+        serde_json::from_slice(&prior).map_err(|_| "malformed qualification policy state")?;
+    let state = fields(&prior, &["revision", "policy_sha256"])?;
+    let prior_revision = state["revision"]
+        .as_u64()
+        .ok_or("malformed qualification policy state")?;
+    if prior_revision == 0 {
+        if !state["policy_sha256"].is_null() {
+            return Err("malformed qualification policy state".into());
         }
-        None => 0,
-    };
+    } else if !sha(string(state, "policy_sha256")?) {
+        return Err("malformed qualification policy state".into());
+    }
     if revision <= prior_revision {
         return Err("policy revision must increase".into());
     }
@@ -365,6 +410,9 @@ pub fn sign(
         digest(revocations)
     );
     owner.ask(&prompt).map_err(String::from)?;
+    // An owner prompt can wait for two minutes. Recheck both expiry and the
+    // 3,600-second snapshot limit with a fresh clock before using the key.
+    validate(policy, revocations, &id, clock_time(clock())?)?;
     // The caller serializes this operation with the secure-admin lock. State
     // is advanced before returning signature bytes, so a failed output write
     // consumes a revision instead of allowing an unattended replay.
@@ -438,7 +486,7 @@ pub fn command(args: &[String]) -> Result<(), String> {
             };
             let policy = read(Path::new(policy_path), false)?;
             let ledger = read(Path::new(revocations_path), true)?;
-            let envelope = sign(&store, &DeviceOwner, &policy, &ledger, SystemTime::now())?;
+            let envelope = sign(&store, &DeviceOwner, &policy, &ledger, SystemTime::now)?;
             let mut out = OpenOptions::new().write(true).create_new(true).mode(0o600).custom_flags(libc::O_NOFOLLOW).open(out_path).map_err(|_| "qualification output already exists or is unavailable")?;
             out.write_all(&envelope).and_then(|_| out.write_all(b"\n")).and_then(|_| out.sync_all()).map_err(|_| "qualification output write failed")?;
             println!("policy-envelope: {}", digest(&envelope));
@@ -453,12 +501,17 @@ mod tests {
     use super::*;
     use crate::{
         consent::tests::Scripted,
-        store::{tests::Memory, Items, PIN_SERVICE, QUALIFICATION_POLICY_ACCOUNT},
+        store::{
+            tests::Memory, Items, PIN_SERVICE, QUALIFICATION_POLICY_ACCOUNT,
+            QUALIFICATION_POLICY_STATE_ACCOUNT,
+        },
     };
     use ed25519_dalek::{Signature, Verifier};
     use std::time::Duration;
 
     fn fixture(id: &str, updated: &str) -> (Vec<u8>, Vec<u8>, SystemTime) {
+        // P-256 generator point as DER SubjectPublicKeyInfo, test-only.
+        let spki = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li/hp/m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q==";
         let snapshot = json!({
             "updated_at": updated,
             "revoked_attestation_sha256": [],
@@ -482,7 +535,7 @@ mod tests {
                 "trust_root_sha256": format!("sha256:{}", "a".repeat(64))
             },
             "evidence_signers": [{
-                "id": "fixture-signer", "host_id": "fixture-host", "algorithm": "ES256", "public_key_spki_der_base64": "AQID"
+                "id": "fixture-signer", "host_id": "fixture-host", "algorithm": "ES256", "public_key_spki_der_base64": spki
             }],
             "revocation_snapshot": snapshot,
             "max_revocation_age_seconds": 3600
@@ -505,6 +558,7 @@ mod tests {
         assert_eq!((root.clone(), id.clone()), public_root(&store).unwrap());
         assert!(init_root(&store, &Scripted::new(true)).is_err());
         assert!(root.len() == 64 && id.starts_with("qual-owner-ed25519-"));
+        assert!(store.qualification_policy_state().unwrap().is_some());
         memory
             .write(PIN_SERVICE, QUALIFICATION_POLICY_ACCOUNT, b"bad")
             .unwrap();
@@ -513,11 +567,12 @@ mod tests {
 
     #[test]
     fn signs_exact_purpose_and_consumes_revision() {
-        let store = Store::new(Box::<Memory>::default());
+        let memory = Memory::default();
+        let store = Store::new(Box::new(memory.clone()));
         let (_, id) = init_root(&store, &Scripted::new(true)).unwrap();
         let (policy, ledger, now) = fixture(&id, "2026-11-21T21:00:00Z");
         let owner = Scripted::new(true);
-        let envelope = sign(&store, &owner, &policy, &ledger, now).unwrap();
+        let envelope = sign(&store, &owner, &policy, &ledger, || now).unwrap();
         assert!(owner.asked.lock().unwrap()[0].contains(&digest(&policy)));
         let value: Value = serde_json::from_slice(&envelope).unwrap();
         assert_eq!(value["purpose"], PURPOSE);
@@ -533,7 +588,14 @@ mod tests {
         seed.fill(0);
         key.verify(&preimage, &Signature::from_slice(&signature).unwrap())
             .unwrap();
-        assert!(sign(&store, &owner, &policy, &ledger, now).is_err());
+        assert!(sign(&store, &owner, &policy, &ledger, || now).is_err());
+        assert!(memory
+            .remove(PIN_SERVICE, QUALIFICATION_POLICY_STATE_ACCOUNT)
+            .unwrap());
+        assert!(
+            sign(&store, &owner, &policy, &ledger, || now).is_err(),
+            "a missing marker cannot reset revision to zero"
+        );
     }
 
     #[test]
@@ -541,17 +603,28 @@ mod tests {
         let store = Store::new(Box::<Memory>::default());
         let (_, id) = init_root(&store, &Scripted::new(true)).unwrap();
         let (policy, ledger, now) = fixture(&id, "2026-11-21T21:00:00Z");
-        assert!(sign(&store, &Scripted::new(false), &policy, &ledger, now).is_err());
-        assert!(store.qualification_policy_state().unwrap().is_none());
+        assert!(sign(&store, &Scripted::new(false), &policy, &ledger, || now).is_err());
+        assert_eq!(
+            serde_json::from_slice::<Value>(&store.qualification_policy_state().unwrap().unwrap())
+                .unwrap()["revision"],
+            0
+        );
         let (_, changed_ledger, _) = fixture(&id, "2026-11-21T20:59:59Z");
-        assert!(sign(&store, &Scripted::new(true), &policy, &changed_ledger, now).is_err());
+        assert!(sign(
+            &store,
+            &Scripted::new(true),
+            &policy,
+            &changed_ledger,
+            || now
+        )
+        .is_err());
         let (stale_policy, stale_ledger, _) = fixture(&id, "2026-11-21T20:00:00Z");
         assert!(sign(
             &store,
             &Scripted::new(true),
             &stale_policy,
             &stale_ledger,
-            now + Duration::from_secs(3601)
+            || now + Duration::from_secs(3601)
         )
         .is_err());
     }
@@ -571,6 +644,68 @@ mod tests {
         .is_err());
     }
 
+    #[test]
+    fn rejects_bad_workflow_url_and_host_spki_before_approval() {
+        let store = Store::new(Box::<Memory>::default());
+        let (_, id) = init_root(&store, &Scripted::new(true)).unwrap();
+        let (policy, ledger, now) = fixture(&id, "2026-11-21T21:00:00Z");
+        for (field, invalid) in [
+            ("workflow_path", ".github/workflows/../release.yml"),
+            ("oidc_issuer", "https://"),
+            (
+                "certificate_identity",
+                "https://user@github.com/release#fragment",
+            ),
+        ] {
+            let mut value: Value = serde_json::from_slice(&policy).unwrap();
+            value["release_workflow"][field] = Value::String(invalid.into());
+            let owner = Scripted::new(true);
+            assert!(sign(
+                &store,
+                &owner,
+                &serde_json::to_vec(&value).unwrap(),
+                &ledger,
+                || now
+            )
+            .is_err());
+            assert!(owner.asked.lock().unwrap().is_empty());
+        }
+        let mut value: Value = serde_json::from_slice(&policy).unwrap();
+        value["evidence_signers"][0]["public_key_spki_der_base64"] = Value::String("AQID".into());
+        assert!(sign(
+            &store,
+            &Scripted::new(true),
+            &serde_json::to_vec(&value).unwrap(),
+            &ledger,
+            || now
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn expiry_during_owner_prompt_refuses_without_consuming_revision() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let store = Store::new(Box::<Memory>::default());
+        let (_, id) = init_root(&store, &Scripted::new(true)).unwrap();
+        let (policy, ledger, now) = fixture(&id, "2026-11-21T21:00:00Z");
+        let calls = AtomicUsize::new(0);
+        let clock = || {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                now
+            } else {
+                now + Duration::from_secs(3601)
+            }
+        };
+        let owner = Scripted::new(true);
+        assert!(sign(&store, &owner, &policy, &ledger, clock).is_err());
+        assert_eq!(owner.asked.lock().unwrap().len(), 1);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&store.qualification_policy_state().unwrap().unwrap())
+                .unwrap()["revision"],
+            0
+        );
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "requires a disposable macOS Keychain"]
@@ -587,7 +722,13 @@ mod tests {
             let public = init_root(&store, &Scripted::new(true)).unwrap();
             assert_eq!(public, public_root(&store).unwrap());
             assert!(init_root(&store, &Scripted::new(true)).is_err());
-            assert!(store.qualification_policy_state().unwrap().is_none());
+            assert_eq!(
+                serde_json::from_slice::<Value>(
+                    &store.qualification_policy_state().unwrap().unwrap()
+                )
+                .unwrap()["revision"],
+                0
+            );
         });
     }
 }
