@@ -88,9 +88,21 @@ func TestReleasedReportsBindFixedPhysicalGates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	release := VerifiedRelease{verified: true, qualificationSHA256: digest(qualificationRaw), ownerKeyID: policy.OwnerKeyID, policyRevision: policy.PolicyRevision, hostReports: []reportReference{{URI: "fixture:protected", SHA256: digest(protectedRaw)}, {URI: "fixture:cooperative", SHA256: digest(cooperativeRaw)}}}
+	release := VerifiedRelease{verified: true, bundleSHA256: sha, qualificationSHA256: digest(qualificationRaw), ownerKeyID: policy.OwnerKeyID, policyRevision: policy.PolicyRevision, hostReports: []reportReference{{URI: "fixture:protected", SHA256: digest(protectedRaw)}, {URI: "fixture:cooperative", SHA256: digest(cooperativeRaw)}}}
 	if err := VerifyReleasedReports(release, verified, qualificationRaw, [][]byte{protectedEnvelope, cooperativeEnvelope}, now); err != nil {
 		t.Fatal(err)
+	}
+	gotProtected, gotCooperative, err := VerifyHostReportsForRelease(verified, qualificationRaw, protectedEnvelope, cooperativeEnvelope, now)
+	if err != nil || gotProtected != digest(protectedRaw) || gotCooperative != digest(cooperativeRaw) {
+		t.Fatalf("producer preflight: %s %s %v", gotProtected, gotCooperative, err)
+	}
+	if _, _, err := VerifyHostReportsForRelease(verified, qualificationRaw, cooperativeEnvelope, protectedEnvelope, now); err == nil {
+		t.Fatal("reversed profile envelopes accepted")
+	}
+	withoutBundle := release
+	withoutBundle.bundleSHA256 = ""
+	if err := VerifyReleasedReports(withoutBundle, verified, qualificationRaw, [][]byte{protectedEnvelope, cooperativeEnvelope}, now); err == nil {
+		t.Fatal("producer preflight promoted to release verification")
 	}
 	for _, tc := range []struct {
 		name string

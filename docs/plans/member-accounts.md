@@ -110,6 +110,44 @@ The statement must name exactly one `qualification.json` subject digest and
 the fixed qualification predicate. Its host-report references must match the
 designated-host signed reports, the protected record and all four fixed gates.
 The verifier reads only supplied local bytes and has no network fallback.
+
+The release producer has a separate `mm-qualification-preflight` command built
+from an exact reviewed Machine commit. It requires `-owner-root` (a file with
+the pinned Ed25519 public key as 64 lowercase hex characters),
+`-owner-key-id`, `-policy-envelope`, `-qualification`,
+`-protected-envelope`, and `-cooperative-envelope` file inputs. The command
+uses real current time with no caller clock override and bounded local reads.
+The release-owned trust inputs will be
+`trust/qualification/owner-root.hex` and
+`trust/qualification/owner-key-id.txt` at that pinned Machine commit. They
+are deliberately absent until the owner provisions and reviews an actual
+public policy root, its ID and an initial signed policy; a test fixture root
+cannot fill this production slot.
+It verifies the owner policy signature, expiry and 3,600-second revocation
+snapshot, then the two designated-host signatures, exact qualification bytes,
+the adapter, launch, harness, runner and host values shared across the signed
+reports and qualification, and protected/cooperative gate assignment. On success
+it emits JSON with `schema_version: 1`, the exact `qualification.json` digest,
+each report's exact raw SHA-256 digest,
+and explicit `managed-protected` and `managed-cooperative` profile fields; an
+invalid or incomplete input exits nonzero without digests. The producer uses
+only those verified digests in its release Statement. This preflight does not
+persist a highest accepted policy revision or verify a release bundle, and a
+past preflight success cannot be replayed as a Machine acceptance decision.
+Machine independently rechecks policy rollback state, the signed final bundle,
+installed bytes and live physical evidence before any qualification can count.
+
+The separate `mm-qualification-verify-release` diagnostic command accepts
+those same owner root, key ID, policy, qualification and two host-envelope
+files, plus `-trusted-root` for the exact local Sigstore root JSON, `-bundle`
+for the v0.3 document and `-bundle-sha256` from the installed qualification
+reference. It invokes the full offline release and report verifiers at real
+current time and emits only the verified bundle, qualification and report
+digests. It does not persist rollback state, inspect installed executable
+bytes or authorize launch. A release workflow or fixture job may use its
+result to reject a malformed bundle; Machine acceptance repeats verification
+with persisted policy state and independent host measurements.
+
 These are components of the production verifier, not permission to install.
 The one-use `started` receipt is never a completed physical run. A separate
 Machine-authored completion and HQ-start process observation, released adapter
@@ -117,6 +155,70 @@ and runner measurements, a release-pinned owner root and initial signed policy,
 an actual release workflow bundle, and physical T01/T02/T03/T21 results are
 still required. No positive production gate is wired; the existing install and
 launch refusals remain in force.
+
+### Owner policy root provisioning proposal
+
+This is a proposed owner ceremony, not an installed key or an enabled signer.
+Create a **new, purpose-only** Ed25519 policy key through keyd in the secure
+administrator account. Its 32-byte seed belongs only in a keyd-created login
+Keychain item under service `agent-bot.keyd`, account
+`qualification-policy-root-v1`, with the existing keyd-only code requirement
+ACL. It must never be exported to HQ, a runner, a repository, a workflow secret
+or the release producer. The existing owner-presence, daemon-grant, HQ and
+device keys are different purposes and cannot serve as this root. First-use
+creation must refuse an existing item; rotation requires a separate reviewed
+Machine release and recovery plan.
+
+The proposed secure-admin command is `agent-bot-keyd qualification-policy
+init-root`, which creates the item once and exports only its 32-byte public
+key. It writes `trust/qualification/owner-root.hex` as exactly 64 lowercase
+hex characters plus LF. The key ID is
+`qual-owner-ed25519-` followed by the first 16 lowercase hex characters of
+`SHA-256(raw_public_key)`; `trust/qualification/owner-key-id.txt` contains
+exactly that ID plus LF. A release review compares those bytes with a fresh
+keyd public export and compiles the root and ID into the signed Machine
+binary. The same reviewed source files are the release workflow's pinned
+preflight inputs. They remain absent until this ceremony; no fixture key or
+arbitrary candidate file can supply them.
+
+The proposed `agent-bot-keyd qualification-policy sign --policy FILE
+--revocations FILE --out FILE` operation runs only under the secure admin
+account after exact-policy owner approval. It requires ASCII RFC 8785
+canonical policy bytes, a revision greater than the greatest locally signed
+revision, `owner_key_id` equal to the pinned ID, a fresh complete revocation
+snapshot, and the contract's fixed fields. Keyd signs
+`ASCII("agent-bot/qualification-policy/v1") || 0x00 || policy_bytes` and emits
+the `control/v1` envelope with exact `policy_sha256`, unpadded base64url policy
+bytes and raw 64-byte Ed25519 signature encoded unpadded base64url. It must
+refuse any direct HQ request to sign policy bytes and any unattended replay of
+an earlier owner approval. The operation and its owner-approval check have not
+been implemented; until then no production policy can be issued.
+
+The revocation source is a complete owner-reviewed ledger at
+`~/.config/agent-machine/qualification/revocations.json` in the secure admin
+account, under a 0700 directory and 0600 file. Its three sets are revoked
+attestation digests, host signer IDs and release workflow IDs. For each new
+snapshot, the owner reviews the ledger's complete sets and authorizes keyd to
+bind the current `updated_at` in a newly signed policy revision. Re-signing an
+old snapshot does not refresh it. Machine stores the greatest accepted
+revision and digest outside HQ-controlled state; at each protected launch it
+rejects a future snapshot or `now - updated_at > 3600` seconds. Exactly 3600
+seconds remains current. There is no automatic refresh or network fallback;
+protected launch stops when the owner has not supplied a new authenticated
+snapshot in time. Any automated owner-authorized refresh would need a separate
+decision and review.
+
+The reviewed Machine release must include the public root, key ID,
+`trust/qualification/sigstore-trusted-root.json` as exact local Sigstore
+trusted-root bytes, and `trust/qualification/initial-policy-envelope.json`,
+with the latter signed by that root and pinning the
+trusted-root byte digest, one `true-line/soul-adapters` source commit/workflow
+identity, and the designated physical host's exported P-256 SPKI and host ID.
+The initial policy can become stale while the release is distributed; that
+does not extend its snapshot. HQ may carry a newer owner-signed revision, and
+Machine verifies and persists it before any protected acceptance. No M2 host
+designation, root, policy, Sigstore root or live revocation feed is present in
+this change.
 
 ## Review a one-use qualification run
 

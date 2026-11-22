@@ -169,6 +169,43 @@ func VerifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON
 // separate installed-byte measurement and Machine-owned completed-run record
 // are still mandatory before a protected launch can be authorized.
 func VerifyReleasedReports(release VerifiedRelease, policy VerifiedPolicy, qualificationJSON []byte, envelopes [][]byte, now time.Time) error {
+	if !validSHA(release.bundleSHA256) {
+		return ErrUnqualified
+	}
+	return verifyReportSet(release, policy, qualificationJSON, envelopes, now)
+}
+
+// VerifyHostReportsForRelease is a producer preflight, not a release or launch
+// authorization. It authenticates exactly one protected and one cooperative
+// host envelope before the release workflow signs their digests in a bundle.
+// Machine must independently verify that final bundle and local measurements.
+func VerifyHostReportsForRelease(policy VerifiedPolicy, qualificationJSON, protectedEnvelope, cooperativeEnvelope []byte, now time.Time) (protectedSHA256, cooperativeSHA256 string, err error) {
+	if !policy.verified || !policy.at.Equal(now) {
+		return "", "", ErrUnqualified
+	}
+	protectedRaw, e1 := VerifyHostReport(protectedEnvelope, policy, now)
+	cooperativeRaw, e2 := VerifyHostReport(cooperativeEnvelope, policy, now)
+	if e1 != nil || e2 != nil {
+		return "", "", ErrUnqualified
+	}
+	var protected, cooperative reportDocument
+	if json.Unmarshal(protectedRaw, &protected) != nil || json.Unmarshal(cooperativeRaw, &cooperative) != nil ||
+		protected.ProfileInForce != "managed-protected" || cooperative.ProfileInForce != "managed-cooperative" {
+		return "", "", ErrUnqualified
+	}
+	protectedSHA256, cooperativeSHA256 = digest(protectedRaw), digest(cooperativeRaw)
+	release := VerifiedRelease{
+		verified: true, qualificationSHA256: digest(qualificationJSON),
+		ownerKeyID: policy.value.OwnerKeyID, policyRevision: policy.value.PolicyRevision,
+		hostReports: []reportReference{{URI: "preflight:protected", SHA256: protectedSHA256}, {URI: "preflight:cooperative", SHA256: cooperativeSHA256}},
+	}
+	if verifyReportSet(release, policy, qualificationJSON, [][]byte{protectedEnvelope, cooperativeEnvelope}, now) != nil {
+		return "", "", ErrUnqualified
+	}
+	return protectedSHA256, cooperativeSHA256, nil
+}
+
+func verifyReportSet(release VerifiedRelease, policy VerifiedPolicy, qualificationJSON []byte, envelopes [][]byte, now time.Time) error {
 	if !release.verified || !policy.verified || now.IsZero() || !policy.at.Equal(now) ||
 		release.ownerKeyID != policy.value.OwnerKeyID || release.policyRevision != policy.value.PolicyRevision ||
 		digest(qualificationJSON) != release.qualificationSHA256 || len(envelopes) != len(release.hostReports) {
