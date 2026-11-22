@@ -325,6 +325,12 @@ impl Store {
         seed.map_err(|_| "qualification policy root is malformed".into())
     }
 
+    pub fn qualification_policy_root_exists(&self) -> Result<bool, StoreError> {
+        self.items
+            .read(PIN_SERVICE, QUALIFICATION_POLICY_ACCOUNT)
+            .map(|value| value.is_some())
+    }
+
     pub fn init_qualification_policy_seed(&self) -> Result<[u8; 32], StoreError> {
         // An unreadable or untrusted existing item must never be overwritten.
         if self
