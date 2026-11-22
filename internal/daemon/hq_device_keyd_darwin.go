@@ -228,3 +228,49 @@ func runDeviceKeyd(ctx context.Context, home string, envelope deviceDelegation) 
 	}
 	return out.buf.Bytes(), nil
 }
+
+// runQualificationWitnessKeyd is the local secure-admin Machine-to-keyd
+// transport. It is deliberately not registered as an HQ device option or
+// daemon request. The signed request is built under Machine's live pair lock;
+// keyd independently checks that pair, owner root, policy and its custody.
+func runQualificationWitnessKeyd(ctx context.Context, adminHome, mode string, signedRequest []byte) ([]byte, error) {
+	if mode != "init" && mode != "sign" && mode != "pin" {
+		return nil, errHQDevice
+	}
+	if len(signedRequest) == 0 || len(signedRequest) > 3*1024*1024 {
+		return nil, errHQDevice
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, errHQDevice
+	}
+	path, _, err := deviceKeydPackagePath(executable)
+	if err != nil {
+		return nil, errHQDevice
+	}
+	parent, cwd, err := openDeviceKeydParent(path)
+	if err != nil {
+		return nil, errHQDevice
+	}
+	defer parent.Close()
+	if verifyDeviceCode(ctx, cwd, "agent-bot-keyd", deviceKeydRequirement) != nil {
+		return nil, errHQDevice
+	}
+	cmd := exec.CommandContext(ctx, "./agent-bot-keyd", "qualification-witness", mode)
+	cmd.Dir = cwd
+	cmd.Env = []string{"HOME=" + adminHome, "PATH=/usr/bin:/bin"}
+	cmd.Stdin = qualificationWitnessInput(signedRequest)
+	out := keydOutput{limit: 8192}
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return nil, errHQDevice
+	}
+	return out.buf.Bytes(), nil
+}
+
+// keyd reads stdin to EOF and compares it with canonical JSON bytes before
+// verifying the Machine signature. Transport framing is not part of that
+// signed request, so the child must receive these bytes without a delimiter.
+func qualificationWitnessInput(signedRequest []byte) *bytes.Reader {
+	return bytes.NewReader(bytes.Clone(signedRequest))
+}

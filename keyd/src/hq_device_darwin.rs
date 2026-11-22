@@ -43,9 +43,9 @@ fn enclave_output_size(op: i32, size: isize, capacity: usize) -> Result<usize, &
     Ok(size as usize)
 }
 
-struct Native<'a> {
-    dir: &'a File,
-    pair: &'a Pair,
+pub(crate) struct Native<'a> {
+    pub(crate) dir: &'a File,
+    pub(crate) pair: &'a Pair,
 }
 impl Native<'_> {
     fn invoke(&self, op: i32, reference: &[u8], message: &[u8]) -> Result<Vec<u8>, &'static str> {
@@ -142,7 +142,7 @@ fn hex_key(s: &str) -> Result<[u8; 32], &'static str> {
     Ok(key)
 }
 
-fn trusted_state() -> Result<(File, File, Pair), &'static str> {
+pub(crate) fn trusted_state() -> Result<(File, File, Pair), &'static str> {
     let uid = unsafe { libc::getuid() };
     // main already verified the nonroot admin prefix owner. Resolve its home
     // through the account database, independently of command-line/env input.

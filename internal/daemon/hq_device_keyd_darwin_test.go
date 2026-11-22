@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,18 @@ import (
 	"github.com/qwts/managed-machine/internal/output"
 	"golang.org/x/sys/unix"
 )
+
+func TestQualificationWitnessNativeInputPreservesCanonicalBytes(t *testing.T) {
+	// keyd's verify_request compares stdin with canonical serde_json bytes.
+	// A line delimiter after this signed object makes all three modes fail.
+	for _, mode := range []string{"init", "sign", "pin"} {
+		canonical := []byte(`{"mode":"` + mode + `","signature_base64url":"fixture"}`)
+		got, err := io.ReadAll(qualificationWitnessInput(canonical))
+		if err != nil || !bytes.Equal(got, canonical) {
+			t.Fatalf("%s transport changed canonical request: %q, %v", mode, got, err)
+		}
+	}
+}
 
 // The report is returned inside the keyd response, so its base64 encoding
 // crosses both stdin and stdout; ordinary device operations keep small caps.
