@@ -100,12 +100,23 @@ package verifies an owner Ed25519 policy envelope against a release-pinned
 root, a 3,600-second revocation snapshot, and designated P-256 host signatures.
 This first verifier accepts only ASCII canonical JSON and refuses non-ASCII
 reports or policies rather than reserializing them into different signed bytes.
+The next offline verifier accepts only a local Sigstore bundle v0.3 carrying one
+DSSE in-toto Statement v1 signature. It hashes the exact bundle and trusted-root
+bytes against the installed qualification reference and owner policy, verifies
+the Fulcio chain and certificate transparency timestamp, one Rekor inclusion
+proof with signed checkpoint and an observer signing-time proof, and matches
+the pinned OIDC issuer, certificate identity, source repository and commit.
+The statement must name exactly one `qualification.json` subject digest and
+the fixed qualification predicate. Its host-report references must match the
+designated-host signed reports, the protected record and all four fixed gates.
+The verifier reads only supplied local bytes and has no network fallback.
 These are components of the production verifier, not permission to install.
 The one-use `started` receipt is never a completed physical run. A separate
 Machine-authored completion and HQ-start process observation, released adapter
-and runner measurements, authenticated release workflow bundle and physical
-T01/T02/T03/T21 results are still required. No positive production gate is
-wired; the existing install and launch refusals remain in force.
+and runner measurements, a release-pinned owner root and initial signed policy,
+an actual release workflow bundle, and physical T01/T02/T03/T21 results are
+still required. No positive production gate is wired; the existing install and
+launch refusals remain in force.
 
 ## Review a one-use qualification run
 
