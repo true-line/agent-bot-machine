@@ -205,7 +205,7 @@ func (s *Stage2aService) HelloStart(hqUID int, epoch string, q Stage2aHelloStart
 		len(hello.RequestedRoles) == 0 || len(hello.RequestedRoles) > 32 {
 		return reply, errStage2aReservationAuthority
 	}
-	r, p, _, err := s.current(hqUID, epoch, q.ReservationSHA256)
+	r, p, expires, err := s.current(hqUID, epoch, q.ReservationSHA256)
 	if err != nil || !stage2aMatchesStopSelectors(r, q.Stage2aStopRequest, hqUID) ||
 		r.hello != nil || q.PeerUID != p.Runner.UID ||
 		q.BrokerBindReceiptSHA256 != r.bindReceiptSHA256 ||
@@ -245,7 +245,7 @@ func (s *Stage2aService) HelloStart(hqUID int, epoch string, q Stage2aHelloStart
 	}
 	envelope, err := signStage2aEnvelope(payload, 1, Stage2aHelloStartPurpose,
 		s.key.Public().(ed25519.PublicKey), s.sign)
-	if err != nil || len(envelope) == 0 || len(envelope) > 8192 ||
+	if err != nil || len(envelope) == 0 || len(envelope) > 8192 || !time.Now().Before(expires) ||
 		stage2aHelloCheckLive(r, p, q.Stage2aStopRequest) != nil ||
 		checkStage2aHelloRunnerPeer(q.PeerPID, r, p, peer) != nil {
 		return reply, errStage2aReservationAuthority
@@ -266,7 +266,7 @@ func (s *Stage2aService) HelloFinalize(hqUID int, epoch string, q Stage2aHelloFi
 		!validStage2aHelloExpected(q.Expected) || len(s.key) != ed25519.PrivateKeySize {
 		return reply, errStage2aReservationAuthority
 	}
-	r, p, _, err := s.current(hqUID, epoch, q.ReservationSHA256)
+	r, p, expires, err := s.current(hqUID, epoch, q.ReservationSHA256)
 	if err != nil || !stage2aMatchesStopSelectors(r, q.Stage2aStopRequest, hqUID) ||
 		r.hello == nil || r.hello.aborted || r.hello.finalized ||
 		stage2aReservationSHA256(r.hello.startEnvelope) != q.StartEnvelopeSHA256 ||
@@ -282,7 +282,7 @@ func (s *Stage2aService) HelloFinalize(hqUID int, epoch string, q Stage2aHelloFi
 	}
 	envelope, err := signStage2aEnvelope(payload, 1, Stage2aHelloFinalizationPurpose,
 		s.key.Public().(ed25519.PublicKey), s.sign)
-	if err != nil || len(envelope) == 0 || len(envelope) > 8192 ||
+	if err != nil || len(envelope) == 0 || len(envelope) > 8192 || !time.Now().Before(expires) ||
 		stage2aHelloCheckLive(r, p, q.Stage2aStopRequest) != nil ||
 		checkStage2aHelloRunnerPeer(r.hello.peerProcess.PID, r, p, r.hello.peerProcess) != nil {
 		return reply, errStage2aReservationAuthority
