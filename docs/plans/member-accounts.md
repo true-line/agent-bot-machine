@@ -570,6 +570,9 @@ does not prove that the projected files or selected process actually have
 those bytes or that the claimed system images are loaded. A protected caller
 must compare every value with the installed root-receipted plan and live
 descriptor/process observations before using it in a reservation.
+The host-projection check separately matches the descriptor-read raw JSON
+bytes and their file-record hashes to the two parsed values in that object;
+it does not substitute for descriptor custody or a root snapshot receipt.
 
 ### What is created
 

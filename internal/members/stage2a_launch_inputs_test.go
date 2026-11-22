@@ -150,3 +150,29 @@ func TestStage2aLaunchInputRejectsIncompleteOrUnboundedObject(t *testing.T) {
 		t.Fatal("launch-input domain separation failed")
 	}
 }
+
+func TestStage2aHostProjectionBindsRawFilesAndParsedValues(t *testing.T) {
+	input := stage2aLaunchFixture(t)
+	adapters := []byte(`{"selected":"fixture-adapter"}`)
+	installation := []byte(`{"id":"fixture-installation"}`)
+	if err := CheckStage2aHostProjectionBytes(input, adapters, installation); err != nil {
+		t.Fatal(err)
+	}
+	for name, raw := range map[string][]byte{
+		"changed raw byte":        []byte(`{ "selected":"fixture-adapter"}`),
+		"different value":         []byte(`{"selected":"different"}`),
+		"duplicate key":           []byte(`{"selected":"fixture-adapter","selected":"other"}`),
+		"array instead of object": []byte(`[]`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := CheckStage2aHostProjectionBytes(input, raw, installation); err == nil {
+				t.Fatal("changed host projection accepted")
+			}
+		})
+	}
+	changed := cloneStage2aLaunch(t, input)
+	changed.HostProjection.Adapters["selected"] = "different"
+	if err := CheckStage2aHostProjectionBytes(changed, adapters, installation); err == nil {
+		t.Fatal("parsed host projection changed without raw bytes")
+	}
+}

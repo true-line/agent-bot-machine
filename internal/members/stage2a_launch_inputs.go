@@ -287,3 +287,54 @@ func CheckStage2aApprovedLaunchInputs(observed, approved Stage2aLaunchInputRecor
 	}
 	return got, nil
 }
+
+// CheckStage2aHostProjectionBytes binds the separately hashed raw host JSON
+// records to the parsed values in the full launch-input object. The caller
+// must supply these bytes from pinned, no-follow snapshot descriptors and
+// verify the snapshot's root custody and identity independently.
+func CheckStage2aHostProjectionBytes(input Stage2aLaunchInputRecords, adapters, installation []byte) error {
+	if _, _, err := Stage2aLaunchInputDigest(input); err != nil {
+		return errors.New("invalid Stage 2a launch inputs for host projection")
+	}
+	for _, item := range []struct {
+		path     string
+		raw      []byte
+		expected map[string]any
+	}{
+		{"host/adapters.json", adapters, input.HostProjection.Adapters},
+		{"host/installation.json", installation, input.HostProjection.Installation},
+	} {
+		if len(item.raw) == 0 || len(item.raw) > 64<<10 || stage2aStrictJSON(item.raw) != nil {
+			return errors.New("invalid Stage 2a host projection JSON")
+		}
+		var record *Stage2aDefinitionRecord
+		for i := range input.Files {
+			if input.Files[i].Path == item.path {
+				record = &input.Files[i]
+				break
+			}
+		}
+		sum := sha256.Sum256(item.raw)
+		if record == nil || record.Size == nil || *record.Size != uint64(len(item.raw)) ||
+			record.SHA256 != fmt.Sprintf("%x", sum) {
+			return errors.New("Stage 2a host projection bytes differ from measured file")
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal(item.raw, &parsed); err != nil || parsed == nil {
+			return errors.New("invalid Stage 2a host projection object")
+		}
+		actual, err := jsoncanonicalizer.Transform(item.raw)
+		if err != nil {
+			return errors.New("invalid Stage 2a host projection canonical JSON")
+		}
+		expectedRaw, err := json.Marshal(item.expected)
+		if err != nil || stage2aStrictJSON(expectedRaw) != nil {
+			return errors.New("invalid Stage 2a expected host projection")
+		}
+		want, err := jsoncanonicalizer.Transform(expectedRaw)
+		if err != nil || !bytes.Equal(actual, want) {
+			return errors.New("Stage 2a host projection differs from parsed approved value")
+		}
+	}
+	return nil
+}
