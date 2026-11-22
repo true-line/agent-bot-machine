@@ -183,6 +183,12 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return failure(diag.MembersNotApproved, "plan %s is not approved: %s", planID, why)
 	}
 
+	if saved.Plan.Purpose == SoulRunnerAccountsPurpose || approval.Purpose == SoulRunnerAccountsPurpose {
+		if platform != PlatformDarwin {
+			return failure(diag.MembersNotApproved, "Soul runner accounts require macOS")
+		}
+		return runSoulRunnerAccountApply(saved, approval, owner, h, deps, pairCheck)
+	}
 	if saved.Plan.Purpose != "" || approval.Purpose == HarnessAccountsPurpose {
 		return runHarnessAccountApply(saved, approval, platform, owner, h, deps, pairCheck)
 	}

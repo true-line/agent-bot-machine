@@ -154,3 +154,44 @@ func TestProtectedDarwinIDReservedByPrimaryUser(t *testing.T) {
 		t.Fatal("would share proposed private group", used, err)
 	}
 }
+
+func TestExistingDarwinRoleRejectsDirectoryAliases(t *testing.T) {
+	old := runOutput
+	t.Cleanup(func() { runOutput = old })
+	search := map[string]string{
+		"/Users UniqueID 312":        "_role\t\tUniqueID = (\n    312\n)\n",
+		"/Groups PrimaryGroupID 312": "_role\t\tPrimaryGroupID = (\n    312\n)\n",
+		"/Users PrimaryGroupID 312":  "_role\t\tPrimaryGroupID = (\n    312\n)\n",
+	}
+	runOutput = func(_ string, args ...string) (string, error) {
+		if len(args) == 5 && args[0] == "/Search" && args[1] == "-search" {
+			return search[strings.Join(args[2:], " ")], nil
+		}
+		if len(args) == 4 && args[1] == "-list" {
+			return "_role 312\n", nil
+		}
+		if len(args) == 4 && args[1] == "-read" {
+			return "No such key: " + args[3] + "\n", nil
+		}
+		return "", errors.New("unexpected Directory Services call")
+	}
+	if ok, err := privateDarwinRoleGroup("_role", "_role", 312); err != nil || !ok {
+		t.Fatalf("exact private role: %v %v", ok, err)
+	}
+	for _, alias := range []string{"/Users UniqueID 312", "/Groups PrimaryGroupID 312", "/Users PrimaryGroupID 312"} {
+		prior := search[alias]
+		search[alias] += "foreign\t\t" + strings.Fields(alias)[1] + " = (\n    312\n)\n"
+		if ok, err := privateDarwinRoleGroup("_role", "_role", 312); err != nil || ok {
+			t.Fatalf("accepted %s alias: %v %v", alias, ok, err)
+		}
+		search[alias] = prior
+	}
+	search["/Users UniqueID 312"] = ""
+	if ok, err := privateDarwinRoleGroup("_role", "_role", 312); err != nil || ok {
+		t.Fatalf("accepted missing effective user: %v %v", ok, err)
+	}
+	search["/Users UniqueID 312"] = "unrecognized search output\n"
+	if ok, err := privateDarwinRoleGroup("_role", "_role", 312); err == nil || ok {
+		t.Fatalf("accepted malformed effective search: %v %v", ok, err)
+	}
+}

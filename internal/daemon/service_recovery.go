@@ -22,11 +22,15 @@ const recoveryVerb = "hq-service-recovery"
 const upgradeVerb = "hq-service-upgrade"
 
 const harnessAccountsVerb = members.HarnessAccountsPurpose
+const soulRunnerAccountsVerb = members.SoulRunnerAccountsPurpose
 const harnessInstallVerb = members.HarnessInstall
 const harnessRetireVerb = members.HarnessRetire
 const harnessQualificationVerb = members.HarnessQualificationPurpose
 
 func pairedServiceVerb(verb string) bool {
+	if verb == soulRunnerAccountsVerb {
+		return true
+	}
 	return verb == harnessAccountsVerb || verb == recoveryVerb || verb == upgradeVerb || verb == members.HarnessInstall || verb == members.HarnessRetire || verb == harnessQualificationVerb
 }
 

@@ -140,9 +140,10 @@ func darwinSharing(a *Account) error {
 		}
 	}
 	harnessHome := a.Home == darwinHarnessHome(a.Name)
+	soulRunnerHome := a.Home == darwinSoulRunnerHome(a.Name)
 	var groups []string
 	for _, g := range a.Groups {
-		if darwinReportGroup(g, harnessHome, nobodyGroups[g]) {
+		if darwinReportGroup(g, harnessHome || soulRunnerHome, nobodyGroups[g]) {
 			groups = append(groups, g)
 		}
 	}
@@ -171,7 +172,7 @@ func darwinSharing(a *Account) error {
 		return err
 	}
 	a.Shell = shell
-	if (!harnessHome && a.Home != HQHome(PlatformDarwin, a.Name)) || a.UID < darwinIDFirst || a.UID > darwinIDLast || a.UID != a.GID {
+	if (!harnessHome && !soulRunnerHome && a.Home != HQHome(PlatformDarwin, a.Name)) || a.UID < darwinIDFirst || a.UID > darwinIDLast || a.UID != a.GID {
 		return nil
 	}
 	label, _, err := dsclAttr("/Users/"+a.Name, "RealName")
@@ -189,7 +190,10 @@ func darwinSharing(a *Account) error {
 		a.DarwinRole = label
 		return nil
 	}
-	if !harnessHome || label != darwinHarnessRoleName {
+	if !harnessHome && !soulRunnerHome {
+		return nil
+	}
+	if harnessHome && label != darwinHarnessRoleName || soulRunnerHome && label != darwinSoulRunnerRoleName {
 		return nil
 	}
 	private, err := privateDarwinRoleGroup(a.Name, a.Group, a.GID)
@@ -226,7 +230,44 @@ func privateDarwinRoleGroup(account, group string, id int) (bool, error) {
 			}
 		}
 	}
+	// The local node is not the whole login namespace. A directory-backed
+	// account with this UID is the same kernel principal even when it has a
+	// different primary group. A remote group or primary-group user similarly
+	// defeats the dedicated role's group boundary. Search the effective node
+	// and require exactly the one reviewed record for every numeric identity.
+	for _, item := range []struct{ kind, attr, want string }{
+		{"/Users", "UniqueID", account},
+		{"/Groups", "PrimaryGroupID", group},
+		{"/Users", "PrimaryGroupID", account},
+	} {
+		owners, err := darwinSearchIDOwners(item.kind, item.attr, gid)
+		if err != nil {
+			return false, err
+		}
+		if len(owners) != 1 || owners[0] != item.want {
+			return false, nil
+		}
+	}
 	return true, nil
+}
+
+func darwinSearchIDOwners(kind, attr, id string) ([]string, error) {
+	out, err := runOutput(dsclPath, "/Search", "-search", kind, attr, id)
+	if err != nil {
+		return nil, fmt.Errorf("Directory Services search for %s %s: %w", attr, id, err)
+	}
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") || line == ")" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[1] != attr || fields[2] != "=" || fields[3] != "(" {
+			return nil, errors.New("unexpected Directory Services search record")
+		}
+		names = append(names, fields[0])
+	}
+	return names, nil
 }
 
 // darwinPasswordField returns "*" for an account nobody can log in to: its
@@ -481,6 +522,30 @@ func (OSRoot) CreateReviewedHarness(name string, id int) error {
 		return errors.New("unexpected reviewed Darwin role ID")
 	}
 	return darwinCreateRoleAccount(name, darwinHarnessHome(name), darwinHarnessRoleName, id)
+}
+
+func (OSRoot) CreateReviewedSoulRunner(name string, id int) error {
+	if id < darwinIDFirst || id > darwinIDLast {
+		return errors.New("unexpected reviewed Soul runner ID")
+	}
+	return darwinCreateRoleAccount(name, darwinSoulRunnerHome(name), darwinSoulRunnerRoleName, id)
+}
+
+func (OSRoot) RepairReviewedSoulRunnerHome(name string, id int, before uint32) error {
+	f, err := os.OpenFile(darwinSoulRunnerHome(name), os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	sys := st.Sys().(*syscall.Stat_t)
+	if sys.Uid != uint32(id) || sys.Gid != uint32(id) || uint32(sys.Mode)&07777 != before {
+		return errors.New("reviewed Soul runner home identity or permissions changed")
+	}
+	return f.Chmod(0700)
 }
 
 func (OSRoot) RepairReviewedHarnessHome(name string, id int, before uint32) error {

@@ -44,6 +44,7 @@ const usage = `Usage: managed-machine members plan [--hq-account <account>] (--h
        sudo managed-machine members uninstall-hq <applied-plan-id> [--dry-run]
        managed-machine members plan --hq-service <record.json> --upgrade-from <prior-plan-id>
        managed-machine members plan --harness-account-provision (--members <a,b,...> | --hq-config <path>) [--dir <path>]
+       managed-machine members plan --soul-runner-provision <installations.json>
        managed-machine members plan --harness-launch-install <adapters.json>
        managed-machine members plan --harness-launch-retire <installed-plan-id>
        managed-machine members plan --harness-qualification <request.json>
@@ -81,6 +82,9 @@ These service transfers require a dedicated HQ-only plan without harness account
 For harness accounts, use --harness-account-provision with --members or --hq-config.
 The dedicated paired HQ exports the exact reviewed IDs, private homes and optional
 broker directories with machine harness-account-provision and returns the owner proof.
+For Soul runner accounts, use --soul-runner-provision with a bounded installation
+mapping. Each installation receives its own hidden, private account and home.
+The paired HQ uses the separate soul-runner-provision owner-proof purpose.
 After a failed or interrupted apply, plan and approve the remaining steps again.
 A Darwin harness launch plan records exact adapter, Machine and sandbox digests
 for review. Enrolled dedicated HQ can export and submit the matching owner
@@ -99,6 +103,7 @@ endpoint. The dedicated account, home, keys, pairing, release files, runtime
 directory and audit receipts remain available. Run this before package removal.
 
 Options
+--soul-runner-provision <file>  Review one separate account per Soul installation
 --harness-qualification <file>  Review fixed, pinned, one-use qualification inputs (read-only)
 --harness-launch-install <file>  Review a dedicated Darwin adapter mapping and launch rule
 --harness-launch-retire <plan-id>  Review retirement of that exact installed rule
@@ -130,14 +135,15 @@ func failure(id, format string, args ...any) cli.Result {
 // Saved is the plan file apply reads: the request, so the plan can be built
 // again from the host, and the digest the owner is asked to approve.
 type Saved struct {
-	UpgradeFrom      *priorServicePlan    `json:"upgrade_from,omitempty"`
-	HarnessLaunch    *HarnessPolicyRecord `json:"harness_launch,omitempty"`
-	QualificationRun *QualificationRun    `json:"qualification_run,omitempty"`
-	HQService        *HQService           `json:"hq_service,omitempty"`
-	PlanID           string               `json:"plan_id"`
-	PlanDigest       string               `json:"plan_digest"`
-	CreatedAt        string               `json:"created_at"`
-	Plan             Plan                 `json:"plan"`
+	UpgradeFrom        *priorServicePlan    `json:"upgrade_from,omitempty"`
+	HarnessLaunch      *HarnessPolicyRecord `json:"harness_launch,omitempty"`
+	SoulRunnerAccounts []SoulRunnerAccount  `json:"soul_runner_accounts,omitempty"`
+	QualificationRun   *QualificationRun    `json:"qualification_run,omitempty"`
+	HQService          *HQService           `json:"hq_service,omitempty"`
+	PlanID             string               `json:"plan_id"`
+	PlanDigest         string               `json:"plan_digest"`
+	CreatedAt          string               `json:"created_at"`
+	Plan               Plan                 `json:"plan"`
 }
 
 // HQ adapter IDs identify harness credentials (PDR-0053). Several adapters
@@ -207,13 +213,14 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return cli.Result{Diagnostic: command.UsageErr("members takes one action: plan, apply or uninstall-hq")}
 	}
 	var hqAccount, hqConfigPath, list, dir, serviceRecord, priorID, qualificationPath string
-	var installFile, retireID string
-	var launchFlags, qualificationFlags int
+	var installFile, retireID, soulRunnerFile string
+	var launchFlags, qualificationFlags, soulRunnerFlags int
 	var harnessAccounts bool
 	var hasList, hasDir, hasUpgrade, hasQualification, hasHQConfig, hasService bool
 	if d := command.Parse(args[1:], command.Spec{
 		Bools: map[string]*bool{"--harness-account-provision": &harnessAccounts},
 		Values: map[string]command.Flag{
+			"--soul-runner-provision":  {Value: &soulRunnerFile, Count: &soulRunnerFlags},
 			"--harness-qualification":  {Value: &qualificationPath, Set: &hasQualification, Count: &qualificationFlags},
 			"--harness-launch-install": {Value: &installFile, Count: &launchFlags},
 			"--harness-launch-retire":  {Value: &retireID, Count: &launchFlags},
@@ -242,7 +249,7 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		if qualificationPath == "" {
 			return failure(diag.MembersListInvalid, "harness qualification request path is empty")
 		}
-		if qualificationFlags != 1 || platform != PlatformDarwin || hqAccount != DarwinHQAccount || hasHQConfig || hasList || hasDir || hasService || hasUpgrade || launchFlags != 0 || harnessAccounts {
+		if qualificationFlags != 1 || platform != PlatformDarwin || hqAccount != DarwinHQAccount || hasHQConfig || hasList || hasDir || hasService || hasUpgrade || launchFlags != 0 || soulRunnerFlags != 0 || harnessAccounts {
 			return failure(diag.MembersListInvalid, "harness qualification planning requires a dedicated Darwin host and no other plan purpose")
 		}
 		read := deps.ReadFile
@@ -266,6 +273,36 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 			return failure(diag.MembersPlanFailed, "%v", err)
 		}
 		return saveQualificationPlan(deps, plan, runRecord)
+	}
+	if soulRunnerFlags != 0 {
+		if soulRunnerFlags != 1 || soulRunnerFile == "" || platform != PlatformDarwin || hqAccount != DarwinHQAccount || hasQualification || hasHQConfig || hasList || hasDir || hasService || hasUpgrade || launchFlags != 0 || harnessAccounts {
+			return failure(diag.MembersListInvalid, "Soul runner provisioning requires only one dedicated Darwin installation request")
+		}
+		read := deps.ReadFile
+		if read == nil {
+			read = readQualificationInput
+		}
+		raw, err := read(soulRunnerFile)
+		if err != nil {
+			return failure(diag.MembersListInvalid, "cannot read Soul runner request: %v", err)
+		}
+		runners, err := decodeSoulRunnerAccounts(raw)
+		if err != nil {
+			return failure(diag.MembersListInvalid, "%v", err)
+		}
+		var h Host = OSHost{}
+		if deps.Host != nil {
+			h = deps.Host()
+		}
+		owner, err := deps.ResolveUsername(usernameOS(platform))
+		if err != nil {
+			return failure(diag.MembersAccountRefused, "cannot identify the planning owner: %v", err)
+		}
+		p, err := Build(Input{SoulRunnerAccounts: runners, HQAccount: DarwinHQAccount, Dir: DarwinDir, Platform: PlatformDarwin, Invoker: owner}, h)
+		if err != nil {
+			return mapRefusal(err, diag.MembersPlanFailed, "cannot plan Soul runner accounts")
+		}
+		return saveSoulRunnerPlan(deps, p, runners)
 	}
 	if launchFlags != 0 {
 		if launchFlags != 1 || hasUpgrade || (installFile == "" && retireID == "") || platform != PlatformDarwin || hasList || hasDir || hqConfigPath != "" || serviceRecord != "" || hqAccount != DarwinHQAccount {

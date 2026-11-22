@@ -302,6 +302,16 @@ func (s Saved) CanonicalForReview() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.SoulRunnerAccounts != nil || s.Plan.Purpose == SoulRunnerAccountsPurpose || s.Plan.SoulRunners != nil {
+		if s.SoulRunnerAccounts == nil || s.HarnessLaunch != nil || s.HQService != nil || s.UpgradeFrom != nil || s.QualificationRun != nil || s.Plan.Purpose != SoulRunnerAccountsPurpose {
+			return nil, errors.New("invalid saved Soul runner account request")
+		}
+		runners, accounts, err := validateSoulRunnerAccounts(s.SoulRunnerAccounts)
+		if err != nil || !slices.Equal(runners, s.Plan.SoulRunners) || !slices.Equal(accounts, s.Plan.Members) {
+			return nil, errors.New("Soul runner request differs from the canonical plan")
+		}
+		return raw, nil
+	}
 	if s.QualificationRun != nil {
 		if s.HarnessLaunch != nil || s.HQService != nil || s.UpgradeFrom != nil || s.Plan.Purpose != HarnessQualificationPurpose || len(s.Plan.Steps) != 1 || s.Plan.Steps[0].Kind != "qualification-run" || s.Plan.Steps[0].Action != ActionNone || !qualificationDigest.MatchString(s.QualificationRun.RequestSHA256) || s.QualificationRun.MemberState != "disposable" || !s.QualificationRun.OneUse {
 			return nil, errors.New("invalid saved qualification review plan")
