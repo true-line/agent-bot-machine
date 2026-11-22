@@ -131,6 +131,7 @@ type FrozenSoulBuildWorkflow struct {
 type FrozenSoulMapping struct {
 	SoulID                  string `json:"soul_id"`
 	ArtifactSHA256          string `json:"artifact_sha256"`
+	ReceiptSHA256           string `json:"receipt_sha256"`
 	ClaimedDefinitionDigest string `json:"claimed_definition_digest"`
 	DefinitionMeasurement   string `json:"definition_measurement"`
 }

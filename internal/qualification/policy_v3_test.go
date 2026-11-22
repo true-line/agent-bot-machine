@@ -63,6 +63,7 @@ func TestOwnerPolicyV3AuthenticatesFrozenAuthorityOffline(t *testing.T) {
 	policy["frozen_soul_mapping"] = map[string]any{
 		"soul_id":                   "agent_00000000-0000-0000-0000-000000000000",
 		"artifact_sha256":           strings.Repeat("c", 64),
+		"receipt_sha256":            "sha256:" + strings.Repeat("f", 64),
 		"claimed_definition_digest": "sha256:" + strings.Repeat("d", 64),
 		"definition_measurement":    "sha256:" + strings.Repeat("e", 64),
 	}
@@ -101,6 +102,7 @@ func TestOwnerPolicyV3AuthenticatesFrozenAuthorityOffline(t *testing.T) {
 		t.Fatal("owner signed v3 policy refused at 3600-second boundary", err)
 	}
 	if verified.value.FrozenSoulMapping.ArtifactSHA256 != strings.Repeat("c", 64) ||
+		verified.value.FrozenSoulMapping.ReceiptSHA256 != "sha256:"+strings.Repeat("f", 64) ||
 		verified.value.FrozenSoulBuildWorkflow.Template.Path != "templates/hello.soul" {
 		t.Fatal("authenticated frozen authority was not retained")
 	}
@@ -129,14 +131,26 @@ func TestOwnerPolicyV3AuthenticatesFrozenAuthorityOffline(t *testing.T) {
 	}
 	policy["frozen_soul_mapping"] = map[string]any{
 		"soul_id": "agent_00000000-0000-0000-0000-000000000000", "artifact_sha256": strings.Repeat("c", 64),
+		"receipt_sha256":            "sha256:" + strings.Repeat("f", 64),
 		"claimed_definition_digest": "sha256:" + strings.Repeat("d", 64), "definition_measurement": "sha256:" + strings.Repeat("e", 64),
 	}
+	mapping := policy["frozen_soul_mapping"].(map[string]any)
+	delete(mapping, "receipt_sha256")
+	if _, err := VerifyOwnerPolicyV3(signed(policy), p.OwnerKeyID, root, 1, prior, now); err == nil {
+		t.Fatal("missing exact frozen receipt digest")
+	}
+	mapping["receipt_sha256"] = "sha256:" + strings.Repeat("f", 64)
 	workflow := policy["frozen_soul_build_workflow"].(map[string]any)
 	workflow["rekor_entry_version"] = "0.0.2"
 	if _, err := VerifyOwnerPolicyV3(signed(policy), p.OwnerKeyID, root, 1, prior, now); err == nil {
 		t.Fatal("wrong Rekor kind/version")
 	}
 	workflow["rekor_entry_version"] = "0.0.1"
+	snapshot["revoked_frozen_soul_receipt_sha256"] = []any{"sha256:" + strings.Repeat("f", 64)}
+	if _, err := VerifyOwnerPolicyV3(signed(policy), p.OwnerKeyID, root, 1, prior, now); err == nil {
+		t.Fatal("revoked frozen receipt")
+	}
+	snapshot["revoked_frozen_soul_receipt_sha256"] = []any{}
 	snapshot["revoked_frozen_soul_artifact_sha256"] = []any{strings.Repeat("c", 64)}
 	if _, err := VerifyOwnerPolicyV3(signed(policy), p.OwnerKeyID, root, 1, prior, now); err == nil {
 		t.Fatal("revoked frozen artifact")

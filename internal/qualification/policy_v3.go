@@ -29,6 +29,7 @@ func validFrozenSoulPolicy(policy Policy) bool {
 		!validHex(build.Template.TemplateTree, 40) ||
 		!frozenSoulID.MatchString(mapping.SoulID) ||
 		!validHex(mapping.ArtifactSHA256, 64) ||
+		!validSHA(mapping.ReceiptSHA256) ||
 		!validSHA(mapping.ClaimedDefinitionDigest) ||
 		!validSHA(mapping.DefinitionMeasurement) {
 		return false
@@ -47,6 +48,11 @@ func validFrozenSoulPolicy(policy Policy) bool {
 	}
 	for _, item := range policy.RevocationSnapshot.RevokedFrozenSoulArtifactSHA256 {
 		if item == mapping.ArtifactSHA256 {
+			return false
+		}
+	}
+	for _, item := range policy.RevocationSnapshot.RevokedFrozenSoulReceiptSHA256 {
+		if item == mapping.ReceiptSHA256 {
 			return false
 		}
 	}
