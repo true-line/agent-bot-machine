@@ -503,6 +503,15 @@ supporting observation is not called by an installed launcher or completion
 producer. The exec path in that argument area is not an executable vnode
 measurement; active Seatbelt profile, endpoints, parent chain, and
 authenticated HQ start still require independent proof.
+The Darwin admission component can read the accepted Unix connection's
+`LOCAL_PEERCRED` UID and `LOCAL_PEERPID` PID. A same-UID child test verifies
+these kernel values against the process that connected. A passed or inherited
+connected descriptor can later be used by another process, so this component
+is not an admission decision: a challenge on that socket alone cannot rule out
+handoff. The future finalizer must keep the connection live, enforce
+launcher-supervised channel custody, and bind a separately bracketed kernel
+process observation and one-use challenge to the spent reservation. The
+same-UID test is not T03.
 Machine must prove the reviewed package/code closure, signed one-use HQ start,
 exact kernel UIDs, live HMAC broker bind, token lifetime, stop containment and
 safe retirement before installing a production grant. Platform PDR-0052's
