@@ -248,6 +248,15 @@ artifact and measured Soul ID/definition to the owner mapping. This is not a
 positive release or launch decision: trusted-root bytes, installed measurements, immutable completed-run
 records and physical T01/T02/T03/T21 results still require authentication.
 
+The public `VerifyReleasedReportsV3` and `mm-qualification-verify-release
+--host-v3` result remains unqualified even when the owner policy, release
+statement, and two Machine-signed run chains are internally consistent. The
+signed-chain checker is diagnostic only. A positive v3 release result requires
+the separate verifier to resolve and authenticate the physical gate manifests,
+segment attestations, raw Q/ACP/OS evidence, and installed inputs; that
+acceptance path is not implemented in this source slice. Synthetic signed
+fixtures do not establish T01, T02, T03, or T21.
+
 ### Owner policy root provisioning ceremony
 
 The keyd command path is implemented for review; no production root has been

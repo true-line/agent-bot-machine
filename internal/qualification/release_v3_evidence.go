@@ -6,12 +6,27 @@ import (
 	"time"
 )
 
-// VerifyReleasedReportsV3 checks the exact two-report set named by a verified
-// release Statement and both Machine-signed completed-run chains. All inputs
-// are supplied as local bytes; no resolver or network access is hidden here.
-// The caller must separately measure the installed adapter, runner, frozen
-// Soul and host inputs before granting protected launch.
+// VerifyReleasedReportsV3 is the public offline acceptance gate for v3. The
+// signed report chains can be checked locally, but the physical segment/raw
+// evidence traversal is not implemented yet. Refuse even valid chains until
+// that verifier is wired into this gate; a signed pass claim is not a result.
 func VerifyReleasedReportsV3(release VerifiedRelease, policy VerifiedPolicy,
+	qualificationJSON, protectedEnvelope, cooperativeEnvelope,
+	protectedExecution, cooperativeExecution,
+	protectedCommitment, cooperativeCommitment []byte,
+	machineKey ed25519.PublicKey, now time.Time) error {
+	if err := verifyReleasedReportsV3Claims(release, policy, qualificationJSON,
+		protectedEnvelope, cooperativeEnvelope, protectedExecution, cooperativeExecution,
+		protectedCommitment, cooperativeCommitment, machineKey, now); err != nil {
+		return err
+	}
+	return ErrUnqualified
+}
+
+// verifyReleasedReportsV3Claims checks the two signed chains and release refs
+// as a diagnostic component. It does not authenticate the gate manifest
+// archive, segment attestations, raw Q/ACP/OS evidence, or installed bytes.
+func verifyReleasedReportsV3Claims(release VerifiedRelease, policy VerifiedPolicy,
 	qualificationJSON, protectedEnvelope, cooperativeEnvelope,
 	protectedExecution, cooperativeExecution,
 	protectedCommitment, cooperativeCommitment []byte,
