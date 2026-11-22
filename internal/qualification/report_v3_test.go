@@ -180,6 +180,20 @@ func TestMeasuredHostReportV3ProfileAndBinding(t *testing.T) {
 				{"extra completed digest", func(v map[string]any) {
 					v["run_evidence"].(map[string]any)["completed_run"] = map[string]any{"uri": "fixture:bogus", "sha256": "sha256:" + strings.Repeat("f", 64)}
 				}},
+				{"nonlocal gate manifest", func(v map[string]any) {
+					gate := "T21"
+					if name == "protected" {
+						gate = "T01"
+					}
+					v["gates"].(map[string]any)[gate].(map[string]any)["evidence"].(map[string]any)["uri"] = "fixture:unresolved-gate"
+				}},
+				{"gate digest and URI disagree", func(v map[string]any) {
+					gate := "T21"
+					if name == "protected" {
+						gate = "T01"
+					}
+					v["gates"].(map[string]any)[gate].(map[string]any)["evidence"].(map[string]any)["sha256"] = "sha256:" + strings.Repeat("0", 64)
+				}},
 				{"unexpected field", func(v map[string]any) { v["approved"] = true }},
 				{"numeric render", func(v map[string]any) { v["renders"] = []any{7} }},
 				{"duplicate render", func(v map[string]any) { v["renders"] = []any{"instructions", "instructions"} }},
@@ -201,6 +215,14 @@ func TestMeasuredHostReportV3ProfileAndBinding(t *testing.T) {
 				})
 			}
 			if name == "protected" {
+				var duplicate map[string]any
+				json.Unmarshal(raw, &duplicate)
+				duplicateGates := duplicate["gates"].(map[string]any)
+				duplicateGates["T02"].(map[string]any)["evidence"] = duplicateGates["T01"].(map[string]any)["evidence"]
+				duplicateRaw, _ := json.Marshal(duplicate)
+				if _, err := VerifyHostReportV3(signedReportV3(t, duplicateRaw, key), verified, now); err == nil {
+					t.Fatal("signed protected report reused a gate manifest")
+				}
 				var changed map[string]any
 				json.Unmarshal(raw, &changed)
 				changed["bridge"].(map[string]any)["principals"].(map[string]any)["machine_uid"] = float64(0)

@@ -2,6 +2,7 @@ package qualification
 
 import (
 	"encoding/json"
+	"strings"
 )
 
 func validV3Renders(raw json.RawMessage) bool {
@@ -81,6 +82,16 @@ func reportShapeV3(raw []byte) error {
 	if json.Unmarshal(raw, &report) != nil || report.SchemaVersion != 3 ||
 		binding.HostID != report.Host.ID || binding.ProfileInForce != report.ProfileInForce {
 		return ErrUnqualified
+	}
+	seenGates := make(map[string]bool, len(report.Gates))
+	for _, gate := range report.Gates {
+		ref := gate.Evidence
+		if _, err := gateObjectNameV3(ref.URI, ref.SHA256); err != nil ||
+			!strings.HasPrefix(ref.URI, gateObjectPrefixV3+"gate-manifest/") ||
+			seenGates[ref.SHA256] {
+			return ErrUnqualified
+		}
+		seenGates[ref.SHA256] = true
 	}
 	if profile == "managed-protected" {
 		copyFields["schema_version"] = []byte("2")

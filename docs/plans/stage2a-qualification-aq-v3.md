@@ -91,6 +91,26 @@ A-corroborated artifact format must bind T01, T02, T03, and the distinct
 cooperative T21 run to the signed report `gates` references and be checked by
 the offline verifier. The current offline diagnostic checks signed gate claims
 and digest references but does not resolve the underlying Q, ACP, or OS bytes.
+The low-level local object reader accepts only content-addressed
+`qualification://stage2a/{gate-manifest,blob}/<lowercase-sha256-hex>` URIs whose
+suffix equals the signed `sha256:` digest, opens each archive component without
+following links, refuses linked or nonregular objects, bounds the read and
+rehashes the exact bytes. The source caps are 1 MiB for gate manifests and
+64 MiB for raw objects; callers may impose tighter limits. This reader does
+not authenticate the archive writer, parse a gate manifest, or turn a signed
+pass claim into a physical result.
+The v3 signed-report shape now requires each gate evidence reference to use the
+gate-manifest URI class, match its digest suffix, and differ from the other
+gates' manifest digests. Synthetic v3 vectors use distinct references for the
+three protected gates and the cooperative gate; they are not physical objects.
+An offline component helper verifies the designated-host report signature and
+resolves those exact manifest bytes from the local root. It checks the fixed
+canonical v1 gate-manifest field set, profile/host/suite selectors, ordered
+segments, shared cohort/owner plan/host observation, unique segment and attempt
+identities/references, and exactly one report anchor across the set.
+It returns the bytes for the future physical verifier; it does not verify
+segment signatures, raw issuer receipts, Q or ACP streams, installed inputs,
+or physical outcomes, and it cannot credit a gate.
 Restart, outage, race, and recovery checks need distinct
 spent starts and Q sessions in a reviewed multi-segment aggregation rule;
 the report's top-level run chain covers only its primary segment. An
