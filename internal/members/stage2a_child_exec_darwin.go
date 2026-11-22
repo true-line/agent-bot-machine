@@ -21,6 +21,7 @@ func (s *Stage2aService) execChild(hqUID int, epoch, digest, nonce string, pid i
 	if r == nil || r.digest != stage2aReservationSHA256(r.envelope) ||
 		r.request.HQEpoch != epoch || r.payload.Assignment.HQUID != hqUID ||
 		len(r.finalizationEnvelope) == 0 || r.bindReceiptSHA256 == "" ||
+		r.hello == nil || r.hello.aborted || !r.hello.finalized || len(r.hello.finalizationEnvelope) == 0 ||
 		r.runnerPID <= 1 || r.bridgePID <= 1 || r.childLauncherPID != 0 || r.liveSequence == 0 {
 		return reply, errStage2aReservationAuthority
 	}
@@ -93,8 +94,9 @@ func (s *Stage2aService) execChild(hqUID int, epoch, digest, nonce string, pid i
 	}
 	child := &Stage2aChildExec{
 		ReservationSHA256: digest, FinalizationSHA256: stage2aReservationSHA256(r.finalizationEnvelope),
-		BindReceiptSHA256: r.bindReceiptSHA256,
-		Runner:            stage2aLiveRoleIdentity(r.runnerProcess), Bridge: stage2aLiveRoleIdentity(r.bridgeProcess),
+		HelloFinalizationSHA256: stage2aReservationSHA256(r.hello.finalizationEnvelope),
+		BindReceiptSHA256:       r.bindReceiptSHA256,
+		Runner:                  stage2aLiveRoleIdentity(r.runnerProcess), Bridge: stage2aLiveRoleIdentity(r.bridgeProcess),
 		Executable: executable, ExecutableSHA256: p.LaunchInputs.ComponentDigests["adapter"],
 		RelaySocket: endpoints.Relay.SocketPath, SandboxPath: SoulChildSandbox,
 		SandboxSHA256:  "sha256:" + harnessSHA(soulChildProfile),

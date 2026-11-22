@@ -783,9 +783,10 @@ durable installation/start spend. `stage2a-exec` grants each fixed launcher
 role once to the observed real, effective and saved kernel UID/GID and PID.
 The reviewed sudo rule has distinct H-to-R `soul-run` and `soul-child` entries
 and an H-to-B `soul-bridge` entry; all use the pinned Machine executable and
-`NOSETENV`. A child grant is available only after B finalization, the same
-R/B kernel starts, a prior signed Live lease, frozen adapter/profile checks,
-and a durable one-use child claim. It has its own at most five-second expiry
+`NOSETENV`. A child grant is available only after B finalization, a completed
+A-signed protected Hello finalization, the same R/B kernel starts, a prior
+signed Live lease, frozen adapter/profile checks, and a durable one-use child
+claim. It has its own at most five-second expiry
 instead of reusing the original 30-second start window.
 R receives the signed reservation on FD3 and a sandbox limited to its own
 admission and relay Unix sockets. Its policy denies direct IP and sibling
@@ -802,8 +803,9 @@ durable fixture spend succeeds. It does not establish physical T03.
 Each finalized `stage2a-live` response carries an A-signed, at most five
 second lease envelope, bound to the spent reservation, signed B finalization,
 bind receipt, exact R/B kernel PID and start identities, and an increasing
-sequence. Once A signs the child-start receipt, Live also binds its wrapper
-and actual stock child PID/start identities and the receipt digest. The paired
+sequence. Once A signs the child-start receipt, Live also binds its wrapper,
+actual stock child PID/start identities, the receipt digest and the exact
+protected Hello finalization digest. The paired
 HQ relays Live over R's assigned admission socket while ACP uses the separate
 stdin stream. R and the separate child wrapper must verify the enrolled A key,
 selectors, process identities, increasing sequence and deadline. The child
@@ -835,7 +837,8 @@ withholds ACP until A observes the actual stock process and signs a short
 child-start receipt, and verifies its first A Live lease. `stage2a-child-ready`
 requires the granted wrapper, direct child PID, exact frozen executable/argv,
 R UID/GID, group and profile pin; its signed receipt binds those identities,
-the exact environment digest and B finalization. Stop requires both whole
+the exact environment digest, B finalization and protected Hello finalization.
+Stop requires both whole
 dedicated UID sets idle and records the child identities when present. On local
 macOS 27, a second `sandbox-exec` inside the outer R sandbox failed with
 `sandbox_apply: Operation not permitted`; a separate local native probe showed
@@ -843,10 +846,25 @@ macOS 27, a second `sandbox-exec` inside the outer R sandbox failed with
 standalone child profile fixture tests path denials. These source and local
 process probes do not prove the designated M2's installed R/B accounts or T03.
 
-The HQ protected Hello/Equip admission and A post-Hello finalization still
-need the authenticated paired production path before HQ may attach the owner
-ACP stream. HQ must wait for both R's child-receipt acknowledgment and the
-child wrapper's signed-receipt/Live acceptance. No fixture can close that gap.
+The paired `stage2a-peer-role` request carries HQ's accepted Unix socket peer
+UID/PID. A reobserves the process and signs a five-second runner role only
+for the frozen Souls Node child of the granted R wrapper, or a child role only
+for the separately granted child wrapper and live stock process. A same-UID
+unrelated process cannot inherit either role. HQ must verify this role for
+each accepted R-only admission connection. Paired `stage2a-hello-start` binds
+the exact canonical `hq/v1` Hello bytes and native Node peer to the spent
+reservation, installed measurements, B finalization and H broker bind.
+`stage2a-hello-finalize` then signs HQ's exact post-Hello decision tuple,
+including every admitted member/runtime mapping and the integer installation
+epoch, once. `stage2a-hello-abort` is terminal for later finalization, child
+grant and Live renewal. A restart also loses the in-memory Hello state and
+refuses a spent start. The child grant and receipt carry the finalization
+digest; the child verifies it again on every signed Live renewal.
+
+HQ's authenticated paired production adapter must consume these signatures
+before attaching the owner ACP stream. HQ must wait for both R's child-receipt
+acknowledgment and the child wrapper's signed-receipt/Live acceptance. These
+source and fixture checks do not establish physical T03.
 
 `stage2a-stop` waits for both dedicated role UIDs to be kernel idle, revokes
 the B proof, retires the active claim, then signs and atomically publishes a

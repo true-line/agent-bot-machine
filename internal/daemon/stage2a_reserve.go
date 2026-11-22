@@ -22,6 +22,10 @@ const stage2aFinalizeBVerb = "stage2a-finalize-b"
 const stage2aLiveVerb = "stage2a-live"
 const stage2aProviderVerb = "stage2a-provider"
 const stage2aChildReadyVerb = "stage2a-child-ready"
+const stage2aHelloStartVerb = "stage2a-hello-start"
+const stage2aHelloFinalizeVerb = "stage2a-hello-finalize"
+const stage2aHelloAbortVerb = "stage2a-hello-abort"
+const stage2aPeerRoleVerb = "stage2a-peer-role"
 
 var stage2aExecDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -34,7 +38,9 @@ type stage2aExecRequest struct {
 
 func isStage2aVerb(verb string) bool {
 	return verb == stage2aReserveVerb || verb == stage2aExecVerb ||
-		verb == stage2aVerifyBVerb || verb == stage2aLookupVerb || verb == stage2aListVerb || verb == stage2aPrepareBVerb || verb == stage2aStopVerb || verb == stage2aFinalizeBVerb || verb == stage2aLiveVerb || verb == stage2aProviderVerb || verb == stage2aChildReadyVerb
+		verb == stage2aVerifyBVerb || verb == stage2aLookupVerb || verb == stage2aListVerb || verb == stage2aPrepareBVerb || verb == stage2aStopVerb || verb == stage2aFinalizeBVerb || verb == stage2aLiveVerb || verb == stage2aProviderVerb || verb == stage2aChildReadyVerb ||
+		verb == stage2aHelloStartVerb || verb == stage2aHelloFinalizeVerb || verb == stage2aHelloAbortVerb ||
+		verb == stage2aPeerRoleVerb
 }
 
 func stage2aFields(req *Request, raw []byte) (string, string) {
@@ -129,6 +135,38 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 			return diag.DaemonUndeclared, "invalid Stage 2a child readiness"
 		}
 		req.stage2aChildReady = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aHelloStartVerb {
+		parsed, err := members.ParseStage2aHelloStartRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a Hello start"
+		}
+		req.stage2aHelloStart = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aHelloFinalizeVerb {
+		parsed, err := members.ParseStage2aHelloFinalizeRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a Hello finalization"
+		}
+		req.stage2aHelloFinalize = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aHelloAbortVerb {
+		parsed, err := members.ParseStage2aStopRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a Hello abort"
+		}
+		req.stage2aHelloAbort = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aPeerRoleVerb {
+		parsed, err := members.ParseStage2aPeerRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a peer role"
+		}
+		req.stage2aPeerRole = parsed
 		return "", ""
 	}
 	body, ok := deviceObject(decoded)

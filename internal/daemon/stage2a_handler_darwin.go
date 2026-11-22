@@ -51,6 +51,21 @@ func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
 		case stage2aChildReadyVerb:
 			state = "child-ready"
 			body, err = service.ChildReady(req.peerUID, req.stage2aEpoch, req.stage2aChildReady)
+		case stage2aHelloStartVerb:
+			state = "hello-started"
+			body, err = service.HelloStart(req.peerUID, req.stage2aEpoch, req.stage2aHelloStart)
+		case stage2aHelloFinalizeVerb:
+			state = "hello-finalized"
+			body, err = service.HelloFinalize(req.peerUID, req.stage2aEpoch, req.stage2aHelloFinalize)
+		case stage2aHelloAbortVerb:
+			state = "hello-aborted"
+			err = service.AbortHello(req.peerUID, req.stage2aEpoch, req.stage2aHelloAbort)
+			body = struct {
+				Aborted bool `json:"aborted"`
+			}{Aborted: err == nil}
+		case stage2aPeerRoleVerb:
+			state = "peer-verified"
+			body, err = service.PeerRole(req.peerUID, req.stage2aEpoch, req.stage2aPeerRole)
 		default:
 			return refused(diag.DaemonUnimplemented, "unsupported Stage 2a verb")
 		}

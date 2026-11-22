@@ -50,6 +50,7 @@ type stage2aLiveReservation struct {
 	childProcess         soulKernelProcessSnapshot
 	childReceiptEnvelope []byte
 	liveSequence         uint64
+	hello                *stage2aHelloState
 }
 
 func NewStage2aService(key ed25519.PrivateKey) *Stage2aService {

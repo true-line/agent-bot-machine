@@ -57,6 +57,8 @@ func verifyStage2aChildStartReceipt(reply Stage2aChildReadyReply, in Stage2aRole
 	if err != nil || payload.Schema != "agent-bot-machine/stage2a-child-start/v1" ||
 		payload.ReservationSHA256 != in.ChildExec.ReservationSHA256 ||
 		payload.FinalizationSHA256 != in.ChildExec.FinalizationSHA256 ||
+		!stage2aPrefixedDigest.MatchString(payload.HelloFinalizationSHA256) ||
+		payload.HelloFinalizationSHA256 != in.ChildExec.HelloFinalizationSHA256 ||
 		payload.BindReceiptSHA256 != in.ChildExec.BindReceiptSHA256 ||
 		payload.Runner != in.ChildExec.Runner || payload.Bridge != in.ChildExec.Bridge ||
 		payload.GrantSHA256 != grantSHA256 ||
@@ -99,6 +101,8 @@ func verifyStage2aChildLiveLease(reply Stage2aLiveReply, challenge string,
 		payload.HQEpoch != in.Request.HQEpoch || payload.Challenge != challenge ||
 		payload.ReservationSHA256 != in.ChildExec.ReservationSHA256 ||
 		payload.FinalizationSHA256 != in.ChildExec.FinalizationSHA256 ||
+		!stage2aPrefixedDigest.MatchString(payload.HelloFinalizationSHA256) ||
+		payload.HelloFinalizationSHA256 != in.ChildExec.HelloFinalizationSHA256 ||
 		payload.BindReceiptSHA256 != in.ChildExec.BindReceiptSHA256 ||
 		payload.Runner != in.ChildExec.Runner || payload.Bridge != in.ChildExec.Bridge ||
 		payload.ChildLauncher == nil || payload.Child == nil ||

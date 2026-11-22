@@ -24,7 +24,8 @@ func (s *Stage2aService) ChildReady(hqUID int, epoch string, q Stage2aChildReady
 	if !stage2aMatchesStopSelectors(r, q.Stage2aStopRequest, hqUID) ||
 		r.childLauncherPID != q.ChildLauncherPID || r.childPID != 0 ||
 		r.childGrantSHA256 != q.GrantSHA256 || !time.Now().Before(r.childGrantExpiresAt) ||
-		len(r.finalizationEnvelope) == 0 || r.bindReceiptSHA256 == "" {
+		len(r.finalizationEnvelope) == 0 || r.bindReceiptSHA256 == "" ||
+		r.hello == nil || r.hello.aborted || !r.hello.finalized || len(r.hello.finalizationEnvelope) == 0 {
 		return reply, errStage2aReservationAuthority
 	}
 	p, raw, err := loadStage2aInstalledPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, q.InstallationID)
@@ -92,8 +93,9 @@ func (s *Stage2aService) ChildReady(hqUID int, epoch string, q Stage2aChildReady
 	}
 	payload := Stage2aChildStartPayload{
 		Schema: "agent-bot-machine/stage2a-child-start/v1", Stage2aStopRequest: q.Stage2aStopRequest,
-		FinalizationSHA256: stage2aReservationSHA256(r.finalizationEnvelope),
-		BindReceiptSHA256:  r.bindReceiptSHA256, GrantSHA256: q.GrantSHA256,
+		FinalizationSHA256:      stage2aReservationSHA256(r.finalizationEnvelope),
+		HelloFinalizationSHA256: stage2aReservationSHA256(r.hello.finalizationEnvelope),
+		BindReceiptSHA256:       r.bindReceiptSHA256, GrantSHA256: q.GrantSHA256,
 		Runner: stage2aLiveRoleIdentity(r.runnerProcess), Bridge: stage2aLiveRoleIdentity(r.bridgeProcess),
 		ChildLauncher: stage2aLiveRoleIdentity(r.childLauncherProcess),
 		Child:         stage2aLiveRoleIdentity(childProcess),

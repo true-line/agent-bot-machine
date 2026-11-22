@@ -114,7 +114,7 @@ func (s *Stage2aService) live(hqUID int, epoch string, q Stage2aStopRequest, cha
 		return reply, errStage2aReservationAuthority
 	}
 	r := s.active[q.ReservationSHA256]
-	if !stage2aMatchesStopSelectors(r, q, hqUID) {
+	if !stage2aMatchesStopSelectors(r, q, hqUID) || r.hello != nil && r.hello.aborted {
 		return reply, errStage2aReservationAuthority
 	}
 	p, raw, err := loadStage2aInstalledPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, q.InstallationID)
@@ -214,6 +214,10 @@ func signStage2aLiveLease(q Stage2aStopRequest, challenge string, r *stage2aLive
 		Sequence: sequence, IssuedAtMS: issued.UnixMilli(), ExpiresAtMS: expires.UnixMilli(),
 	}
 	if r.childPID > 1 && len(r.childReceiptEnvelope) > 0 {
+		if r.hello == nil || r.hello.aborted || !r.hello.finalized || len(r.hello.finalizationEnvelope) == 0 {
+			return nil, errStage2aReservationAuthority
+		}
+		payload.HelloFinalizationSHA256 = stage2aReservationSHA256(r.hello.finalizationEnvelope)
 		launcher, child := stage2aLiveRoleIdentity(r.childLauncherProcess), stage2aLiveRoleIdentity(r.childProcess)
 		payload.ChildLauncher, payload.Child = &launcher, &child
 		payload.ChildReceiptSHA256 = stage2aReservationSHA256(r.childReceiptEnvelope)

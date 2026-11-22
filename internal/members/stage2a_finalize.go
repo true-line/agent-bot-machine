@@ -71,17 +71,18 @@ type Stage2aLiveRoleIdentity struct {
 type Stage2aLiveLeasePayload struct {
 	Schema string `json:"schema"`
 	Stage2aStopRequest
-	FinalizationSHA256 string                   `json:"finalization_sha256"`
-	BindReceiptSHA256  string                   `json:"bind_receipt_sha256"`
-	Challenge          string                   `json:"challenge"`
-	Runner             Stage2aLiveRoleIdentity  `json:"runner"`
-	Bridge             Stage2aLiveRoleIdentity  `json:"bridge"`
-	ChildLauncher      *Stage2aLiveRoleIdentity `json:"child_launcher,omitempty"`
-	Child              *Stage2aLiveRoleIdentity `json:"child,omitempty"`
-	ChildReceiptSHA256 string                   `json:"child_receipt_sha256,omitempty"`
-	Sequence           uint64                   `json:"sequence"`
-	IssuedAtMS         int64                    `json:"issued_at_ms"`
-	ExpiresAtMS        int64                    `json:"expires_at_ms"`
+	FinalizationSHA256      string                   `json:"finalization_sha256"`
+	HelloFinalizationSHA256 string                   `json:"hello_finalization_sha256,omitempty"`
+	BindReceiptSHA256       string                   `json:"bind_receipt_sha256"`
+	Challenge               string                   `json:"challenge"`
+	Runner                  Stage2aLiveRoleIdentity  `json:"runner"`
+	Bridge                  Stage2aLiveRoleIdentity  `json:"bridge"`
+	ChildLauncher           *Stage2aLiveRoleIdentity `json:"child_launcher,omitempty"`
+	Child                   *Stage2aLiveRoleIdentity `json:"child,omitempty"`
+	ChildReceiptSHA256      string                   `json:"child_receipt_sha256,omitempty"`
+	Sequence                uint64                   `json:"sequence"`
+	IssuedAtMS              int64                    `json:"issued_at_ms"`
+	ExpiresAtMS             int64                    `json:"expires_at_ms"`
 }
 
 func ParseStage2aFinalizeBRequest(raw []byte) (Stage2aFinalizeBRequest, error) {

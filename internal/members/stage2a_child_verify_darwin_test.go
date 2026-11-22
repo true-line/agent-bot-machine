@@ -51,13 +51,15 @@ func TestStage2aChildReceiptAndLiveBindKernelStarts(t *testing.T) {
 		Start: SoulStartAssignment{PlanID: selectors.PlanID, PlanDigest: selectors.PlanDigest, LaunchID: selectors.LaunchID},
 		ChildExec: &Stage2aChildExec{ReservationSHA256: selectors.ReservationSHA256,
 			FinalizationSHA256: "sha256:" + strings.Repeat("d", 64), BindReceiptSHA256: "sha256:" + strings.Repeat("e", 64),
-			Runner: role, Bridge: bridge, Executable: "/private/tmp/claude-agent-acp",
+			HelloFinalizationSHA256: "sha256:" + strings.Repeat("3", 64),
+			Runner:                  role, Bridge: bridge, Executable: "/private/tmp/claude-agent-acp",
 			ExecutableSHA256: "sha256:" + strings.Repeat("f", 64), SandboxPath: SoulChildSandbox,
 			SandboxSHA256: "sha256:" + strings.Repeat("1", 64), RelaySocket: "/private/tmp/relay.sock", Environment: env}}
 	grant := "sha256:" + strings.Repeat("2", 64)
 	receipt := Stage2aChildStartPayload{Schema: "agent-bot-machine/stage2a-child-start/v1",
 		Stage2aStopRequest: selectors, FinalizationSHA256: in.ChildExec.FinalizationSHA256,
-		BindReceiptSHA256: in.ChildExec.BindReceiptSHA256, GrantSHA256: grant, Runner: role, Bridge: bridge,
+		HelloFinalizationSHA256: in.ChildExec.HelloFinalizationSHA256,
+		BindReceiptSHA256:       in.ChildExec.BindReceiptSHA256, GrantSHA256: grant, Runner: role, Bridge: bridge,
 		ChildLauncher: stage2aLiveRoleIdentity(launcher), Child: stage2aLiveRoleIdentity(child),
 		Executable: in.ChildExec.Executable, ExecutableSHA256: in.ChildExec.ExecutableSHA256,
 		SandboxPath: SoulChildSandbox, SandboxSHA256: in.ChildExec.SandboxSHA256,
@@ -68,6 +70,12 @@ func TestStage2aChildReceiptAndLiveBindKernelStarts(t *testing.T) {
 	if _, err := verifyStage2aChildStartReceipt(reply, in, grant, launcher, child, pub, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	helloSHA := in.ChildExec.HelloFinalizationSHA256
+	in.ChildExec.HelloFinalizationSHA256 = "sha256:" + strings.Repeat("4", 64)
+	if _, err := verifyStage2aChildStartReceipt(reply, in, grant, launcher, child, pub, now.Add(time.Second)); err == nil {
+		t.Fatal("child accepted a different Hello finalization")
+	}
+	in.ChildExec.HelloFinalizationSHA256 = helloSHA
 	reused := child
 	reused.StartMicros++
 	if _, err := verifyStage2aChildStartReceipt(reply, in, grant, launcher, reused, pub, now.Add(time.Second)); err == nil {
@@ -83,7 +91,8 @@ func TestStage2aChildReceiptAndLiveBindKernelStarts(t *testing.T) {
 	challenge := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 	lease := Stage2aLiveLeasePayload{Schema: "agent-bot-machine/stage2a-live-lease/v1",
 		Stage2aStopRequest: selectors, FinalizationSHA256: in.ChildExec.FinalizationSHA256,
-		BindReceiptSHA256: in.ChildExec.BindReceiptSHA256, Challenge: challenge, Runner: role, Bridge: bridge,
+		HelloFinalizationSHA256: in.ChildExec.HelloFinalizationSHA256,
+		BindReceiptSHA256:       in.ChildExec.BindReceiptSHA256, Challenge: challenge, Runner: role, Bridge: bridge,
 		ChildLauncher: ptrStage2aLiveRole(stage2aLiveRoleIdentity(launcher)),
 		Child:         ptrStage2aLiveRole(stage2aLiveRoleIdentity(child)), ChildReceiptSHA256: sha,
 		Sequence: 7, IssuedAtMS: now.UnixMilli(), ExpiresAtMS: now.Add(4 * time.Second).UnixMilli()}
