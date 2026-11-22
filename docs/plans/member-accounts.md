@@ -781,6 +781,12 @@ cannot authorize a launch. `stage2a-lookup` returns only installed selectors.
 `stage2a-reserve` signs the A-owned `machine/v2` snapshot binding after a
 durable installation/start spend. `stage2a-exec` grants each fixed launcher
 role once to the observed real, effective and saved kernel UID/GID and PID.
+The reviewed sudo rule has distinct H-to-R `soul-run` and `soul-child` entries
+and an H-to-B `soul-bridge` entry; all use the pinned Machine executable and
+`NOSETENV`. A child grant is available only after B finalization, the same
+R/B kernel starts, a prior signed Live lease, frozen adapter/profile checks,
+and a durable one-use child claim. It has its own at most five-second expiry
+instead of reusing the original 30-second start window.
 R receives the signed reservation on FD3 and a sandbox limited to its own
 admission and relay Unix sockets. Its policy denies direct IP and sibling
 sockets. B receives only its assigned H broker and R relay paths, a one-use
@@ -789,16 +795,20 @@ spends the HMAC broker bind; `stage2a-finalize-b` signs HQ's exact bind receipt
 and relay socket observation only after the live B launcher and spent bind
 claim match. `stage2a-live` renews a short lease while the installed authority,
 active claim and role processes still match. The local `stage2a-provider`
-fixture reveals its reviewed response only once after finalization and a
-durable spend. It does not establish physical T03.
+fixture reveals its reviewed response only once after the stock child has an
+A-signed start receipt, both role wrappers and the child remain live, and a
+durable fixture spend succeeds. It does not establish physical T03.
 
 Each finalized `stage2a-live` response carries an A-signed, at most five
 second lease envelope, bound to the spent reservation, signed B finalization,
 bind receipt, exact R/B kernel PID and start identities, and an increasing
-sequence. The paired HQ relays that envelope over R's assigned admission
-socket while ACP uses the separate stdin stream. R must verify the enrolled A
-key, selectors, process identity, sequence and deadline, and stop its stock
-child on missing, stale or rejected renewal. An A restart loses the active
+sequence. Once A signs the child-start receipt, Live also binds its wrapper
+and actual stock child PID/start identities and the receipt digest. The paired
+HQ relays Live over R's assigned admission socket while ACP uses the separate
+stdin stream. R and the separate child wrapper must verify the enrolled A key,
+selectors, process identities, increasing sequence and deadline. The child
+wrapper terminates its stock process group on missing, stale or rejected
+renewal or HQ EOF. An A restart loses the active
 in-memory reservation and cannot resume signing the already spent start.
 
 The owner-approved launch inputs also contain a bounded
@@ -809,23 +819,34 @@ be one `claude-agent-acp` executable inside A's frozen runtime inventory; its
 measured file digest must equal the named adapter component digest, with no
 adapter route environment or extra argv. R checks these inputs against
 its signed launch-input digest before entering Souls. The object cannot name
-a Unix socket or temp directory: those must be derived from the verified
-per-start B assignment and R-private state. R's own environment remains the
-fixed three-variable launcher environment. This measured object alone does
-not start the stock client. The reviewed R-owned child argv, B-ready gate,
-HQ ACP stream and stop observation must be connected before a protected T03
-run can be claimed; the generic shared-account C launcher is ineligible.
+a Unix socket or temp directory: those are derived from the verified per-start
+B assignment and R-private state. R's own environment remains the fixed
+three-variable launcher environment. The child gets only the fixed private
+HOME/XDG/TMPDIR, literal fixture key and model, and assigned B Unix relay
+environment. The generic shared-account C launcher is ineligible.
 
 A separate measured `effective_config.adapter_child_sandbox` pins the
 root-installed child Seatbelt profile and its frozen inventory bytes. A
-Machine-granted child launch must invoke the one reviewed adapter executable
+Machine's separate one-use R-UID `soul-child` wrapper invokes that executable
 through fixed `sandbox-exec` arguments using the signed B relay path. The
 child profile permits only that relay; it denies HQ admission, the member
-socket, siblings and direct IP. Machine must supervise its separate child
-process group and verify cutoff. On local macOS 27, a second `sandbox-exec`
-inside the outer R sandbox failed with `sandbox_apply: Operation not permitted`,
-so the R process cannot spawn this profile itself. The standalone child profile
-fixture tests path denials; only a separate installed R child can prove T03.
+socket, siblings and direct IP. The wrapper starts a separate process group,
+withholds ACP until A observes the actual stock process and signs a short
+child-start receipt, and verifies its first A Live lease. `stage2a-child-ready`
+requires the granted wrapper, direct child PID, exact frozen executable/argv,
+R UID/GID, group and profile pin; its signed receipt binds those identities,
+the exact environment digest and B finalization. Stop requires both whole
+dedicated UID sets idle and records the child identities when present. On local
+macOS 27, a second `sandbox-exec` inside the outer R sandbox failed with
+`sandbox_apply: Operation not permitted`; a separate local native probe showed
+`sandbox-exec` replacing itself with the target at the direct child PID. The
+standalone child profile fixture tests path denials. These source and local
+process probes do not prove the designated M2's installed R/B accounts or T03.
+
+The HQ protected Hello/Equip admission and A post-Hello finalization still
+need the authenticated paired production path before HQ may attach the owner
+ACP stream. HQ must wait for both R's child-receipt acknowledgment and the
+child wrapper's signed-receipt/Live acceptance. No fixture can close that gap.
 
 `stage2a-stop` waits for both dedicated role UIDs to be kernel idle, revokes
 the B proof, retires the active claim, then signs and atomically publishes a
