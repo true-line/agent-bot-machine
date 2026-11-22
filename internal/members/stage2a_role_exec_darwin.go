@@ -38,6 +38,8 @@ func RunStage2aRole(command string) int {
 	case "soul-run":
 	case "soul-bridge":
 		role = "bridge"
+	case "soul-child":
+		role = "child"
 	default:
 		return harnessRefused
 	}
@@ -85,6 +87,14 @@ func RunStage2aRole(command string) int {
 		return runStage2aRunner(ctx, in.Request, in.Start, in.Runner, in.Bridge, in.Binding,
 			in.Launch, run.Definition, run.Node, run.Entry, run.ReservationEnvelopeBase64URL,
 			run.ReservationSHA256, input, inputFile, os.Stdout, os.Stderr)
+	}
+	if role == "child" {
+		var grant Stage2aExecReply
+		if decodeStage2aRoleJSON(line, &grant) != nil {
+			return harnessRefused
+		}
+		return runStage2aChild(ctx, in, grant.SHA256, pub,
+			input, inputFile, os.Stdout, os.Stderr)
 	}
 
 	bridge := in.BridgeExec
@@ -211,8 +221,12 @@ func verifyStage2aRoleGrant(frame []byte, challenge stage2aExecChallenge,
 		decodeStage2aRoleJSON(invocation, &in) != nil || !in.Request.valid() ||
 		in.Request.StartID != grant.StartID || in.Request.HQEpoch != grant.HQEpoch ||
 		in.Request.InstallationID != grant.InstallationID || in.Start.LaunchID != grant.LaunchID ||
-		in.Start.ExpiresAt != grant.ExpiresAt ||
-		(grant.Role == "runner") != (in.RunnerExec != nil) || (grant.Role == "bridge") != (in.BridgeExec != nil) {
+		(grant.Role != "child" && in.Start.ExpiresAt != grant.ExpiresAt) ||
+		(grant.Role == "runner") != (in.RunnerExec != nil) ||
+		(grant.Role == "bridge") != (in.BridgeExec != nil) ||
+		(grant.Role == "child") != (in.ChildExec != nil) ||
+		(grant.Role == "child" && (in.ChildExec.GrantExpiresAt != grant.ExpiresAt ||
+			in.ChildExec.ReservationSHA256 != grant.ReservationSHA256)) {
 		return Stage2aRoleInvocation{}, invalid
 	}
 	return in, nil

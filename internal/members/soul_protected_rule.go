@@ -35,6 +35,8 @@ func RenderSoulProtectedRule(runners []SoulRunner, bridges []SoulBridge, hqUID i
 	for i := range runners {
 		fmt.Fprintf(&rule, "%s ALL = (%s) NOPASSWD: NOSETENV: sha256:%s %s soul-run\n",
 			DarwinHQAccount, runners[i].Account, launcherSHA256, launcher)
+		fmt.Fprintf(&rule, "%s ALL = (%s) NOPASSWD: NOSETENV: sha256:%s %s soul-child\n",
+			DarwinHQAccount, runners[i].Account, launcherSHA256, launcher)
 		fmt.Fprintf(&rule, "%s ALL = (%s) NOPASSWD: NOSETENV: sha256:%s %s soul-bridge\n",
 			DarwinHQAccount, bridges[i].Account, launcherSHA256, launcher)
 	}

@@ -137,7 +137,9 @@ func (s *Stage2aService) live(hqUID int, epoch string, q Stage2aStopRequest, cha
 		return reply, errStage2aReservationAuthority
 	}
 	if r.bridgePID > 1 && checkStage2aGrantedRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge", r.bridgeProcess) != nil ||
-		r.runnerPID > 1 && checkStage2aGrantedRoleProcess(r.runnerPID, p.Runner.UID, p.Runner.GID, "runner", r.runnerProcess) != nil {
+		r.runnerPID > 1 && checkStage2aGrantedRoleProcess(r.runnerPID, p.Runner.UID, p.Runner.GID, "runner", r.runnerProcess) != nil ||
+		r.childLauncherPID > 1 && checkStage2aGrantedRoleProcess(r.childLauncherPID, p.Runner.UID, p.Runner.GID, "child", r.childLauncherProcess) != nil ||
+		r.childPID > 1 && checkStage2aChildProcess(r.childPID, r.childLauncherPID, p.Runner, p.LaunchInputs, r.childProcess) != nil {
 		return reply, errStage2aReservationAuthority
 	}
 	reply = Stage2aLiveReply{ReservationSHA256: q.ReservationSHA256, Phase: "prebind",
@@ -156,6 +158,11 @@ func (s *Stage2aService) live(hqUID int, epoch string, q Stage2aStopRequest, cha
 	}
 	finalName := ".stage2a-b-final-" + soulStartClaimName(q.InstallationID, q.StartID) + ".json"
 	if stage2aCheckFinalizationFile(dir, finalName, store.uid, store.gid, r.finalizationEnvelope) != nil {
+		return Stage2aLiveReply{}, errStage2aReservationAuthority
+	}
+	if r.childPID > 1 && stage2aCheckFinalizationFile(dir,
+		".stage2a-child-ready-"+soulStartClaimName(q.InstallationID, q.StartID)+".json",
+		store.uid, store.gid, r.childReceiptEnvelope) != nil {
 		return Stage2aLiveReply{}, errStage2aReservationAuthority
 	}
 	issued := time.Now()
@@ -205,6 +212,11 @@ func signStage2aLiveLease(q Stage2aStopRequest, challenge string, r *stage2aLive
 		BindReceiptSHA256:  r.bindReceiptSHA256, Challenge: challenge,
 		Runner: stage2aLiveRoleIdentity(r.runnerProcess), Bridge: stage2aLiveRoleIdentity(r.bridgeProcess),
 		Sequence: sequence, IssuedAtMS: issued.UnixMilli(), ExpiresAtMS: expires.UnixMilli(),
+	}
+	if r.childPID > 1 && len(r.childReceiptEnvelope) > 0 {
+		launcher, child := stage2aLiveRoleIdentity(r.childLauncherProcess), stage2aLiveRoleIdentity(r.childProcess)
+		payload.ChildLauncher, payload.Child = &launcher, &child
+		payload.ChildReceiptSHA256 = stage2aReservationSHA256(r.childReceiptEnvelope)
 	}
 	return signStage2aEnvelope(payload, 1, Stage2aLiveLeasePurpose, key, sign)
 }

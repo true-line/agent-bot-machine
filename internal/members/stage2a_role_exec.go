@@ -33,6 +33,7 @@ type Stage2aRoleInvocation struct {
 	Launch     Stage2aLaunchInputRecords `json:"launch_inputs"`
 	RunnerExec *Stage2aRunnerExec        `json:"runner_exec,omitempty"`
 	BridgeExec *Stage2aBridgeExec        `json:"bridge_exec,omitempty"`
+	ChildExec  *Stage2aChildExec         `json:"child_exec,omitempty"`
 }
 
 type Stage2aRunnerExec struct {
@@ -47,4 +48,22 @@ type Stage2aBridgeExec struct {
 	Executable          HarnessArtifact `json:"executable"`
 	AssignmentBase64URL string          `json:"assignment_base64url"`
 	ProofSHA256         string          `json:"proof_sha256"`
+}
+
+// The child command is selected from the installed, owner-reviewed launch
+// inputs. HQ supplies no executable, argument, environment or socket value.
+type Stage2aChildExec struct {
+	ReservationSHA256  string                  `json:"reservation_sha256"`
+	FinalizationSHA256 string                  `json:"finalization_sha256"`
+	BindReceiptSHA256  string                  `json:"bind_receipt_sha256"`
+	Runner             Stage2aLiveRoleIdentity `json:"runner"`
+	Bridge             Stage2aLiveRoleIdentity `json:"bridge"`
+	Executable         string                  `json:"executable"`
+	ExecutableSHA256   string                  `json:"executable_sha256"`
+	RelaySocket        string                  `json:"relay_socket"`
+	SandboxPath        string                  `json:"sandbox_path"`
+	SandboxSHA256      string                  `json:"sandbox_sha256"`
+	GrantExpiresAt     string                  `json:"grant_expires_at"`
+	Workdir            string                  `json:"workdir"`
+	Environment        map[string]string       `json:"environment"`
 }

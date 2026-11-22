@@ -130,6 +130,9 @@ func runSoulProtectedLaunchApply(s Saved, a Approval, owner string, h Host, deps
 			if err := stage2aVerifySudoersRole(policy.Runner.Account, "soul-run"); err != nil {
 				return err
 			}
+			if err := stage2aVerifySudoersRole(policy.Runner.Account, "soul-child"); err != nil {
+				return err
+			}
 			return stage2aVerifySudoersRole(policy.Bridge.Account, "soul-bridge")
 		})
 	}

@@ -24,6 +24,7 @@ func TestSoulProtectedRulePinsOnlyReviewedCommandsAndRunAsRoles(t *testing.T) {
 	path := strings.ReplaceAll(SoulLauncher, " ", "\\ ")
 	for i := range runners {
 		want += DarwinHQAccount + " ALL = (" + runners[i].Account + ") NOPASSWD: NOSETENV: sha256:" + digest + " " + path + " soul-run\n"
+		want += DarwinHQAccount + " ALL = (" + runners[i].Account + ") NOPASSWD: NOSETENV: sha256:" + digest + " " + path + " soul-child\n"
 		want += DarwinHQAccount + " ALL = (" + bridges[i].Account + ") NOPASSWD: NOSETENV: sha256:" + digest + " " + path + " soul-bridge\n"
 	}
 	if rule != want || strings.Contains(rule, "_shared-c") || strings.Contains(rule, "(root)") {

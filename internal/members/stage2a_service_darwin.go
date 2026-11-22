@@ -40,8 +40,15 @@ type stage2aLiveReservation struct {
 	finalizationEnvelope []byte
 	bindReceiptSHA256    string
 	runnerPID, bridgePID int
+	childLauncherPID     int
 	runnerProcess        soulKernelProcessSnapshot
 	bridgeProcess        soulKernelProcessSnapshot
+	childLauncherProcess soulKernelProcessSnapshot
+	childGrantSHA256     string
+	childGrantExpiresAt  time.Time
+	childPID             int
+	childProcess         soulKernelProcessSnapshot
+	childReceiptEnvelope []byte
 	liveSequence         uint64
 }
 
@@ -201,12 +208,15 @@ func (s *Stage2aService) Exec(hqUID int, epoch, digest, role, nonce string, pid 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var reply Stage2aExecReply
-	if (role != "runner" && role != "bridge") || !validStage2aExecDigest(digest) || pid <= 1 {
+	if (role != "runner" && role != "bridge" && role != "child") || !validStage2aExecDigest(digest) || pid <= 1 {
 		return reply, errStage2aReservationAuthority
 	}
 	nonceBytes, err := base64.RawURLEncoding.Strict().DecodeString(nonce)
 	if err != nil || len(nonceBytes) != 32 || base64.RawURLEncoding.EncodeToString(nonceBytes) != nonce {
 		return reply, errStage2aReservationAuthority
+	}
+	if role == "child" {
+		return s.execChild(hqUID, epoch, digest, nonce, pid)
 	}
 	r, p, expires, err := s.current(hqUID, epoch, digest)
 	if err != nil || r.digest != stage2aReservationSHA256(r.envelope) ||
@@ -331,6 +341,8 @@ func observeStage2aRoleProcess(pid, uid, gid int, role string) (soulKernelProces
 	command := "soul-run"
 	if role == "bridge" {
 		command = "soul-bridge"
+	} else if role == "child" {
+		command = "soul-child"
 	}
 	observed, err := observeSoulProcess(pid, SoulLauncher, []string{SoulLauncher, command})
 	if err != nil || observed.Kernel.RealUID != uint32(uid) ||

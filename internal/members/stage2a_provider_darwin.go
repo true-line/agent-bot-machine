@@ -31,6 +31,9 @@ func (s *Stage2aService) Provider(hqUID int, epoch string, q Stage2aProviderRequ
 		!stage2aProviderRunnerLive(live, r.runnerPID, func(pid int) error {
 			return checkStage2aGrantedRoleProcess(pid, p.Runner.UID, p.Runner.GID, "runner", r.runnerProcess)
 		}) ||
+		r.childPID <= 1 || len(r.childReceiptEnvelope) == 0 ||
+		checkStage2aGrantedRoleProcess(r.childLauncherPID, p.Runner.UID, p.Runner.GID, "child", r.childLauncherProcess) != nil ||
+		checkStage2aChildProcess(r.childPID, r.childLauncherPID, p.Runner, p.LaunchInputs, r.childProcess) != nil ||
 		r.bridgePID <= 1 || checkStage2aGrantedRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge", r.bridgeProcess) != nil {
 		return reply, errStage2aReservationAuthority
 	}

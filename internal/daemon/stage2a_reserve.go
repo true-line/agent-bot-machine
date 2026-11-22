@@ -21,6 +21,7 @@ const stage2aStopVerb = "stage2a-stop"
 const stage2aFinalizeBVerb = "stage2a-finalize-b"
 const stage2aLiveVerb = "stage2a-live"
 const stage2aProviderVerb = "stage2a-provider"
+const stage2aChildReadyVerb = "stage2a-child-ready"
 
 var stage2aExecDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -33,7 +34,7 @@ type stage2aExecRequest struct {
 
 func isStage2aVerb(verb string) bool {
 	return verb == stage2aReserveVerb || verb == stage2aExecVerb ||
-		verb == stage2aVerifyBVerb || verb == stage2aLookupVerb || verb == stage2aListVerb || verb == stage2aPrepareBVerb || verb == stage2aStopVerb || verb == stage2aFinalizeBVerb || verb == stage2aLiveVerb || verb == stage2aProviderVerb
+		verb == stage2aVerifyBVerb || verb == stage2aLookupVerb || verb == stage2aListVerb || verb == stage2aPrepareBVerb || verb == stage2aStopVerb || verb == stage2aFinalizeBVerb || verb == stage2aLiveVerb || verb == stage2aProviderVerb || verb == stage2aChildReadyVerb
 }
 
 func stage2aFields(req *Request, raw []byte) (string, string) {
@@ -122,11 +123,19 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 		req.stage2aProvider = parsed
 		return "", ""
 	}
+	if req.Verb == stage2aChildReadyVerb {
+		parsed, err := members.ParseStage2aChildReadyRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a child readiness"
+		}
+		req.stage2aChildReady = parsed
+		return "", ""
+	}
 	body, ok := deviceObject(decoded)
 	var parsed stage2aExecRequest
 	if !ok || !deviceKeys(body, "reservation_sha256", "role", "nonce", "pid") || json.Unmarshal(decoded, &parsed) != nil ||
 		!stage2aExecDigest.MatchString(parsed.ReservationSHA256) || parsed.PID <= 1 || parsed.PID > 1<<31-1 ||
-		(parsed.Role != "runner" && parsed.Role != "bridge") {
+		(parsed.Role != "runner" && parsed.Role != "bridge" && parsed.Role != "child") {
 		return diag.DaemonUndeclared, "invalid Stage 2a exec request"
 	}
 	nonce, err := base64.RawURLEncoding.Strict().DecodeString(parsed.Nonce)

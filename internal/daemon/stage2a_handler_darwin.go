@@ -48,6 +48,9 @@ func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
 		case stage2aProviderVerb:
 			state = "provided"
 			body, err = service.Provider(req.peerUID, req.stage2aEpoch, req.stage2aProvider)
+		case stage2aChildReadyVerb:
+			state = "child-ready"
+			body, err = service.ChildReady(req.peerUID, req.stage2aEpoch, req.stage2aChildReady)
 		default:
 			return refused(diag.DaemonUnimplemented, "unsupported Stage 2a verb")
 		}

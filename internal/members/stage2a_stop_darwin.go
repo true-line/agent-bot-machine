@@ -69,7 +69,11 @@ func (s *Stage2aService) Stop(hqUID int, epoch string, q Stage2aStopRequest) (St
 		ReservationSHA256: q.ReservationSHA256, InstallationID: q.InstallationID, StartID: q.StartID,
 		LaunchID: q.LaunchID, PlanID: q.PlanID, PlanDigest: q.PlanDigest, HQEpoch: q.HQEpoch,
 		RunnerUID: p.Runner.UID, BridgeUID: p.Bridge.UID, RunnerPID: r.runnerPID, BridgePID: r.bridgePID,
+		ChildLauncherPID: r.childLauncherPID, ChildPID: r.childPID,
 		BothUIDsIdle: true, StoppedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	if len(r.childReceiptEnvelope) > 0 {
+		payload.ChildReceiptSHA256 = stage2aReservationSHA256(r.childReceiptEnvelope)
+	}
 	envelope, err := signStage2aEnvelope(payload, 1, Stage2aStopPurpose, s.key.Public().(ed25519.PublicKey), s.sign)
 	if err != nil {
 		return reply, err

@@ -24,20 +24,23 @@ type Stage2aStopReply struct {
 	SHA256            string `json:"sha256"`
 }
 type Stage2aStopPayload struct {
-	Schema            string `json:"schema"`
-	ReservationSHA256 string `json:"reservation_sha256"`
-	InstallationID    string `json:"installation_id"`
-	StartID           string `json:"start_id"`
-	LaunchID          string `json:"launch_id"`
-	PlanID            string `json:"plan_id"`
-	PlanDigest        string `json:"plan_digest"`
-	HQEpoch           string `json:"hq_epoch"`
-	RunnerUID         int    `json:"runner_uid"`
-	BridgeUID         int    `json:"bridge_uid"`
-	RunnerPID         int    `json:"runner_pid"`
-	BridgePID         int    `json:"bridge_pid"`
-	BothUIDsIdle      bool   `json:"both_uids_idle"`
-	StoppedAt         string `json:"stopped_at"`
+	Schema             string `json:"schema"`
+	ReservationSHA256  string `json:"reservation_sha256"`
+	InstallationID     string `json:"installation_id"`
+	StartID            string `json:"start_id"`
+	LaunchID           string `json:"launch_id"`
+	PlanID             string `json:"plan_id"`
+	PlanDigest         string `json:"plan_digest"`
+	HQEpoch            string `json:"hq_epoch"`
+	RunnerUID          int    `json:"runner_uid"`
+	BridgeUID          int    `json:"bridge_uid"`
+	RunnerPID          int    `json:"runner_pid"`
+	BridgePID          int    `json:"bridge_pid"`
+	ChildLauncherPID   int    `json:"child_launcher_pid,omitempty"`
+	ChildPID           int    `json:"child_pid,omitempty"`
+	ChildReceiptSHA256 string `json:"child_receipt_sha256,omitempty"`
+	BothUIDsIdle       bool   `json:"both_uids_idle"`
+	StoppedAt          string `json:"stopped_at"`
 }
 
 func ParseStage2aStopRequest(raw []byte) (Stage2aStopRequest, error) {
