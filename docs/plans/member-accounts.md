@@ -775,7 +775,9 @@ component is writable by group or others and all inventory hashes match.
 The installed artifact is checked again at each reservation. One runner OS
 account and one bridge OS account belong to each Soul installation.
 
-Paired `stage2a-list` and `stage2a-lookup` return only installed selectors.
+Paired `stage2a-list` returns A's public key with an empty installation list
+before the first install or after retirement; a missing policy directory
+cannot authorize a launch. `stage2a-lookup` returns only installed selectors.
 `stage2a-reserve` signs the A-owned `machine/v2` snapshot binding after a
 durable installation/start spend. `stage2a-exec` grants each fixed launcher
 role once to the observed real, effective and saved kernel UID/GID and PID.

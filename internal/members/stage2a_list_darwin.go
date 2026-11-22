@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,11 +18,18 @@ import (
 )
 
 func (s *Stage2aService) List(hqUID int, epoch string) (Stage2aListReply, error) {
-	var reply Stage2aListReply
+	reply := Stage2aListReply{Installations: []Stage2aInstalledAssignment{}}
 	if len(s.key) != ed25519.PrivateKeySize || !soulHQEpoch.MatchString(epoch) {
 		return reply, errStage2aReservationAuthority
 	}
+	reply.MachinePublicKey = hex.EncodeToString(s.key.Public().(ed25519.PublicKey))
 	dir, err := openStage2aAdminDirectory(stage2aAuthorityDirectory, uint32(os.Getuid()))
+	if errors.Is(err, unix.ENOENT) {
+		// No authority directory exists before the first paired root install.
+		// The public key is needed to review that exact install, and returning
+		// no policies cannot authorize a launch.
+		return reply, nil
+	}
 	if err != nil {
 		return reply, errStage2aReservationAuthority
 	}
@@ -31,7 +39,7 @@ func (s *Stage2aService) List(hqUID int, epoch string) (Stage2aListReply, error)
 		return reply, errStage2aReservationAuthority
 	}
 	names, err := dir.Readdirnames(17)
-	if err != nil && err != io.EOF || len(names) == 0 || len(names) > 16 {
+	if err != nil && err != io.EOF || len(names) > 16 {
 		return reply, errStage2aReservationAuthority
 	}
 	seenPackage := map[string]bool{}
@@ -84,6 +92,5 @@ func (s *Stage2aService) List(hqUID int, epoch string) (Stage2aListReply, error)
 		})
 	}
 	slices.SortFunc(reply.Installations, func(a, b Stage2aInstalledAssignment) int { return strings.Compare(a.InstallationID, b.InstallationID) })
-	reply.MachinePublicKey = hex.EncodeToString(s.key.Public().(ed25519.PublicKey))
 	return reply, nil
 }
