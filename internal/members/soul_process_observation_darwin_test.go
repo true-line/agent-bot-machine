@@ -46,7 +46,7 @@ func TestSoulProcessArgumentsObservedWithoutEnvironment(t *testing.T) {
 func TestSoulProcessArgumentsRejectsMalformedArea(t *testing.T) {
 	valid := make([]byte, 4)
 	binary.NativeEndian.PutUint32(valid, 2)
-	valid = append(valid, []byte("/bin/sleep\x00\x00/bin/sleep\x005\x00SECRET=value\x00")...)
+	valid = append(valid, []byte("/bin/sleep\x00\x00\x00\x00\x00\x00/bin/sleep\x005\x00SECRET=value\x00")...)
 	got, err := parseSoulProcessArguments(valid)
 	if err != nil || got.ExecPath != "/bin/sleep" || !reflect.DeepEqual(got.Argv, []string{"/bin/sleep", "5"}) {
 		t.Fatalf("valid area refused: %+v: %v", got, err)
@@ -57,6 +57,14 @@ func TestSoulProcessArgumentsRejectsMalformedArea(t *testing.T) {
 		"large argc": func(v []byte) []byte { binary.NativeEndian.PutUint32(v, 129); return v },
 		"relative":   func(v []byte) []byte { v[4] = 'b'; return v },
 		"no path":    func(v []byte) []byte { return v[:5] },
+		"missing padding": func(v []byte) []byte {
+			return append(v[:15], v[16:]...)
+		},
+		"nonzero padding": func(v []byte) []byte { v[15] = 'x'; return v },
+		"empty argv zero": func(v []byte) []byte {
+			return append(v[:20], append([]byte{0}, v[20:]...)...)
+		},
+		"empty argv one before environment": func(v []byte) []byte { v[31] = 0; return v },
 		"missing arg": func(v []byte) []byte {
 			binary.NativeEndian.PutUint32(v, 3)
 			return v[:len(v)-len("SECRET=value\x00")]
@@ -66,6 +74,36 @@ func TestSoulProcessArgumentsRejectsMalformedArea(t *testing.T) {
 			copyOfValid := append([]byte(nil), valid...)
 			if _, err := parseSoulProcessArguments(mutate(copyOfValid)); err == nil {
 				t.Fatal("malformed process arguments accepted")
+			}
+		})
+	}
+}
+
+func TestSoulProcessArgumentsRefusesLiveEmptyArgv(t *testing.T) {
+	for _, example := range []struct {
+		name string
+		path string
+		args []string
+	}{
+		{name: "empty argv zero", path: "/bin/sleep", args: []string{"", "5"}},
+		{name: "empty argv one", path: "/usr/bin/yes", args: []string{"/usr/bin/yes", ""}},
+	} {
+		t.Run(example.name, func(t *testing.T) {
+			child := exec.Command(example.path)
+			child.Args = example.args
+			child.Env = []string{"ABM_SECRET_TEST=not-for-output"}
+			if err := child.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				_ = child.Process.Kill()
+				_ = child.Wait()
+			}()
+			if _, err := observeSoulKernelProcess(child.Process.Pid); err != nil {
+				t.Fatalf("child was not live before argv check: %v", err)
+			}
+			if _, err := observeSoulProcessArguments(child.Process.Pid); err == nil {
+				t.Fatal("empty argv was accepted")
 			}
 		})
 	}

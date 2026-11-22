@@ -53,14 +53,22 @@ func observeSoulProcessArguments(pid int) (soulProcessArguments, error) {
 	if err != nil {
 		return soulProcessArguments{}, fmt.Errorf("observe Soul process arguments: %w", err)
 	}
+	// The sysctl can copy environment bytes after argv into this buffer. Never
+	// return them, and erase the transient copy even when parsing refuses.
+	defer clear(raw)
 	return parseSoulProcessArguments(raw)
 }
 
-// KERN_PROCARGS2 starts with a native int argc, then an exec path, NUL padding,
-// and exactly argc NUL-terminated argument strings. The remaining bytes are
-// environment data; never record or inspect them because they may hold secrets.
+// KERN_PROCARGS2 starts with a native int argc, then an exec path aligned to
+// the target process pointer width, then exactly argc NUL-terminated argument
+// strings. Current Darwin only runs 64-bit processes. Skip the exact padding,
+// never arbitrary NULs: an empty argv[0] must not be mistaken for padding.
+// Reject any empty argument before it can shift the parse into environment.
 func parseSoulProcessArguments(raw []byte) (soulProcessArguments, error) {
-	const maxArgs = 128
+	const (
+		maxArgs      = 128
+		pointerWidth = 8
+	)
 	if len(raw) < 6 || len(raw) > 1<<20 {
 		return soulProcessArguments{}, errors.New("Soul process arguments have invalid size")
 	}
@@ -75,9 +83,16 @@ func parseSoulProcessArguments(raw []byte) (soulProcessArguments, error) {
 	}
 	result := soulProcessArguments{ExecPath: string(remaining[:end]), Argv: make([]string, 0, argc)}
 	remaining = remaining[end+1:]
-	for len(remaining) != 0 && remaining[0] == 0 {
-		remaining = remaining[1:]
+	pad := (pointerWidth - (end+1)%pointerWidth) % pointerWidth
+	if len(remaining) < pad {
+		return soulProcessArguments{}, errors.New("Soul process exec path padding is incomplete")
 	}
+	for _, value := range remaining[:pad] {
+		if value != 0 {
+			return soulProcessArguments{}, errors.New("Soul process exec path padding is invalid")
+		}
+	}
+	remaining = remaining[pad:]
 	for i := 0; i < argc; i++ {
 		end = bytes.IndexByte(remaining, 0)
 		if end <= 0 {

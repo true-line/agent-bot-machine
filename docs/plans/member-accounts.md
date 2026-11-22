@@ -441,8 +441,10 @@ the signed reservation operation nor the installed rule exists yet.
 The Darwin observation helper samples a live PID's kernel start time, parent,
 process group and real/effective/saved UID/GID and groups before and after a
 bounded `kern.procargs2` argv read. It refuses PID reuse, changed credentials,
-incomplete argument data and non-live process states, and does not retain the
-environment area. This supporting observation is not called by an installed
+incomplete argument data, empty argv entries and non-live process states.
+The sysctl may copy environment bytes into a temporary buffer; Machine clears
+that buffer before returning and never returns or logs the environment. This
+supporting observation is not called by an installed
 launcher or completion producer. The exec path in that argument area is not
 an executable vnode measurement; active Seatbelt profile, endpoints, parent
 chain, and authenticated HQ start still require independent proof.
