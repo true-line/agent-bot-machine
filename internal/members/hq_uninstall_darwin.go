@@ -205,9 +205,9 @@ func checkUninstallLaunchFiles(lstat func(string) (os.FileInfo, error), readDir 
 		dir   string
 		files []string
 	}{
-		{launchRuntimeDir, []string{"harness-launch", "harness-egress.sb", "harness-launch-policy.json",
-			"soul-launch", "soul-runner-egress.sb", "soul-bridge-egress.sb", "soul-launch-policy.json"}},
-		{sudoers, []string{"agent-bot-hq-harness-launch", "agent-bot-hq-soul-launch"}},
+		{launchRuntimeDir, []string{filepath.Base(HarnessLauncher), filepath.Base(HarnessSandbox), filepath.Base(HarnessPolicy),
+			filepath.Base(SoulLauncher), filepath.Base(SoulRunnerSandbox), filepath.Base(SoulBridgeSandbox), "soul-launch-policy.json"}},
+		{sudoers, []string{filepath.Base(HarnessRule), filepath.Base(SoulLaunchRule)}},
 	} {
 		// The prefix owner may be unable to inspect sudoers.d. By the time
 		// we reach it all public payloads and their staging names are absent.
