@@ -11,10 +11,14 @@ import (
 )
 
 func TestSoulProcessArgumentsObservedWithoutEnvironment(t *testing.T) {
-	observed, err := observeSoulProcessArguments(os.Getpid())
+	process, err := observeSoulProcess(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
+	if process.Kernel.PID != os.Getpid() || process.Kernel.EffectiveUID != uint32(os.Geteuid()) {
+		t.Fatalf("current process kernel identity differs: %+v", process.Kernel)
+	}
+	observed := process.Arguments
 	if observed.ExecPath == "" || !reflect.DeepEqual(observed.Argv, os.Args) {
 		t.Fatalf("current process arguments differ: path=%q argv=%q want=%q", observed.ExecPath, observed.Argv, os.Args)
 	}
@@ -26,10 +30,14 @@ func TestSoulProcessArgumentsObservedWithoutEnvironment(t *testing.T) {
 		_ = child.Process.Kill()
 		_ = child.Wait()
 	}()
-	observed, err = observeSoulProcessArguments(child.Process.Pid)
+	process, err = observeSoulProcess(child.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if process.Kernel.ParentPID != os.Getpid() {
+		t.Fatalf("child process parent differs: %+v", process.Kernel)
+	}
+	observed = process.Arguments
 	if observed.ExecPath != "/bin/sleep" || !reflect.DeepEqual(observed.Argv, []string{"/bin/sleep", "5"}) {
 		t.Fatalf("child process arguments differ: %+v", observed)
 	}

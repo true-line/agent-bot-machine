@@ -19,6 +19,32 @@ type soulProcessArguments struct {
 	Argv     []string
 }
 
+type soulProcessObservation struct {
+	Kernel    soulKernelProcessSnapshot
+	Arguments soulProcessArguments
+}
+
+// Bracket the argument read with kernel identity samples. A PID that exits and
+// is reused during observation must not lend its argv to an earlier process.
+func observeSoulProcess(pid int) (soulProcessObservation, error) {
+	first, err := observeSoulKernelProcess(pid)
+	if err != nil {
+		return soulProcessObservation{}, err
+	}
+	arguments, err := observeSoulProcessArguments(pid)
+	if err != nil {
+		return soulProcessObservation{}, err
+	}
+	last, err := observeSoulKernelProcess(pid)
+	if err != nil {
+		return soulProcessObservation{}, err
+	}
+	if !sameSoulKernelProcess(first, last) {
+		return soulProcessObservation{}, errors.New("Soul process changed during observation")
+	}
+	return soulProcessObservation{Kernel: last, Arguments: arguments}, nil
+}
+
 func observeSoulProcessArguments(pid int) (soulProcessArguments, error) {
 	if pid <= 1 {
 		return soulProcessArguments{}, errors.New("invalid Soul process PID")
