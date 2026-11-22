@@ -36,7 +36,7 @@ fn key_id(key: &SigningKey) -> String {
 pub fn init_root(store: &Store, owner: &dyn Consent) -> Result<(String, String), String> {
     // Even an attempted second initialization is refused before asking the
     // owner; the Store's atomic insert closes a concurrent first-use race.
-    if store.qualification_policy_state()?.is_some() {
+    if store.qualification_policy_root_exists()? || store.qualification_policy_state()?.is_some() {
         return Err("qualification policy state exists; root rotation requires review".into());
     }
     owner
