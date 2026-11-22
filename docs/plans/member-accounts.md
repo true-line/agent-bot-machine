@@ -559,6 +559,21 @@ and measure through no-follow descriptors, publish and recheck an immutable
 snapshot, then bind both definition and launch-input measurements to a spent
 signed reservation and the later authenticated finalization.
 
+The separate Stage 2a launch-input helper hashes the **full** owner-approved
+object from `soul-contracts` machine/v1, including external file records,
+parsed host projection, selected command and full argv, static environment,
+effective profile/config, macOS image constraints, sandbox digest and all
+eight named component digests. It rejects missing host JSON records, unlisted
+named digests, path aliases, writable files and unbounded nested JSON. Its
+synthetic byte vector matches the distinct launch-input domain. The helper
+does not prove that the projected files or selected process actually have
+those bytes or that the claimed system images are loaded. A protected caller
+must compare every value with the installed root-receipted plan and live
+descriptor/process observations before using it in a reservation.
+The host-projection check separately matches the descriptor-read raw JSON
+bytes and their file-record hashes to the two parsed values in that object;
+it does not substitute for descriptor custody or a root snapshot receipt.
+
 ### What is created
 
 For an HQ account `H` and each listed harness credential account `M`:

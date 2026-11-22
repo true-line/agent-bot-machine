@@ -1,0 +1,146 @@
+{
+  "schema": "machine/v1/launch-input-records.schema.json",
+  "expect": {
+    "schema": "valid"
+  },
+  "note": "Synthetic exact-byte records; physical descriptor/custody and approved inventory are external.",
+  "input": {
+    "files": [
+      {
+        "path": "bin/adapter",
+        "kind": "regular",
+        "mode": "0555",
+        "size": 14,
+        "sha256": "19837aaa8806351854b4b1a3c37003227a2da9cd81bb13e3c0e1278481a25411"
+      },
+      {
+        "path": "bin/bridge",
+        "kind": "regular",
+        "mode": "0555",
+        "size": 13,
+        "sha256": "25c4b0373b5d9d6b8a8eef147b9c992058c164dd56b120004791098ae26eaddb"
+      },
+      {
+        "path": "bin/comms-broker",
+        "kind": "regular",
+        "mode": "0555",
+        "size": 19,
+        "sha256": "5b5954fcead766fae2f9d3dc1c1a8654547e53855d424319af929fcff186db89"
+      },
+      {
+        "path": "bin/harness",
+        "kind": "regular",
+        "mode": "0555",
+        "size": 14,
+        "sha256": "999290a5d94a4e13d9134dc019ec4dd94011df9e2887bab0b87f1d0911011b4b"
+      },
+      {
+        "path": "bin/hq",
+        "kind": "regular",
+        "mode": "0555",
+        "size": 9,
+        "sha256": "d036b4a0f2740bcd6d6f3334d9baf6df898825d42379894c236876472168912e"
+      },
+      {
+        "path": "bin/machine",
+        "kind": "regular",
+        "mode": "0555",
+        "size": 14,
+        "sha256": "12169e3bfb63b78a1e7acd3df0ac3f60dfad4fb9335807d5dad031763abf1526"
+      },
+      {
+        "path": "bin/node",
+        "kind": "regular",
+        "mode": "0555",
+        "size": 11,
+        "sha256": "8fa24749dfde768195b5417d92c739b5447816fc70f8a6df44adc201570b9e2f"
+      },
+      {
+        "path": "bin/souls",
+        "kind": "regular",
+        "mode": "0555",
+        "size": 12,
+        "sha256": "c566ad4da0dc0fef4d63f8aaaea24427b8d6c7c9c21325795a5100dc257227c3"
+      },
+      {
+        "path": "bin/test-provider",
+        "kind": "regular",
+        "mode": "0555",
+        "size": 20,
+        "sha256": "2ac024f9ac130f3528760cf478b00dd6bf29035846b4d365e895595680254d11"
+      },
+      {
+        "path": "host/adapters.json",
+        "kind": "regular",
+        "mode": "0444",
+        "size": 30,
+        "sha256": "48c6739f8bd0383410b64043bb220aefa6a69a03990ae2cbd39854062326253e"
+      },
+      {
+        "path": "host/installation.json",
+        "kind": "regular",
+        "mode": "0444",
+        "size": 29,
+        "sha256": "97e13c08f748c21f77624ebdc7eea076cb724f32685c529ec8ea07733524db89"
+      },
+      {
+        "path": "policy/harness-egress.sb",
+        "kind": "regular",
+        "mode": "0444",
+        "size": 25,
+        "sha256": "1461895e6bcd6c38bd544c1de59e38271d7a934e98626e287e5277a2e4e045c0"
+      }
+    ],
+    "host_projection": {
+      "adapters": {
+        "selected": "fixture-adapter"
+      },
+      "installation": {
+        "id": "fixture-installation"
+      }
+    },
+    "selected_command": "/private/stage2a/snapshot-launch/bin/node",
+    "argv": [
+      "/private/stage2a/snapshot-launch/bin/node",
+      "/private/stage2a/snapshot-definition/Contents/opt/quickstart-check.mjs",
+      "--fixture"
+    ],
+    "environment": {
+      "HOME": "/private/stage2a/runner-home",
+      "TMPDIR": "/private/stage2a/runner-tmp"
+    },
+    "effective_config": {
+      "adapter_id": "fixture-adapter",
+      "profile": "managed-protected"
+    },
+    "system_images": {
+      "product_version": "15.7",
+      "build_version": "24G207",
+      "darwin_kernel": "Darwin 24.6.0",
+      "selected": [
+        {
+          "path": "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+          "signing_requirement": "anchor apple",
+          "cdhash": "1111111111111111111111111111111111111111"
+        },
+        {
+          "path": "/usr/lib/libSystem.B.dylib",
+          "signing_requirement": "anchor apple",
+          "cdhash": "2222222222222222222222222222222222222222"
+        }
+      ]
+    },
+    "sandbox_policy_digest": "sha256:1461895e6bcd6c38bd544c1de59e38271d7a934e98626e287e5277a2e4e045c0",
+    "component_digests": {
+      "machine": "sha256:12169e3bfb63b78a1e7acd3df0ac3f60dfad4fb9335807d5dad031763abf1526",
+      "hq": "sha256:d036b4a0f2740bcd6d6f3334d9baf6df898825d42379894c236876472168912e",
+      "souls": "sha256:c566ad4da0dc0fef4d63f8aaaea24427b8d6c7c9c21325795a5100dc257227c3",
+      "bridge": "sha256:25c4b0373b5d9d6b8a8eef147b9c992058c164dd56b120004791098ae26eaddb",
+      "comms_broker": "sha256:5b5954fcead766fae2f9d3dc1c1a8654547e53855d424319af929fcff186db89",
+      "adapter": "sha256:19837aaa8806351854b4b1a3c37003227a2da9cd81bb13e3c0e1278481a25411",
+      "harness": "sha256:999290a5d94a4e13d9134dc019ec4dd94011df9e2887bab0b87f1d0911011b4b",
+      "test_provider": "sha256:2ac024f9ac130f3528760cf478b00dd6bf29035846b4d365e895595680254d11"
+    }
+  },
+  "canonical_sha256": "sha256:c7ecdf9efb2b5d6ee71a7d539b5f4b7672fcdcb2d6e2e8a82ea2b086ba92f81b"
+}
