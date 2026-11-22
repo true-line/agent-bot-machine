@@ -24,6 +24,7 @@ import (
 const (
 	HostPurpose      = "agent-bot/qualification-host-report/v1"
 	HostPurposeV2    = "agent-bot/qualification-host-report/v2"
+	HostPurposeV3    = "agent-bot/qualification-host-report/v3"
 	PolicyPurpose    = "agent-bot/qualification-policy/v1"
 	PolicyPurposeV2  = "agent-bot/qualification-policy/v2"
 	MaxRevocationAge = 3600 * time.Second
@@ -267,6 +268,8 @@ func parseEnvelope(raw []byte, expected string) (Envelope, error) {
 	version := 1
 	if expected == HostPurposeV2 || expected == PolicyPurposeV2 {
 		version = 2
+	} else if expected == HostPurposeV3 {
+		version = 3
 	}
 	if json.Unmarshal(raw, &e) != nil || e.SchemaVersion != version || e.Purpose != expected {
 		return Envelope{}, ErrUnqualified
@@ -485,6 +488,16 @@ func VerifyHostReportV2(envelope []byte, verified VerifiedPolicy, now time.Time)
 	return verifyHostReport(envelope, verified, now, HostPurposeV2, 2, reportShapeV2)
 }
 
+// VerifyHostReportV3 authenticates a measured protected or cooperative host
+// report. It does not resolve one-use records, installed inputs, or the
+// release attestation and therefore cannot authorize launch by itself.
+func VerifyHostReportV3(envelope []byte, verified VerifiedPolicy, now time.Time) ([]byte, error) {
+	if verified.version != 2 {
+		return nil, ErrUnqualified
+	}
+	return verifyHostReport(envelope, verified, now, HostPurposeV3, 3, reportShapeV3)
+}
+
 func verifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time, purpose string, version int, shape func([]byte) error) ([]byte, error) {
 	if !verified.verified || !verified.at.Equal(now) || now.IsZero() {
 		return nil, ErrUnqualified
@@ -508,6 +521,11 @@ func verifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time, p
 	required := []string{"adapter", "checks", "cost_bound", "evaluation_cells", "gates", "harness", "host", "launch", "outcome", "profile_in_force", "recorded_at", "renders", "run_id", "runner", "schema_version", "soul_start", "suite_revision"}
 	if version == 2 {
 		required = append(required, "bridge")
+	} else if version == 3 {
+		required = append(required, "measurement_binding", "run_evidence")
+		if _, protected := fields["bridge"]; protected {
+			required = append(required, "bridge")
+		}
 	}
 	if len(fields) != len(required) {
 		return nil, ErrUnqualified
