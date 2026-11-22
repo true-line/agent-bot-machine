@@ -495,6 +495,15 @@ target or shared C target is allowed. Rule rendering alone installs nothing.
 The paired grant installer must verify the launcher, package closure and
 profiles, validate the exact rule with `visudo`, and publish its root receipt
 and rule under the owner approval guard before either command may run.
+Root-run HQ package uninstall must first verify that the protected Soul
+launcher, both profiles, its policy file, the sudoers rule and any staged
+transition files are absent. An installed or partly staged grant must be
+retired or reconciled while the paired HQ approval path is still available.
+This file-visibility guard does not observe live R/B children or retire a
+grant by itself; the grant retirement must separately prove both roles idle.
+The Homebrew prefix owner's separate package-uninstall observer remains
+nonroot and refuses visible launch payloads. It cannot treat unreadable
+sudoers.d as root-attested rule absence; root HQ uninstall performs that check.
 Machine's prepared pre-Hello start assignment v2 binds the approved plan ID
 and digest, installation and Soul IDs, Machine and HQ epochs, the start and
 launch IDs, the R/B/HQ/Machine numeric identities, the reviewed package root
@@ -520,8 +529,8 @@ spent claim. A future Machine-authenticated post-Hello finalization must bind
 both to the earlier signed and spent reservation, independently observed
 runner PID/start/UID and process chain, exact endpoint inodes, one-use
 admission challenge and live B bind before HQ records a protected launch or
-opens ACP. The production finalization producer, reservation entry point and
-installed rule remain absent.
+opens ACP. The finalization producer and signed reservation operation do not
+exist, and the installed rule remains absent.
 The Darwin observation helper samples a live PID's kernel start time, parent,
 process group and real/effective/saved UID/GID and groups before and after a
 bounded `kern.procargs2` argv read. It refuses PID reuse, changed credentials,
@@ -610,43 +619,6 @@ helper has an owner-approved installed-plan caller yet, proves the selected
 process loaded these bytes, or authorizes a Soul launch. The installer must
 bind source, inventory, snapshot name and root receipt to the exact approval;
 the pre-exec caller must recheck both snapshots and the one-use lifecycle.
-
-The source-only Darwin reservation producer consumes the shared typed
-`Stage2aMeasurementBinding` rather than maintaining a second wire shape. It
-requires a nonempty bare frozen `.soul` SHA-256 in both the signed assignment
-and measurement binding, equal to the authenticated owner mapping and installed
-artifact receipt. That requirement is stricter than the optional additive
-field allowed to older nonauthorizing machine/v1 binding readers. The legacy
-package digest, adapter package and Souls runtime archive digests remain
-separate. Its synthetic vector fixes the exact RFC 8785 JCS payload and
-six-field envelope bytes for an HQ verifier; it is not installed evidence.
-Both claimed frozen snapshot group IDs must equal the assigned runner's
-dedicated primary group; a root:wheel fixture cannot stand in for runner
-readability or sibling isolation.
-
-Before Hello, the producer derives the exact R/B member endpoint from the
-reviewed assignment and signs the UTF-8 purpose
-`agent-bot/stage2a-reservation/v1`, one NUL byte, and the canonical
-machine/v1 reservation payload with the enrolled administrator Ed25519 key.
-The envelope carries schema version, purpose, issuer public key, payload
-digest, payload and signature; the key, payload and signature use unpadded
-base64url. The signed payload includes the complete member endpoint fragment,
-host, HQ epoch, installation, start, launch, installed plan receipt digest,
-measurement binding, expiry and digest of a private 32-byte admission
-challenge. It contains no runtime ID, observed process or socket inode, or B
-broker material. Machine hashes the exact canonical envelope as the
-reservation digest.
-
-A root-private per-installation lock and exclusive `0600` claim spend the
-installation/start before bytes return to HQ. A concurrent retry, changed
-epoch or launch, lost response, post-publication expiry, or uncertain sync
-cannot reopen that start. The source has no production caller, authenticated
-installed authority loader or purpose-limited secure-administrator signer.
-Those, the live HQ pairing, descriptor-verified frozen bytes and owner-approved
-mapping must exist before this producer can authorize anything. Post-Hello
-Machine finalization must independently bind kernel PID/start/UID and process
-chain, endpoint inodes, one-use admission and live B bind. The immutable
-completed-run record and signed v3 host report are separate later evidence.
 
 ### What is created
 

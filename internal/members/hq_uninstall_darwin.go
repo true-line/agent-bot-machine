@@ -172,10 +172,21 @@ func uninstallEndpoint(path, pid string, job bool) (*stoppingHQ, error) {
 	return observedStopEvidence(parent, filepath.Base(path), st, pid, 0)
 }
 
-// CheckDarwinHarnessLaunchRemoval preserves the paired approval path until the
-// exact installed launch grant has been retired. Call under the lifecycle lock.
+// CheckDarwinHarnessLaunchRemoval is the existing package-owner observer.
+// It refuses visible harness and Soul files. A nonroot result cannot prove an
+// unreadable sudoers rule absent; the root HQ-uninstall check is separate.
 func CheckDarwinHarnessLaunchRemoval() error {
 	return checkUninstallLaunchFiles(os.Lstat, readUninstallGrantDir, os.Geteuid() == 0)
+}
+
+// CheckDarwinProtectedLaunchRemoval preserves paired HQ approval until root
+// can inspect the exact launch rule and files under the lifecycle lock. Live
+// R/B process idleness remains a separate grant-retirement requirement.
+func CheckDarwinProtectedLaunchRemoval() error {
+	if os.Geteuid() != 0 {
+		return errors.New("root required to verify protected launch rule removal")
+	}
+	return checkUninstallLaunchFiles(os.Lstat, readUninstallGrantDir, true)
 }
 
 func readUninstallGrantDir(path string) ([]os.DirEntry, error) {
@@ -189,13 +200,14 @@ func readUninstallGrantDir(path string) ([]os.DirEntry, error) {
 
 func checkUninstallLaunchFiles(lstat func(string) (os.FileInfo, error), readDir func(string) ([]os.DirEntry, error), privileged bool) error {
 	const sudoers = "/private/etc/sudoers.d"
-	unknown := errors.New("cannot verify absence of harness launch files. Have the administrator inspect the grant before uninstall")
+	unknown := errors.New("cannot verify absence of protected launch files. Have the administrator inspect the grant before uninstall")
 	for _, group := range []struct {
 		dir   string
 		files []string
 	}{
-		{launchRuntimeDir, []string{"harness-launch", "harness-egress.sb", "harness-launch-policy.json"}},
-		{sudoers, []string{"agent-bot-hq-harness-launch"}},
+		{launchRuntimeDir, []string{"harness-launch", "harness-egress.sb", "harness-launch-policy.json",
+			"soul-launch", "soul-runner-egress.sb", "soul-bridge-egress.sb", "soul-launch-policy.json"}},
+		{sudoers, []string{"agent-bot-hq-harness-launch", "agent-bot-hq-soul-launch"}},
 	} {
 		// The prefix owner may be unable to inspect sudoers.d. By the time
 		// we reach it all public payloads and their staging names are absent.
@@ -203,7 +215,7 @@ func checkUninstallLaunchFiles(lstat func(string) (os.FileInfo, error), readDir 
 		for _, name := range group.files {
 			_, err := lstat(filepath.Join(group.dir, name))
 			if err == nil {
-				return errors.New("retire the installed harness launch grant through paired HQ before uninstall, or have the administrator reconcile partial or changed files")
+				return errors.New("retire installed launch grants through paired HQ before uninstall, or have the administrator reconcile partial or changed files")
 			}
 			if !errors.Is(err, os.ErrNotExist) && !(inaccessibleRule && errors.Is(err, os.ErrPermission)) {
 				return unknown
@@ -217,14 +229,21 @@ func checkUninstallLaunchFiles(lstat func(string) (os.FileInfo, error), readDir 
 			return unknown
 		}
 		for _, entry := range entries {
-			staged, ok := strings.CutPrefix(entry.Name(), ".harness-")
-			if !ok {
+			staged, harness := strings.CutPrefix(entry.Name(), ".harness-")
+			if !harness {
+				var soul bool
+				staged, soul = strings.CutPrefix(entry.Name(), ".soul-")
+				if !soul {
+					continue
+				}
+			}
+			if staged == "" {
 				continue
 			}
 			for _, name := range group.files {
 				id, ok := strings.CutSuffix(staged, "-"+name)
 				if ok && validUninstallID(id) {
-					return errors.New("a harness launch transition has staged files. Have the administrator resume or reconcile the original plan before uninstall")
+					return errors.New("a protected launch transition has staged files. Have the administrator resume or reconcile the original plan before uninstall")
 				}
 			}
 		}
@@ -250,7 +269,7 @@ type uninstallHost struct {
 func newUninstallHost(r launchRecord, owner string) uninstallHost {
 	observe := func() (bool, string, error) { return loadedLaunchDaemon(r.Service, owner) }
 	return uninstallHost{
-		grantAbsent:  CheckDarwinHarnessLaunchRemoval,
+		grantAbsent:  CheckDarwinProtectedLaunchRemoval,
 		observe:      observe,
 		plist:        func() (upgradeNodeIdentity, error) { return checkedUninstallPlist(r.Plist) },
 		unlinkPlist:  func() error { return os.Remove(launchPlist) },
