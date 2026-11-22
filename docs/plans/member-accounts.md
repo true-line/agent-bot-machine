@@ -137,6 +137,17 @@ past preflight success cannot be replayed as a Machine acceptance decision.
 Machine independently rechecks policy rollback state, the signed final bundle,
 installed bytes and live physical evidence before any qualification can count.
 
+The separate `mm-qualification-verify-release` diagnostic command accepts
+those same owner root, key ID, policy, qualification and two host-envelope
+files, plus `-trusted-root` for the exact local Sigstore root JSON, `-bundle`
+for the v0.3 document and `-bundle-sha256` from the installed qualification
+reference. It invokes the full offline release and report verifiers at real
+current time and emits only the verified bundle, qualification and report
+digests. It does not persist rollback state, inspect installed executable
+bytes or authorize launch. A release workflow or fixture job may use its
+result to reject a malformed bundle; Machine acceptance repeats verification
+with persisted policy state and independent host measurements.
+
 These are components of the production verifier, not permission to install.
 The one-use `started` receipt is never a completed physical run. A separate
 Machine-authored completion and HQ-start process observation, released adapter
