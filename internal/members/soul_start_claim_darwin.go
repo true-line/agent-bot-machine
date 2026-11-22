@@ -34,7 +34,9 @@ type soulStartClaim struct {
 const soulStartClaimsDir = "/private/var/db/managed-machine/soul-starts/claims"
 
 func soulStartClaimName(installationID, startID string) string {
-	key := sha256.Sum256([]byte("agent-bot-soul-start-claim/v2\x00" + installationID + "\x00" + startID))
+	// Keep the name domain stable across record schema upgrades. A spent start
+	// must not gain a fresh pathname merely because its record shape changes.
+	key := sha256.Sum256([]byte("agent-bot-soul-start-claim/v1\x00" + installationID + "\x00" + startID))
 	return fmt.Sprintf("%x.json", key)
 }
 

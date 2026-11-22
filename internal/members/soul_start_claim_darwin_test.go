@@ -103,6 +103,9 @@ func TestSoulStartClaimSpendsExactStartOnce(t *testing.T) {
 
 func TestSoulStartClaimNameBindsInstallationAndStart(t *testing.T) {
 	first := soulStartClaimName("inst_0000000000000001", "st_0123456789abcdef01234567")
+	if first != "eb04c8afe747a8f0b755eeb9344ce0d2641e0cd598311ebd1c152472251855e4.json" {
+		t.Fatal("schema upgrade changed the spent-start pathname")
+	}
 	for _, next := range []string{
 		soulStartClaimName("inst_0000000000000002", "st_0123456789abcdef01234567"),
 		soulStartClaimName("inst_0000000000000001", "st_0123456789abcdef01234568"),
