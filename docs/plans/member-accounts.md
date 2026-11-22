@@ -169,8 +169,10 @@ These accounts are not the harness credential accounts above. Two installations
 of the same Soul still require distinct UIDs, GIDs, private homes and state.
 Machine's reviewed runner mapping rejects an HQ or harness UID/account, a
 duplicate installation identity, a shared runner principal, and an unpinned
-package. A start header selects only the reviewed installation and carries a
-start instance and HQ epoch; it cannot supply a command, package path or UID.
+package. It also refuses protected macOS group names as account names, since
+each runner needs a private same-name primary group. A start header selects
+only the reviewed installation and carries a start instance and HQ epoch; it
+cannot supply a command, package path or UID.
 
 This mapping and header parser are contract checks for the forthcoming fixed
 launcher. They do not install a sudoers rule or make a production runner
