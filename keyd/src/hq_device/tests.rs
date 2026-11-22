@@ -299,7 +299,7 @@ fn bridge_v2_host_report_has_distinct_purpose_and_custody_shape() {
 }
 
 #[test]
-fn measured_v3_host_reports_have_distinct_purpose_and_bound_inputs() {
+fn measured_v3_host_report_shape_is_valid_but_signing_requires_a_completed_run() {
     let (items, native, mut p) = (Memory::default(), Fake::default(), pair());
     p.hq_epoch = "e".repeat(64);
     initialize(&items, &native, p.clone()).unwrap();
@@ -319,14 +319,9 @@ fn measured_v3_host_reports_have_distinct_purpose_and_bound_inputs() {
             "qualification-host-report-v3",
             "fixture-physical-mac",
         );
-        let result = run(&items, &native, &p, req, seconds(100)).unwrap();
-        assert_eq!(result["schema_version"], 3);
-        assert_eq!(result["purpose"], HOST_REPORT_PURPOSE_V3);
-        assert_eq!(result["report_sha256"], format!("sha256:{}", digest(raw)));
-        assert_eq!(
-            native.signed.borrow().last().unwrap(),
-            &[HOST_REPORT_PURPOSE_V3.as_bytes(), &[0], raw].concat()
-        );
+        assert_eq!(fixed_host_report_version(&req, 3, 500).unwrap(), raw);
+        assert!(run(&items, &native, &p, req, seconds(100)).is_err());
+        assert!(native.signed.borrow().is_empty());
         assert!(run(
             &items,
             &native,

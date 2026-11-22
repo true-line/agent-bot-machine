@@ -22,18 +22,16 @@ host signer in owner policy, the measured candidate and installed inputs, and
 the physical results. The separate qualification release attestation is issued
 only after the signed host report is verified.
 
-The uncalled `qualification-host-report-v3` paired-Machine request has a
-distinct `agent-bot/qualification-host-report/v3` purpose. keyd accepts at most
-2 MiB for the Machine-signed request, requires at most 1 MiB of exact canonical
-ASCII report bytes in its safe-integer JCS subset, validates the v3 measurement
-binding and run references, and signs
-`ASCII(purpose) || 0x00 || exact report bytes` with the same secure-admin Secure
-Enclave P-256 custody. It returns a schema-version-3 ES256 envelope. This
-request shape does **not** authenticate the referenced Machine completed run,
-owner policy, measured inputs or physical results by itself. There is no public
-Machine caller until those records are independently verified and bound to the
-exact report. The signed report is then an input to the separate release
-attestation; protected launch stays closed until that attestation verifies.
+The reserved `qualification-host-report-v3` paired-Machine request has the
+distinct `agent-bot/qualification-host-report/v3` purpose and a bounded,
+canonical report shape parser. Its production signing branch refuses before
+Secure Enclave access. A valid report shape and paired request cannot prove
+the referenced Machine completed run, owner policy, measured inputs, or
+physical results. Machine A must first consume a one-use completed-run
+authorization bound to the exact report and corroborated physical objects;
+keyd must verify that authorization before this purpose can be enabled. The
+future signed report will be input to a separate release attestation. Protected
+launch remains closed until that attestation and installed inputs verify.
 
 A native MCP server that holds souls' GitHub App keys
 ([agent-bot-identity #397](https://github.com/qwts/agent-bot-identity/issues/397)).

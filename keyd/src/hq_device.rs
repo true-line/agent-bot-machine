@@ -21,12 +21,13 @@ const WINDOW: u64 = 30;
 const MAX_RECENT: usize = 256;
 const HOST_REPORT_PURPOSE: &str = "agent-bot/qualification-host-report/v1";
 const HOST_REPORT_PURPOSE_V2: &str = "agent-bot/qualification-host-report/v2";
-const HOST_REPORT_PURPOSE_V3: &str = "agent-bot/qualification-host-report/v3";
 
 use crate::store::{keychain_read_interaction_denied, Items};
 
 pub(crate) trait Enclave {
     fn check_live(&self) -> Result<(), &'static str>;
+    // Reserved for the future A-gated v3 issuer; shape tests use it today.
+    #[allow(dead_code)]
     fn custody_uid(&self) -> Result<u32, &'static str> {
         Err(UNAVAILABLE)
     }
@@ -1411,20 +1412,13 @@ fn execute(
             });
         }
         "qualification-host-report-v3" => {
-            let raw = fixed_host_report_version(&request, 3, provider.custody_uid()?)?;
-            let mut message = HOST_REPORT_PURPOSE_V3.as_bytes().to_vec();
-            message.push(0);
-            message.extend_from_slice(&raw);
-            let signature = provider.sign(&reference, &message)?;
-            result = json!({
-                "schema_version": 3,
-                "purpose": HOST_REPORT_PURPOSE_V3,
-                "host_id": request.host_id.as_ref().ok_or(UNAVAILABLE)?,
-                "signer_id": request.signer_id.as_ref().ok_or(UNAVAILABLE)?,
-                "report_sha256": format!("sha256:{}", digest(&raw)),
-                "report_base64url": URL.encode(&raw),
-                "signature_base64url": URL.encode(signature),
-            });
+            // A shape-valid HQ request is not an A-observed physical run.
+            // The production issuer must first consume one A-owned completed-
+            // run authorization bound to these exact report bytes and the
+            // resolved Q/ACP/OS gate objects. No such issuer is wired yet.
+            // Refuse before touching the Secure Enclave signer, even when
+            // the paired request and synthetic report shape are valid.
+            return Err(UNAVAILABLE);
         }
         _ => return Err(UNAVAILABLE),
     }

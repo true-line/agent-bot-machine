@@ -417,16 +417,19 @@ digests, the pinned workflow certificate and source commit, a DSSE Statement
 for the archive and template, and local Rekor, SCT and observer-time proof.
 An unsigned or reserialized receipt cannot mint a verified frozen Soul; no
 real signed frozen receipt or positive installed admission is present yet.
-The uncalled keyd v3 host-report transport keeps the Machine-signed paired
-transcript and secure-admin P-256 key custody. It accepts only exact canonical
-ASCII v3 report bytes in its safe-integer JCS subset with a typed measurement
-binding and separate reservation, finalization and challenge references, then
-signs the fixed v3 purpose and bytes. That signer must not be called until the
-Machine lifecycle issuer has authenticated the completed run, designated-host
-owner policy, measured candidate and installed inputs, and physical results.
-The separate qualification release attestation is issued after verification
-of the signed host report. Shape checks in keyd do not turn a referenced run
-into a verified one.
+The reserved keyd v3 host-report transport retains the Machine-signed paired
+transcript and secure-admin P-256 key custody. Its parser accepts only exact
+canonical ASCII v3 report bytes in its safe-integer JCS subset with a typed
+measurement binding and separate reservation, finalization and challenge
+references. Production v3 signing currently refuses before Secure Enclave
+access, including for a shape-valid paired request. The native large-message
+signing guard also excludes the v3 purpose. A future Machine lifecycle issuer
+must authenticate the completed run, designated-host owner policy, measured
+candidate and installed inputs, and resolved physical results, then provide
+one-use authorization bound to the exact report for keyd to verify before
+v3 signing can be enabled. The separate qualification release attestation
+follows verification of that signed host report. Shape checks in keyd do not
+turn a referenced run into a verified one.
 
 The source-only `mm-qualification-preflight --host-v3` path requires an owner
 v3 policy, a release-pinned Machine public key, two distinct signed pre-sign

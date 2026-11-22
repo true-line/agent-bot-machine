@@ -21,7 +21,9 @@ private typealias DeviceKey = SecureEnclave.P256.Signing.PrivateKey
 // 8 KiB limit below. This check is independent of Secure Enclave availability.
 func keydFixedHostReportMessage(_ op: Int32, _ message: UnsafePointer<UInt8>, _ count: Int) -> Bool {
     guard op == 2, count > 8192 else { return false }
-    for purpose in ["agent-bot/qualification-host-report/v1", "agent-bot/qualification-host-report/v2", "agent-bot/qualification-host-report/v3"] {
+    // v3 has no A-authorized completed-run issuer yet. Keep its large-message
+    // native path closed as well as refusing it in the Rust request handler.
+    for purpose in ["agent-bot/qualification-host-report/v1", "agent-bot/qualification-host-report/v2"] {
         let prefix = Array("\(purpose)\u{0}".utf8)
         if count <= 1_048_576 + prefix.count &&
             Data(bytes: message, count: prefix.count).elementsEqual(prefix) {
