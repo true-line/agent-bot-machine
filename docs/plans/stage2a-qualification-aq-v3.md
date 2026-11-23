@@ -305,6 +305,14 @@ A-custodied bytes. A separate offline R sidecar parser checks canonical
 inventory bytes, the purpose-separated R digest, sidecar size/hash, the exact
 file and directory closure, numeric ceilings, release-path uniqueness and the
 signed R reference counts. It does not authenticate file contents or custody.
+The offline `CheckCooperativeHostReportRInventoryV3` diagnostic composes the
+designated-host report signature, A-signed cooperative reservation and exact
+R sidecar, then requires the reported adapter executable and every code-input
+digest to equal a row for that adapter component in the sidecar. It also
+requires an executable inventory mode and refuses another component's file,
+an unlisted path, or a coherent sidecar replacement with changed code bytes.
+It remains a claim-to-inventory join: the actual sealed files, component
+release manifest, Q runner and physical T21 result are not established by it.
 One-use spending, release attestation, T21 segment artifacts and physical
 results remain separate gates; this diagnostic cannot return a positive Stage
 2a acceptance result.

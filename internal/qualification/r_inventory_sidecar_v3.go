@@ -1,10 +1,12 @@
 package qualification
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"path"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const rInventoryPurposeV3 = "agent-bot/stage2a-r-runtime-inventory/v3"
@@ -143,4 +145,98 @@ func verifyRInventorySidecarV3(raw []byte, ref hrInventoryRefV3) (rInventorySide
 		seen[strings.ToLower(dir.Path)] = true
 	}
 	return inv, nil
+}
+
+// verifyRAdapterReportInventoryV3 joins the adapter executable and every
+// reported code input to the A-referenced R inventory's exact file digests.
+// The caller must first authenticate the host report and A reservation. This
+// diagnostic does not authenticate the actual installed files, component
+// release manifests, Q runner, or physical gate results.
+func verifyRAdapterReportInventoryV3(reportRaw, inventoryRaw []byte,
+	binding hrMeasurementBindingV3) error {
+	inv, err := verifyRInventorySidecarV3(inventoryRaw, binding.RInventory)
+	if err != nil {
+		return ErrUnqualified
+	}
+	fields, err := canonicalBytes(reportRaw, MaxReportBytes)
+	if err != nil || fields["adapter"] == nil || fields["launch"] == nil {
+		return ErrUnqualified
+	}
+	adapterFields, err := strictObject(fields["adapter"], MaxReportBytes)
+	if err != nil || !hasFields(adapterFields, "id", "version", "package_sha256") {
+		return ErrUnqualified
+	}
+	launchFields, err := strictObject(fields["launch"], MaxReportBytes)
+	if err != nil || !hasFields(launchFields, "executable", "executable_sha256", "argv", "code_inputs") {
+		return ErrUnqualified
+	}
+	var report struct {
+		Adapter struct {
+			PackageSHA256 string `json:"package_sha256"`
+		} `json:"adapter"`
+		Launch struct {
+			Executable       string       `json:"executable"`
+			ExecutableSHA256 string       `json:"executable_sha256"`
+			CodeInputs       []reportFile `json:"code_inputs"`
+		} `json:"launch"`
+	}
+	if json.Unmarshal(reportRaw, &report) != nil ||
+		report.Adapter.PackageSHA256 != binding.AdapterRelease.PackageSHA256 ||
+		report.Launch.Executable != binding.AdapterRelease.ExecutablePath ||
+		report.Launch.ExecutableSHA256 != binding.AdapterRelease.ExecutableSHA256 ||
+		len(report.Launch.CodeInputs) != binding.AdapterRelease.CodeInputCount {
+		return ErrUnqualified
+	}
+	files := make(map[string]rInventoryFileV3, len(inv.Files))
+	for _, file := range inv.Files {
+		files[file.Path] = file
+	}
+	root := binding.RInventory.Snapshot.Path + "/"
+	if !strings.HasPrefix(report.Launch.Executable, root) {
+		return ErrUnqualified
+	}
+	executable, ok := files[strings.TrimPrefix(report.Launch.Executable, root)]
+	if !ok || executable.ComponentID != binding.AdapterRelease.ComponentID ||
+		executable.SHA256 != report.Launch.ExecutableSHA256 || executable.Mode != "0550" {
+		return ErrUnqualified
+	}
+	seen := map[string]bool{report.Launch.Executable: true}
+	for _, input := range report.Launch.CodeInputs {
+		if !strings.HasPrefix(input.Path, root) || !validSHA(input.SHA256) || seen[input.Path] {
+			return ErrUnqualified
+		}
+		file, ok := files[strings.TrimPrefix(input.Path, root)]
+		if !ok || file.ComponentID != binding.AdapterRelease.ComponentID || file.SHA256 != input.SHA256 {
+			return ErrUnqualified
+		}
+		seen[input.Path] = true
+	}
+	return nil
+}
+
+// CheckCooperativeHostReportRInventoryV3 authenticates a designated-host
+// cooperative report and A reservation, then joins the report's adapter file
+// hashes to the exact A-referenced R inventory sidecar. It is an offline
+// diagnostic only: installed byte custody, release provenance and physical
+// T21 results are still required before any positive qualification.
+func CheckCooperativeHostReportRInventoryV3(hostEnvelope, reservationEnvelope,
+	inventoryRaw []byte, policy VerifiedPolicy, machineKey ed25519.PublicKey,
+	now time.Time) error {
+	report, err := VerifyHostReportV3(hostEnvelope, policy, now)
+	if err != nil || cooperativeReportJoinV3(report, reservationEnvelope, machineKey) != nil {
+		return ErrUnqualified
+	}
+	payload, err := qSignedRecordV3(reservationEnvelope, cooperativeReservationPurposeV3, 3, machineKey)
+	if err != nil {
+		return ErrUnqualified
+	}
+	fields, err := canonicalBytes(payload, 48<<10)
+	if err != nil || fields["measurement_binding"] == nil {
+		return ErrUnqualified
+	}
+	binding, err := parseHRMeasurementBindingV3(fields["measurement_binding"])
+	if err != nil {
+		return ErrUnqualified
+	}
+	return verifyRAdapterReportInventoryV3(report, inventoryRaw, binding)
 }
