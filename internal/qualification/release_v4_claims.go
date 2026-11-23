@@ -6,6 +6,33 @@ import (
 	"time"
 )
 
+// VerifyV4SignedReleaseCandidateClaims joins an independently verified v4
+// release bundle to the same exact qualification and completed run bytes used
+// by the candidate checker. A nil result is still diagnostic: raw Q/ACP/OS,
+// installed-byte custody and physical gate verdicts remain separate gates.
+func VerifyV4SignedReleaseCandidateClaims(release VerifiedRelease, policy VerifiedPolicy,
+	qualificationJSON, statementRaw, protectedEnvelope, cooperativeEnvelope,
+	protectedExecution, cooperativeExecution, protectedCommitment, cooperativeCommitment []byte,
+	build VerifiedSoulsBuild, machineKey ed25519.PublicKey, now time.Time) error {
+	if !release.verified || !validSHA(release.bundleSHA256) || release.v4Reports == nil ||
+		release.v4SoulsBuild == nil || release.qualificationSHA256 != digest(qualificationJSON) ||
+		release.ownerKeyID != policy.value.OwnerKeyID || release.policyRevision != policy.value.PolicyRevision ||
+		!release.v4ExpiresAt.After(now) || !build.verified || *release.v4SoulsBuild != build.build {
+		return ErrUnqualified
+	}
+	qualification, refs, _, _, err := qualificationObjectV4(qualificationJSON, now)
+	if err != nil || refs != *release.v4Reports {
+		return ErrUnqualified
+	}
+	var artifact string
+	if json.Unmarshal(qualification["soul_artifact_sha256"], &artifact) != nil || artifact != release.v4SoulArtifact {
+		return ErrUnqualified
+	}
+	return VerifyV4ReleaseCandidateClaims(policy, qualificationJSON, statementRaw,
+		protectedEnvelope, cooperativeEnvelope, protectedExecution, cooperativeExecution,
+		protectedCommitment, cooperativeCommitment, build, machineKey, now)
+}
+
 // VerifyV4ReleaseCandidateClaims checks the unsigned release candidate's
 // exact v4 qualification/Statement bytes, two owner-designated host signatures,
 // two A pre-sign/post-sign chains and separately verified Souls build. A nil

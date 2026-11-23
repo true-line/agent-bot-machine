@@ -201,6 +201,35 @@ func TestV4QualificationAndStatementContractBytes(t *testing.T) {
 	if err := check(statement, cNewCommitment); err != nil {
 		t.Fatal("synthetic v4 release candidate refused:", err)
 	}
+	_, signedRefs, signedBuild, _, err := qualificationObjectV4(qualified, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This locally fabricated receipt exercises only the binding to a release
+	// verifier result. It is not a Sigstore bundle or physical qualification.
+	release := VerifiedRelease{verified: true, bundleSHA256: digest([]byte("synthetic bundle")),
+		qualificationSHA256: digest(qualified), ownerKeyID: policy.OwnerKeyID,
+		policyRevision: policy.PolicyRevision, v4Reports: &signedRefs,
+		v4SoulsBuild: &signedBuild, v4SoulArtifact: artifact, v4ExpiresAt: expires}
+	signedCheck := func(receipt VerifiedRelease) error {
+		return VerifyV4SignedReleaseCandidateClaims(receipt, verified, qualified, statement,
+			[]byte(p.HostEnvelope), cNewHost, []byte(p.Completion), cNewCompletion,
+			[]byte(p.Commitment), cNewCommitment, VerifiedSoulsBuild{verified: true, build: build},
+			ed25519.PublicKey(key), now)
+	}
+	if err := signedCheck(release); err != nil {
+		t.Fatal("matching synthetic release receipt refused:", err)
+	}
+	changedReceipt := release
+	changedReceipt.qualificationSHA256 = digest(qualification)
+	if signedCheck(changedReceipt) == nil {
+		t.Fatal("release receipt for other qualification bytes accepted")
+	}
+	changedReceipt = release
+	changedReceipt.v4Reports = &refs
+	if signedCheck(changedReceipt) == nil {
+		t.Fatal("release receipt for other host report bytes accepted")
+	}
 	if check(statement, []byte(p.Commitment)) == nil {
 		t.Fatal("protected commitment substituted for cooperative")
 	}
