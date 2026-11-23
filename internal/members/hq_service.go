@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -64,7 +65,7 @@ func (s HQService) validate() error {
 		paths = append(paths, s.Archive)
 	}
 	for _, p := range paths {
-		if !systemdPath.MatchString(p) || filepath.Clean(p) != p || p == "/" {
+		if !validHQServiceArgumentPath(p) {
 			return refuse(RefusedPath, "HQ service paths must be clean absolute service arguments")
 		}
 	}
@@ -72,6 +73,20 @@ func (s HQService) validate() error {
 		return refuse(RefusedList, "expected a versioned extraction ending in /hq and both lowercase SHA-256 digests")
 	}
 	return nil
+}
+
+func validHQServiceArgumentPath(p string) bool {
+	if p == "/" || filepath.Clean(p) != p {
+		return false
+	}
+	// The macOS reviewed H installation lives below this single space-bearing
+	// Apple directory. Linux still writes unquoted systemd ExecStart arguments,
+	// so its path alphabet remains unchanged.
+	const darwinPrefix = "/Library/Application Support/"
+	if runtime.GOOS == "darwin" && strings.HasPrefix(p, darwinPrefix) {
+		p = "/Library/ApplicationSupport/" + strings.TrimPrefix(p, darwinPrefix)
+	}
+	return systemdPath.MatchString(p)
 }
 
 func trustedPath(h Host, p string, directory bool) error {

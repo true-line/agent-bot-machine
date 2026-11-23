@@ -33,6 +33,12 @@ Source selection and artifact hashes alone grant no authority to seal or
 start; the caller must first authenticate the owner Saved plan, paired
 approval, release attestations, and root install receipt.
 
+The Darwin H service record accepts the one fixed Apple path segment
+`/Library/Application Support/` in its archive, release and Node arguments.
+All remaining path bytes use the existing restricted alphabet; the paths
+must remain clean absolute paths and pass the root-owned no-symlink ancestry
+checks. Linux systemd service arguments keep their space-free alphabet.
+
 ## Acceptance
 
 - The exact source manifest and inventory are canonical, bounded, and
@@ -54,6 +60,9 @@ approval, release attestations, and root install receipt.
 - Missing authority, mismatched artifacts, extra selected paths, stale or
   inconsistent source metadata, failed A seal, or descriptor mismatch fail
   closed. No qualification T result is claimed from an installer test.
+- A reviewed Darwin H path under `/Library/Application Support/` passes plan
+  validation. A second space, control character, traversal or noncanonical
+  separator fails; Linux still rejects a space-bearing systemd argument.
 
 ## Replay
 
