@@ -186,11 +186,23 @@ func stage2aVerifyRuntimeV3Tar(file *os.File, componentID string, inv stage2aDom
 		}
 		wantFiles[row.ReleasePath] = row
 		for released, installed := filepath.Dir(row.ReleasePath), filepath.Dir(row.Path); released != "."; released, installed = filepath.Dir(released), filepath.Dir(installed) {
-			mode := dirModes[installed]
-			if installed == "." || mode == "" || wantDirs[released] != "" && wantDirs[released] != mode {
+			// A release-only ancestor is transport metadata: it is pinned by the
+			// artifact digest but never copied into the installed snapshot.
+			mode := ""
+			if installed != "." {
+				mode = dirModes[installed]
+				if mode == "" {
+					return errStage2aReservationAuthority
+				}
+			}
+			if previous := wantDirs[released]; previous != "" && mode != "" && previous != mode {
 				return errStage2aReservationAuthority
 			}
-			wantDirs[released] = mode
+			if mode != "" {
+				wantDirs[released] = mode
+			} else if _, ok := wantDirs[released]; !ok {
+				wantDirs[released] = ""
+			}
 		}
 	}
 	if len(wantFiles) == 0 {
@@ -216,8 +228,9 @@ func stage2aVerifyRuntimeV3Tar(file *os.File, componentID string, inv stage2aDom
 				return errStage2aReservationAuthority
 			}
 			name = strings.TrimSuffix(name, "/")
-			if !stage2aV3InventoryRecordPath(name) || seenDirs[name] || wantDirs[name] == "" ||
-				mode != wantDirs[name] {
+			wantMode, wanted := wantDirs[name]
+			if !stage2aV3InventoryRecordPath(name) || seenDirs[name] || !wanted ||
+				wantMode != "" && mode != wantMode || header.Mode&07000 != 0 || header.Mode&0022 != 0 {
 				return errStage2aReservationAuthority
 			}
 			seenDirs[name] = true
