@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -124,6 +125,80 @@ func TestServeStatusSigned(t *testing.T) {
 	if VerifyResponse(dpub, res) {
 		t.Fatal("a response for another request verified")
 	}
+	cancel()
+	<-done
+}
+
+func TestServeVerifiesAnotherConnectionWhileHookRuns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket permissions are not the Windows pipe")
+	}
+	pub, clientKey := keyPair(t)
+	_, machineKey := keyPair(t)
+	now := time.Now()
+	base, err := os.MkdirTemp("/tmp", "mm-par-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	dir := filepath.Join(base, "state")
+	ln, err := Listen(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, ln, &Gate{Pairing: Pairing{Live: pub}, Now: func() time.Time { return now }},
+			machineKey, func(net.Conn) (int, error) { return 501, nil }, Hooks{
+				Status: func() (string, []byte, error) {
+					close(entered)
+					<-release
+					return "idle", nil, nil
+				},
+			})
+	}()
+	first, err := net.Dial("unix", filepath.Join(dir, "daemon.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	status := signed(t, clientKey, Request{Verb: "status", Timestamp: now.Unix(), Nonce: "busy-hook"})
+	if _, err := first.Write(append(status, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("status hook did not start")
+	}
+	second, err := net.Dial("unix", filepath.Join(dir, "daemon.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	// This signed but incomplete Stage 2a request must be refused by Gate
+	// promptly even while the first hook waits. It exercises the accept loop
+	// without granting any test pairing or protected operation.
+	invalid := signed(t, clientKey, Request{Verb: stage2aListVerb, Timestamp: now.Unix(), Nonce: "second-connection"})
+	if _, err := second.Write(append(invalid, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	_ = second.SetReadDeadline(time.Now().Add(time.Second))
+	line, err := bufio.NewReader(second).ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("second connection waited behind hook: %v", err)
+	}
+	var response Response
+	if json.Unmarshal(line, &response) != nil || response.OK {
+		t.Fatalf("incomplete Stage 2a request was not refused: %s", line)
+	}
+	releaseOnce.Do(func() { close(release) })
 	cancel()
 	<-done
 }

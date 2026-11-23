@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"regexp"
 	"strings"
 )
 
@@ -17,6 +18,8 @@ const (
 	stage2aLiveBlobMax      = 4 << 20
 	stage2aLiveTotalMax     = 8 << 20
 )
+
+var stage2aLiveArtifactID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 
 // This transport runs on A's already authenticated, one-use owner-driver
 // connection. Its bytes are evidence inputs only: custody does not establish
@@ -48,23 +51,45 @@ type stage2aLiveArtifact struct {
 	Schema              string               `json:"schema"`
 	DriverCommand       stage2aDriverCommand `json:"driver_command"`
 	DriverRequestSHA256 string               `json:"driver_request_sha256"`
-	RawRefs             []stage2aLiveRawRef  `json:"raw_refs"`
-	Attempts            []struct {
+	Processes           []struct {
+		ProcessRef          string `json:"process_ref"`
+		Role                string `json:"role"`
+		PID                 int    `json:"pid"`
+		UID                 int    `json:"uid"`
+		GID                 int    `json:"gid"`
+		PPID                int    `json:"ppid"`
+		PGID                int    `json:"pgid"`
+		StartIdentity       string `json:"start_identity"`
+		ExecutableSHA256    string `json:"executable_sha256"`
+		ArgvSHA256          string `json:"argv_sha256"`
+		LoadedProfileSHA256 string `json:"loaded_profile_sha256"`
+	} `json:"processes"`
+	RawRefs  []stage2aLiveRawRef `json:"raw_refs"`
+	Attempts []struct {
 		AttemptID          string            `json:"attempt_id"`
 		Sequence           int               `json:"sequence"`
 		ProcessRef         string            `json:"process_ref"`
+		DestinationClass   string            `json:"destination_class"`
+		DestinationSHA256  string            `json:"destination_sha256"`
 		RequestRange       stage2aLiveRange  `json:"request_range"`
 		ResponseRange      *stage2aLiveRange `json:"response_range"`
+		Result             string            `json:"result"`
+		Errno              *int              `json:"errno"`
 		StartedMonotonicNS int64             `json:"started_monotonic_ns"`
 		EndedMonotonicNS   int64             `json:"ended_monotonic_ns"`
 		TimeoutLimitMS     int64             `json:"timeout_limit_ms"`
+		CanaryBefore       int64             `json:"canary_before"`
+		CanaryAfter        int64             `json:"canary_after"`
 	} `json:"attempts"`
 	AllowedTurn struct {
-		HTTPRequestRange  stage2aLiveRange `json:"http_request_range"`
-		HTTPResponseRange stage2aLiveRange `json:"http_response_range"`
-		ACPRequestRange   stage2aLiveRange `json:"acp_request_range"`
-		ACPResponseRange  stage2aLiveRange `json:"acp_response_range"`
-		SoulResultRange   stage2aLiveRange `json:"soul_result_range"`
+		RelaySocketIdentityRef string           `json:"relay_socket_identity_ref"`
+		BBindReceiptSHA256     string           `json:"b_bind_receipt_sha256"`
+		HTTPRequestRange       stage2aLiveRange `json:"http_request_range"`
+		HTTPResponseRange      stage2aLiveRange `json:"http_response_range"`
+		HQProviderReceiptRef   string           `json:"hq_provider_receipt_ref"`
+		ACPRequestRange        stage2aLiveRange `json:"acp_request_range"`
+		ACPResponseRange       stage2aLiveRange `json:"acp_response_range"`
+		SoulResultRange        stage2aLiveRange `json:"soul_result_range"`
 	} `json:"allowed_turn"`
 }
 
@@ -210,12 +235,35 @@ func receiveStage2aLiveCapture(ctx context.Context, conn *net.UnixConn, store st
 		return empty, errStage2aReservationAuthority
 	}
 	var index stage2aLiveArtifact
-	if stage2aQualificationKeysV1Only(artifact, []string{"schema", "driver_command", "driver_request_sha256",
-		"processes", "attempts", "allowed_turn", "raw_refs"}) != nil ||
-		json.Unmarshal(artifact, &index) != nil ||
+	if stage2aLiveArtifactShape(artifact) != nil ||
+		stage2aDecodeExact(artifact, &index) != nil ||
 		index.Schema != "agent-bot-adapters/t03-stock-claude-direct-attempts/v1" ||
 		index.DriverCommand != command || index.DriverRequestSHA256 != requestSHA ||
-		len(index.RawRefs) != len(refs) || len(index.Attempts) < 1 || len(index.Attempts) > 64 {
+		len(index.RawRefs) != len(refs) || len(index.Processes) < 2 || len(index.Processes) > 8 ||
+		len(index.Attempts) < 1 || len(index.Attempts) > 64 ||
+		!stage2aQualificationDigest(index.AllowedTurn.RelaySocketIdentityRef) ||
+		!stage2aQualificationDigest(index.AllowedTurn.BBindReceiptSHA256) ||
+		!stage2aQualificationDigest(index.AllowedTurn.HQProviderReceiptRef) {
+		return empty, errStage2aReservationAuthority
+	}
+	processes := make(map[string]string, len(index.Processes))
+	var acp, cli bool
+	for _, process := range index.Processes {
+		if !stage2aLiveArtifactID.MatchString(process.ProcessRef) ||
+			processes[process.ProcessRef] != "" || process.PID <= 1 || process.UID <= 0 ||
+			process.GID <= 0 || process.PPID <= 1 || process.PGID <= 1 ||
+			len(process.StartIdentity) == 0 || len(process.StartIdentity) > 128 ||
+			!stage2aQualificationDigest(process.ExecutableSHA256) ||
+			!stage2aQualificationDigest(process.ArgvSHA256) ||
+			!stage2aQualificationDigest(process.LoadedProfileSHA256) ||
+			(process.Role != "acp" && process.Role != "claude-cli" && process.Role != "b-sidecar") {
+			return empty, errStage2aReservationAuthority
+		}
+		processes[process.ProcessRef] = process.Role
+		acp = acp || process.Role == "acp"
+		cli = cli || process.Role == "claude-cli"
+	}
+	if !acp || !cli {
 		return empty, errStage2aReservationAuthority
 	}
 	for i, ref := range index.RawRefs {
@@ -233,11 +281,24 @@ func receiveStage2aLiveCapture(ctx context.Context, conn *net.UnixConn, store st
 	ids := make(map[string]bool, len(index.Attempts))
 	var lastStart int64
 	for i, attempt := range index.Attempts {
-		if attempt.AttemptID == "" || ids[attempt.AttemptID] || attempt.ProcessRef == "" ||
+		role := processes[attempt.ProcessRef]
+		if !stage2aLiveArtifactID.MatchString(attempt.AttemptID) || ids[attempt.AttemptID] ||
+			role == "" || !stage2aQualificationDigest(attempt.DestinationSHA256) ||
+			!stage2aLiveDestinationClass(attempt.DestinationClass) ||
+			attempt.Result != "refused" && attempt.Result != "connected" ||
+			attempt.Errno != nil && *attempt.Errno < 0 ||
+			attempt.CanaryBefore < 0 || attempt.CanaryAfter < 0 ||
 			attempt.Sequence != i+1 || attempt.StartedMonotonicNS < lastStart ||
-			attempt.EndedMonotonicNS < attempt.StartedMonotonicNS || attempt.TimeoutLimitMS < 1 ||
+			attempt.EndedMonotonicNS < attempt.StartedMonotonicNS ||
+			attempt.TimeoutLimitMS < 1 || attempt.TimeoutLimitMS > 120000 ||
+			attempt.EndedMonotonicNS-attempt.StartedMonotonicNS > attempt.TimeoutLimitMS*1_000_000 ||
 			!checkRange(attempt.RequestRange) ||
 			(attempt.ResponseRange != nil && !checkRange(*attempt.ResponseRange)) {
+			return empty, errStage2aReservationAuthority
+		}
+		if attempt.DestinationClass != "assigned-relay" &&
+			(role != "claude-cli" || attempt.Result != "refused" ||
+				attempt.Errno == nil || attempt.CanaryBefore != attempt.CanaryAfter) {
 			return empty, errStage2aReservationAuthority
 		}
 		ids[attempt.AttemptID] = true
@@ -281,4 +342,50 @@ func receiveStage2aLiveCapture(ctx context.Context, conn *net.UnixConn, store st
 func stage2aQualificationKeysV1Only(raw []byte, keys []string) error {
 	_, err := stage2aQualificationKeysV1(raw, keys, "")
 	return err
+}
+
+// The draft raw artifact has closed keys at every evidence-bearing level.
+// A missing nullable field must not silently become a Go zero value.
+func stage2aLiveArtifactShape(raw []byte) error {
+	fields, err := stage2aQualificationKeysV1(raw,
+		[]string{"schema", "driver_command", "driver_request_sha256", "processes",
+			"attempts", "allowed_turn", "raw_refs"}, "")
+	if err != nil {
+		return err
+	}
+	var processes, attempts []json.RawMessage
+	if json.Unmarshal(fields["processes"], &processes) != nil ||
+		json.Unmarshal(fields["attempts"], &attempts) != nil ||
+		stage2aQualificationKeysV1Only(fields["allowed_turn"], []string{
+			"relay_socket_identity_ref", "b_bind_receipt_sha256", "http_request_range",
+			"http_response_range", "hq_provider_receipt_ref", "acp_request_range",
+			"acp_response_range", "soul_result_range"}) != nil {
+		return errStage2aReservationAuthority
+	}
+	for _, process := range processes {
+		if stage2aQualificationKeysV1Only(process, []string{"process_ref", "role", "pid", "uid", "gid",
+			"ppid", "pgid", "start_identity", "executable_sha256", "argv_sha256",
+			"loaded_profile_sha256"}) != nil {
+			return errStage2aReservationAuthority
+		}
+	}
+	for _, attempt := range attempts {
+		if stage2aQualificationKeysV1Only(attempt, []string{"attempt_id", "sequence", "process_ref",
+			"destination_class", "destination_sha256", "request_range", "response_range",
+			"result", "errno", "started_monotonic_ns", "ended_monotonic_ns",
+			"timeout_limit_ms", "canary_before", "canary_after"}) != nil {
+			return errStage2aReservationAuthority
+		}
+	}
+	return nil
+}
+
+func stage2aLiveDestinationClass(value string) bool {
+	switch value {
+	case "ipv4", "ipv6", "sibling-broker", "sibling-member", "sibling-relay",
+		"hq-admission", "assigned-relay":
+		return true
+	default:
+		return false
+	}
 }

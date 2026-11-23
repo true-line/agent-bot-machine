@@ -51,6 +51,12 @@ func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
 		case stage2aChildReadyVerb:
 			state = "child-ready"
 			body, err = service.ChildReady(req.peerUID, req.stage2aEpoch, req.stage2aChildReady)
+		case stage2aCaptureSelectorVerb:
+			state = "capture-selected"
+			body, err = service.CaptureSelector(req.peerUID, req.stage2aEpoch, req.stage2aCaptureSelector)
+		case stage2aControlProbeVerb:
+			state = "control-probe-stored"
+			body, err = service.StoreProtectedControlProbe(req.peerUID, req.stage2aEpoch, req.stage2aControlProbe)
 		case stage2aHelloStartVerb:
 			state = "hello-started"
 			body, err = service.HelloStart(req.peerUID, req.stage2aEpoch, req.stage2aHelloStart)

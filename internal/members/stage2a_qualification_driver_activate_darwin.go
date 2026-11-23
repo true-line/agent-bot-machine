@@ -4,14 +4,47 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"os/user"
 	"reflect"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 )
+
+type stage2aRetainedDriver struct {
+	listener *stage2aQualificationDriverListener
+	conn     *net.UnixConn
+	peer     stage2aQualificationDriverPeer
+	cmd      *exec.Cmd
+	cancel   context.CancelFunc
+	once     sync.Once
+	waitErr  error
+}
+
+func (d *stage2aRetainedDriver) close(graceful bool) error {
+	if d == nil {
+		return nil
+	}
+	d.once.Do(func() {
+		if d.conn != nil {
+			_ = d.conn.Close()
+		}
+		if !graceful {
+			d.cancel()
+			d.listener.close()
+			go func() { _ = d.cmd.Wait() }()
+			return
+		}
+		d.waitErr = d.cmd.Wait()
+		d.cancel()
+		d.listener.close()
+	})
+	return d.waitErr
+}
 
 func captureStage2aProtectedBaseline(hqUID int, epoch string, guard stage2aReservationGuardV3,
 	got stage2aReservation, reply stage2aReservationWorkerReplyV3, key ed25519.PublicKey,
@@ -28,6 +61,9 @@ func captureStage2aProtectedBaseline(hqUID int, epoch string, guard stage2aReser
 		return err
 	}
 	if install.Review.InstallationID != guard.assignment.InstallationID || !install.Review.DriverBaselineOnly {
+		if install.Review.InstallationID == guard.assignment.InstallationID && install.Review.DriverLive {
+			return errStage2aReservationAuthority
+		}
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -128,6 +164,20 @@ func recheckStage2aProtectedBaseline(install stage2aQualificationQInstall, guard
 
 func runStage2aDriverBaselineChild(ctx context.Context, install stage2aQualificationQInstall, review stage2aDriverReview,
 	session *stage2aQualificationSessionV1, checkLive func() error) (stage2aDriverPhaseCapture, error) {
+	driver, capture, err := startStage2aDriverBaselineChild(ctx, install, review, session, checkLive)
+	if err != nil {
+		return stage2aDriverPhaseCapture{}, err
+	}
+	if driver.close(true) != nil {
+		return stage2aDriverPhaseCapture{}, errStage2aReservationAuthority
+	}
+	return capture, nil
+}
+
+// In a reviewed live run the caller retains this exact listener, process and
+// connection until the same Q session has observed its live cases and EOF.
+func startStage2aDriverBaselineChild(ctx context.Context, install stage2aQualificationQInstall, review stage2aDriverReview,
+	session *stage2aQualificationSessionV1, checkLive func() error) (*stage2aRetainedDriver, stage2aDriverPhaseCapture, error) {
 	var empty stage2aDriverPhaseCapture
 	account, err := user.LookupId(strconv.Itoa(install.AdminUID))
 	self, selfErr := os.Executable()
@@ -135,40 +185,39 @@ func runStage2aDriverBaselineChild(ctx context.Context, install stage2aQualifica
 		review.Socket != stage2aQualificationDriverPath(account.HomeDir) ||
 		!slices.Equal(review.Argv, []string{review.Executable.Path, "stage2a-qualification-owner-driver"}) ||
 		verifyQualificationExecutable(review.Executable.Path, review.Executable.SHA256) != nil {
-		return empty, errStage2aReservationAuthority
+		return nil, empty, errStage2aReservationAuthority
 	}
 	listener, err := newStage2aQualificationDriverListener(account.HomeDir, install.AdminUID, install.AdminGID)
 	if err != nil {
-		return empty, err
+		return nil, empty, err
 	}
-	defer listener.close()
 	workerCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	cmd := exec.CommandContext(workerCtx, review.Executable.Path, review.Argv[1:]...)
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LC_ALL=C"}
 	if err := cmd.Start(); err != nil {
-		return empty, err
-	}
-	defer func() {
 		cancel()
-		if cmd.ProcessState == nil {
-			_ = cmd.Wait()
-		}
-	}()
+		listener.close()
+		return nil, empty, err
+	}
+	driver := &stage2aRetainedDriver{listener: listener, cmd: cmd, cancel: cancel}
 	conn, peer, err := acceptStage2aReviewedQualificationDriver(ctx, listener, review)
 	if err != nil {
-		return empty, err
+		_ = driver.close(false)
+		return nil, empty, err
 	}
-	defer conn.Close()
+	driver.conn, driver.peer = conn, peer
 	if peer.pid != cmd.Process.Pid || peer.kernel.ParentPID != os.Getpid() {
-		return empty, errStage2aReservationAuthority
+		_ = driver.close(false)
+		return nil, empty, errStage2aReservationAuthority
 	}
-	trace, err := runStage2aQualificationDriverCases(ctx, conn, peer, session.begin, stage2aDriverBeforeLaunch, checkLive,
+	trace, err := runStage2aQualificationDriverCasesAtSequence(ctx, conn, peer, session.begin,
+		stage2aDriverBeforeLaunch, 1, nil, checkLive,
 		func(ctx context.Context, command stage2aDriverCommand, _ string) (stage2aDriverCorroboration, error) {
 			return verifyStage2aDriverBaseline(ctx, command, review, install.Review.Provider, install.AdminUID)
 		}, session.observe)
-	if err != nil || cmd.Wait() != nil || len(trace) == 0 {
-		return empty, errStage2aReservationAuthority
+	if err != nil || len(trace) == 0 {
+		_ = driver.close(false)
+		return nil, empty, errStage2aReservationAuthority
 	}
-	return stage2aDriverPhaseCapture{phase: stage2aDriverBeforeLaunch, review: review, peer: peer, trace: trace}, nil
+	return driver, stage2aDriverPhaseCapture{phase: stage2aDriverBeforeLaunch, review: review, peer: peer, trace: trace}, nil
 }

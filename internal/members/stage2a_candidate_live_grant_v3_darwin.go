@@ -72,6 +72,11 @@ func (s *Stage2aService) beginStage2aCandidateRunV3(uid int, selector Stage2aRes
 		selector.PlanDigest != base.base.binding.InstalledPlanDigest {
 		return errStage2aReservationAuthority
 	}
+	preparedStart, err := stage2aQualificationPreparedStart(selector.InstallationID,
+		base.base.binding.InstalledPlanDigest)
+	if err != nil || preparedStart != "" && selector.StartID != preparedStart {
+		return errStage2aReservationAuthority
+	}
 	authority, spent, err := beginStage2aApprovedCandidateV3(saved, approval, owner, state, uid, base, guard, checkDesignatedHost, checkInstalledQ)
 	if err != nil {
 		return err

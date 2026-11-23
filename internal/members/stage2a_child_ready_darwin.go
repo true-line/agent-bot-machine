@@ -91,6 +91,14 @@ func (s *Stage2aService) ChildReady(hqUID int, epoch string, q Stage2aChildReady
 		checkStage2aChildProcess(q.ChildPID, q.ChildLauncherPID, p.Runner, p.LaunchInputs, childProcess) != nil {
 		return reply, errStage2aReservationAuthority
 	}
+	var controlSpec *Stage2aProtectedControlProbeSpec
+	if r.protectedQ != nil && r.protectedQ.install.Review.DriverLive {
+		controlSpec, err = s.stage2aProtectedPeerSpec(hqUID, epoch, r, p,
+			r.protectedQ.install.Review)
+		if err != nil {
+			return reply, errStage2aReservationAuthority
+		}
+	}
 	payload := Stage2aChildStartPayload{
 		Schema: "agent-bot-machine/stage2a-child-start/v1", Stage2aStopRequest: q.Stage2aStopRequest,
 		FinalizationSHA256:      stage2aReservationSHA256(r.finalizationEnvelope),
@@ -101,9 +109,10 @@ func (s *Stage2aService) ChildReady(hqUID int, epoch string, q Stage2aChildReady
 		Child:         stage2aLiveRoleIdentity(childProcess),
 		Executable:    executable, ExecutableSHA256: p.LaunchInputs.ComponentDigests["adapter"],
 		SandboxPath: SoulChildSandbox, SandboxSHA256: "sha256:" + harnessSHA(soulChildProfile),
-		RelaySocket:       r.payload.Assignment.Relay.SocketPath,
-		EnvironmentSHA256: stage2aReservationSHA256(environmentRaw),
-		StartedAtMS:       now.UnixMilli(), ExpiresAtMS: expires.UnixMilli(),
+		RelaySocket:           r.payload.Assignment.Relay.SocketPath,
+		EnvironmentSHA256:     stage2aReservationSHA256(environmentRaw),
+		ProtectedControlProbe: controlSpec,
+		StartedAtMS:           now.UnixMilli(), ExpiresAtMS: expires.UnixMilli(),
 	}
 	envelope, err := signStage2aEnvelope(payload, 1, Stage2aChildStartPurpose,
 		s.key.Public().(ed25519.PublicKey), s.sign)

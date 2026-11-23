@@ -79,6 +79,10 @@ func verifyStage2aChildStartReceipt(reply Stage2aChildReadyReply, in Stage2aRole
 		payload.ExpiresAtMS-payload.StartedAtMS > stage2aLiveLease.Milliseconds() {
 		return Stage2aChildStartPayload{}, invalid
 	}
+	if payload.ProtectedControlProbe != nil &&
+		!validStage2aProtectedControlProbeSpec(*payload.ProtectedControlProbe, in) {
+		return Stage2aChildStartPayload{}, invalid
+	}
 	return payload, nil
 }
 

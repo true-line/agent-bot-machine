@@ -55,6 +55,9 @@ func (s *Stage2aService) Stop(hqUID int, epoch string, q Stage2aStopRequest) (St
 			{Account: p.Bridge.Account, UID: p.Bridge.UID}}, unix.SysctlKinfoProcSlice) != nil {
 		return reply, errStage2aReservationAuthority
 	}
+	// A stopped start cannot retain its Q stream or private owner-driver
+	// listener. A late capture after cutoff has no route to a report.
+	r.protectedQ.abort()
 	if err := stage2aRevokeBridgeProof(a.SoulStartAssignment, r.bridgeProof[:]); err != nil {
 		return reply, err
 	}

@@ -386,5 +386,8 @@ func (s *Stage2aService) AbortHello(hqUID int, epoch string, q Stage2aStopReques
 	} else {
 		r.hello.aborted = true
 	}
+	// A failed prelaunch Hello cannot leave the optional Q observer or its
+	// A-only owner-driver socket alive after the start is denied.
+	r.protectedQ.abort()
 	return nil
 }

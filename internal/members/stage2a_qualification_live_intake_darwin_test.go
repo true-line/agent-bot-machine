@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -97,23 +98,57 @@ func TestStage2aLiveIntakeRetainsExactBytesAndRefusesReplay(t *testing.T) {
 	blob := []byte("synthetic ACP bytes from the verified transfer")
 	blobHash := stage2aQualificationSHA256(blob)
 	rangeRef := stage2aLiveRange{BlobSHA256: blobHash, OffsetBytes: 0, LengthBytes: len(blob)}
+	process := func(ref, role string, pid int) map[string]any {
+		return map[string]any{
+			"process_ref": ref, "role": role, "pid": pid, "uid": 310, "gid": 310,
+			"ppid": 20, "pgid": 21, "start_identity": "synthetic-start",
+			"executable_sha256": blobHash, "argv_sha256": blobHash,
+			"loaded_profile_sha256": blobHash,
+		}
+	}
 	artifact, err := marshalStage2aReservationJCS(map[string]any{
 		"schema":         "agent-bot-adapters/t03-stock-claude-direct-attempts/v1",
 		"driver_command": command, "driver_request_sha256": stage2aQualificationSHA256(requestFrame[4:]),
-		"processes": []any{}, "raw_refs": []any{stage2aLiveRawRef{SHA256: blobHash, SizeBytes: len(blob), Purpose: "acp-in"}},
+		"processes": []any{process("acp-1", "acp", 301), process("cli-1", "claude-cli", 302)},
+		"raw_refs":  []any{stage2aLiveRawRef{SHA256: blobHash, SizeBytes: len(blob), Purpose: "acp-in"}},
 		"attempts": []any{map[string]any{
-			"attempt_id": "attempt-1", "sequence": 1, "process_ref": "acp-1",
-			"request_range": rangeRef, "response_range": nil,
+			"attempt_id": "attempt-1", "sequence": 1, "process_ref": "cli-1",
+			"destination_class": "ipv4", "destination_sha256": blobHash,
+			"request_range": rangeRef, "response_range": nil, "result": "refused", "errno": 13,
+			"canary_before": 0, "canary_after": 0,
 			"started_monotonic_ns": 100, "ended_monotonic_ns": 200, "timeout_limit_ms": 1,
 		}},
 		"allowed_turn": map[string]any{
-			"http_request_range": rangeRef, "http_response_range": rangeRef,
+			"relay_socket_identity_ref": blobHash, "b_bind_receipt_sha256": blobHash,
+			"hq_provider_receipt_ref": blobHash,
+			"http_request_range":      rangeRef, "http_response_range": rangeRef,
 			"acp_request_range": rangeRef, "acp_response_range": rangeRef,
 			"soul_result_range": rangeRef,
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for name, remove := range map[string]func(map[string]any){
+		"process identity": func(v map[string]any) {
+			delete(v["processes"].([]any)[1].(map[string]any), "loaded_profile_sha256")
+		},
+		"attempt result": func(v map[string]any) {
+			delete(v["attempts"].([]any)[0].(map[string]any), "errno")
+		},
+		"allowed turn join": func(v map[string]any) {
+			delete(v["allowed_turn"].(map[string]any), "hq_provider_receipt_ref")
+		},
+	} {
+		var changed map[string]any
+		if json.Unmarshal(artifact, &changed) != nil {
+			t.Fatal("fixture artifact is not JSON")
+		}
+		remove(changed)
+		raw, err := marshalStage2aReservationJCS(changed)
+		if err != nil || stage2aLiveArtifactShape(raw) == nil {
+			t.Fatalf("%s omission accepted: %v", name, err)
+		}
 	}
 	manifest := stage2aLiveTransfer{Schema: stage2aLiveIntakeSchema, Kind: "raw-transfer",
 		RequestSHA256: stage2aQualificationSHA256(requestFrame[4:]), ArtifactSize: len(artifact)}

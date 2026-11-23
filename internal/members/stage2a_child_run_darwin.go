@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"os"
 	"os/exec"
@@ -124,6 +125,27 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 		if err != nil {
 			return err
 		}
+		// Keep renewal active during the bounded profile control. The stock
+		// child's ACP stdin remains held by superviseHarnessStarted throughout.
+		go watchStage2aChildLive(childCtx, cancel, in, receipt.SHA256,
+			launcher, observed, pub, first)
+		if spec := signedReceipt.ProtectedControlProbe; spec != nil {
+			artifact, probeErr := runStage2aProtectedControlProbes(childCtx, in,
+				receipt.SHA256, launcher, observed, *spec)
+			if probeErr != nil || childCtx.Err() != nil ||
+				time.Until(time.UnixMilli(first.ExpiresAtMS)) <= time.Second {
+				return errors.New("protected child control probe refused")
+			}
+			if reporter.write(struct {
+				Kind              string `json:"kind"`
+				ReceiptSHA256     string `json:"receipt_sha256"`
+				ArtifactSHA256    string `json:"artifact_sha256"`
+				ArtifactBase64URL string `json:"artifact_base64url"`
+			}{"child-control-probe", receipt.SHA256, stage2aReservationSHA256(artifact),
+				base64.RawURLEncoding.EncodeToString(artifact)}) != nil {
+				return errors.New("protected child control probe was not delivered")
+			}
+		}
 		if reporter.write(struct {
 			Kind          string `json:"kind"`
 			ReceiptSHA256 string `json:"receipt_sha256"`
@@ -131,8 +153,6 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 		}{"child-accepted", receipt.SHA256, first.Sequence}) != nil {
 			return errors.New("protected child acceptance not delivered")
 		}
-		go watchStage2aChildLive(childCtx, cancel, in, receipt.SHA256,
-			launcher, observed, pub, first)
 		return nil
 	}
 	return superviseHarnessStarted(childCtx, cmd, acp, control, stdout, reporter, time.Second, onStart)
