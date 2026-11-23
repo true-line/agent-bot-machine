@@ -15,12 +15,13 @@ import (
 )
 
 const (
-	QFrameIndexPurposeV3  = "agent-bot/stage2a-q-frame-index/v1"
-	QFinishedEOFPurposeV3 = "agent-bot/stage2a-q-finished-eof/v1"
-	qReservationPurposeV3 = "agent-bot/stage2a-reservation/v2"
-	qSessionSchemaV3      = "soul-conformance/qualification-session/v1"
-	qFrameMaxV3           = 65536
-	qStreamMaxV3          = 128 * (qFrameMaxV3 + 4)
+	QFrameIndexPurposeV3           = "agent-bot/stage2a-q-frame-index/v1"
+	QFinishedEOFPurposeV3          = "agent-bot/stage2a-q-finished-eof/v1"
+	qReservationPurposeV3          = "agent-bot/stage2a-reservation/v2"
+	qProtectedReservationPurposeV3 = "agent-bot/stage2a-reservation/v3"
+	qSessionSchemaV3               = "soul-conformance/qualification-session/v1"
+	qFrameMaxV3                    = 65536
+	qStreamMaxV3                   = 128 * (qFrameMaxV3 + 4)
 )
 
 var (
@@ -326,6 +327,77 @@ func qPrintableV3(s string, max int) bool {
 }
 
 func qReservationJoinV3(envelope []byte, key ed25519.PublicKey, idx qIndexV3) error {
+	if idx.Profile == "managed-cooperative" {
+		payload, err := qSignedRecordV3(envelope, cooperativeReservationPurposeV3, 3, key)
+		if err != nil {
+			return ErrUnqualified
+		}
+		return qReservationJoinCurrentV3(payload, idx, "soul-cooperative-reservation", true)
+	}
+	if idx.Profile != "managed-protected" {
+		return ErrUnqualified
+	}
+	if payload, err := qSignedRecordV3(envelope, qProtectedReservationPurposeV3, 3, key); err == nil {
+		return qReservationJoinCurrentV3(payload, idx, "stage2a-reservation", false)
+	}
+	return qReservationJoinLegacyV3(envelope, key, idx)
+}
+
+// The Q pre-sign component joins the exact current A-signed reservation and
+// its complete v3 measurement binding. One-use spending, installed bytes,
+// release provenance and physical gate verdicts remain separate checks.
+func qReservationJoinCurrentV3(payload []byte, idx qIndexV3, kind string, cooperative bool) error {
+	fields, err := canonicalBytes(payload, 64<<10)
+	if err != nil {
+		return ErrUnqualified
+	}
+	var p struct {
+		Contract                 string          `json:"contract"`
+		Kind                     string          `json:"kind"`
+		SchemaVersion            int             `json:"schema_version"`
+		HostID                   string          `json:"host_id"`
+		AdmissionChallengeSHA256 string          `json:"admission_challenge_sha256"`
+		Assignment               json.RawMessage `json:"assignment"`
+		MeasurementBinding       json.RawMessage `json:"measurement_binding"`
+	}
+	if json.Unmarshal(payload, &p) != nil || p.Contract != "machine/v3" || p.Kind != kind ||
+		p.SchemaVersion != 3 || p.HostID != idx.HostID ||
+		p.AdmissionChallengeSHA256 != idx.LaunchChallengeSHA256 ||
+		len(p.Assignment) == 0 || len(p.MeasurementBinding) == 0 {
+		return ErrUnqualified
+	}
+	assignment, err := strictObject(p.Assignment, 48<<10)
+	if err != nil {
+		return ErrUnqualified
+	}
+	var ids struct {
+		InstallationID string `json:"installation_id"`
+		SoulID         string `json:"soul_id"`
+		StartID        string `json:"start_id"`
+		LaunchID       string `json:"launch_id"`
+	}
+	if json.Unmarshal(p.Assignment, &ids) != nil || ids.InstallationID != idx.InstallationID ||
+		ids.SoulID != idx.SoulID || ids.StartID != idx.StartID || ids.LaunchID == "" ||
+		assignment["installation_id"] == nil || assignment["soul_id"] == nil ||
+		assignment["start_id"] == nil || assignment["launch_id"] == nil {
+		return ErrUnqualified
+	}
+	var binding hrMeasurementBindingV3
+	if cooperative {
+		binding, err = parseCooperativeMeasurementBindingV3(fields["measurement_binding"])
+	} else {
+		binding, err = parseHRMeasurementBindingV3(fields["measurement_binding"])
+	}
+	if err != nil || binding.Base.InstallationID != idx.InstallationID ||
+		binding.Base.SoulID != idx.SoulID || binding.Base.StartID != idx.StartID ||
+		binding.Base.LaunchID != ids.LaunchID || binding.Base.HostID != idx.HostID ||
+		binding.Base.ProfileInForce != idx.Profile {
+		return ErrUnqualified
+	}
+	return nil
+}
+
+func qReservationJoinLegacyV3(envelope []byte, key ed25519.PublicKey, idx qIndexV3) error {
 	payload, err := qSignedRecordV3(envelope, qReservationPurposeV3, 2, key)
 	if err != nil {
 		return ErrUnqualified
