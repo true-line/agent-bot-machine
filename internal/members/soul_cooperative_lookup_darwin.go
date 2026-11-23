@@ -5,7 +5,9 @@ package members
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -75,6 +77,73 @@ func (s *Stage2aService) LookupCooperativeInstalled(hqUID int, epoch string,
 		return SoulCooperativeLookupReplyV3{}, errSoulCooperativeAuthority
 	}
 	return reply, nil
+}
+
+// CooperativeReserveResultV3 retrieves the exact pending reservation after
+// an ambiguous reserve response. It may return an expired envelope for owner
+// recovery, and it never starts, spends, or restores a live run.
+func (s *Stage2aService) CooperativeReserveResultV3(hqUID int, epoch string,
+	q SoulCooperativeReserveRequest, paired func(string, func() error) error) (Stage2aReserveReply, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var reply Stage2aReserveReply
+	if paired == nil || len(s.key) != ed25519.PrivateKeySize || !q.valid() ||
+		q.LaunchID == "" || q.AdmissionChallengeSHA256 == "" || q.HQEpoch != epoch {
+		return reply, errSoulCooperativeAuthority
+	}
+	key := s.key.Public().(ed25519.PublicKey)
+	installed, _, err := loadSoulCooperativeInstalledV3(key, hqUID, epoch, q.InstallationID)
+	if err != nil {
+		return reply, errSoulCooperativeAuthority
+	}
+	var ran bool
+	err = paired(installed.PairCommitment, func() error {
+		if ran {
+			return errSoulCooperativeAuthority
+		}
+		ran = true
+		current, _, err := loadSoulCooperativeInstalledV3(key, hqUID, epoch, q.InstallationID)
+		if err != nil || current.PairCommitment != installed.PairCommitment ||
+			!bytes.Equal(current.RootReceipt, installed.RootReceipt) {
+			return errSoulCooperativeAuthority
+		}
+		store := current.claimStore()
+		dir, err := store.open()
+		if err != nil {
+			return err
+		}
+		defer dir.Close()
+		reply, err = readCooperativeReserveResult(dir, store, current, q, key)
+		return err
+	})
+	if err != nil || !ran || reply.SHA256 == "" {
+		return Stage2aReserveReply{}, errSoulCooperativeAuthority
+	}
+	return reply, nil
+}
+
+func readCooperativeReserveResult(dir *os.File, store stage2aAdminClaimStore,
+	installed soulCooperativeInstalledV3, q SoulCooperativeReserveRequest, key ed25519.PublicKey,
+) (Stage2aReserveReply, error) {
+	var receipt Receipt
+	p := installed.Policy
+	if store.checkDirectory(dir) != nil || p.SourcePackagePath != q.PackagePath ||
+		p.Runner.InstallationID != q.InstallationID || p.HostID != q.HostID || p.HQEpoch != q.HQEpoch ||
+		json.Unmarshal(installed.RootReceipt, &receipt) != nil ||
+		!ValidApproval(receipt.PlanID, receipt.PlanDigest) || receipt.PlanDigest != q.PlanDigest {
+		return Stage2aReserveReply{}, errSoulCooperativeAuthority
+	}
+	_, request, signed, err := readSoulCooperativeRecoveryRequest(dir, store, q.InstallationID, q.StartID, p, key)
+	if err != nil || signed.HostID != q.HostID ||
+		signed.InstalledPlanReceiptSHA256 != fmt.Sprintf("sha256:%x", sha256.Sum256(installed.RootReceipt)) ||
+		signed.Assignment.StartID != q.StartID || signed.Assignment.LaunchID != q.LaunchID ||
+		signed.Assignment.PlanID != receipt.PlanID || signed.Assignment.PlanDigest != receipt.PlanDigest ||
+		signed.Assignment.HQEpoch != q.HQEpoch || signed.AdmissionChallengeSHA256 != q.AdmissionChallengeSHA256 ||
+		signed.MeasurementBinding.RInventory != installed.RuntimeV3 {
+		return Stage2aReserveReply{}, errSoulCooperativeAuthority
+	}
+	return Stage2aReserveReply{EnvelopeBase64URL: request.ReservationEnvelopeBase64URL,
+		SHA256: request.ReservationSHA256}, nil
 }
 
 func findSoulCooperativeInstallation(sourcePackagePath string) (string, error) {

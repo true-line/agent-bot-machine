@@ -5,12 +5,18 @@ package members
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 )
 
 func TestCooperativeRecoveryRetainsJournalUntilCompletionCleanup(t *testing.T) {
@@ -140,5 +146,98 @@ func TestCooperativeRecoveryRequiresExactSignedTerminal(t *testing.T) {
 	if _, err := soulCooperativeExistingTerminal(dir, store, pub, q,
 		"sha256:"+strings.Repeat("f", 64)); err == nil {
 		t.Fatal("terminal from a different H descriptor accepted")
+	}
+}
+
+func TestCooperativeLostReserveReplyReadsOriginalJournalWithoutSpending(t *testing.T) {
+	store, dir, q := cooperativeClaimFixture(t)
+	p, _, private, _ := cooperativeFixture(t)
+	pub := private.Public().(ed25519.PublicKey)
+	input := stage2aLaunchFixture(t)
+	input.EffectiveConfig["profile"] = "managed-cooperative"
+	input.AdapterTransport = stage2aDirectComms
+	delete(input.ComponentDigests, "bridge")
+	measurement, _, err := Stage2aLaunchInputDigest(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	challenge := bytes.Repeat([]byte{1}, 32)
+	q.LaunchID = "ln_1234567890abcdef12345678"
+	q.AdmissionChallengeSHA256 = fmt.Sprintf("sha256:%x", sha256.Sum256(challenge))
+	receipt := Receipt{PlanID: "plan-20261122T120000Z-abcd", PlanDigest: q.PlanDigest}
+	installed := soulCooperativeInstalledV3{Policy: p, RootReceipt: encodeReceipt(receipt)}
+	issued := time.Now().UTC().Add(-time.Hour)
+	expires := issued.Add(30 * time.Second).Format(time.RFC3339Nano)
+	payload := soulCooperativeReservationPayloadV3{Contract: "machine/v3",
+		Kind: "soul-cooperative-reservation", SchemaVersion: 3, HostID: q.HostID,
+		IssuedAt: issued.Format(time.RFC3339Nano), ExpiresAt: expires,
+		InstalledPlanReceiptSHA256: fmt.Sprintf("sha256:%x", sha256.Sum256(installed.RootReceipt)),
+		AdapterTransport:           stage2aDirectComms, AdmissionChallengeSHA256: q.AdmissionChallengeSHA256,
+		Assignment: soulCooperativeAssignmentV3{InstallationID: q.InstallationID, StartID: q.StartID,
+			LaunchID: q.LaunchID, PlanID: receipt.PlanID, PlanDigest: q.PlanDigest,
+			HQEpoch: q.HQEpoch, RunnerUID: p.Runner.UID, RunnerGID: p.Runner.GID,
+			StateRoot: "/synthetic/state", RuntimeRoot: "/synthetic/runtime",
+			NodePath: "/synthetic/runtime/bin/node", EntryPath: "/synthetic/runtime/bin/agent-bot-souls.mjs"},
+		MeasurementBinding: soulCooperativeBindingV3{Stage2aMeasurementBinding: Stage2aMeasurementBinding{
+			ProfileInForce: "managed-cooperative", LaunchInputMeasurement: measurement}}}
+	payload.MeasurementBinding.RInventory.Snapshot.Path = payload.Assignment.RuntimeRoot
+	installed.RuntimeV3 = payload.MeasurementBinding.RInventory
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := jsoncanonicalizer.Transform(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, digest, err := signSoulCooperativeEnvelopeV3(canonical, pub,
+		func(data []byte) ([]byte, error) { return ed25519.Sign(private, data), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatch := soulCooperativeDispatchRequest{Schema: soulCooperativeDispatchSchema, MachinePinPath: SoulAuthorityPin,
+		ReservationEnvelopeBase64URL: base64.RawURLEncoding.EncodeToString(envelope), ReservationSHA256: digest,
+		LaunchInputRecords: input, StateRoot: payload.Assignment.StateRoot,
+		AdmissionChallengeBase64URL: base64.RawURLEncoding.EncodeToString(challenge)}
+	journal, err := json.Marshal(dispatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err = jsoncanonicalizer.Transform(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := cooperativePendingName(q.InstallationID, q.StartID)
+	if err := commitStage2aReservation(dir, name, journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := spendSoulCooperativeStartIn(store, dir, q); err != nil {
+		t.Fatal(err)
+	}
+	// The reply disappeared and a daemon restart erased its live table.
+	// Only the protected journal and permanent claim remain.
+	for attempt := 0; attempt < 2; attempt++ {
+		reply, err := readCooperativeReserveResult(dir, store, installed, q, pub)
+		if err != nil || reply.SHA256 != digest || reply.EnvelopeBase64URL != dispatch.ReservationEnvelopeBase64URL {
+			t.Fatalf("original expired reservation unavailable on attempt %d: %v", attempt, err)
+		}
+	}
+	if err := spendSoulCooperativeStartIn(store, dir, q); err == nil ||
+		cooperativeActiveClaimMatches(dir, store, q.InstallationID, q.StartID) != nil {
+		t.Fatal("lookup changed the one-use or active claim")
+	}
+	for _, edit := range []func(*SoulCooperativeReserveRequest){
+		func(r *SoulCooperativeReserveRequest) { r.LaunchID = "ln_ffffffffffffffffffffffff" },
+		func(r *SoulCooperativeReserveRequest) { r.StartID = "st_ffffffffffffffffffffffff" },
+		func(r *SoulCooperativeReserveRequest) {
+			r.AdmissionChallengeSHA256 = "sha256:" + strings.Repeat("f", 64)
+		},
+		func(r *SoulCooperativeReserveRequest) { r.HQEpoch = strings.Repeat("f", 64) },
+	} {
+		other := q
+		edit(&other)
+		if _, err := readCooperativeReserveResult(dir, store, installed, other, pub); err == nil {
+			t.Fatal("lookup returned a reservation for different selectors")
+		}
 	}
 }

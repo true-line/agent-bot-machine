@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -162,5 +164,55 @@ func TestStage2aProtectedHandshakeVerbsReachAuthority(t *testing.T) {
 				t.Fatalf("missing authority did not fail closed: %+v", got)
 			}
 		})
+	}
+}
+
+func TestCooperativeReserveResultRequiresExactPairedRequest(t *testing.T) {
+	testPlanRole(t, "777")
+	hq, key := keyPair(t)
+	epoch := strings.Repeat("b", 64)
+	challenge := make([]byte, 32)
+	input := members.SoulCooperativeStartRequestV3{
+		SoulCooperativeReserveRequest: members.SoulCooperativeReserveRequest{
+			Profile: "managed-cooperative", HostID: "test-host", PackagePath: "/Library/Example.soul",
+			PlanDigest: strings.Repeat("a", 64), InstallationID: "soul-one", HQEpoch: epoch,
+			StartID: "st_0123456789abcdef01234567", LaunchID: "ln_0123456789abcdef01234567",
+			AdmissionChallengeSHA256: fmt.Sprintf("sha256:%x", sha256.Sum256(challenge)),
+		},
+		AdmissionChallengeBase64URL: base64.RawURLEncoding.EncodeToString(challenge),
+	}
+	pairing := Pairing{Live: hq, AgentDaemon: hq, AgentDaemonUID: 777, AgentDaemonBound: true,
+		OwnerPresenceRequired: true, HQEpoch: epoch}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := Request{Verb: stage2aCooperativeReserveResultVerb, Timestamp: time.Now().Unix(),
+		Nonce: "cooperative-reserve-result-1", Stage2aRequest: base64.RawURLEncoding.EncodeToString(raw)}
+	for _, verb := range []string{stage2aCooperativeReserveVerb, stage2aCooperativeReserveResultVerb} {
+		request := req
+		request.Verb = verb
+		got, id, _ := (&Gate{Pairing: pairing}).verify(777, signed(t, key, request))
+		if id != "" || got.stage2aCooperativeReserve != input || got.stage2aEpoch != epoch {
+			t.Fatalf("paired %s refused or misrouted: %q", verb, id)
+		}
+		// The test has no installed owner authority. Each handler must reach
+		// the guarded authority and refuse before any use of the host.
+		res := stage2aHandler(nil, "", "")(got)
+		if res.OK || res.Message != "Stage 2a installed authority unavailable or mismatched" {
+			t.Fatalf("unexpected %s handler response: %+v", verb, res)
+		}
+	}
+	if _, id, _ := (&Gate{Pairing: pairing}).verify(778, signed(t, key, req)); id == "" {
+		t.Fatal("foreign peer accepted")
+	}
+	input.AdmissionChallengeBase64URL = ""
+	raw, err = json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Stage2aRequest = base64.RawURLEncoding.EncodeToString(raw)
+	if _, id, _ := (&Gate{Pairing: pairing}).verify(777, signed(t, key, req)); id == "" {
+		t.Fatal("result lookup accepted without the original challenge")
 	}
 }

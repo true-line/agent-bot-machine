@@ -50,6 +50,16 @@ func stage2aHandlerWithService(service *members.Stage2aService, dir, account str
 			body, err = service.Lookup(req.peerUID, req.stage2aEpoch, req.stage2aLookup)
 		case stage2aReserveVerb:
 			body, err = service.Reserve(req.peerUID, req.stage2aEpoch, req.stage2aReserve)
+		case stage2aCooperativeReserveVerb:
+			state = "cooperative-reserved"
+			body, err = service.ReserveCooperativeV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeReserve, func(digest string) (members.Saved, error) {
+					return findUniqueCooperativeHPlan(account, digest)
+				}, paired)
+		case stage2aCooperativeReserveResultVerb:
+			state = "cooperative-reserve-result"
+			body, err = service.CooperativeReserveResultV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeReserve.SoulCooperativeReserveRequest, paired)
 		case stage2aCooperativeAttachVerb:
 			state = "cooperative-attached"
 			body, err = service.AttachCooperativeVerified(req.peerUID, req.stage2aEpoch,

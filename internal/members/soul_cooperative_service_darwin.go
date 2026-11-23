@@ -38,19 +38,22 @@ type soulCooperativeLiveV3 struct {
 	attachSHA256      string
 }
 
-// ReserveCooperativeVerified requires a separately authenticated H proof
-// constructor before the caller enters this method. The callback keeps the
-// current paired authority live across the one-use spend and file publish.
-func (s *Stage2aService) ReserveCooperativeVerified(hqUID int, epoch string,
-	a soulCooperativeVerifiedStartV3, q SoulCooperativeReserveRequest,
-	challenge []byte, paired func(string, func() error) error) (Stage2aReserveReply, error) {
+// ReserveCooperativeV3 reconstructs the candidate solely from current
+// installed R authority and the daemon-selected, independently applied H plan.
+func (s *Stage2aService) ReserveCooperativeV3(hqUID int, epoch string,
+	start SoulCooperativeStartRequestV3, findHPlan func(string) (Saved, error),
+	paired func(string, func() error) error) (Stage2aReserveReply, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var reply Stage2aReserveReply
-	p := a.installed.Policy
-	if paired == nil || len(s.key) != ed25519.PrivateKeySize || p.HQUID != hqUID || p.HQEpoch != epoch ||
-		q.HQEpoch != epoch || q.InstallationID != p.Runner.InstallationID ||
-		len(s.cooperativeActive) >= 128 {
+	q := start.SoulCooperativeReserveRequest
+	if findHPlan == nil || paired == nil || len(s.key) != ed25519.PrivateKeySize ||
+		!q.valid() || q.HQEpoch != epoch || len(s.cooperativeActive) >= 128 {
+		return reply, errSoulCooperativeAuthority
+	}
+	challenge, err := base64.RawURLEncoding.Strict().DecodeString(start.AdmissionChallengeBase64URL)
+	if err != nil || len(challenge) != 32 || !soulLaunchID.MatchString(q.LaunchID) ||
+		fmt.Sprintf("sha256:%x", sha256.Sum256(challenge)) != q.AdmissionChallengeSHA256 {
 		return reply, errSoulCooperativeAuthority
 	}
 	for _, live := range s.cooperativeActive {
@@ -58,18 +61,51 @@ func (s *Stage2aService) ReserveCooperativeVerified(hqUID int, epoch string,
 			return reply, errSoulCooperativeAuthority
 		}
 	}
-	issued := time.Now().UTC()
-	var err error
-	ran := false
-	err = paired(a.installed.PairCommitment, func() error {
+	key := s.key.Public().(ed25519.PublicKey)
+	installed, _, err := loadSoulCooperativeInstalledV3(key, hqUID, epoch, q.InstallationID)
+	if err != nil {
+		return reply, errSoulCooperativeAuthority
+	}
+	selector, err := cooperativeHSelectorFromInstalled(installed)
+	if err != nil || selector.CooperativePlanDigest != q.PlanDigest {
+		return reply, errSoulCooperativeAuthority
+	}
+	saved, err := findHPlan(selector.HOwnerPlanDigest)
+	if err != nil || "sha256:"+saved.PlanDigest != selector.HOwnerPlanDigest {
+		return reply, errSoulCooperativeAuthority
+	}
+	var proof soulCooperativeVerifiedStartV3
+	var issued time.Time
+	var ran bool
+	err = paired(installed.PairCommitment, func() error {
 		if ran {
 			return errSoulCooperativeAuthority
 		}
 		ran = true
-		var publishErr error
-		reply, publishErr = publishSoulCooperativeStartV3(a, q, challenge, issued,
-			s.key.Public().(ed25519.PublicKey), s.sign)
-		return publishErr
+		current, r, err := loadSoulCooperativeInstalledV3(key, hqUID, epoch, q.InstallationID)
+		if err != nil || !bytes.Equal(current.RootReceipt, installed.RootReceipt) ||
+			current.PairCommitment != installed.PairCommitment {
+			return errSoulCooperativeAuthority
+		}
+		h, err := loadInstalledCooperativeHV3(saved, selector.Owner, selector.CooperativePlanID,
+			selector.CooperativePlanDigest, time.Now().Add(30*time.Second), key, paired)
+		if err != nil {
+			return errSoulCooperativeAuthority
+		}
+		descriptor, digest, err := stage2aDecodeHDescriptorV3(h.envelope, key)
+		if err != nil || digest != h.descriptorDigest || descriptor.HostID != current.Policy.HostID ||
+			descriptor.HQInstallationID != selector.HQInstallationID {
+			return errSoulCooperativeAuthority
+		}
+		proof = soulCooperativeVerifiedStartV3{installed: current, r: r, h: h.verifiedH,
+			hDescriptorDigest: digest, hEntryPath: descriptor.Runtime.EntryPath,
+			hEntrySHA256: descriptor.Runtime.EntrySHA256}
+		for _, c := range descriptor.Components {
+			proof.hComponents = append(proof.hComponents, soulCooperativeComponentV3(c))
+		}
+		issued = time.Now().UTC()
+		reply, err = publishSoulCooperativeStartV3(proof, q, challenge, issued, key, s.sign)
+		return err
 	})
 	if err != nil {
 		return Stage2aReserveReply{}, err
@@ -78,8 +114,8 @@ func (s *Stage2aService) ReserveCooperativeVerified(hqUID int, epoch string,
 		return Stage2aReserveReply{}, errSoulCooperativeAuthority
 	}
 	s.cooperativeActive[reply.SHA256] = &soulCooperativeLiveV3{
-		request: q, installed: a.installed, h: a.h,
-		hDescriptorDigest: a.hDescriptorDigest, digest: reply.SHA256,
+		request: q, installed: proof.installed, h: proof.h,
+		hDescriptorDigest: proof.hDescriptorDigest, digest: reply.SHA256,
 		challengeSHA: fmt.Sprintf("sha256:%x", sha256.Sum256(challenge)),
 		issuedAt:     issued,
 	}

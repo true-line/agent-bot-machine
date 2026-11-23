@@ -27,6 +27,7 @@ const stage2aHelloFinalizeVerb = "stage2a-hello-finalize"
 const stage2aHelloAbortVerb = "stage2a-hello-abort"
 const stage2aPeerRoleVerb = "stage2a-peer-role"
 const stage2aCooperativeReserveVerb = "stage2a-cooperative-reserve-v3"
+const stage2aCooperativeReserveResultVerb = "stage2a-cooperative-reserve-result-v3"
 const stage2aCooperativeAttachVerb = "stage2a-cooperative-attach-v3"
 const stage2aCooperativeStopVerb = "stage2a-cooperative-stop-v3"
 const stage2aCooperativeProjectionVerb = "stage2a-cooperative-launch-inputs-v3"
@@ -53,7 +54,7 @@ func isStage2aVerb(verb string) bool {
 		verb == stage2aCooperativeAttachVerb || verb == stage2aCooperativeStopVerb ||
 		verb == stage2aCooperativeProjectionVerb || verb == stage2aCooperativeProviderVerb ||
 		verb == stage2aCooperativeLookupVerb || verb == stage2aCooperativeLiveVerb ||
-		verb == stage2aCooperativeAbortVerb
+		verb == stage2aCooperativeAbortVerb || verb == stage2aCooperativeReserveResultVerb
 }
 
 func stage2aFields(req *Request, raw []byte) (string, string) {
@@ -99,7 +100,7 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 		req.stage2aReserve = parsed
 		return "", ""
 	}
-	if req.Verb == stage2aCooperativeReserveVerb {
+	if req.Verb == stage2aCooperativeReserveVerb || req.Verb == stage2aCooperativeReserveResultVerb {
 		parsed, err := members.ParseSoulCooperativeStartRequestV3(decoded)
 		if err != nil {
 			return diag.DaemonUndeclared, "invalid cooperative Soul reserve request"
