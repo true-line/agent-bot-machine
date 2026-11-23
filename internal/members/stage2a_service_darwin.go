@@ -56,7 +56,7 @@ type stage2aLiveReservation struct {
 	childReceiptEnvelope        []byte
 	twoMemberChildren           *stage2aTwoMemberObservation
 	memberSetAssignmentEnvelope []byte
-	memberSetAssignmentExpires time.Time
+	memberSetAssignmentExpires  time.Time
 	protectedQ                  *stage2aProtectedQRun
 	liveSequence                uint64
 	hello                       *stage2aHelloState
@@ -297,6 +297,12 @@ func (s *Stage2aService) Exec(hqUID int, epoch, digest, role, nonce string, pid 
 			ReservationV3:                r.payloadV3,
 			ReservationRunModeV3:         string(r.runModeV3),
 		}
+		memberSet, err := stage2aRunnerMemberSetFromA(r, p, invocation,
+			s.key.Public().(ed25519.PublicKey), time.Now())
+		if err != nil {
+			return reply, errStage2aReservationAuthority
+		}
+		invocation.RunnerExec.MemberSetAssignmentEnvelopeBase64URL = memberSet
 	} else {
 		invocation.BridgeExec = &Stage2aBridgeExec{
 			Executable:          p.BridgeExecutable,
