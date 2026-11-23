@@ -49,12 +49,17 @@ func openStage2aAdminDirectory(path string, uid uint32) (*os.File, error) {
 	if !stage2aAbsolutePath(path) {
 		return nil, errStage2aReservationAuthority
 	}
-	fd, err := unix.Open("/", stage2aDirectoryOpenFlags, 0)
+	// The shared snapshot parent is deliberately root:wheel 0711. A may
+	// traverse but not list it. O_RDONLY would require read permission on
+	// every ancestor and refuse that approved custody layout.
+	const traverseFlags = unix.O_SEARCH | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_NONBLOCK
+	fd, err := unix.Open("/", traverseFlags, 0)
 	if err != nil {
 		return nil, err
 	}
 	current := ""
-	for _, part := range strings.Split(path[1:], "/") {
+	parts := strings.Split(path[1:], "/")
+	for i, part := range parts {
 		aclPath := current
 		if aclPath == "" {
 			aclPath = "/"
@@ -63,7 +68,11 @@ func openStage2aAdminDirectory(path string, uid uint32) (*os.File, error) {
 			unix.Close(fd)
 			return nil, err
 		}
-		child, err := unix.Openat(fd, part, stage2aDirectoryOpenFlags, 0)
+		flags := traverseFlags
+		if i == len(parts)-1 {
+			flags = stage2aDirectoryOpenFlags
+		}
+		child, err := unix.Openat(fd, part, flags, 0)
 		unix.Close(fd)
 		if err != nil {
 			return nil, err
