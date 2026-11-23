@@ -23,6 +23,7 @@ import (
 )
 
 const stage2aInstallSchema = "agent-bot-machine/soul-protected-launch-install/v1"
+const stage2aRuntimeInstallSchemaV3 = "agent-bot-machine/soul-protected-launch-install/v3"
 
 var stage2aMessagesQuery = regexp.MustCompile(`^[a-zA-Z0-9._=&%-]{0,128}$`)
 
@@ -36,7 +37,9 @@ func decodeSoulProtectedLaunch(raw []byte) (*SoulProtectedLaunchInstall, error) 
 	if decoder.Decode(&request) != nil || decoder.Decode(new(any)) != io.EOF {
 		return nil, errors.New("invalid protected Soul launch request")
 	}
-	if request.Schema != stage2aInstallSchema || !stage2aAbsolutePath(request.ArtifactSource) ||
+	legacy := request.Schema == stage2aInstallSchema && request.RuntimeV3 == nil
+	v3 := request.Schema == stage2aRuntimeInstallSchemaV3 && request.RuntimeV3 != nil
+	if (!legacy && !v3) || !stage2aAbsolutePath(request.ArtifactSource) ||
 		!stage2aAbsolutePath(request.BridgeBinarySource) ||
 		!stage2aAbsolutePath(request.DefinitionSource) || !stage2aAbsolutePath(request.LaunchInputsSource) ||
 		len(request.Policy) == 0 || len(request.Policy) > 40<<10 {
@@ -124,7 +127,7 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 		policy.Binding.PlanID != "" || policy.Binding.InstalledPlanDigest != "" ||
 		policy.Binding.StartID != "" || policy.Binding.LaunchID != "" ||
 		!stage2aPreApplyJSONEmpty(policy.Plan) || !stage2aPreApplyJSONEmpty(policy.Receipt) || policy.Claims != (stage2aInstalledDirectory{}) ||
-		policy.SnapshotNamespace != (stage2aInstalledDirectory{}) || policy.RelayParent != (stage2aInstalledDirectory{}) || policy.LegacySpent == nil ||
+		policy.SnapshotNamespace != (stage2aInstalledDirectory{}) || policy.RelayParent != (stage2aInstalledDirectory{}) || policy.RuntimeV3 != nil || policy.LegacySpent == nil ||
 		len(policy.LegacySpent) != 0 || !soulHQEpoch.MatchString(policy.Binding.HQEpoch) ||
 		!stage2aBindingID.MatchString(policy.Binding.HostID) ||
 		!stage2aBindingID.MatchString(policy.Binding.InstallationID) ||
@@ -187,6 +190,11 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 			policy.Binding.Snapshots.LaunchInputs.RootPath) != nil {
 		return Plan{}, invalid
 	}
+	if r.RuntimeV3 != nil {
+		if _, _, err := stage2aReadReviewedRuntimeV3(*r.RuntimeV3, policy.Binding.InstallationID); err != nil {
+			return Plan{}, invalid
+		}
+	}
 	if err := ValidateSoulBridges([]SoulRunner{policy.Runner}, []SoulBridge{policy.Bridge}, policy.HQUID, nil); err != nil {
 		return Plan{}, err
 	}
@@ -214,11 +222,15 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 	}
 	policy.LauncherSHA256 = launcherDigest
 	r.Policy = mustStage2aJSON(policy)
+	detail := "install exact pinned launcher, sandbox policies, Machine public key, per-Soul rule and A-owned authority; publish root applied receipt"
+	if r.RuntimeV3 != nil {
+		detail = "seal reviewed R runtime in A, persist per-Soul authority and root applied receipt; defer the protected launch rule"
+	}
 	p := Plan{Version: PlanVersion, HQAccount: DarwinHQAccount, Dir: DarwinDir,
 		Members: []string{policy.Bridge.Account, policy.Runner.Account}, Purpose: SoulProtectedLaunchInstallPurpose,
 		SoulProtectedLaunch: &r,
 		Steps: []Step{{Kind: "soul-protected-launch", Target: policy.Binding.InstallationID,
-			Action: ActionWrite, Detail: "install exact pinned launcher, sandbox policies, Machine public key, per-Soul rule and A-owned authority; publish root applied receipt"}},
+			Action: ActionWrite, Detail: detail}},
 	}
 	slices.Sort(p.Members)
 	canonical, err := p.Canonical()

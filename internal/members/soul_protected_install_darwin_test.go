@@ -60,6 +60,22 @@ func TestStage2aInstalledPolicyMustMatchReviewedTemplate(t *testing.T) {
 	if stage2aInstalledPolicyMatchesPlan(p, plan, key) {
 		t.Fatal("wrong Machine key accepted")
 	}
+	plan.SoulProtectedLaunch.MachinePublicKey = hex.EncodeToString(key)
+	plan.SoulProtectedLaunch.Schema = stage2aRuntimeInstallSchemaV3
+	plan.SoulProtectedLaunch.RuntimeV3 = &stage2aRuntimeV3Install{InventoryDigest: "sha256:" + strings.Repeat("1", 64)}
+	p.RuntimeV3 = &stage2aDomainInventoryRefV3{Contract: "machine/v3", Domain: "R-runtime"}
+	if !stage2aInstalledPolicyMatchesPlan(p, plan, key) {
+		t.Fatal("installer-derived R reference was treated as an unreviewed template mutation")
+	}
+	plan.SoulProtectedLaunch.RuntimeV3 = nil
+	if stage2aInstalledPolicyMatchesPlan(p, plan, key) {
+		t.Fatal("v3 install accepted no reviewed R source plan")
+	}
+	plan.SoulProtectedLaunch.RuntimeV3 = &stage2aRuntimeV3Install{InventoryDigest: "sha256:" + strings.Repeat("1", 64)}
+	p.RuntimeV3 = nil
+	if stage2aInstalledPolicyMatchesPlan(p, plan, key) {
+		t.Fatal("v3 install accepted no derived R reference")
+	}
 }
 
 func TestStage2aInstalledReceiptReloadMatchesProtectedRootBytes(t *testing.T) {

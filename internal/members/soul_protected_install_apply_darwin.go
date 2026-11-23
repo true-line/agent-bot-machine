@@ -33,7 +33,10 @@ func runSoulProtectedLaunchApply(s Saved, a Approval, owner string, h Host, deps
 	refused := func(err error) cli.Result {
 		return failure(diag.MembersNotApproved, "protected Soul launch apply refused: %v", err)
 	}
-	if !stage2aProtectedStartContractReady {
+	// A reviewed v3 R installation may seal source bytes while positive start
+	// stays closed. The legacy v2 installer must not acquire new authority.
+	if !stage2aProtectedStartContractReady &&
+		(s.SoulProtectedLaunch == nil || s.SoulProtectedLaunch.RuntimeV3 == nil) {
 		return refused(errors.New("authenticated H/R code contract and preloader are not released"))
 	}
 	if os.Getuid() != 0 || os.Geteuid() != 0 || deps.Root != nil ||
@@ -82,13 +85,19 @@ func runSoulProtectedLaunchApply(s Saved, a Approval, owner string, h Host, deps
 	if err != nil || harnessSHA(bridgeBinary) != policy.BridgeExecutable.SHA256 {
 		return refused(errors.New("native bridge binary differs from owner review"))
 	}
-	rule, err := RenderSoulProtectedRule([]SoulRunner{policy.Runner}, []SoulBridge{policy.Bridge}, policy.HQUID, nil, policy.LauncherSHA256)
-	if err != nil {
-		return refused(err)
-	}
 	rulePath := stage2aInstallRulePath(policy.Binding.InstallationID)
-	if err := stage2aCheckSudoersRule([]byte(rule), rulePath, s.PlanID); err != nil {
-		return refused(err)
+	publishRule := request.RuntimeV3 == nil
+	var rule string
+	if publishRule {
+		rule, err = RenderSoulProtectedRule([]SoulRunner{policy.Runner}, []SoulBridge{policy.Bridge}, policy.HQUID, nil, policy.LauncherSHA256)
+		if err != nil {
+			return refused(err)
+		}
+		if err := stage2aCheckSudoersRule([]byte(rule), rulePath, s.PlanID); err != nil {
+			return refused(err)
+		}
+	} else if _, err := os.Lstat(rulePath); !errors.Is(err, os.ErrNotExist) {
+		return refused(errors.New("R-only install found an existing protected launch rule"))
 	}
 	root := OSRoot{}
 	receipt := Receipt{PlanID: s.PlanID, PlanDigest: s.PlanDigest, Owner: owner,
@@ -116,6 +125,7 @@ func runSoulProtectedLaunchApply(s Saved, a Approval, owner string, h Host, deps
 		installErr = authorize(func() error {
 			receipt.Result = "applied"
 			receipt.FinishedAt = deps.Time().UTC().Format(approvalTime)
+			receipt.Stage2aRuntimeV3 = policy.RuntimeV3
 			canonical, err := s.Plan.Canonical()
 			if err != nil {
 				return err
@@ -125,7 +135,7 @@ func runSoulProtectedLaunchApply(s Saved, a Approval, owner string, h Host, deps
 			return stage2aPublishInstalledPolicy(policy)
 		})
 	}
-	if installErr == nil {
+	if installErr == nil && publishRule {
 		installErr = authorize(func() error {
 			if err := stage2aInstallRootFile(rulePath, []byte(rule), 0440); err != nil {
 				return err
@@ -280,6 +290,29 @@ func stage2aInstallFiles(s Saved, request *SoulProtectedLaunchInstall, p *stage2
 			return errStage2aReservationAuthority
 		}
 		*source.identity = identity
+	}
+	if request.RuntimeV3 != nil {
+		inv, raw, err := stage2aReadReviewedRuntimeV3(*request.RuntimeV3, p.Binding.InstallationID)
+		if err != nil {
+			return err
+		}
+		for _, component := range request.RuntimeV3.Components {
+			if err := stage2aVerifyRuntimeV3Artifact(component, ownerUID, inv); err != nil {
+				return err
+			}
+		}
+		ref, err := stage2aInstallRuntimeV3AsAdmin(stage2aRuntimeStageV3{
+			InstallationID: p.Binding.InstallationID,
+			MachineAccount: p.MachineAccount, MachineUID: p.MachineUID, MachineGID: p.MachineGID,
+			ReaderAccount: p.Runner.Account, ReaderUID: p.Runner.UID, ReaderGID: p.Runner.GID,
+			PlanDigest: s.PlanDigest, InventoryDigest: request.RuntimeV3.InventoryDigest,
+			LauncherSHA256: p.LauncherSHA256, Inventory: raw,
+			SourceRoots: request.RuntimeV3.SourceRoots,
+		})
+		if err != nil {
+			return err
+		}
+		p.RuntimeV3 = &ref
 	}
 	if _, _, err := stage2aBindingDigestForOwner(p.Binding, uint32(p.MachineUID)); err != nil {
 		return err

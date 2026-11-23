@@ -46,30 +46,31 @@ type stage2aInstalledDirectory struct {
 }
 
 type stage2aInstalledPolicy struct {
-	Schema              string                     `json:"schema"`
-	MachineAccount      string                     `json:"machine_account"`
-	MachineUID          int                        `json:"machine_uid"`
-	MachineGID          int                        `json:"machine_gid"`
-	PlanOwner           string                     `json:"plan_owner"`
-	HQUID               int                        `json:"hq_uid"`
-	ApprovedUntil       string                     `json:"approved_until"`
-	Plan                json.RawMessage            `json:"canonical_plan"`
-	Receipt             json.RawMessage            `json:"root_receipt"`
-	Claims              stage2aInstalledDirectory  `json:"claims"`
-	SnapshotNamespace   stage2aInstalledDirectory  `json:"snapshot_namespace"`
-	RelayParent         stage2aInstalledDirectory  `json:"relay_parent"`
-	LegacySpent         []string                   `json:"legacy_spent_start_ids"`
-	LauncherSHA256      string                     `json:"launcher_sha256"`
-	ArtifactPath        string                     `json:"artifact_path"`
-	Runner              SoulRunner                 `json:"runner"`
-	Bridge              SoulBridge                 `json:"bridge"`
-	Binding             Stage2aMeasurementBinding  `json:"measurement_binding"`
-	Definition          []Stage2aDefinitionRecord  `json:"definition"`
-	LaunchInputs        Stage2aLaunchInputRecords  `json:"launch_inputs"`
-	Node                string                     `json:"node"`
-	Entry               string                     `json:"entry"`
-	BridgeExecutable    HarnessArtifact            `json:"bridge_executable"`
-	BridgeQualification Stage2aBridgeQualification `json:"bridge_qualification"`
+	Schema              string                       `json:"schema"`
+	MachineAccount      string                       `json:"machine_account"`
+	MachineUID          int                          `json:"machine_uid"`
+	MachineGID          int                          `json:"machine_gid"`
+	PlanOwner           string                       `json:"plan_owner"`
+	HQUID               int                          `json:"hq_uid"`
+	ApprovedUntil       string                       `json:"approved_until"`
+	Plan                json.RawMessage              `json:"canonical_plan"`
+	Receipt             json.RawMessage              `json:"root_receipt"`
+	Claims              stage2aInstalledDirectory    `json:"claims"`
+	SnapshotNamespace   stage2aInstalledDirectory    `json:"snapshot_namespace"`
+	RelayParent         stage2aInstalledDirectory    `json:"relay_parent"`
+	LegacySpent         []string                     `json:"legacy_spent_start_ids"`
+	LauncherSHA256      string                       `json:"launcher_sha256"`
+	ArtifactPath        string                       `json:"artifact_path"`
+	Runner              SoulRunner                   `json:"runner"`
+	Bridge              SoulBridge                   `json:"bridge"`
+	Binding             Stage2aMeasurementBinding    `json:"measurement_binding"`
+	Definition          []Stage2aDefinitionRecord    `json:"definition"`
+	LaunchInputs        Stage2aLaunchInputRecords    `json:"launch_inputs"`
+	Node                string                       `json:"node"`
+	Entry               string                       `json:"entry"`
+	BridgeExecutable    HarnessArtifact              `json:"bridge_executable"`
+	BridgeQualification Stage2aBridgeQualification   `json:"bridge_qualification"`
+	RuntimeV3           *stage2aDomainInventoryRefV3 `json:"runtime_v3,omitempty"`
 }
 
 func stage2aReadRootFile(path string, maximum int64, modes ...uint16) ([]byte, error) {
@@ -182,6 +183,12 @@ func loadStage2aInstalledPolicyWithLease(key ed25519.PublicKey, hqUID int, epoch
 		p.LegacySpent == nil || !ValidApproval(p.Binding.PlanID, p.Binding.InstalledPlanDigest) {
 		return p, nil, errStage2aReservationAuthority
 	}
+	// The R-only v3 install deliberately has no protected launch rule. A later
+	// release must enter it through the distinct v3 H/R reservation loader,
+	// never through this legacy positive-start path when its gate opens.
+	if requireLiveLease && p.RuntimeV3 != nil {
+		return p, nil, errStage2aReservationAuthority
+	}
 	var approvedPlan Plan
 	planDecoder := json.NewDecoder(bytes.NewReader(p.Plan))
 	planDecoder.DisallowUnknownFields()
@@ -219,6 +226,25 @@ func loadStage2aInstalledPolicyWithLease(key ed25519.PublicKey, hqUID int, epoch
 	installedReceipt, err := stage2aReadRootFile(receiptPath, 256<<10, 0644)
 	if err != nil || !stage2aInstalledReceiptMatchesRoot(p.Receipt, installedReceipt) {
 		return p, nil, errStage2aReservationAuthority
+	}
+	if p.RuntimeV3 != nil {
+		ref := p.RuntimeV3
+		if receipt.Stage2aRuntimeV3 == nil || *receipt.Stage2aRuntimeV3 != *ref ||
+			ref.Contract != "machine/v3" || ref.Kind != "stage2a-inventory-ref" ||
+			ref.SchemaVersion != 3 || ref.Domain != "R-runtime" ||
+			ref.InstallationID != installationID || ref.MachineUID != uint32(p.MachineUID) ||
+			ref.ReaderUID != uint32(p.Runner.UID) || ref.ReaderGID != uint32(p.Runner.GID) ||
+			ref.OwnerPlanDigest != "sha256:"+p.Binding.InstalledPlanDigest {
+			return p, nil, errStage2aReservationAuthority
+		}
+		if requireLiveLease {
+			observed, err := stage2aObserveInstalledDomainV3(ref.Snapshot.Path, ref.Sidecar.Path,
+				ref.MachineUID, ref.ReaderUID, ref.ReaderGID,
+				ref.OwnerPlanDigest, ref.ReviewedSourceInventoryDigest)
+			if err != nil || observed.ref != *ref {
+				return p, nil, errStage2aReservationAuthority
+			}
+		}
 	}
 	if p.Runner.Account != soulRunnerName(p.Binding.InstallationID) || p.Bridge.Account != SoulBridgeName(p.Binding.InstallationID) ||
 		p.Runner.InstallationID != p.Binding.InstallationID || p.Bridge.InstallationID != p.Binding.InstallationID ||
@@ -264,7 +290,9 @@ func (p stage2aInstalledPolicy) verifyRunnerGroup() error {
 // unrelated root receipt appear to approve changed launch bytes or roles.
 func stage2aInstalledPolicyMatchesPlan(p stage2aInstalledPolicy, approved Plan, pub ed25519.PublicKey) bool {
 	r := approved.SoulProtectedLaunch
-	if r == nil || r.Schema != stage2aInstallSchema ||
+	if r == nil || (r.Schema != stage2aInstallSchema && r.Schema != stage2aRuntimeInstallSchemaV3) ||
+		(r.Schema == stage2aRuntimeInstallSchemaV3) != (r.RuntimeV3 != nil) ||
+		(r.Schema == stage2aRuntimeInstallSchemaV3) != (p.RuntimeV3 != nil) ||
 		p.Binding.PlanID == "" || p.Binding.InstalledPlanDigest == "" ||
 		p.ArtifactPath != stage2aArtifactPath(p.Binding.InstallationID) {
 		return false
@@ -275,6 +303,7 @@ func stage2aInstalledPolicyMatchesPlan(p stage2aInstalledPolicy, approved Plan, 
 	}
 	template := p
 	template.Plan, template.Receipt = nil, nil
+	template.RuntimeV3 = nil
 	template.Claims, template.SnapshotNamespace = stage2aInstalledDirectory{}, stage2aInstalledDirectory{}
 	template.RelayParent = stage2aInstalledDirectory{}
 	template.Binding.PlanID, template.Binding.InstalledPlanDigest = "", ""
