@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -356,7 +357,7 @@ func qReservationJoinV3(envelope []byte, key ed25519.PublicKey, idx qIndexV3) er
 
 func qVerifyTranscriptV3(beginRaw, readyRaw []byte, requests, observations [][]byte,
 	finishRaw, finishedRaw, observationFrames []byte, idx qIndexV3, eofAt time.Time) error {
-	if !qExactObjectV3(beginRaw, "schema", "kind", "session_id", "challenge_base64url", "cohort_id", "installation_id", "soul_id", "start_id", "host_id", "profile", "reservation_sha256", "test_plan_sha256", "suite_revision", "ps_sha256", "path_roots", "q_uid", "q_gid", "deadline_at") {
+	if !qExactObjectV3(beginRaw, "schema", "kind", "session_id", "challenge_base64url", "cohort_id", "installation_id", "soul_id", "start_id", "host_id", "profile", "reservation_sha256", "test_plan_sha256", "suite_revision", "ps_sha256", "path_roots", "q_uid", "q_gid", "deadline_at", "require_argv_proof") {
 		return ErrUnqualified
 	}
 	var begin struct {
@@ -378,8 +379,9 @@ func qVerifyTranscriptV3(beginRaw, readyRaw []byte, requests, observations [][]b
 		QUID              int      `json:"q_uid"`
 		QGID              int      `json:"q_gid"`
 		DeadlineAt        string   `json:"deadline_at"`
+		RequireArgvProof  bool     `json:"require_argv_proof"`
 	}
-	if json.Unmarshal(beginRaw, &begin) != nil || begin.Schema != qSessionSchemaV3 || begin.Kind != "begin" || begin.SessionID != idx.SessionID || begin.CohortID != idx.CohortID || begin.InstallationID != idx.InstallationID || begin.SoulID != idx.SoulID || begin.StartID != idx.StartID || begin.HostID != idx.HostID || begin.Profile != idx.Profile || begin.ReservationSHA256 != idx.ReservationSHA256 || begin.TestPlanSHA256 != idx.TestPlanSHA256 || begin.QUID != idx.QUID || begin.QGID != idx.QGID || len(begin.SuiteRevision) != 40 || !qLowerHexV3(begin.SuiteRevision) || !validSHA(begin.PSSHA256) || len(begin.PathRoots) < 1 || len(begin.PathRoots) > 16 {
+	if json.Unmarshal(beginRaw, &begin) != nil || begin.Schema != qSessionSchemaV3 || begin.Kind != "begin" || begin.SessionID != idx.SessionID || begin.CohortID != idx.CohortID || begin.InstallationID != idx.InstallationID || begin.SoulID != idx.SoulID || begin.StartID != idx.StartID || begin.HostID != idx.HostID || begin.Profile != idx.Profile || begin.ReservationSHA256 != idx.ReservationSHA256 || begin.TestPlanSHA256 != idx.TestPlanSHA256 || begin.QUID != idx.QUID || begin.QGID != idx.QGID || !begin.RequireArgvProof || len(begin.SuiteRevision) != 40 || !qLowerHexV3(begin.SuiteRevision) || !validSHA(begin.PSSHA256) || len(begin.PathRoots) < 1 || len(begin.PathRoots) > 16 {
 		return ErrUnqualified
 	}
 	challenge, err := decode(begin.Challenge, 32)
@@ -397,22 +399,26 @@ func qVerifyTranscriptV3(beginRaw, readyRaw []byte, requests, observations [][]b
 		}
 		roots[root] = true
 	}
-	if !qExactObjectV3(readyRaw, "schema", "kind", "session_id", "challenge_sha256", "sequence", "pid", "uid", "gid", "source_sha256", "captured_at") {
+	if !qExactObjectV3(readyRaw, "schema", "kind", "session_id", "challenge_sha256", "sequence", "pid", "uid", "gid", "source_sha256", "captured_at", "exec_path", "argv") {
 		return ErrUnqualified
 	}
 	var ready struct {
-		Schema          string `json:"schema"`
-		Kind            string `json:"kind"`
-		SessionID       string `json:"session_id"`
-		ChallengeSHA256 string `json:"challenge_sha256"`
-		Sequence        int    `json:"sequence"`
-		PID             int    `json:"pid"`
-		UID             int    `json:"uid"`
-		GID             int    `json:"gid"`
-		SourceSHA256    string `json:"source_sha256"`
-		CapturedAt      string `json:"captured_at"`
+		Schema          string   `json:"schema"`
+		Kind            string   `json:"kind"`
+		SessionID       string   `json:"session_id"`
+		ChallengeSHA256 string   `json:"challenge_sha256"`
+		Sequence        int      `json:"sequence"`
+		PID             int      `json:"pid"`
+		UID             int      `json:"uid"`
+		GID             int      `json:"gid"`
+		SourceSHA256    string   `json:"source_sha256"`
+		CapturedAt      string   `json:"captured_at"`
+		ExecPath        string   `json:"exec_path"`
+		Argv            []string `json:"argv"`
 	}
-	if json.Unmarshal(readyRaw, &ready) != nil || ready.Schema != qSessionSchemaV3 || ready.Kind != "ready" || ready.SessionID != idx.SessionID || ready.ChallengeSHA256 != idx.QChallengeSHA256 || ready.Sequence != 0 || ready.PID != idx.QPID || ready.UID != idx.QUID || ready.GID != idx.QGID || ready.SourceSHA256 != idx.QSourceSHA256 {
+	// Q's challenged argv is joined to A's signed index. The separate installed
+	// launchd and kernel-image evidence must still establish what actually ran.
+	if json.Unmarshal(readyRaw, &ready) != nil || ready.Schema != qSessionSchemaV3 || ready.Kind != "ready" || ready.SessionID != idx.SessionID || ready.ChallengeSHA256 != idx.QChallengeSHA256 || ready.Sequence != 0 || ready.PID != idx.QPID || ready.UID != idx.QUID || ready.GID != idx.QGID || ready.SourceSHA256 != idx.QSourceSHA256 || ready.ExecPath != idx.QExecutable || !slices.Equal(ready.Argv, idx.QArgv) {
 		return ErrUnqualified
 	}
 	last, err := qTimeParsedV3(ready.CapturedAt)
