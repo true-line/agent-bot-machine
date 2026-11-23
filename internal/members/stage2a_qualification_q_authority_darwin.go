@@ -59,7 +59,7 @@ func decodeStage2aQualificationQPlan(raw []byte, install stage2aQualificationQIn
 	}
 	request := saved.QualificationRun.Request
 	candidate := request.Candidate
-	if request.SchemaVersion != 2 || candidate == nil ||
+	if request.SchemaVersion != 2 || candidate == nil || validateQualificationRequest(request) != nil ||
 		candidate.HostUUID != review.HostUUID || request.Host.ID != review.HostID ||
 		candidate.InstallationID != review.InstallationID || candidate.InstalledPlanDigest != review.InstalledPlanDigest ||
 		candidate.TestPlan != review.TestPlan || request.TestProvider.ConfigPath != review.Provider.Path ||

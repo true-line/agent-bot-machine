@@ -60,6 +60,14 @@ func TestRetainedQualificationQPlanRequiresExactOwnerReview(t *testing.T) {
 	if _, err := decodeStage2aQualificationQPlan(forgedRaw, install); err == nil {
 		t.Fatal("replacement harness accepted under original plan digest")
 	}
+	invalidRun := *run
+	invalidRun.Request.Adapter.Launch.Argv = nil
+	invalidRaw, invalidSaved := savePlan(t, &invalidRun)
+	invalidInstall := install
+	invalidInstall.Review.PlanDigest = invalidSaved.PlanDigest
+	if _, err := decodeStage2aQualificationQPlan(invalidRaw, invalidInstall); err == nil {
+		t.Fatal("invalid request accepted under matching owner review digest")
+	}
 	for name, change := range map[string]func(*stage2aQualificationQInstall){
 		"host":                   func(i *stage2aQualificationQInstall) { i.Review.HostID = "other-host" },
 		"installed plan":         func(i *stage2aQualificationQInstall) { i.Review.InstalledPlanDigest = strings.Repeat("9", 64) },
