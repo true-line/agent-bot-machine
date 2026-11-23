@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strconv"
 
@@ -18,8 +19,25 @@ import (
 // no-follow observation and must be rechecked before a descriptor or one-use
 // reservation is signed. Its fields are deliberately private to this package.
 type stage2aVerifiedDomainRefV3 struct {
-	verified bool
-	ref      stage2aDomainInventoryRefV3
+	verified       bool
+	ref            stage2aDomainInventoryRefV3
+	machineAccount string
+	readerAccount  string
+}
+
+func stage2aInstalledDomainAccountsV3(machineUID, readerUID, readerGID uint32) (string, string, error) {
+	machine, err := user.LookupId(strconv.FormatUint(uint64(machineUID), 10))
+	if err != nil {
+		return "", "", errStage2aReservationAuthority
+	}
+	reader, err := user.LookupId(strconv.FormatUint(uint64(readerUID), 10))
+	if err != nil || !accountName.MatchString(machine.Username) ||
+		!accountName.MatchString(reader.Username) || machine.Username == reader.Username ||
+		verifyStage2aInstalledGroup(reader.Username, int(readerGID), machine.Username, int(machineUID),
+			reader.Username, int(readerUID)) != nil {
+		return "", "", errStage2aReservationAuthority
+	}
+	return machine.Username, reader.Username, nil
 }
 
 func stage2aV3NodeRef(path string, st unix.Stat_t) (stage2aDomainNodeRefV3, error) {
@@ -103,29 +121,36 @@ func stage2aObserveInstalledDomainV3(rootPath, sidecarPath string, machineUID, r
 	if err != nil || digest != reviewedDigest {
 		return empty, errors.New("Stage 2a v3 sidecar differs from reviewed source")
 	}
+	machineAccount, readerAccount, err := stage2aInstalledDomainAccountsV3(machineUID, readerUID, readerGID)
+	if err != nil {
+		return empty, errors.New("Stage 2a v3 dedicated reader group changed")
+	}
 	identity, observedDigest, err := stage2aObserveDomainV3At(rootPath, machineUID, readerGID, raw)
 	if err != nil || observedDigest != digest {
 		return empty, errors.New("Stage 2a v3 installed tree differs from reviewed inventory")
 	}
-	return stage2aVerifiedDomainRefV3{verified: true, ref: stage2aDomainInventoryRefV3{
-		Contract: "machine/v3", Kind: "stage2a-inventory-ref", SchemaVersion: 3,
-		Domain: inv.Domain, InstallationID: inv.InstallationID,
-		OwnerPlanDigest: ownerPlanDigest, ReviewedSourceInventoryDigest: reviewedDigest,
-		MachineUID: machineUID, ReaderUID: readerUID, ReaderGID: readerGID,
-		Snapshot: stage2aV3SnapshotRef(identity), Sidecar: sidecar,
-		FileCount: len(inv.Files), DirectoryCount: len(inv.Directories),
-		TotalBytes: inv.TotalBytes, InventoryDigest: digest,
-	}}, nil
+	return stage2aVerifiedDomainRefV3{verified: true, machineAccount: machineAccount,
+		readerAccount: readerAccount, ref: stage2aDomainInventoryRefV3{
+			Contract: "machine/v3", Kind: "stage2a-inventory-ref", SchemaVersion: 3,
+			Domain: inv.Domain, InstallationID: inv.InstallationID,
+			OwnerPlanDigest: ownerPlanDigest, ReviewedSourceInventoryDigest: reviewedDigest,
+			MachineUID: machineUID, ReaderUID: readerUID, ReaderGID: readerGID,
+			Snapshot: stage2aV3SnapshotRef(identity), Sidecar: sidecar,
+			FileCount: len(inv.Files), DirectoryCount: len(inv.Directories),
+			TotalBytes: inv.TotalBytes, InventoryDigest: digest,
+		}}, nil
 }
 
 func stage2aRecheckVerifiedDomainV3(v stage2aVerifiedDomainRefV3) error {
-	if !v.verified {
+	if !v.verified || !accountName.MatchString(v.machineAccount) ||
+		!accountName.MatchString(v.readerAccount) {
 		return errors.New("unverified Stage 2a v3 domain reference")
 	}
 	current, err := stage2aObserveInstalledDomainV3(v.ref.Snapshot.Path, v.ref.Sidecar.Path,
 		v.ref.MachineUID, v.ref.ReaderUID, v.ref.ReaderGID,
 		v.ref.OwnerPlanDigest, v.ref.ReviewedSourceInventoryDigest)
-	if err != nil || current.ref != v.ref {
+	if err != nil || current.ref != v.ref || current.machineAccount != v.machineAccount ||
+		current.readerAccount != v.readerAccount {
 		return errors.New("Stage 2a v3 installed domain changed before use")
 	}
 	return nil

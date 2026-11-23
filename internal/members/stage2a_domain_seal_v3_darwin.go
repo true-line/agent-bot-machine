@@ -177,7 +177,8 @@ func stage2aSealDomainV3At(r stage2aDomainSealRequestV3) (stage2aVerifiedDomainR
 	finalSidecar := filepath.Join(r.Namespace.Path, sidecarName)
 	v, err := stage2aObserveInstalledDomainV3(finalRoot, finalSidecar,
 		a.uid, uint32(r.ReaderUID), a.runnerReadGID, r.OwnerPlanDigest, r.ReviewedDigest)
-	if err != nil || stage2aRecheckVerifiedDomainV3(v) != nil {
+	if err != nil || v.machineAccount != r.MachineAccount || v.readerAccount != r.ReaderAccount ||
+		stage2aRecheckVerifiedDomainV3(v) != nil {
 		return empty, errors.New("Stage 2a v3 A-owned published domain differs")
 	}
 	return v, nil
