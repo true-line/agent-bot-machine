@@ -66,6 +66,9 @@ func runStage2aProtectedMemberReady(ctx context.Context, cancel context.CancelFu
 	}{"child-accepted", frame.Ready.SHA256, frame.HQFinalizationSHA256, first.Sequence}) != nil {
 		return invalid
 	}
+	if ctx.Err() != nil || time.Until(firstExpires) <= time.Second {
+		return invalid
+	}
 	return nil
 }
 
