@@ -3,8 +3,11 @@
 package members
 
 import (
+	"bytes"
+	"encoding/base64"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -62,6 +65,35 @@ func TestQualificationQSessionClaimIsDurableAndExact(t *testing.T) {
 	defer reopened.Close()
 	if err := stage2aCheckSpentClaim(reopened, ".stage2a-q-session-"+slot, store.uid, store.gid); err != nil {
 		t.Fatalf("one-use Q claim was not durable: %v", err)
+	}
+	begin.SessionID = strings.Repeat("a", 32)
+	begin.QUID, begin.QGID = 650, 651
+	challenge := "sha256:" + strings.Repeat("b", 64)
+	challengeRaw := bytes.Repeat([]byte{0xbb}, 32)
+	begin.ChallengeBase64URL = base64.RawURLEncoding.EncodeToString(challengeRaw)
+	challenge = stage2aQualificationSHA256(challengeRaw)
+	peer := stage2aQualificationPeerV1{
+		pid: 42, uid: 650, gid: 651, executable: "/usr/local/bin/node",
+		argv:       []string{"/usr/local/bin/node", "/opt/q/qualification-runner.mjs", "--once"},
+		socketPath: "/private/tmp/q-session.sock", socketDev: 1, socketInode: 4242,
+		socketBirthSeconds: 1795327200,
+		kernel: soulKernelProcessSnapshot{PID: 42, ParentPID: 40, StartSeconds: 1795327200,
+			RealUID: 650, EffectiveUID: 650, SavedUID: 650,
+			RealGID: 651, PrimaryGroupGID: 651, SavedGID: 651},
+	}
+	if err := bindStage2aQualificationSessionV3(store, begin, challenge, peer, reservation); err != nil {
+		t.Fatalf("authenticated Q session was not durably bound: %v", err)
+	}
+	if err := bindStage2aQualificationSessionV3(store, begin, challenge, peer, reservation); err == nil {
+		t.Fatal("a second Q session binding replaced the first")
+	}
+	result := stage2aQualificationSessionResultV1{begin: begin, challengeSHA256: challenge, peer: peer}
+	if err := checkStage2aQualificationSessionBinding(reopened, store, result); err != nil {
+		t.Fatalf("exact Q session binding was refused: %v", err)
+	}
+	result.begin.SessionID = strings.Repeat("c", 32)
+	if err := checkStage2aQualificationSessionBinding(reopened, store, result); err == nil {
+		t.Fatal("a different Q session inherited the spent claim")
 	}
 	closed := begin
 	closed.StartID = "st_0123456789abcdef01234568"

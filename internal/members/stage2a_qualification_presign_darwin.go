@@ -237,7 +237,7 @@ func publishStage2aQualificationPreSign(store stage2aAdminClaimStore,
 	defer lock.Close()
 	slot := soulStartClaimName(session.begin.InstallationID, session.begin.StartID)
 	if store.checkDirectory(dir) != nil ||
-		stage2aCheckSpentClaim(dir, ".stage2a-q-session-"+slot, store.uid, store.gid) != nil ||
+		checkStage2aQualificationSessionBinding(dir, store, session) != nil ||
 		stage2aExactAdminRecord(dir, ".stage2a-admin-envelope-"+slot,
 			store.uid, store.gid, reservation, 64<<10) != nil {
 		return empty, errStage2aReservationAuthority

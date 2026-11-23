@@ -68,11 +68,13 @@ func openStage2aQualificationObserverV3(ctx context.Context,
 	if err != nil {
 		return nil, nil, err
 	}
-	_, bindingErr := stage2aQualificationReservationJoinV3(expected,
+	_, joinErr := stage2aQualificationReservationJoinV3(expected,
 		stage2aQualificationSessionResultV1{
 			begin: session.begin, startedAt: session.started, eofObservedAt: session.started,
 		}, raw, key)
-	if err := checkLiveRun(); err != nil || bindingErr != nil {
+	if err := checkLiveRun(); err != nil || joinErr != nil || session.peer.recheck() != nil ||
+		bindStage2aQualificationSessionV3(store, session.begin, session.challengeSHA256, session.peer, raw) != nil ||
+		checkLiveRun() != nil {
 		session.close()
 		_ = wait()
 		return nil, nil, errQualificationAdmissionUnavailable
