@@ -123,6 +123,15 @@ func TestCooperativeReportReservationJoinV3ContractVector(t *testing.T) {
 		"H owner substitution": func(p map[string]any) {
 			p["endpoints"].(map[string]any)["broker"].(map[string]any)["owner_uid"] = float64(310)
 		},
+		"broker account substitution": func(p map[string]any) {
+			broker := p["endpoints"].(map[string]any)["broker"].(map[string]any)
+			broker["directory"] = "/Library/Application Support/ai.true-line.agent-bot-hq/broker/other"
+			broker["socket_path"] = broker["directory"].(string) + "/broker.sock"
+		},
+		"admission start substitution": func(p map[string]any) {
+			admission := p["endpoints"].(map[string]any)["admission"].(map[string]any)
+			admission["socket_path"] = admission["directory"].(string) + "/other.sock"
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var changed map[string]any

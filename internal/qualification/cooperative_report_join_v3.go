@@ -152,6 +152,11 @@ func cooperativeReportJoinV3(reportRaw, reservationEnvelope []byte,
 			reservation.Assignment.HQUID, reservation.Assignment.RunnerUID, reservation.Assignment.RunnerGID) ||
 		!validCooperativeEndpointV3(reservation.Endpoints.Broker,
 			reservation.Assignment.HQUID, reservation.Assignment.RunnerUID, reservation.Assignment.RunnerGID) ||
+		path.Base(path.Dir(reservation.Endpoints.Admission.Directory)) != "c" ||
+		path.Base(reservation.Endpoints.Admission.SocketPath) != reservation.Assignment.StartID+".sock" ||
+		reservation.Endpoints.Broker.Directory !=
+			"/Library/Application Support/ai.true-line.agent-bot-hq/broker/"+reservation.Assignment.RunnerAccount ||
+		reservation.Endpoints.Broker.SocketPath != reservation.Endpoints.Broker.Directory+"/broker.sock" ||
 		reservation.Endpoints.Admission.SocketPath == reservation.Endpoints.Broker.SocketPath {
 		return ErrUnqualified
 	}

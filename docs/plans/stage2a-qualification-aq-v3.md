@@ -293,17 +293,21 @@ Q/ACP/OS captures or any physical T result. The ordinary release attestation
 still follows qualification and the public acceptance gate remains closed.
 
 The managed-cooperative T21 diagnostic consumes the distinct A-signed
-`agent-bot/soul-cooperative-reservation/v3` envelope from draft Contracts #74 (review head `b809aa8d3fafd11157c97f78f44df39a8cb37430`).
+`agent-bot/soul-cooperative-reservation/v3` envelope from draft Contracts #74 (review head `eb6ed1ecd46c08c8337dfc3ed09e353511b50683`).
 It verifies the enrolled A key and exact canonical bytes, derives the fixed
 `machine/v2` host-report projection, and joins the report to the H descriptor,
 sealed R inventory, frozen definition and launch roots, runner UID/GID,
-H-owned admission and broker endpoints, released adapter claim, challenge and
+H-owned per-start admission and runner-scoped broker endpoints, released adapter claim, challenge and
 reservation digest. Its paired synthetic vector and substitution tests are
 source-level evidence only. The complete H descriptor, R sidecar and
 cooperative launch-input records must still be resolved and remeasured from
-A-custodied bytes. One-use spending, release attestation, T21 segment
-artifacts and physical results remain separate gates;
-this diagnostic cannot return a positive Stage 2a acceptance result.
+A-custodied bytes. A separate offline R sidecar parser checks canonical
+inventory bytes, the purpose-separated R digest, sidecar size/hash, the exact
+file and directory closure, numeric ceilings, release-path uniqueness and the
+signed R reference counts. It does not authenticate file contents or custody.
+One-use spending, release attestation, T21 segment artifacts and physical
+results remain separate gates; this diagnostic cannot return a positive Stage
+2a acceptance result.
 
 The separate `mm-qualification-verify-release --host-v3` command parses the
 supplied owner root, policy, trusted Sigstore roots, exact release and Souls
