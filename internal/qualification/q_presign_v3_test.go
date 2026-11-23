@@ -116,13 +116,14 @@ func makeQFixtureContractV3(t *testing.T, observationSequence int, cleanEOF bool
 		"host_id": host, "profile": profile, "reservation_sha256": reservationSHA,
 		"test_plan_sha256": digest([]byte("plan")), "suite_revision": "1111111111111111111111111111111111111111",
 		"ps_sha256": digest([]byte("ps")), "path_roots": []string{"/tmp/q-root"},
-		"q_uid": 501, "q_gid": 20, "deadline_at": "2026-11-22T12:05:00Z",
+		"q_uid": 501, "q_gid": 20, "deadline_at": "2026-11-22T12:05:00Z", "require_argv_proof": true,
 	})
 	ready := qFrameFixtureV3(t, map[string]any{
 		"schema": schema, "kind": "ready", "session_id": session,
 		"challenge_sha256": digest(challenge), "sequence": 0,
 		"pid": 812, "uid": 501, "gid": 20, "source_sha256": digest([]byte("q source")),
-		"captured_at": "2026-11-22T12:00:00Z",
+		"captured_at": "2026-11-22T12:00:00Z", "exec_path": "/usr/local/bin/node",
+		"argv": []string{"/usr/local/bin/node", "--", "/tmp/q.mjs"},
 	})
 	request := qFrameFixtureV3(t, map[string]any{
 		"schema": schema, "kind": "observe", "session_id": session, "sequence": 1,
@@ -219,4 +220,97 @@ func TestVerifyQPreSignV3(t *testing.T) {
 			t.Fatal("missing EOF accepted")
 		}
 	})
+}
+
+func TestQTranscriptRequiresChallengeBoundArgvProofV3(t *testing.T) {
+	good := makeQFixtureV3(t, 1, true, true)
+	var wire qWireV3
+	if err := json.Unmarshal(good.wire, &wire); err != nil {
+		t.Fatal(err)
+	}
+	frame := func(encoded string) []byte {
+		t.Helper()
+		framed, err := decode(encoded, qFrameMaxV3+4)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := qFrameV3(framed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	begin, ready := frame(wire.Begin), frame(wire.Ready)
+	finish, finished := frame(wire.FinishRequest), frame(wire.Finished)
+	requestBytes, err := decode(wire.Requests, qStreamMaxV3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observationBytes, err := decode(wire.Observations, qStreamMaxV3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, requests, err := qFramesV3(requestBytes, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, observations, err := qFramesV3(observationBytes, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexBytes, err := qSignedRecordV3(good.index, QFrameIndexPurposeV3, 1, good.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var index qIndexV3
+	if err := json.Unmarshal(indexBytes, &index); err != nil {
+		t.Fatal(err)
+	}
+	eofAt := time.Date(2026, 11, 22, 12, 0, 3, 0, time.UTC)
+	check := func(beginBytes, readyBytes []byte) error {
+		return qVerifyTranscriptV3(beginBytes, readyBytes, requests, observations,
+			finish, finished, observationBytes, index, eofAt)
+	}
+	if err := check(begin, ready); err != nil {
+		t.Fatalf("challenge-bound argv proof refused: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(map[string]any)
+	}{
+		{"missing executable", func(m map[string]any) { delete(m, "exec_path") }},
+		{"wrong executable", func(m map[string]any) { m["exec_path"] = "/tmp/other-node" }},
+		{"missing argv", func(m map[string]any) { delete(m, "argv") }},
+		{"changed argv", func(m map[string]any) { m["argv"].([]any)[2] = "/tmp/other.mjs" }},
+		{"extra field", func(m map[string]any) { m["unreviewed"] = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var fields map[string]any
+			if err := json.Unmarshal(ready, &fields); err != nil {
+				t.Fatal(err)
+			}
+			tc.change(fields)
+			if err := check(begin, qJSONFixtureV3(t, fields)); err == nil {
+				t.Fatal("unbound Q Ready argv accepted")
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(map[string]any)
+	}{
+		{"missing requirement", func(m map[string]any) { delete(m, "require_argv_proof") }},
+		{"disabled requirement", func(m map[string]any) { m["require_argv_proof"] = false }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var fields map[string]any
+			if err := json.Unmarshal(begin, &fields); err != nil {
+				t.Fatal(err)
+			}
+			tc.change(fields)
+			if err := check(qJSONFixtureV3(t, fields), ready); err == nil {
+				t.Fatal("Q session without required argv proof accepted")
+			}
+		})
+	}
 }
