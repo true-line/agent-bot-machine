@@ -116,6 +116,10 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 		if readErr != nil || len(line) > stage2aExecMaxFrame || control.SetReadDeadline(time.Time{}) != nil {
 			return errors.New("protected child receipt unavailable")
 		}
+		if child.MemberID != "" {
+			return runStage2aProtectedMemberReady(childCtx, cancel, line, in, grantSHA256,
+				launcher, observed, pub, reporter)
+		}
 		var receipt Stage2aChildReadyReply
 		if decodeStage2aRoleJSON(line, &receipt) != nil {
 			return errors.New("invalid protected child receipt frame")
