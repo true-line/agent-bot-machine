@@ -284,6 +284,13 @@ func TestSignedInstalledInventoryStopToSegmentJoinV3(t *testing.T) {
 		t.Error("accepted signed inventory digest substitution")
 	}
 	changedAttestation["installed_inputs_sha256"] = sha(inventoryRaw)
+	changedAttestation["owner_plan_sha256"] = "unmeasured-plan"
+	if err := verify(inventoryRaw, stopEnvelope,
+		signInstalledFixtureV3(t, "agent-bot/stage2a-physical-segment/v1",
+			changedAttestation, private), public); err == nil {
+		t.Error("accepted malformed signed owner-plan digest")
+	}
+	changedAttestation["owner_plan_sha256"] = placeholder
 	changedAttestation["signed_at"] = "2026-11-22T12:00:04Z"
 	if err := verify(inventoryRaw, stopEnvelope,
 		signInstalledFixtureV3(t, "agent-bot/stage2a-physical-segment/v1",

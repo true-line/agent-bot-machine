@@ -521,6 +521,11 @@ func ResolveSignedInstalledInputInventoryV3(root string, inventoryRaw, bindingRa
 		attestation.Kind != "stage2a-physical-segment-attestation" ||
 		(attestation.Gate != "T01" && attestation.Gate != "T02" && attestation.Gate != "T03") ||
 		attestation.Profile != "managed-protected" ||
+		!reportID.MatchString(attestation.CohortID) ||
+		!validHex(attestation.SuiteRevision, 40) ||
+		!reportID.MatchString(attestation.SegmentID) ||
+		!gatePurposeV3(attestation.Purpose) ||
+		len(attestation.QSessionID) != 32 || !qLowerHexV3(attestation.QSessionID) ||
 		attestation.TerminalState != "stopped" || attestation.QSessionStatus != "completed" ||
 		attestation.InstallationID != binding.InstallationID ||
 		attestation.SoulID != binding.SoulID || attestation.StartID != binding.StartID ||
@@ -531,6 +536,19 @@ func ResolveSignedInstalledInputInventoryV3(root string, inventoryRaw, bindingRa
 		attestation.StopSHA256 != digest(stopEnvelope) ||
 		attestation.InstalledInputsSHA256 != digest(inventoryRaw) {
 		return zero, ErrUnqualified
+	}
+	for _, value := range []string{
+		attestation.OwnerPlanSHA256, attestation.QChallengeSHA256,
+		attestation.SegmentManifestSHA256, attestation.ReservationSHA256,
+		attestation.BFinalizationSHA256, attestation.StopSHA256,
+		attestation.QWireSHA256, attestation.QIndexSHA256,
+		attestation.QEOFSHA256, attestation.OwnerACPToHQSha256,
+		attestation.HQACPToOwnerSHA256, attestation.OSObservationSHA256,
+		attestation.InstalledInputsSHA256,
+	} {
+		if !validSHA(value) {
+			return zero, ErrUnqualified
+		}
 	}
 	signedAt, err := parseTime(attestation.SignedAt)
 	if err != nil {
