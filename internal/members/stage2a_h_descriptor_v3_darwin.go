@@ -10,14 +10,23 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 )
 
+var (
+	stage2aV3SourceRepository = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
+	stage2aV3SourceCommit     = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	stage2aV3SourceTag        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+/-]{0,127}$`)
+)
+
 type stage2aHReleaseComponentV3 struct {
-	ComponentID              string `json:"component_id"`
-	ReleaseArtifactSHA256    string `json:"release_artifact_sha256"`
-	ReleaseAttestationSHA256 string `json:"release_attestation_sha256"`
-	ReleaseManifestSHA256    string `json:"release_manifest_sha256"`
+	ComponentID           string `json:"component_id"`
+	SourceRepository      string `json:"source_repository"`
+	SourceCommit          string `json:"source_commit"`
+	SourceTag             string `json:"source_tag,omitempty"`
+	ReleaseArtifactSHA256 string `json:"release_artifact_sha256"`
+	ReleaseManifestSHA256 string `json:"release_manifest_sha256"`
 }
 
 type stage2aHOuterLaunchV3 struct {
@@ -94,8 +103,10 @@ func stage2aValidateHDescriptorV3(p stage2aHServiceDescriptorPayloadV3,
 	previous := ""
 	for _, c := range p.Components {
 		if !stage2aBindingID.MatchString(c.ComponentID) || c.ComponentID <= previous ||
+			!stage2aV3SourceRepository.MatchString(c.SourceRepository) ||
+			!stage2aV3SourceCommit.MatchString(c.SourceCommit) ||
+			(c.SourceTag != "" && !stage2aV3SourceTag.MatchString(c.SourceTag)) ||
 			!stage2aPrefixedDigest.MatchString(c.ReleaseArtifactSHA256) ||
-			!stage2aPrefixedDigest.MatchString(c.ReleaseAttestationSHA256) ||
 			!stage2aPrefixedDigest.MatchString(c.ReleaseManifestSHA256) {
 			return invalid
 		}

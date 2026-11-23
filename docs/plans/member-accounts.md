@@ -1495,8 +1495,11 @@ atomic challenge claim and physical host evidence.
   and a producer-created verified token; wrong A identity, signer, purpose,
   contract version, duplicate keys and noncanonical bytes refuse. A matching
   signature is a component result, not an owner-plan or installed-H/R verdict.
-  The H descriptor validator also refuses a substituted host, release
-  attestation, guard file, launch argv, installed Node row or authority key.
+  The H descriptor validator also refuses a substituted host, owner-pinned
+  component source commit, guard file, launch argv, installed Node row or
+  authority key. A separate H/R component release attestation is deferred in
+  Platform #127; the selected adapter's qualification attestation remains a
+  separate required gate.
 - A synthetic v3 qualification and Statement pair agrees on exact references
   and subject digest. Old purpose, missing or reused completed-run reference,
   future qualification date and expiry at verification time refuse. These

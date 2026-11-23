@@ -39,8 +39,8 @@ func TestStage2aHDescriptorBindsReviewedPlanAndInstalledRowsV3(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*stage2aHServiceDescriptorPayloadV3){
 		"host": func(q *stage2aHServiceDescriptorPayloadV3) { q.HostID = "other-host" },
-		"release attestation": func(q *stage2aHServiceDescriptorPayloadV3) {
-			q.Components[0].ReleaseAttestationSHA256 = "sha256:" + string(bytes.Repeat([]byte{'0'}, 64))
+		"source commit": func(q *stage2aHServiceDescriptorPayloadV3) {
+			q.Components[0].SourceCommit = string(bytes.Repeat([]byte{'0'}, 40))
 		},
 		"guard file": func(q *stage2aHServiceDescriptorPayloadV3) {
 			q.Runtime.GuardModuleSHA256 = "sha256:" + string(bytes.Repeat([]byte{'0'}, 64))
@@ -64,11 +64,19 @@ func TestStage2aHDescriptorBindsReviewedPlanAndInstalledRowsV3(t *testing.T) {
 	if stage2aValidateHDescriptorV3(p, p.HInventory, plan, changedInventory, pub) == nil {
 		t.Fatal("accepted changed installed Node bytes")
 	}
+	badSource := p
+	badSource.Components = append([]stage2aHReleaseComponentV3(nil), p.Components...)
+	badSource.Components[0].SourceCommit = "not-a-commit"
+	badSourcePlan := plan
+	badSourcePlan.descriptor = badSource
+	if stage2aValidateHDescriptorV3(badSource, p.HInventory, badSourcePlan, inv, pub) == nil {
+		t.Fatal("accepted invalid owner-pinned component source")
+	}
 	unusedRelease := p
 	unusedRelease.Components = append(append([]stage2aHReleaseComponentV3(nil), p.Components...),
 		stage2aHReleaseComponentV3{ComponentID: "zz", ReleaseArtifactSHA256: p.Components[0].ReleaseArtifactSHA256,
-			ReleaseAttestationSHA256: p.Components[0].ReleaseAttestationSHA256,
-			ReleaseManifestSHA256:    p.Components[0].ReleaseManifestSHA256})
+			SourceRepository: p.Components[0].SourceRepository, SourceCommit: p.Components[0].SourceCommit,
+			ReleaseManifestSHA256: p.Components[0].ReleaseManifestSHA256})
 	unusedPlan := plan
 	unusedPlan.descriptor = unusedRelease
 	if stage2aValidateHDescriptorV3(unusedRelease, p.HInventory, unusedPlan, inv, pub) == nil {
