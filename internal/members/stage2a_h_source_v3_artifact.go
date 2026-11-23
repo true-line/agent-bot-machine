@@ -197,6 +197,7 @@ var stage2aHSourceNonInstalledV3 = map[string]bool{
 	"tests/stage2a-cooperative-admission.test.mjs":                     true,
 	"tests/stage2a-cooperative-owner.test.mjs":                         true,
 	"tests/stage2a-h-preloader.test.mjs":                               true,
+	"tests/t02-machine-capture.test.mjs":                               true,
 	"tests/stage2a-protected-admission.test.mjs":                       true,
 	"tests/stage2a-protected-start.test.mjs":                           true,
 	"tests/stage2a-r-admission.test.mjs":                               true,
