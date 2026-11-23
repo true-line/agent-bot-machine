@@ -4,6 +4,7 @@ package members
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
@@ -114,11 +115,60 @@ func stage2aVerifyRuntimeV3Artifact(component stage2aRuntimeV3ComponentPin, owne
 		if stage2aVerifyRuntimeV3Tar(file, component.ComponentID, inv) != nil {
 			return errStage2aReservationAuthority
 		}
+	} else if component.ArtifactFormat == "zip" {
+		if stage2aVerifyRuntimeV3Zip(file, before.Size, component.ComponentID, inv) != nil {
+			return errStage2aReservationAuthority
+		}
 	} else {
 		return errStage2aReservationAuthority
 	}
 	if unix.Fstat(fd, &after) != nil || !stage2aSameNode(before, after) {
 		return errStage2aReservationAuthority
+	}
+	return nil
+}
+
+// A stock adapter ZIP is a transport for exact reviewed regular-file rows.
+// Its member names are release_path values, while inventory path is the
+// separately reviewed location in the sealed R snapshot. No archive member
+// is copied directly into A's staging or given authority by ZIP metadata.
+func stage2aVerifyRuntimeV3Zip(file *os.File, size int64, componentID string, inv stage2aDomainInventoryV3) error {
+	want := make(map[string]stage2aDomainFileV3)
+	for _, row := range inv.Files {
+		if row.ComponentID == componentID {
+			want[row.ReleasePath] = row
+		}
+	}
+	if len(want) == 0 || len(want) > 512 {
+		return errStage2aReservationAuthority
+	}
+	archive, err := zip.NewReader(file, size)
+	if err != nil || len(archive.File) != len(want) || archive.Comment != "" {
+		return errStage2aReservationAuthority
+	}
+	seen := make(map[string]bool, len(want))
+	for _, member := range archive.File {
+		row, ok := want[member.Name]
+		if !ok || seen[member.Name] || !stage2aV3InventoryRecordPath(member.Name) ||
+			member.Flags&1 != 0 || !member.FileInfo().Mode().IsRegular() ||
+			member.UncompressedSize64 != row.SizeBytes ||
+			(member.Method != zip.Store && member.Method != zip.Deflate) {
+			return errStage2aReservationAuthority
+		}
+		opened, err := member.Open()
+		if err != nil {
+			return errStage2aReservationAuthority
+		}
+		hash := sha256.New()
+		_, err = io.CopyN(hash, opened, int64(row.SizeBytes))
+		var extra [1]byte
+		n, readErr := opened.Read(extra[:])
+		closeErr := opened.Close()
+		if err != nil || n != 0 || readErr != io.EOF || closeErr != nil ||
+			fmt.Sprintf("sha256:%x", hash.Sum(nil)) != row.SHA256 {
+			return errStage2aReservationAuthority
+		}
+		seen[member.Name] = true
 	}
 	return nil
 }

@@ -77,7 +77,7 @@ func stage2aValidateRuntimeV3Plan(spec stage2aRuntimeV3Install, inv stage2aDomai
 	for _, component := range spec.Components {
 		if !stage2aBindingID.MatchString(component.ComponentID) ||
 			component.ComponentID <= previous ||
-			(component.ArtifactFormat != "tar" && component.ArtifactFormat != "raw") ||
+			(component.ArtifactFormat != "tar" && component.ArtifactFormat != "raw" && component.ArtifactFormat != "zip") ||
 			!stage2aRuntimeV3SourceRepository.MatchString(component.SourceRepository) ||
 			!stage2aRuntimeV3SourceCommit.MatchString(component.SourceCommit) ||
 			component.SourceTag != "" && !stage2aRuntimeV3SourceTag.MatchString(component.SourceTag) ||

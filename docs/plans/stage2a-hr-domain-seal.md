@@ -35,11 +35,12 @@ descriptor and HQ preloader metadata are separate from these inventory trees.
 
 The R producer is an additive v3 path in the paired Soul install. Its exact
 owner plan pins canonical inventory bytes and digest, limits, sorted component
-source repository/commit/tag, artifact format (`tar` or `raw`), artifact and
+source repository/commit/tag, artifact format (`tar`, `raw` or exact-member
+`zip`), artifact and
 manifest paths and hashes, and one
 distinct root-owned materialized source root per component. Each manifest is
 exact JCS with all and only its inventory `release_path`/SHA-256 rows. Root
-remeasures artifact bytes, checks every tar member or exact raw binary against
+remeasures artifact bytes, checks every tar/ZIP member or exact raw binary against
 its manifest, checks each complete source-root closure, copies
 only approved files into fresh private A:R nodes, and invokes the fixed A
 seal. The applied root receipt and A-owned policy carry the same typed R
@@ -86,3 +87,8 @@ reviewed R tree into fresh A-private staging, publish through the fixed A
 helper, and reopen the installed root and sidecar. Record its signed source
 head, binary hashes, guest output and clone cleanup. This test proves only
 the producer seam; it does not exercise an owner proof or a Soul start.
+When the private stock adapter source-stage map is present, set
+`STAGE2A_V3_STOCK_ZIP_MAPPING` to its absolute path and run
+`TestStage2aRuntimeV3StockZipCompatibility`. It hashes the exact ZIP and
+checks the two expanded members against the proposed R rows; it supplies no
+release, owner-plan, A-seal, or T03 authority.

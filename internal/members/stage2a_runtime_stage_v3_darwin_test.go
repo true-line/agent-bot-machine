@@ -4,6 +4,7 @@ package members
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"crypto/sha256"
 	"fmt"
@@ -70,4 +71,79 @@ func TestStage2aRuntimeV3TarMustMapEveryReleasedFile(t *testing.T) {
 		t.Fatal("unreviewed tar member accepted")
 	}
 	bad.Close()
+}
+
+func TestStage2aRuntimeV3ZipRequiresExactStockPackageMembers(t *testing.T) {
+	contents := map[string][]byte{
+		"claude-agent-acp": []byte("reviewed ACP adapter"),
+		"claude":           []byte("reviewed adjacent CLI"),
+	}
+	inv := stage2aDomainInventoryV3{}
+	for name, data := range contents {
+		sum := sha256.Sum256(data)
+		inv.Files = append(inv.Files, stage2aDomainFileV3{
+			ComponentID: "adapter", ReleasePath: name, Path: "runtime/bin/" + name,
+			SizeBytes: uint64(len(data)), SHA256: fmt.Sprintf("sha256:%x", sum), Mode: "0550",
+		})
+	}
+	makeArchive := func(extra bool, changed bool) string {
+		t.Helper()
+		var buf bytes.Buffer
+		writer := zip.NewWriter(&buf)
+		for _, name := range []string{"claude-agent-acp", "claude"} {
+			header := &zip.FileHeader{Name: name, Method: zip.Deflate}
+			header.SetMode(0755)
+			entry, err := writer.CreateHeader(header)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data := contents[name]
+			if changed && name == "claude" {
+				data = bytes.Repeat([]byte{'x'}, len(data))
+			}
+			if _, err := entry.Write(data); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if extra {
+			entry, err := writer.Create("unreviewed")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := entry.Write([]byte("x")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "adapter.zip")
+		if err := os.WriteFile(path, buf.Bytes(), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	for _, tc := range []struct {
+		name, path string
+		accept     bool
+	}{
+		{"exact", makeArchive(false, false), true},
+		{"extra", makeArchive(true, false), false},
+		{"changed", makeArchive(false, true), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file, err := os.Open(tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			st, err := file.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if accepted := stage2aVerifyRuntimeV3Zip(file, st.Size(), "adapter", inv) == nil; accepted != tc.accept {
+				t.Fatalf("ZIP acceptance=%v, wanted %v", accepted, tc.accept)
+			}
+		})
+	}
 }
