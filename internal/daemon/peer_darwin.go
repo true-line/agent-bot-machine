@@ -6,6 +6,8 @@ import (
 	"net"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -20,6 +22,32 @@ type xucred struct {
 	ngroups int16
 	_       int16
 	groups  [16]uint32
+}
+
+func stage2aPeerPID(conn net.Conn) (int, error) {
+	raw, ok := conn.(syscall.Conn)
+	if !ok {
+		return 0, syscall.EINVAL
+	}
+	sc, err := raw.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	var pid int
+	var observed error
+	err = sc.Control(func(fd uintptr) {
+		pid, observed = unix.GetsockoptInt(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERPID)
+	})
+	if err != nil {
+		return 0, err
+	}
+	if observed != nil {
+		return 0, observed
+	}
+	if pid <= 1 {
+		return 0, syscall.EINVAL
+	}
+	return pid, nil
 }
 
 func peerCred(conn net.Conn) (int, error) {

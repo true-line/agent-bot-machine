@@ -25,7 +25,7 @@ func TestStage2aDirectHQRefusalRequiresBoundDurableReceipt(t *testing.T) {
 		TestPlanSHA256: digest, CaseNonceBase64URL: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
 		IssuedAt:  now.Add(-time.Second).Format(time.RFC3339Nano),
 		ExpiresAt: now.Add(time.Minute).Format(time.RFC3339Nano)}
-	q := Stage2aDirectQFinishRequestV3{PreResponseSHA256: digest}
+	q := Stage2aDirectQWitnessFinishRequestV3{Stage2aDirectQWitnessBeginRequestV3: Stage2aDirectQWitnessBeginRequestV3{PreResponseSHA256: digest}}
 	receipt := stage2aDirectHQRefusalV1{Schema: stage2aDirectHQRefusalSchemaV1,
 		Plugin: "hq", Kind: "hq.soul.protected-claim.refused", Seq: 5, At: now.UnixMilli(),
 		Profile: "managed-cooperative", InstallationID: pre.InstallationID,

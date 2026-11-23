@@ -50,6 +50,18 @@ type stage2aDirectQRunV3 struct {
 	install     stage2aQualificationQInstall
 	request     QualificationRequest
 	owner       string
+	witness     *stage2aDirectQWitnessV3
+}
+
+type stage2aDirectQWitnessV3 struct {
+	challenge     string
+	peer          soulKernelProcessSnapshot
+	accepted      bool
+	refusalSHA256 string
+	startRaw      []byte
+	refusalRaw    []byte
+	envelope      []byte
+	sha256        string
 }
 
 func (s *Stage2aService) directQCheckV3(uid int, epoch string,
@@ -88,7 +100,7 @@ type stage2aDirectHQRefusalV1 struct {
 	CooperativeStartReceiptSHA256 string `json:"cooperative_start_receipt_sha256"`
 }
 
-func verifyStage2aDirectHQRefusalV1(q Stage2aDirectQFinishRequestV3,
+func verifyStage2aDirectHQRefusalV1(q Stage2aDirectQWitnessFinishRequestV3,
 	pre stage2aDirectQPreV3, now time.Time) ([]byte, stage2aDirectHQRefusalV1, error) {
 	var empty stage2aDirectHQRefusalV1
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(q.HQRefusalReceiptBase64URL)
@@ -412,6 +424,7 @@ type stage2aDirectQCaptureV3 struct {
 	TestPlanSHA256         string `json:"test_plan_sha256"`
 	PreResponseSHA256      string `json:"pre_response_sha256"`
 	HQRefusalReceiptSHA256 string `json:"hq_refusal_receipt_sha256"`
+	WitnessSHA256          string `json:"witness_sha256"`
 	PostObservationSHA256  string `json:"post_observation_sha256"`
 	QWireSHA256            string `json:"q_wire_sha256"`
 	QIndexSHA256           string `json:"q_index_sha256"`
@@ -454,8 +467,8 @@ func publishStage2aDirectQCaptureV3(store stage2aAdminClaimStore,
 		live.request.InstallationID, live.request.StartID)), envelope)
 }
 
-// FinishDirectQualificationV3 accepts the exact durable HQ refusal only on
-// the paired local channel. It completes Q's post observation and persists an
+// FinishDirectQualificationV3 requires A's separately witnessed HQ ledger
+// refusal. It completes Q's post observation and persists an
 // A-signed capture, but never emits a qualification host report or host credit.
 func (s *Stage2aService) FinishDirectQualificationV3(uid int, epoch string,
 	q Stage2aDirectQFinishRequestV3,
@@ -467,7 +480,9 @@ func (s *Stage2aService) FinishDirectQualificationV3(uid int, epoch string,
 	}
 	live, err := s.directQCurrentV3(uid, epoch, q.SoulCooperativeLiveRequestV3)
 	if err != nil || live.directQ == nil || live.directQ.session == nil ||
-		live.directQ.finishing || live.directQ.preSHA256 != q.PreResponseSHA256 {
+		live.directQ.finishing || live.directQ.preSHA256 != q.PreResponseSHA256 ||
+		live.directQ.witness == nil || !live.directQ.witness.accepted ||
+		live.directQ.witness.sha256 != q.WitnessSHA256 {
 		s.mu.Unlock()
 		return Stage2aReserveReply{}, errSoulCooperativeAuthority
 	}
@@ -479,8 +494,16 @@ func (s *Stage2aService) FinishDirectQualificationV3(uid int, epoch string,
 		}
 		ran = true
 		current, e := s.directQCurrentV3(uid, epoch, q.SoulCooperativeLiveRequestV3)
+		peer, peerErr := observeStage2aDirectHQPeerV3(live, run.witness.peer.PID, s.key.Public().(ed25519.PublicKey))
 		if e != nil || current != live || live.directQ != run ||
-			readOnlyDirectQPre(live.installed.claimStore(), run) != nil {
+			peerErr != nil || !sameSoulKernelProcess(run.witness.peer, peer) ||
+			readOnlyDirectQPre(live.installed.claimStore(), run) != nil ||
+			stage2aDirectQRecord(live.installed.claimStore(), q.InstallationID, q.StartID,
+				stage2aDirectQWitnessName(q.InstallationID, q.StartID), run.witness.envelope, false) != nil ||
+			stage2aDirectQRecord(live.installed.claimStore(), q.InstallationID, q.StartID,
+				stage2aDirectQHQRowName(q.InstallationID, q.StartID, "start"), run.witness.startRaw, false) != nil ||
+			stage2aDirectQRecord(live.installed.claimStore(), q.InstallationID, q.StartID,
+				stage2aDirectQHQRowName(q.InstallationID, q.StartID, "refusal"), run.witness.refusalRaw, false) != nil {
 			return errSoulCooperativeAuthority
 		}
 		run.finishing = true
@@ -512,9 +535,6 @@ func (s *Stage2aService) FinishDirectQualificationV3(uid int, epoch string,
 		return s.directQCheckV3(uid, epoch, q.SoulCooperativeLiveRequestV3, live, run)
 	}
 	if checkLive() != nil {
-		return Stage2aReserveReply{}, errSoulCooperativeAuthority
-	}
-	if _, _, err := verifyStage2aDirectHQRefusalV1(q, run.pre, time.Now().UTC()); err != nil {
 		return Stage2aReserveReply{}, errSoulCooperativeAuthority
 	}
 	protectedPath, err := stage2aAuthorityPath(q.InstallationID)
@@ -554,8 +574,16 @@ func (s *Stage2aService) FinishDirectQualificationV3(uid int, epoch string,
 		}
 		ran = true
 		current, e := s.directQCurrentV3(uid, epoch, q.SoulCooperativeLiveRequestV3)
+		peer, peerErr := observeStage2aDirectHQPeerV3(live, run.witness.peer.PID, s.key.Public().(ed25519.PublicKey))
 		if e != nil || current != live || live.directQ != run || !run.finishing ||
-			readOnlyDirectQPre(live.installed.claimStore(), run) != nil {
+			peerErr != nil || !sameSoulKernelProcess(run.witness.peer, peer) ||
+			readOnlyDirectQPre(live.installed.claimStore(), run) != nil ||
+			stage2aDirectQRecord(live.installed.claimStore(), q.InstallationID, q.StartID,
+				stage2aDirectQWitnessName(q.InstallationID, q.StartID), run.witness.envelope, false) != nil ||
+			stage2aDirectQRecord(live.installed.claimStore(), q.InstallationID, q.StartID,
+				stage2aDirectQHQRowName(q.InstallationID, q.StartID, "start"), run.witness.startRaw, false) != nil ||
+			stage2aDirectQRecord(live.installed.claimStore(), q.InstallationID, q.StartID,
+				stage2aDirectQHQRowName(q.InstallationID, q.StartID, "refusal"), run.witness.refusalRaw, false) != nil {
 			return errSoulCooperativeAuthority
 		}
 		artifacts, e := persistStage2aDirectQualificationPreSignV3(
@@ -570,7 +598,8 @@ func (s *Stage2aService) FinishDirectQualificationV3(uid int, epoch string,
 			HQEpoch: epoch, ReservationSHA256: q.ReservationSHA256, AttachSHA256: q.AttachSHA256,
 			SessionID: run.pre.SessionID, TestPlanSHA256: run.pre.TestPlanSHA256,
 			PreResponseSHA256:      q.PreResponseSHA256,
-			HQRefusalReceiptSHA256: q.HQRefusalReceiptSHA256,
+			HQRefusalReceiptSHA256: run.witness.refusalSHA256,
+			WitnessSHA256:          q.WitnessSHA256,
 			PostObservationSHA256:  stage2aQualificationSHA256(postRaw),
 			QWireSHA256:            artifacts.WireSHA256, QIndexSHA256: artifacts.IndexSHA256,
 			QEOFReceiptSHA256: artifacts.EOFReceiptSHA256,
