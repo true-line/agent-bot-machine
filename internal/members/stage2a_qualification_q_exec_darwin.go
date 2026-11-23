@@ -21,6 +21,7 @@ type stage2aQualificationQInstall struct {
 	ProfileSHA256    string                      `json:"profile_sha256"`
 	AdminGID         int                         `json:"admin_gid"`
 	SupplementalGIDs []int                       `json:"supplemental_gids"`
+	HQUID            int                         `json:"hq_uid"`
 	HQGID            int                         `json:"hq_gid"`
 	RunnerGID        int                         `json:"runner_gid"`
 	BridgeGID        int                         `json:"bridge_gid"`
@@ -109,7 +110,7 @@ func readStage2aQualificationQInstall() (stage2aQualificationQInstall, error) {
 	}
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
-	if dec.Decode(&install) != nil || !install.Review.valid() || !digestPattern.MatchString(install.LauncherSHA256) || install.AdminUID <= 0 || !stage2aQualificationQID(install.UID) ||
+	if dec.Decode(&install) != nil || !install.Review.valid() || !digestPattern.MatchString(install.LauncherSHA256) || install.AdminUID <= 0 || install.HQUID <= 0 || !stage2aQualificationQID(install.UID) ||
 		install.AdminUID == install.UID || install.UID != install.GID || len(install.Roots) == 0 || len(install.Roots) > 16 ||
 		install.ProfileSHA256 != stage2aQualificationProfileSHA256(install) ||
 		!validStage2aQualificationQGroups(install.GID, install.SupplementalGIDs,

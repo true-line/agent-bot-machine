@@ -61,7 +61,7 @@ func TestStage2aQualificationQDisposableComponent(t *testing.T) {
 		}
 		q := stage2aQualificationQInstall{
 			AdminGID: admin.GID, SupplementalGIDs: []int{12, 61, 100, 701},
-			HQGID: 621, RunnerGID: 622, BridgeGID: 623,
+			HQUID: 309, HQGID: 621, RunnerGID: 622, BridgeGID: 623,
 			LauncherSHA256: digestFile(SoulLauncher),
 			AdminUID:       admin.UID, UID: uid, GID: uid,
 			Node:   qualificationFile{node, digestFile(node)},

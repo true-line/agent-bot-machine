@@ -370,6 +370,47 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 		"sha256:"+strings.Repeat("1", 64), now, machinePub, sign); err == nil {
 		t.Fatal("Q pre-sign index accepted a different well-formed launch challenge")
 	}
+	if _, err := persistStage2aQualificationPreSignV1(store, session, reservation,
+		launchChallengeSHA, now, machinePub, sign); err == nil {
+		t.Fatal("Q pre-sign evidence published without a spent one-use Q session")
+	}
+	dir, err = store.open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := spendStage2aAdminName(dir, ".stage2a-q-session-"+slot, store.uid, store.gid); err != nil {
+		dir.Close()
+		t.Fatal(err)
+	}
+	if err := dir.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := persistStage2aQualificationPreSignV1(store, session, reservation,
+		launchChallengeSHA, now, machinePub, sign); err == nil {
+		t.Fatal("Q pre-sign evidence published without the authenticated session binding")
+	}
+	bindingRecord, err := stage2aQualificationSessionBindingBytes(session.begin,
+		session.challengeSHA256, session.peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err = store.open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitStage2aReservation(dir, ".stage2a-q-binding-"+slot+".json", bindingRecord); err != nil {
+		dir.Close()
+		t.Fatal(err)
+	}
+	if err := dir.Close(); err != nil {
+		t.Fatal(err)
+	}
+	alteredSession := session
+	alteredSession.peer.socketInode++
+	if _, err := persistStage2aQualificationPreSignV1(store, alteredSession, reservation,
+		launchChallengeSHA, now, machinePub, sign); err == nil {
+		t.Fatal("Q pre-sign evidence used a different Q socket binding")
+	}
 	preSign, err := persistStage2aQualificationPreSignV1(store, session, reservation,
 		launchChallengeSHA, now, machinePub, sign)
 	if err != nil {
