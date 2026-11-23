@@ -894,6 +894,10 @@ HQ's authenticated paired production adapter must consume these signatures
 before attaching the owner ACP stream. HQ must wait for both R's child-receipt
 acknowledgment and the child wrapper's signed-receipt/Live acceptance. These
 source and fixture checks do not establish physical T03.
+The installed core dispatches all five protected child/Hello/peer-role verbs
+through the paired A service; its fixed Darwin entrypoint also dispatches
+`soul-child` to the same role launcher as `soul-run` and `soul-bridge`.
+Neither path accepts an arbitrary caller-selected executable or account.
 
 `stage2a-stop` waits for both dedicated role UIDs to be kernel idle, revokes
 the B proof, retires the active claim, then signs and atomically publishes a

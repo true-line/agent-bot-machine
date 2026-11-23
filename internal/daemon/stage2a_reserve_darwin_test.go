@@ -139,3 +139,28 @@ func TestStage2aReserveBoundHQOnly(t *testing.T) {
 		t.Fatalf("nil authority did not refuse: %+v", got)
 	}
 }
+
+func TestStage2aProtectedHandshakeVerbsReachAuthority(t *testing.T) {
+	for _, verb := range []string{stage2aChildReadyVerb, stage2aHelloStartVerb,
+		stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb} {
+		t.Run(verb, func(t *testing.T) {
+			if !knownVerb(verb) || !isStage2aVerb(verb) {
+				t.Fatal("protected handshake verb is not admitted by both protocol gates")
+			}
+			called := false
+			hooks := Hooks{Stage2a: func(req Request) Response {
+				called = true
+				if req.Verb != verb {
+					t.Fatalf("dispatched wrong verb %q", req.Verb)
+				}
+				return Response{OK: true, State: "accepted"}
+			}}
+			if got := hooks.reply(Request{Verb: verb}); !called || !got.OK || got.State != "accepted" {
+				t.Fatalf("protected handshake authority was not reached: %+v", got)
+			}
+			if got := (Hooks{}).reply(Request{Verb: verb}); got.OK || got.Diagnostic != diag.DaemonUnimplemented {
+				t.Fatalf("missing authority did not fail closed: %+v", got)
+			}
+		})
+	}
+}

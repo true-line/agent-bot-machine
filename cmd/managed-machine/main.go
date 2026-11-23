@@ -65,9 +65,10 @@ func main() {
 		switch os.Args[1] {
 		case "harness-run":
 			os.Exit(members.RunHarness())
-		case "soul-run", "soul-bridge":
-			os.Exit(members.RunStage2aRole(os.Args[1]))
 		}
+	}
+	if role, ok := stage2aRoleCommand(runtime.GOOS, os.Args); ok {
+		os.Exit(members.RunStage2aRole(role))
 	}
 	getenv := cli.BridgeDarwinEnv(runtime.GOOS, os.Getenv)
 	daemonDeps := daemon.Deps{
@@ -213,6 +214,18 @@ func main() {
 		},
 	}
 	os.Exit(app.Run(os.Args[1:]))
+}
+
+func stage2aRoleCommand(goos string, argv []string) (string, bool) {
+	if goos != "darwin" || len(argv) != 2 {
+		return "", false
+	}
+	switch argv[1] {
+	case "soul-run", "soul-bridge", "soul-child":
+		return argv[1], true
+	default:
+		return "", false
+	}
 }
 
 // membersDaemonState locates agent-machine's state directory for members
