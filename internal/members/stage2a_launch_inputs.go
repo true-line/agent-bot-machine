@@ -35,6 +35,7 @@ type Stage2aLaunchInputRecords struct {
 	SystemImages        Stage2aSystemImages       `json:"system_images"`
 	SandboxPolicyDigest string                    `json:"sandbox_policy_digest"`
 	ComponentDigests    map[string]string         `json:"component_digests"`
+	AdapterTransport    string                    `json:"adapter_transport,omitempty"`
 }
 
 type Stage2aHostProjection struct {
@@ -350,6 +351,9 @@ func Stage2aLaunchInputDigest(input Stage2aLaunchInputRecords) (string, []byte, 
 		len(input.EffectiveConfig) > 256 || input.EffectiveConfig == nil ||
 		(input.EffectiveConfig["profile"] != "managed-protected" &&
 			input.EffectiveConfig["profile"] != "managed-cooperative") ||
+		(input.EffectiveConfig["profile"] == "managed-protected" && input.AdapterTransport != "") ||
+		(input.AdapterTransport != "" && input.AdapterTransport != "brokered-b" &&
+			input.AdapterTransport != "direct-comms") ||
 		len(images.Selected) == 0 || len(images.Selected) > 256 ||
 		!stage2aValidLaunchStrings(input) ||
 		!stage2aJSONSize(input.HostProjection.Adapters, 64<<10) ||

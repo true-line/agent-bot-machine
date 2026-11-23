@@ -25,30 +25,44 @@ func buildSoulCooperativeLaunch(in Input, h Host) (Plan, error) {
 		return Plan{}, invalid
 	}
 	p := *in.SoulCooperativeLaunch
-	if p.validate() != nil || p.Runner.PackageRoot != cooperativeArtifactPath(p.Runner.InstallationID) ||
+	if p.validate() != nil || !cooperativeReviewedPackageRoot(p) ||
 		p.SourcePackagePath == p.Runner.PackageRoot || p.Runner.Account == in.Invoker {
 		return Plan{}, invalid
 	}
-	for _, role := range []struct {
+	roles := []struct {
 		name     string
 		uid, gid int
 	}{
 		{DarwinHQAccount, p.HQUID, p.HQUID},
 		{p.Runner.Account, p.Runner.UID, p.Runner.GID},
-	} {
+	}
+	members := []string{p.Runner.Account}
+	detail := "install exact A-sealed frozen Soul and fixed H-to-R cooperative launcher; publish applied root receipt"
+	if p.Schema == soulCooperativeTwoMemberInstallSchemaV3 {
+		if p.Bridge == nil || p.Bridge.Account == in.Invoker {
+			return Plan{}, invalid
+		}
+		roles = append(roles, struct {
+			name     string
+			uid, gid int
+		}{p.Bridge.Account, p.Bridge.UID, p.Bridge.GID})
+		members = append(members, p.Bridge.Account)
+		detail = "review separate cooperative R and B principals, frozen two-member Soul and launch measurements, fixed B endpoints, and one-use Q; positive apply remains closed"
+	}
+	for _, role := range roles {
 		account, ok, err := h.Account(role.name)
 		if err != nil || !ok || account.UID != role.uid || account.GID != role.gid {
 			return Plan{}, invalid
 		}
 	}
 	plan := Plan{Version: PlanVersion, HQAccount: DarwinHQAccount, Dir: DarwinDir,
-		Members: []string{p.Runner.Account}, Purpose: SoulCooperativeLaunchInstallPurpose,
+		Members: members, Purpose: SoulCooperativeLaunchInstallPurpose,
 		SoulCooperativeLaunch: &p,
 		Steps: []Step{{Kind: "soul-cooperative-launch", Target: p.Runner.InstallationID,
-			Action: ActionWrite, Detail: "install exact A-sealed frozen Soul and fixed H-to-R cooperative launcher; publish applied root receipt"}},
+			Action: ActionWrite, Detail: detail}},
 	}
 	canonical, err := plan.Canonical()
-	if err != nil || len(canonical) > 48<<10 {
+	if err != nil || len(canonical) > 2<<20 {
 		return Plan{}, invalid
 	}
 	return plan, nil
