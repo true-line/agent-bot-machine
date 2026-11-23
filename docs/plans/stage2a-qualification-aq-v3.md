@@ -219,6 +219,11 @@ exactly. The current eight-component v1 protected schema is not silently
 reinterpreted for the base install. A reviewed successor must specify optional
 component mapping and the separate H code measurement before this draft can
 credit an installed protected pilot.
+The signed v3 qualification's `adapter.package_sha256` and
+`launch.executable`/`launch.code_inputs` claims need an exact reviewed mapping
+to opened R inventory paths and the adapter release attestation. The
+`measurement_binding.package_sha256` names the Machine package and is a
+different subject; this draft never equates those two package digests.
 
 This component currently prepares an unsigned wrapper and nested bytes.
 There is no production A archive publisher or A-signed segment issuer for
