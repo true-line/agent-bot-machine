@@ -145,6 +145,22 @@ func TestV4PreSignCompletionContractVectors(t *testing.T) {
 				key, digest([]byte(vector.Commitment)), fixturePolicyVerified, now); err != nil {
 				t.Fatal("valid Contracts v4 completed chain refused:", err)
 			}
+			if profile == "cooperative" {
+				inventoryFixture, err := os.ReadFile("testdata/stage2a-cooperative-r-inventory-v3-contract-synthetic.json")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var inventory struct {
+					Raw string `json:"inventory_jcs"`
+				}
+				if json.Unmarshal(inventoryFixture, &inventory) != nil || inventory.Raw == "" {
+					t.Fatal("invalid R inventory fixture")
+				}
+				if CheckV4HostReportRInventory([]byte(vector.HostEnvelope), envelope,
+					[]byte(inventory.Raw), fixturePolicyVerified, key, now) == nil {
+					t.Fatal("v4 report's fixture adapter bytes mismatched R inventory but were accepted")
+				}
+			}
 			machinePrivate := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x13}, ed25519.SeedSize))
 			if !bytes.Equal(machinePrivate.Public().(ed25519.PublicKey), key) {
 				t.Fatal("Contracts fixture Machine key changed")

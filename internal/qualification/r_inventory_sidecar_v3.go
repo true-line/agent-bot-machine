@@ -158,7 +158,7 @@ func verifyRAdapterReportInventoryV3(reportRaw, inventoryRaw []byte,
 	if err != nil {
 		return ErrUnqualified
 	}
-	fields, err := canonicalBytes(reportRaw, MaxReportBytes)
+	fields, err := canonicalObjectV4(reportRaw, MaxReportBytes)
 	if err != nil || fields["adapter"] == nil || fields["launch"] == nil {
 		return ErrUnqualified
 	}
@@ -212,6 +212,39 @@ func verifyRAdapterReportInventoryV3(reportRaw, inventoryRaw []byte,
 		seen[input.Path] = true
 	}
 	return nil
+}
+
+// CheckV4HostReportRInventory resolves a designated v4 host report and its
+// A-signed pre-sign completion to the exact A-referenced R inventory sidecar.
+// It refuses a report whose adapter executable, package or code inputs differ
+// from that sidecar. Installed file custody, release provenance, raw Q/ACP/OS
+// evidence and physical results still need separate verification.
+func CheckV4HostReportRInventory(hostEnvelope, completionEnvelope, inventoryRaw []byte,
+	policy VerifiedPolicy, machineKey ed25519.PublicKey, now time.Time) error {
+	report, err := VerifyHostReportV4(hostEnvelope, policy, now)
+	if err != nil || VerifyExecutionCompletionBeforeSignV4(report, completionEnvelope, machineKey, now) != nil {
+		return ErrUnqualified
+	}
+	fields, err := canonicalObjectV4(report, MaxReportBytes)
+	if err != nil {
+		return ErrUnqualified
+	}
+	var profile string
+	if json.Unmarshal(fields["profile_in_force"], &profile) != nil {
+		return ErrUnqualified
+	}
+	var binding hrMeasurementBindingV3
+	if profile == "managed-protected" {
+		binding, err = parseHRMeasurementBindingV3(fields["measurement_binding"])
+	} else if profile == "managed-cooperative" {
+		binding, err = parseCooperativeMeasurementBindingV3(fields["measurement_binding"])
+	} else {
+		return ErrUnqualified
+	}
+	if err != nil {
+		return ErrUnqualified
+	}
+	return verifyRAdapterReportInventoryV3(report, inventoryRaw, binding)
 }
 
 // CheckCooperativeHostReportRInventoryV3 authenticates a designated-host
