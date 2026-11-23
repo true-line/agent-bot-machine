@@ -22,6 +22,7 @@ const MAX_RECENT: usize = 256;
 const HOST_REPORT_PURPOSE: &str = "agent-bot/qualification-host-report/v1";
 const HOST_REPORT_PURPOSE_V2: &str = "agent-bot/qualification-host-report/v2";
 const HOST_REPORT_PURPOSE_V3: &str = "agent-bot/qualification-host-report/v3";
+const HOST_REPORT_PURPOSE_V4: &str = "agent-bot/qualification-host-report/v4";
 
 use crate::store::{keychain_read_interaction_denied, Items};
 
@@ -103,6 +104,7 @@ impl Request {
                     | "qualification-host-report"
                     | "qualification-host-report-v2"
                     | "qualification-host-report-v3"
+                    | "qualification-host-report-v4"
             )
         {
             return Err(UNAVAILABLE);
@@ -153,7 +155,8 @@ impl Request {
         match self.option.as_str() {
             "qualification-host-report"
             | "qualification-host-report-v2"
-            | "qualification-host-report-v3" => {
+            | "qualification-host-report-v3"
+            | "qualification-host-report-v4" => {
                 for (label, value) in [
                     ("report_base64url", &self.report_base64url),
                     ("host_id", &self.host_id),
@@ -481,6 +484,112 @@ fn v3_binding_shape(report: &Value, custody_uid: u32, paired_epoch: &str) -> boo
     }
 }
 
+// keyd independently checks the v4 run's fixed shape and its own custody
+// identity before signing. Machine A must already verify the complete signed
+// pre-sign chain, owner policy, Q bytes and physical observations. This shape
+// check is never a physical verdict or release verifier.
+fn v4_binding_shape(report: &Value, custody_uid: u32, paired_epoch: &str) -> bool {
+    let binding = &report["measurement_binding"];
+    let run = &report["run_evidence"];
+    let snapshots = &binding["snapshots"];
+    let mut binding_keys = vec![
+        "adapter_release",
+        "claimed_definition_digest",
+        "contract",
+        "definition_measurement",
+        "h_service_descriptor_digest",
+        "host_id",
+        "hq_epoch",
+        "installation_id",
+        "installed_plan_digest",
+        "kind",
+        "launch_id",
+        "launch_input_measurement",
+        "package_sha256",
+        "plan_id",
+        "profile_in_force",
+        "r_components",
+        "r_inventory",
+        "schema_version",
+        "snapshots",
+        "soul_artifact_sha256",
+        "soul_id",
+        "start_id",
+    ];
+    let protected = report["profile_in_force"] == "managed-protected";
+    if protected {
+        binding_keys.push("broker_executable");
+    } else {
+        binding_keys.push("hq_broker");
+    }
+    let mut run_keys = vec![
+        "reservation",
+        "execution_completion",
+        "challenge_sha256",
+        "q_session",
+    ];
+    if protected {
+        run_keys.push("finalization");
+    } else {
+        run_keys.extend([
+            "bridge_assignment",
+            "cooperative_publish_order",
+            "cooperative_publish_outcome",
+            "cooperative_watched_request",
+        ]);
+    }
+    let q = &run["q_session"];
+    if !exact_fields(binding, &binding_keys)
+        || binding["contract"] != "machine/v3"
+        || binding["schema_version"] != 3
+        || binding["kind"] != "stage2a-measurement-binding"
+        || binding["host_id"] != report["host"]["id"]
+        || binding["profile_in_force"] != report["profile_in_force"]
+        || binding["hq_epoch"] != paired_epoch
+        || !bridge_id(&binding["installation_id"])
+        || !bridge_soul_id(&binding["soul_id"])
+        || !bridge_id(&binding["host_id"])
+        || !exact_fields(snapshots, &["definition", "launch_inputs"])
+        || !snapshot_identity(&snapshots["definition"])
+        || !snapshot_identity(&snapshots["launch_inputs"])
+        || custody_uid < 400
+        || snapshots["definition"]["owner_uid"] != custody_uid
+        || snapshots["launch_inputs"]["owner_uid"] != custody_uid
+        || snapshots["definition"]["owner_gid"] != snapshots["launch_inputs"]["owner_gid"]
+        || snapshots["definition"]["mode"] != "0555"
+        || snapshots["launch_inputs"]["mode"] != "0555"
+        || !exact_fields(run, &run_keys)
+        || !report_sha(&run["challenge_sha256"])
+        || !exact_fields(
+            q,
+            &["framed_wire", "frame_index_envelope", "clean_eof_envelope"],
+        )
+        || ["framed_wire", "frame_index_envelope", "clean_eof_envelope"]
+            .iter()
+            .any(|name| !report_evidence(&q[*name]))
+        || ["reservation", "execution_completion"]
+            .iter()
+            .any(|name| !report_evidence(&run[*name]))
+    {
+        return false;
+    }
+    if protected {
+        report_evidence(&run["finalization"])
+            && bridge_shape(&report["bridge"])
+            && report["bridge"]["assignment"]["machine_observation"]
+                == report["soul_start"]["machine_observation"]
+    } else {
+        [
+            "bridge_assignment",
+            "cooperative_publish_order",
+            "cooperative_publish_outcome",
+            "cooperative_watched_request",
+        ]
+        .iter()
+        .all(|name| report_evidence(&run[*name]))
+    }
+}
+
 fn bridge_soul_id(value: &Value) -> bool {
     value.as_str().is_some_and(|s| {
         if !s.starts_with("agent_") || s.len() != 42 {
@@ -715,7 +824,7 @@ fn fixed_host_report(request: &Request) -> Result<Vec<u8>, &'static str> {
     fixed_host_report_version(request, 1, 0)
 }
 
-// The Machine verifier accepts the ASCII, integer-only JCS subset. Serde's
+// The older Machine verifier accepts the ASCII, integer-only JCS subset. Serde's
 // JSON writer preserves 1.0 as 1.0, while JCS would emit 1. Limit numbers to
 // exact IEEE-754 integers before comparing the exact serialized bytes.
 fn integer_only_json(value: &Value) -> bool {
@@ -738,17 +847,20 @@ fn fixed_host_report_version(
     version: u64,
     custody_uid: u32,
 ) -> Result<Vec<u8>, &'static str> {
-    if !(1..=3).contains(&version) {
+    if !(1..=4).contains(&version) {
         return Err(UNAVAILABLE);
     }
     let encoded = request.report_base64url.as_ref().ok_or(UNAVAILABLE)?;
     let raw = URL.decode(encoded).map_err(|_| UNAVAILABLE)?;
-    if raw.is_empty() || raw.len() > 1024 * 1024 || URL.encode(&raw) != *encoded || !raw.is_ascii()
+    if raw.is_empty()
+        || raw.len() > 1024 * 1024
+        || URL.encode(&raw) != *encoded
+        || (version < 4 && !raw.is_ascii())
     {
         return Err(UNAVAILABLE);
     }
     let report: Value = serde_json::from_slice(&raw).map_err(|_| UNAVAILABLE)?;
-    if (version == 3 && !integer_only_json(&report))
+    if ((version == 3 || version == 4) && !integer_only_json(&report))
         || serde_json::to_vec(&report).map_err(|_| UNAVAILABLE)? != raw
     {
         return Err(UNAVAILABLE);
@@ -772,10 +884,12 @@ fn fixed_host_report_version(
         "soul_start",
         "suite_revision",
     ];
-    if version == 2 || (version == 3 && report["profile_in_force"] == "managed-protected") {
+    if version == 2
+        || ((version == 3 || version == 4) && report["profile_in_force"] == "managed-protected")
+    {
         keys.push("bridge");
     }
-    if version == 3 {
+    if version == 3 || version == 4 {
         keys.extend(["measurement_binding", "run_evidence"]);
     }
     let fields = report.as_object().ok_or(UNAVAILABLE)?;
@@ -849,7 +963,7 @@ fn fixed_host_report_version(
         || !report["soul_start"]["machine_observation"].is_object()
         || !report["soul_start"]["hq_launch_receipt"].is_object()
         || !report["renders"].is_array()
-        || (version == 3 && !v3_renders(&report["renders"]))
+        || ((version == 3 || version == 4) && !v3_renders(&report["renders"]))
         || !report["evaluation_cells"].as_array().is_some_and(|cells| {
             !cells.is_empty()
                 && cells.iter().all(|cell| {
@@ -925,7 +1039,8 @@ fn fixed_host_report_version(
     {
         return Err(UNAVAILABLE);
     }
-    if (version == 2 || (version == 3 && report["profile_in_force"] == "managed-protected"))
+    if (version == 2
+        || ((version == 3 || version == 4) && report["profile_in_force"] == "managed-protected"))
         && (report["profile_in_force"] != "managed-protected"
             || !bridge_shape(&report["bridge"])
             || report["bridge"]["assignment"]["machine_observation"]
@@ -934,6 +1049,9 @@ fn fixed_host_report_version(
         return Err(UNAVAILABLE);
     }
     if version == 3 && !v3_binding_shape(&report, custody_uid, &request.hq_epoch) {
+        return Err(UNAVAILABLE);
+    }
+    if version == 4 && !v4_binding_shape(&report, custody_uid, &request.hq_epoch) {
         return Err(UNAVAILABLE);
     }
     Ok(raw)
@@ -1419,6 +1537,22 @@ fn execute(
             result = json!({
                 "schema_version": 3,
                 "purpose": HOST_REPORT_PURPOSE_V3,
+                "host_id": request.host_id.as_ref().ok_or(UNAVAILABLE)?,
+                "signer_id": request.signer_id.as_ref().ok_or(UNAVAILABLE)?,
+                "report_sha256": format!("sha256:{}", digest(&raw)),
+                "report_base64url": URL.encode(&raw),
+                "signature_base64url": URL.encode(signature),
+            });
+        }
+        "qualification-host-report-v4" => {
+            let raw = fixed_host_report_version(&request, 4, provider.custody_uid()?)?;
+            let mut message = HOST_REPORT_PURPOSE_V4.as_bytes().to_vec();
+            message.push(0);
+            message.extend_from_slice(&raw);
+            let signature = provider.sign(&reference, &message)?;
+            result = json!({
+                "schema_version": 4,
+                "purpose": HOST_REPORT_PURPOSE_V4,
                 "host_id": request.host_id.as_ref().ok_or(UNAVAILABLE)?,
                 "signer_id": request.signer_id.as_ref().ok_or(UNAVAILABLE)?,
                 "report_sha256": format!("sha256:{}", digest(&raw)),

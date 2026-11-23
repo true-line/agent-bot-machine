@@ -39,6 +39,7 @@ func TestDeviceKeydReportTransportLimits(t *testing.T) {
 		{"qualification-host-report", 2 * 1024 * 1024, 2 * 1024 * 1024},
 		{"qualification-host-report-v2", 2 * 1024 * 1024, 2 * 1024 * 1024},
 		{"qualification-host-report-v3", 2 * 1024 * 1024, 2 * 1024 * 1024},
+		{"qualification-host-report-v4", 2 * 1024 * 1024, 2 * 1024 * 1024},
 	} {
 		input, output := deviceKeydLimits(tc.option)
 		if input != tc.input || output != tc.output {

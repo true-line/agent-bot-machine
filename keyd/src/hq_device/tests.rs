@@ -9,6 +9,7 @@ fn seconds(n: u64) -> Duration {
 
 #[derive(Default)]
 struct Fake {
+    uid: Cell<u32>,
     created: Cell<u8>,
     clock: Cell<u64>,
     time_after_sign: Cell<Option<u64>>,
@@ -19,7 +20,11 @@ struct Fake {
 }
 impl Enclave for Fake {
     fn custody_uid(&self) -> Result<u32, &'static str> {
-        Ok(500)
+        Ok(if self.uid.get() == 0 {
+            500
+        } else {
+            self.uid.get()
+        })
     }
     fn proof_time(&self) -> Result<u64, &'static str> {
         Ok(self.clock.get())
@@ -55,6 +60,54 @@ impl Enclave for Fake {
             self.revoked.set(true)
         }
         Ok([11; 64])
+    }
+}
+
+#[test]
+fn measured_v4_host_reports_use_fixed_purpose_and_q_shape() {
+    let (items, native, mut pair) = (Memory::default(), Fake::default(), pair());
+    native.uid.set(501);
+    pair.hq_epoch = "a".repeat(64);
+    initialize(&items, &native, pair.clone()).unwrap();
+    let vectors: Value = serde_json::from_str(include_str!(
+        "../../../internal/qualification/testdata/stage2a-v4-completion-contracts83.json"
+    ))
+    .unwrap();
+    for profile in ["protected", "cooperative"] {
+        let raw = vectors[profile]["report_jcs"].as_str().unwrap().as_bytes();
+        let request =
+            host_report_request_for(&pair, raw, "qualification-host-report-v4", "synthetic-host");
+        let envelope = run(&items, &native, &pair, request, seconds(100)).unwrap();
+        assert_eq!(envelope["schema_version"], 4);
+        assert_eq!(envelope["purpose"], HOST_REPORT_PURPOSE_V4);
+        assert_eq!(envelope["report_sha256"], format!("sha256:{}", digest(raw)));
+        assert_eq!(
+            native.signed.borrow().last().unwrap(),
+            &[HOST_REPORT_PURPOSE_V4.as_bytes(), &[0], raw].concat()
+        );
+        let mut missing_q: Value = serde_json::from_slice(raw).unwrap();
+        missing_q["run_evidence"]["q_session"]
+            .as_object_mut()
+            .unwrap()
+            .remove("clean_eof_envelope");
+        let changed = serde_json::to_vec(&missing_q).unwrap();
+        assert!(fixed_host_report_version(
+            &host_report_request_for(
+                &pair,
+                &changed,
+                "qualification-host-report-v4",
+                "synthetic-host"
+            ),
+            4,
+            501,
+        )
+        .is_err());
+        assert!(fixed_host_report_version(
+            &host_report_request_for(&pair, raw, "qualification-host-report-v4", "synthetic-host"),
+            4,
+            500,
+        )
+        .is_err());
     }
 }
 fn pair() -> Pair {

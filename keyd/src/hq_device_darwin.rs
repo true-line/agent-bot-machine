@@ -292,7 +292,8 @@ fn device_request_size_allowed(option: &str, size: usize) -> bool {
     let limit = match option {
         "qualification-host-report"
         | "qualification-host-report-v2"
-        | "qualification-host-report-v3" => 2 * 1024 * 1024,
+        | "qualification-host-report-v3"
+        | "qualification-host-report-v4" => 2 * 1024 * 1024,
         _ => 16384,
     };
     size <= limit
@@ -348,6 +349,7 @@ mod tests {
             "qualification-host-report",
             "qualification-host-report-v2",
             "qualification-host-report-v3",
+            "qualification-host-report-v4",
         ] {
             assert!(device_request_size_allowed(option, 16385));
             assert!(device_request_size_allowed(option, 2 * 1024 * 1024));

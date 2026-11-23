@@ -35,6 +35,18 @@ Machine caller until those records are independently verified and bound to the
 exact report. The signed report is then an input to the separate release
 attestation; protected launch stays closed until that attestation verifies.
 
+The draft `qualification-host-report-v4` local A-to-keyd request has the
+separate `agent-bot/qualification-host-report/v4` purpose. Machine A verifies
+the signed v2 pre-sign completion and current owner-designated host policy
+before calling keyd, and checks the returned ES256 envelope and unchanged
+pair/policy afterward. keyd independently authenticates the Machine pair and
+secure-admin UID, fixed v4 profile/Q reference shape, and exact report bytes
+before using the same Secure Enclave custody. The v4 keyd parser currently
+accepts its canonical integer-only JSON subset; a valid report outside that
+subset refuses until the parser is extended. There is no production physical
+caller, no positive release verifier, and no T01/T02/T03/T21 credit from this
+transport component.
+
 A native MCP server that holds souls' GitHub App keys
 ([agent-bot-identity #397](https://github.com/qwts/agent-bot-identity/issues/397)).
 agent-bot-machine builds it and signs it with the agent-machine Developer ID.

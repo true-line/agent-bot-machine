@@ -175,7 +175,7 @@ type keydOutput struct {
 }
 
 func deviceKeydLimits(option string) (input, output int) {
-	if option == "qualification-host-report" || option == "qualification-host-report-v2" || option == "qualification-host-report-v3" {
+	if option == "qualification-host-report" || option == "qualification-host-report-v2" || option == "qualification-host-report-v3" || option == "qualification-host-report-v4" {
 		return 2 * 1024 * 1024, 2 * 1024 * 1024
 	}
 	return 16384, 8192
