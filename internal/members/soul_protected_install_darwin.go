@@ -120,6 +120,8 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 	d := json.NewDecoder(bytes.NewReader(r.Policy))
 	d.DisallowUnknownFields()
 	if d.Decode(&policy) != nil || d.Decode(new(any)) != io.EOF ||
+		(r.OwnerPlanMemberSetSHA256 == "" && len(policy.MemberBridgeQualifications) != 0) ||
+		(r.OwnerPlanMemberSetSHA256 != "" && !stage2aValidMemberBridgeQualificationRows(policy.MemberBridgeQualifications, policy.BridgeQualification)) ||
 		policy.Schema != "agent-bot-machine/stage2a-installed-authority/v1" ||
 		policy.PlanOwner != in.Invoker || policy.MachineUID < 400 || policy.MachineGID < 1 ||
 		policy.HQUID < 300 || policy.HQUID > 399 ||

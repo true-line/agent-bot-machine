@@ -156,6 +156,9 @@ func stage2aBuildMemberSetAssignment(r *stage2aLiveReservation,
 		}
 		return 0
 	})
+	if !stage2aMemberBridgeQualificationsMatchRoles(p.MemberBridgeQualifications, roles, p.BridgeQualification) {
+		return result, errStage2aReservationAuthority
+	}
 	var plan Plan
 	if json.Unmarshal(p.Plan, &plan) != nil || plan.SoulProtectedLaunch == nil ||
 		plan.Purpose != SoulProtectedLaunchInstallPurpose {
