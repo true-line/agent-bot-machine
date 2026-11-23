@@ -29,6 +29,7 @@ const stage2aHelloFinalizeVerb = "stage2a-hello-finalize"
 const stage2aHelloAbortVerb = "stage2a-hello-abort"
 const stage2aPeerRoleVerb = "stage2a-peer-role"
 const stage2aMemberSetAssignVerb = "stage2a-member-set-assign"
+const stage2aMemberProvisionalMapVerb = "stage2a-member-provisional-map"
 
 var stage2aExecDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -43,7 +44,8 @@ func isStage2aVerb(verb string) bool {
 	return verb == stage2aReserveVerb || verb == stage2aExecVerb ||
 		verb == stage2aVerifyBVerb || verb == stage2aLookupVerb || verb == stage2aListVerb || verb == stage2aPrepareBVerb || verb == stage2aStopVerb || verb == stage2aFinalizeBVerb || verb == stage2aLiveVerb || verb == stage2aProviderVerb || verb == stage2aChildReadyVerb || verb == stage2aCaptureSelectorVerb || verb == stage2aControlProbeVerb ||
 		verb == stage2aHelloStartVerb || verb == stage2aHelloFinalizeVerb || verb == stage2aHelloAbortVerb ||
-		verb == stage2aPeerRoleVerb || verb == stage2aMemberSetAssignVerb
+		verb == stage2aPeerRoleVerb || verb == stage2aMemberSetAssignVerb ||
+		verb == stage2aMemberProvisionalMapVerb
 }
 
 func stage2aFields(req *Request, raw []byte) (string, string) {
@@ -174,6 +176,14 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 			return diag.DaemonUndeclared, "invalid Stage 2a member-set assignment request"
 		}
 		req.stage2aMemberSetAssign = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aMemberProvisionalMapVerb {
+		parsed, err := members.ParseStage2aMemberProvisionalMapRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a provisional member map"
+		}
+		req.stage2aMemberProvisionalMap = parsed
 		return "", ""
 	}
 	if req.Verb == stage2aHelloFinalizeVerb {

@@ -290,6 +290,7 @@ func (s *Stage2aService) HelloFinalize(hqUID int, epoch string, q Stage2aHelloFi
 	r, p, expires, err := s.current(hqUID, epoch, q.ReservationSHA256)
 	if err != nil || !stage2aMatchesStopSelectors(r, q.Stage2aStopRequest, hqUID) ||
 		r.hello == nil || r.hello.aborted || r.hello.finalized ||
+		len(r.memberSetAssignmentEnvelope) != 0 || len(p.MemberBridgeQualifications) != 0 ||
 		stage2aReservationSHA256(r.hello.startEnvelope) != q.StartEnvelopeSHA256 ||
 		!stage2aHelloExpectedMatches(q, r, p) ||
 		stage2aHelloCheckLive(r, p, q.Stage2aStopRequest) != nil ||

@@ -20,6 +20,7 @@ func (s *Stage2aService) execChild(hqUID int, epoch, digest, nonce string, pid i
 	r := s.active[digest]
 	if r == nil || r.digest != stage2aReservationSHA256(r.envelope) ||
 		r.request.HQEpoch != epoch || r.payload.Assignment.HQUID != hqUID ||
+		len(r.memberSetAssignmentEnvelope) != 0 ||
 		len(r.finalizationEnvelope) == 0 || r.bindReceiptSHA256 == "" ||
 		r.hello == nil || r.hello.aborted || !r.hello.finalized || len(r.hello.finalizationEnvelope) == 0 ||
 		r.runnerPID <= 1 || r.bridgePID <= 1 || r.childLauncherPID != 0 || r.liveSequence == 0 {
@@ -27,6 +28,7 @@ func (s *Stage2aService) execChild(hqUID int, epoch, digest, nonce string, pid i
 	}
 	p, raw, err := loadStage2aActiveExecutionPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, r)
 	if err != nil || stage2aReservationSHA256(raw) != r.policyDigest ||
+		len(p.MemberBridgeQualifications) != 0 ||
 		p.Binding.InstallationID != r.request.InstallationID ||
 		p.Binding.LaunchInputMeasurement != r.payload.MeasurementBinding.LaunchInputMeasurement ||
 		p.Binding.DefinitionMeasurement != r.payload.MeasurementBinding.DefinitionMeasurement ||

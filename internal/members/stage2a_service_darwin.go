@@ -57,6 +57,8 @@ type stage2aLiveReservation struct {
 	twoMemberChildren           *stage2aTwoMemberObservation
 	memberSetAssignmentEnvelope []byte
 	memberSetAssignmentExpires  time.Time
+	provisionalHQMap            []byte
+	provisionalHQMapSHA256      string
 	protectedQ                  *stage2aProtectedQRun
 	liveSequence                uint64
 	hello                       *stage2aHelloState
