@@ -212,10 +212,13 @@ not gain a shared writable or readable group through this draft.
 The current `Stage2aLaunchInputRecords` v1 source contract and this offline
 consumer require eight component digests backed by R-snapshot files, including
 `harness` and `test_provider`. The owner has clarified that the base
-HQ/Machine/Souls install is harness-free and ACP/Claude is an explicit optional
-selection. A reviewed successor must specify which component digests belong
-to that base and how optional test components and separate H code are measured;
-this draft must not be read as approval to install a harness in the base.
+HQ/Machine/Souls install is harness-free and does not request Stage 2a
+protected-launch qualification. A protected pilot is a separate, owner-reviewed
+selection; ACP/Claude and any other selected test inputs must be measured
+exactly. The current eight-component v1 protected schema is not silently
+reinterpreted for the base install. A reviewed successor must specify optional
+component mapping and the separate H code measurement before this draft can
+credit an installed protected pilot.
 
 This component currently prepares an unsigned wrapper and nested bytes.
 There is no production A archive publisher or A-signed segment issuer for
