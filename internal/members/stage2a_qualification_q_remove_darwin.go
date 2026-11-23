@@ -66,7 +66,7 @@ func RunStage2aQualificationQRemove(deps ApplyDeps, args []string) error {
 	if err := runProgram(dsclPath, ".", "-delete", "/Groups/"+stage2aQualificationQAccount); err != nil {
 		return err
 	}
-	for _, path := range []string{filepath.Join(stage2aQualificationQHome, "saved-plan.json"), install.Source.Path, install.PS.Path, stage2aQualificationQProfile, pin, stage2aQualificationQHome} {
+	for _, path := range []string{stage2aQualificationQPlanPath, install.Source.Path, install.PS.Path, stage2aQualificationQProfile, pin, stage2aQualificationQHome} {
 		if err := os.Remove(path); err != nil {
 			return err
 		}
