@@ -20,6 +20,46 @@ var (
 	stage2aHSourceTagV3    = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 )
 
+// These raw release files are reviewed as non-installed build, platform,
+// documentation, or SDK entry files. Every other file in these source trees
+// must appear in the H source manifest and selected inventory. A new HQ or
+// plugin module therefore fails closed until its H inclusion is reviewed.
+var stage2aHSourceNonInstalledV3 = map[string]bool{
+	"governance/darwin-broker.json":                   true,
+	"helpers/linux-owner-peer.py":                     true,
+	"helpers/macos-enclave/MachineInstallation.swift": true,
+	"helpers/macos-enclave/RoleStore.swift":           true,
+	"helpers/macos-enclave/Signer.swift":              true,
+	"helpers/macos-enclave/Standalone.swift":          true,
+	"helpers/macos-enclave/main.swift":                true,
+	"helpers/tpm2-signer.mjs":                         true,
+	"hq/README.md":                                    true,
+	"hq/cooperative-reservation.mjs":                  true,
+	"scripts/build-interim-release.mjs":               true,
+	"scripts/build-macos-standalone-signer.sh":        true,
+	"scripts/check-macos-enclave.swift":               true,
+	"scripts/ci-build-darwin-artifact.sh":             true,
+	"scripts/darwin-broker.mjs":                       true,
+	"sdk/README.md":                                   true,
+	"sdk/conformance.mjs":                             true,
+	"sdk/index.mjs":                                   true,
+	"sdk/local-socket-client.mjs":                     true,
+	"sdk/local-socket-lines.mjs":                      true,
+	"sdk/member-client.mjs":                           true,
+	"sdk/member-query-conformance.mjs":                true,
+	"sdk/member-query.mjs":                            true,
+	"sdk/member-session.mjs":                          true,
+	"sdk/package.json":                                true,
+	"sdk/test-host.mjs":                               true,
+	"sdk/wire/index.mjs":                              true,
+}
+
+func stage2aHSourceRuntimeTreeV3(path string) bool {
+	return strings.HasPrefix(path, "governance/") || strings.HasPrefix(path, "helpers/") ||
+		strings.HasPrefix(path, "hq/") || strings.HasPrefix(path, "scripts/") ||
+		strings.HasPrefix(path, "sdk/") || strings.HasPrefix(path, "vendor/plugins/")
+}
+
 // Pins here are byte expectations, not proof of who approved them. The owner
 // plan installer must authenticate their origin before calling this verifier.
 type stage2aHSourceReleasePinsV3 struct {
@@ -225,6 +265,11 @@ func stage2aVerifyHSourceBytesV3(invRaw, sourceManifest []byte,
 			}
 			seenSource[path] = true
 		}
+		if stage2aHSourceRuntimeTreeV3(path) && !stage2aHSourceNonInstalledV3[path] {
+			if _, installed := selected[path]; !installed || !seenSource[path] {
+				return invalid
+			}
+		}
 		if file, ok := selected[path]; ok {
 			mode := "0440"
 			if header.Mode == 0755 {
@@ -242,6 +287,17 @@ func stage2aVerifyHSourceBytesV3(invRaw, sourceManifest []byte,
 			}
 			contracts[relative] = stage2aHSourceContractRowV3{
 				SHA256: strings.TrimPrefix(digest, "sha256:"), Size: header.Size, Mode: mode}
+		}
+	}
+	// The full Contracts digest proves the raw archive, but every nonexcluded
+	// Contracts file must also be in H's selected rows. Otherwise an owner-plan
+	// inventory could omit a runtime schema while keeping the full digest valid.
+	for path := range contracts {
+		releasePath := "vendor/soul-contracts/" + path
+		_, selectedRuntime := selected[releasePath]
+		if !seenSource[releasePath] ||
+			selectedRuntime == containsHSourceOmissionV3(pins.Excluded, releasePath) {
+			return invalid
 		}
 	}
 	if len(seenSource) != len(want) || len(contracts) != pins.ContractsFullFiles ||
@@ -284,9 +340,11 @@ func stage2aVerifyHSourceBytesV3(invRaw, sourceManifest []byte,
 	if err != nil || fullDigest != pins.ContractsFullDigest {
 		return invalid
 	}
-	runtime := make(map[string]stage2aHSourceContractRowV3, len(contracts))
+	// Derive the runtime digest from rows actually selected for H. The raw
+	// archive hash and per-row checks above bind these bytes to that inventory.
+	runtime := make(map[string]stage2aHSourceContractRowV3, len(selected))
 	for path, row := range contracts {
-		if !containsHSourceOmissionV3(pins.Excluded, "vendor/soul-contracts/"+path) {
+		if _, installed := selected["vendor/soul-contracts/"+path]; installed {
 			runtime[path] = row
 		}
 	}

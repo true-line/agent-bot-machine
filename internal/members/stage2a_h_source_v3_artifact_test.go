@@ -151,6 +151,51 @@ func TestStage2aHSourceV3RawArtifactClosure(t *testing.T) {
 	if err := check(archive, node, pins); err != nil {
 		t.Fatalf("authentic H source refused: %v", err)
 	}
+	// A full release digest does not justify omitting a runtime schema from H.
+	// Even a mutually repinned inventory and source manifest must refuse it.
+	if inv.Files[len(inv.Files)-1].Path != schemaPath || sourceRows[len(sourceRows)-1].Path != schemaPath {
+		t.Fatal("schema must be the final synthetic source row")
+	}
+	missingSchemaInv := inv
+	missingSchemaInv.Directories = append([]stage2aDomainDirectoryV3(nil), inv.Directories[:3]...)
+	missingSchemaInv.Files = append([]stage2aDomainFileV3(nil), inv.Files[:len(inv.Files)-1]...)
+	missingSchemaInv.TotalBytes -= uint64(len(schema))
+	missingSchemaInvRaw := stage2aHSourceTestCanonicalV3(t, missingSchemaInv)
+	_, missingSchemaInvDigest, err := stage2aDomainInventoryDigestV3(missingSchemaInvRaw)
+	if err != nil {
+		t.Fatalf("missing-schema inventory must be valid by itself: %v", err)
+	}
+	missingSchemaManifest := stage2aHSourceTestCanonicalV3(t, sourceRows[:len(sourceRows)-1])
+	missingSchemaPins := pins
+	missingSchemaPins.InventoryDigest = missingSchemaInvDigest
+	missingSchemaPins.SourceManifestSHA256 = stage2aHSourceTestDigestV3(missingSchemaManifest)
+	if err := stage2aVerifyHSourceBytesV3(missingSchemaInvRaw, missingSchemaManifest,
+		bytes.NewReader(archive), int64(len(archive)), bytes.NewReader(node), int64(len(node)), missingSchemaPins); err == nil {
+		t.Fatal("accepted a missing runtime Contracts schema under repinned inventory and manifest")
+	}
+	// The release also must not silently omit an HQ runtime module from
+	// both the reviewed source projection and the installed inventory.
+	if inv.Files[3].Path != "hq/index.mjs" || sourceRows[2].Path != "hq/index.mjs" {
+		t.Fatal("HQ module must be the selected synthetic source row")
+	}
+	missingHQInv := inv
+	missingHQInv.Files = append(append([]stage2aDomainFileV3(nil), inv.Files[:3]...), inv.Files[4:]...)
+	missingHQInv.Directories = append(append([]stage2aDomainDirectoryV3(nil), inv.Directories[:2]...), inv.Directories[3:]...)
+	missingHQInv.TotalBytes -= uint64(len(entry))
+	missingHQInvRaw := stage2aHSourceTestCanonicalV3(t, missingHQInv)
+	_, missingHQInvDigest, err := stage2aDomainInventoryDigestV3(missingHQInvRaw)
+	if err != nil {
+		t.Fatalf("missing-HQ inventory must be valid by itself: %v", err)
+	}
+	missingHQRows := append(append([]stage2aHSourceManifestRowV3(nil), sourceRows[:2]...), sourceRows[3:]...)
+	missingHQManifest := stage2aHSourceTestCanonicalV3(t, missingHQRows)
+	missingHQPins := pins
+	missingHQPins.InventoryDigest = missingHQInvDigest
+	missingHQPins.SourceManifestSHA256 = stage2aHSourceTestDigestV3(missingHQManifest)
+	if err := stage2aVerifyHSourceBytesV3(missingHQInvRaw, missingHQManifest,
+		bytes.NewReader(archive), int64(len(archive)), bytes.NewReader(node), int64(len(node)), missingHQPins); err == nil {
+		t.Fatal("accepted a missing HQ module under repinned inventory and manifest")
+	}
 	changed := map[string][]byte{}
 	for path, raw := range files {
 		changed[path] = raw
