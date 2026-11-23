@@ -1236,6 +1236,23 @@ adapter does not remove an account still used by another adapter. The account
 and its home are kept and reported, never deleted by this tool: the home may
 hold work.
 
+The Machine v3 H/R signer first enforces a narrow fixed-purpose envelope
+boundary. It accepts only a producer-created verified A-input token and runs
+under the secure A real/effective UID and GID. It signs exact RFC 8785 JCS
+payload bytes using Ed25519 over ASCII purpose, NUL, payload, verifies its own
+signature against the independently enrolled A public key, and emits the
+purpose-separated H descriptor digest for the Soul plan and reservation. Its
+read-only verifier refuses wrong purpose, key, version, noncanonical bytes and
+malformed base64url. The H descriptor signer additionally reopens the sealed
+H tree and sibling sidecar, compares the final H ref and selected runtime,
+guard and Ruby helper rows with the verified H install plan, checks the exact
+outer and Node argv, and requires the signer key to match the existing
+root-owned `SoulAuthorityPin`. This cryptographic component does not make a launch
+eligible: the A-owned H/R recheck, authenticated owner plan and release map,
+fixed H descriptor publication, HQ preloader, one-use claim and physical run
+must all be composed before a positive start. The old v2 reservation retains
+its old purpose and remains closed for protected starts.
+
 ## Open questions for the owner
 
 | Question                                    | Recommendation                                                                                                            |
@@ -1474,6 +1491,12 @@ atomic challenge claim and physical host evidence.
   aliased snapshot roots, mismatched protected bridge start and reservation,
   and cooperative gate substitution refuse. This is verifier evidence only;
   no fixture counts as physical T01/T02/T03/T21 or a release qualification.
+- The v3 envelope signer runs only with the matching A real/effective identity
+  and a producer-created verified token; wrong A identity, signer, purpose,
+  contract version, duplicate keys and noncanonical bytes refuse. A matching
+  signature is a component result, not an owner-plan or installed-H/R verdict.
+  The H descriptor validator also refuses a substituted host, release
+  attestation, guard file, launch argv, installed Node row or authority key.
 - A synthetic v3 qualification and Statement pair agrees on exact references
   and subject digest. Old purpose, missing or reused completed-run reference,
   future qualification date and expiry at verification time refuse. These
@@ -1538,6 +1561,10 @@ completed-run/report producer out of this portable preflight.
    `TestMeasuredV3StatementAndQualificationParsing`; they do not replace the
    separately authenticated completed-run, signing-time or installed-byte
    checks.
+7. For the fixed Machine v3 envelope and H descriptor components, run `go test
+   ./internal/members -run 'TestStage2a(HDescriptor|V3)' -count=1`, then the
+   full Go and vet gates. Do not wire a positive route until the H/R producer
+   and owner-plan consumer can supply verified inputs under the A account.
 
 ### Opt-in Linux HQ service
 
