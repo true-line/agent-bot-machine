@@ -42,9 +42,7 @@ func openStage2aQualificationObserverV3(ctx context.Context,
 	default:
 		return nil, nil, errQualificationAdmissionUnavailable
 	}
-	if assignment.MachineUID != install.AdminUID || assignment.HQUID != install.HQGID ||
-		assignment.RunnerGID != install.RunnerGID || assignment.BridgeGID != install.BridgeGID ||
-		assignment.PlanDigest != install.Review.InstalledPlanDigest || assignment.StartID != begin.StartID ||
+	if !stage2aQualificationAssignmentMatchesQInstall(assignment, install, begin.StartID) ||
 		observeStage2aQualificationHost(ctx, install.Review.HostUUID) != nil ||
 		verifyQualificationFile(install.Review.TestPlan) != nil || verifyQualificationFile(install.Review.Provider) != nil {
 		return nil, nil, errQualificationAdmissionUnavailable
@@ -80,4 +78,11 @@ func openStage2aQualificationObserverV3(ctx context.Context,
 		return nil, nil, errQualificationAdmissionUnavailable
 	}
 	return session, wait, nil
+}
+
+func stage2aQualificationAssignmentMatchesQInstall(assignment stage2aReservationAssignmentV3,
+	install stage2aQualificationQInstall, startID string) bool {
+	return assignment.MachineUID == install.AdminUID && assignment.HQUID == install.HQUID &&
+		assignment.RunnerGID == install.RunnerGID && assignment.BridgeGID == install.BridgeGID &&
+		assignment.PlanDigest == install.Review.InstalledPlanDigest && assignment.StartID == startID
 }

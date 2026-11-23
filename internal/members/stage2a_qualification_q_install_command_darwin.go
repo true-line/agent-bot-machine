@@ -51,6 +51,10 @@ func RunStage2aQualificationQInstall(deps ApplyDeps, args []string) error {
 	if plan.Install.LauncherSHA256 != plan.LauncherSHA256 {
 		return errStage2aReservationAuthority
 	}
+	hq, found, err := (OSHost{}).Account(DarwinHQAccount)
+	if err != nil || !found || hq.UID != plan.Install.HQUID || hq.GID != plan.Install.HQGID {
+		return errStage2aReservationAuthority
+	}
 	install, err := json.Marshal(plan.Install)
 	if err != nil {
 		return err
