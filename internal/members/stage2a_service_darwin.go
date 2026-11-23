@@ -66,6 +66,7 @@ type stage2aLiveReservation struct {
 	memberReadyEnvelope            []byte
 	memberReadyExpires             time.Time
 	memberHQFinalizationSHA256     string
+	memberHQFinalizationRaw        []byte
 	protectedQ                     *stage2aProtectedQRun
 	liveSequence                   uint64
 	hello                          *stage2aHelloState

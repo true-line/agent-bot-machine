@@ -20,8 +20,9 @@ func TestStage2aMemberRuntimeRequestRequiresPreviousEnvelopeOnRenewal(t *testing
 			ChallengeNonceBase64URL: base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
 			PriorExpiresAt:          time.Now().UTC().Add(5 * time.Second).Format(time.RFC3339Nano),
 		},
-		ReadyEnvelopeSHA256:  "sha256:" + strings.Repeat("c", 64),
-		HQFinalizationSHA256: "sha256:" + strings.Repeat("d", 64),
+		ReadyEnvelopeSHA256:     "sha256:" + strings.Repeat("c", 64),
+		HQFinalizationSHA256:    stage2aReservationSHA256([]byte("{}")),
+		HQFinalizationBase64URL: base64.RawURLEncoding.EncodeToString([]byte("{}")),
 	}
 	parse := func() error {
 		t.Helper()
@@ -52,5 +53,10 @@ func TestStage2aMemberRuntimeRequestRequiresPreviousEnvelopeOnRenewal(t *testing
 	q.PreviousLeaseEnvelopeSHA256 = &previous
 	if err := parse(); err == nil {
 		t.Fatal("renewal accepted an invalid previous digest")
+	}
+	previous = "sha256:" + strings.Repeat("e", 64)
+	q.HQFinalizationBase64URL = base64.RawURLEncoding.EncodeToString([]byte(`{"changed":true}`))
+	if err := parse(); err == nil {
+		t.Fatal("renewal accepted changed H bytes under old digest")
 	}
 }

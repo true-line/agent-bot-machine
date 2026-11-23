@@ -3,6 +3,7 @@
 package members
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"time"
@@ -71,6 +72,11 @@ func (s *Stage2aService) MemberRuntime(hqUID int, epoch string,
 		q.HQFinalizationSHA256 != r.memberHQFinalizationSHA256 ||
 		q.ReadyEnvelopeSHA256 != stage2aReservationSHA256(r.memberReadyEnvelope) ||
 		q.ChildObservationEnvelopeSHA256 != stage2aReservationSHA256(r.memberChildObservationEnvelope) {
+		return reply, errStage2aReservationAuthority
+	}
+	hqFinalizationRaw, hqFinalizationErr := stage2aDecodeHQFinalizationRecord(
+		q.HQFinalizationBase64URL, q.HQFinalizationSHA256)
+	if hqFinalizationErr != nil || !bytes.Equal(hqFinalizationRaw, r.memberHQFinalizationRaw) {
 		return reply, errStage2aReservationAuthority
 	}
 	key := s.key.Public().(ed25519.PublicKey)

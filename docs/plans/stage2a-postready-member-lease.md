@@ -31,9 +31,14 @@ T01, T03 or T21 evidence.
   the child. A separate B runtime lease and verified H/R/B consumer path are
   required before a protected end-to-end launch is enabled.
 - The member runtime lease requires the digest of H's separately committed,
-  Ready-bound two-member finalization. A's digest cache has no producer until
-  authenticated paired intake and durable rechecks for the exact H record
-  exist. It stays empty and the route refuses in this slice.
+  Ready-bound two-member finalization. H fsyncs and reopens its canonical
+  record before sending the exact bytes and digest through a distinct paired
+  Machine intake. A checks its own signed assignment, child observation,
+  aggregate Ready, B authority, both arm rows and live kernel roles, then
+  caches the exact H bytes and signs a purpose-separated acknowledgement.
+  H reopens the durable record on each renewal and sends its exact bytes;
+  A compares them with the cached record before signing a member lease.
+  This handoff does not attest B's private relay socket birthtime.
 
 ## Acceptance
 
@@ -43,6 +48,9 @@ T01, T03 or T21 evidence.
   expiry, sequence replay and owner approval cutoff.
 - The daemon routes the new verb only through paired Stage 2a authority and
   refuses it when that authority is unavailable.
+- The synthetic replay from soul-contracts #89 proves the exact canonical H
+  intake, A acknowledgement signature and reopened-byte renewal wire shape;
+  altered H bytes under the committed digest refuse.
 - A real two-member protected run must demonstrate both wrappers and B
   renewing under the same owner-approved installation, followed by prompt
   cutoff on stop and safe retirement. Fixture checks cannot satisfy that gate.
@@ -51,7 +59,9 @@ T01, T03 or T21 evidence.
 
 Run `GOTOOLCHAIN=go1.27.3 go test -p 1 ./internal/members ./internal/daemon`
 and `GOTOOLCHAIN=go1.27.3 go vet ./internal/members ./internal/daemon` in the
-isolated Machine worktree. Record its exact signed head and hosted CI. The
+isolated Machine worktree. The checked-in synthetic replay is copied from
+soul-contracts #89 head `c8696d21aa704ebc73445693a91c5552b0044d91`.
+Record the Machine exact signed head and hosted CI. The
 protected boundary is unverified until an installed release and same-run
 physical evidence cover both harness accounts and direct, sibling and stopped
 access refusal.
