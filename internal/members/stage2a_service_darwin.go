@@ -160,6 +160,11 @@ func (s *Stage2aService) Reserve(hqUID int, epoch string, request Stage2aReserve
 		a.StartID != request.StartID || a.LaunchID != request.LaunchID || a.PlanDigest != request.PlanDigest {
 		return reply, errStage2aReservationAuthority
 	}
+	// A's installed opt-in consumes Q and captures the baseline after the
+	// durable reservation, before a bridge proof or live runner is published.
+	if err := captureStage2aProtectedBaseline(hqUID, epoch, guard, got, result, key, s.sign); err != nil {
+		return reply, err
+	}
 	// Role plumbing still uses a legacy field projection. The guard authenticates
 	// the full v3 reservation and mode before any role can execute.
 	payload := guard.payload

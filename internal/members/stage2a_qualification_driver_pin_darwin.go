@@ -23,6 +23,8 @@ type stage2aDriverReview struct {
 	Argv           []string          `json:"owner_driver_argv"`
 	Policy         qualificationFile `json:"owner_driver_policy"`
 	Authority      qualificationFile `json:"owner_driver_authority"`
+	CohortID       string            `json:"owner_driver_cohort_id"`
+	SuiteRevision  string            `json:"owner_driver_suite_revision"`
 	AuthorityArgv  []string          `json:"owner_driver_authority_argv"`
 }
 

@@ -27,6 +27,9 @@ type stage2aDriverReceipt struct {
 	GID                      uint32                `json:"gid"`
 	StartSeconds             int64                 `json:"start_seconds"`
 	StartMicros              int32                 `json:"start_micros"`
+	QIndexSHA256             string                `json:"q_index_sha256,omitempty"`
+	QEOFSHA256               string                `json:"q_eof_sha256,omitempty"`
+	QWireSHA256              string                `json:"q_wire_sha256,omitempty"`
 	QRequestFramesSHA256     string                `json:"q_request_frames_sha256"`
 	QObservationFramesSHA256 string                `json:"q_observation_frames_sha256"`
 	CaseFramesBase64URL      string                `json:"case_frames_base64url"`

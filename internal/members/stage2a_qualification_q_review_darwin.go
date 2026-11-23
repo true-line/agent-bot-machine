@@ -17,6 +17,7 @@ type stage2aQualificationQReview struct {
 	InstalledPlanDigest string            `json:"installed_plan_digest"`
 	TestPlan            qualificationFile `json:"test_plan"`
 	Provider            qualificationFile `json:"provider"`
+	DriverBaselineOnly  bool              `json:"driver_baseline_only,omitempty"`
 }
 
 var stage2aQualificationUUID = regexp.MustCompile(`^[0-9A-F]{8}-(?:[0-9A-F]{4}-){3}[0-9A-F]{12}$`)

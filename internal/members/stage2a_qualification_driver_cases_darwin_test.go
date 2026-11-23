@@ -226,6 +226,38 @@ func TestStage2aQualificationDriverSignsExactQJoin(t *testing.T) {
 		func(raw []byte) ([]byte, error) { return ed25519.Sign(private, raw), nil }); err == nil {
 		t.Fatal("receipt issued over substituted capture bytes")
 	}
+	objects := stage2aQualificationPreSignArtifactsV1{
+		WireSHA256:       stage2aQualificationSHA256([]byte("wire")),
+		IndexSHA256:      stage2aQualificationSHA256([]byte("index")),
+		EOFReceiptSHA256: stage2aQualificationSHA256([]byte("eof")),
+	}
+	archive, err := marshalStage2aDriverArchive(stage2aDriverPhaseCapture{phase, review, peer, trace},
+		result, objects, now, key, func(raw []byte) ([]byte, error) { return ed25519.Sign(private, raw), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sealed struct {
+		Receipt  string                         `json:"receipt_base64url"`
+		Evidence []stage2aDriverArchiveEvidence `json:"evidence"`
+	}
+	if json.Unmarshal(archive, &sealed) != nil || len(sealed.Evidence) != len(trace) ||
+		sealed.Evidence[0].SourceBase64URL != base64.RawURLEncoding.EncodeToString(trace[0].artifact) ||
+		sealed.Evidence[0].WitnessBase64URL != base64.RawURLEncoding.EncodeToString(trace[0].osWitness) {
+		t.Fatal("driver archive did not retain the exact source and witness bytes")
+	}
+	envelope, err := base64.RawURLEncoding.Strict().DecodeString(sealed.Receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawPayload, err := verifyStage2aStoredARecordV3(envelope, stage2aDriverReceiptPurpose, 1, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var archivedReceipt stage2aDriverReceipt
+	if json.Unmarshal(rawPayload, &archivedReceipt) != nil || archivedReceipt.QWireSHA256 != objects.WireSHA256 ||
+		archivedReceipt.QEOFSHA256 != objects.EOFReceiptSHA256 || archivedReceipt.QIndexSHA256 != objects.IndexSHA256 {
+		t.Fatal("signed archived capture did not bind the exact Q pre-sign objects")
+	}
 	peer.kernel.StartSeconds++
 	if verifyStage2aDriverReceipt(signed, result, phase, review, peer, trace, key) == nil {
 		t.Fatal("another driver generation inherited the capture")
