@@ -14,6 +14,7 @@ import (
 type qFixtureV3 struct {
 	wire, index, eof, reservation []byte
 	key                           ed25519.PublicKey
+	private                       ed25519.PrivateKey
 	now                           time.Time
 }
 
@@ -53,8 +54,18 @@ func qSignFixtureV3(t *testing.T, value any, purpose string, version int, priv e
 	})
 }
 
-func makeQFixtureV3(t *testing.T, observationSequence int, cleanEOF bool, launchMatches bool) qFixtureV3 {
+func makeQFixtureV3(t *testing.T, observationSequence int, cleanEOF bool, launchMatches bool, roleUIDs ...int) qFixtureV3 {
+	return makeQFixtureContractV3(t, observationSequence, cleanEOF, launchMatches, "machine/v2", 2, roleUIDs...)
+}
+
+func makeQFixtureContractV3(t *testing.T, observationSequence int, cleanEOF bool, launchMatches bool, contract string, version int, roleUIDs ...int) qFixtureV3 {
 	t.Helper()
+	runnerUID, bridgeUID := 310, 311
+	if len(roleUIDs) == 2 {
+		runnerUID, bridgeUID = roleUIDs[0], roleUIDs[1]
+	} else if len(roleUIDs) != 0 {
+		t.Fatal("role UID fixture requires both R and B")
+	}
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -69,11 +80,33 @@ func makeQFixtureV3(t *testing.T, observationSequence int, cleanEOF bool, launch
 	const profile = "managed-protected"
 	challenge := bytes.Repeat([]byte{0x42}, 32)
 	launch := digest([]byte("launch challenge"))
+	snapshot := func(root, inode string) map[string]any {
+		return map[string]any{
+			"root_path": root, "device": "1", "inode": inode, "generation": "1", "birthtime_ns": "1000",
+			"owner_uid": 501, "owner_gid": 20, "mode": "0555",
+		}
+	}
 	reservation := qSignFixtureV3(t, map[string]any{
-		"contract": "machine/v1", "kind": "stage2a-reservation", "schema_version": 1,
+		"contract": contract, "kind": "stage2a-reservation", "schema_version": version,
 		"admission_challenge_sha256": launch, "host_id": host,
-		"assignment":          map[string]any{"installation_id": install, "soul_id": soul, "start_id": start},
-		"measurement_binding": map[string]any{"installation_id": install, "soul_id": soul, "start_id": start, "host_id": host, "profile_in_force": profile},
+		"assignment": map[string]any{"installation_id": install, "soul_id": soul, "start_id": start,
+			"launch_id": "ln_1234567890abcdef12345678", "plan_id": "plan-20261122T120000Z-abcd",
+			"plan_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+			"hq_epoch":    "2222222222222222222222222222222222222222222222222222222222222222",
+			"runner_uid":  runnerUID, "bridge_uid": bridgeUID},
+		"measurement_binding": map[string]any{
+			"contract": "machine/v2", "kind": "stage2a-measurement-binding", "schema_version": 2,
+			"installation_id": install, "soul_id": soul, "start_id": start, "launch_id": "ln_1234567890abcdef12345678",
+			"host_id": host, "hq_epoch": "2222222222222222222222222222222222222222222222222222222222222222",
+			"plan_id":               "plan-20261122T120000Z-abcd",
+			"installed_plan_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+			"package_sha256":        "3333333333333333333333333333333333333333333333333333333333333333",
+			"soul_artifact_sha256":  "4444444444444444444444444444444444444444444444444444444444444444",
+			"profile_in_force":      profile, "claimed_definition_digest": digest([]byte("definition")),
+			"definition_measurement":   digest([]byte("definition bytes")),
+			"launch_input_measurement": digest([]byte("launch inputs")),
+			"snapshots":                map[string]any{"definition": snapshot("/tmp/definition", "2"), "launch_inputs": snapshot("/tmp/launch-inputs", "3")},
+		},
 	}, qReservationPurposeV3, 2, priv)
 	reservationSHA := digest(reservation)
 	begin := qFrameFixtureV3(t, map[string]any{
@@ -141,7 +174,7 @@ func makeQFixtureV3(t *testing.T, observationSequence int, cleanEOF bool, launch
 		ObservationCount: 1, CleanEOFObserved: cleanEOF, NoTrailingBytes: true,
 		EOFObservedAt: "2026-11-22T12:00:03Z", IssuedAt: "2026-11-22T12:00:04Z",
 	}, QFinishedEOFPurposeV3, 1, priv)
-	return qFixtureV3{wire: wire, index: index, eof: eof, reservation: reservation, key: pub,
+	return qFixtureV3{wire: wire, index: index, eof: eof, reservation: reservation, key: pub, private: priv,
 		now: time.Date(2026, 11, 22, 12, 0, 10, 0, time.UTC)}
 }
 
@@ -158,6 +191,7 @@ func TestVerifyQPreSignV3(t *testing.T) {
 		{"coherently signed wrong sequence", makeQFixtureV3(t, 2, true, true)},
 		{"signed missing EOF", makeQFixtureV3(t, 1, false, true)},
 		{"signed launch mismatch", makeQFixtureV3(t, 1, true, false)},
+		{"signed legacy reservation", makeQFixtureContractV3(t, 1, true, true, "machine/v1", 1)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

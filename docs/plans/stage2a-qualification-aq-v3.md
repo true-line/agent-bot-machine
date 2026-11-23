@@ -94,7 +94,9 @@ enrolled A Ed25519 key. It verifies both distinct signature purposes, canonical
 bounded payloads, the reservation's launch challenge, the A-signed one-use Q
 socket and kernel identity fields, all length-prefixed frames and ordered transcript hashes,
 request/observation pairing, and a signed clean EOF. It returns selectors and
-digests for later joins, without a gate verdict. The caller must still bind
+digests for later joins, without a gate verdict. Its reservation join requires
+the secure-admin `machine/v2` contract and schema version 2 used by v3 reports;
+the legacy root-owned `machine/v1` record is refused. The caller must still bind
 these digests to an A-signed physical segment and the host report, then verify
 installed inputs, raw ACP/OS evidence, and physical results before acceptance.
 
@@ -156,6 +158,17 @@ inputs, and check the gate-specific stimulus inventory. Field shape or an
 A signature by itself grants no gate credit. The producer, capture formats,
 T21 segment form, and gate-specific inventory remain open; public v3
 acceptance stays closed.
+
+The portable `ResolveSignedProtectedSegmentsV3` component follows the signed
+protected report's T01/T02/T03 gate references, verifies each completed and
+stopped segment manifest and A attestation, resolves all ten exact local blob
+references, checks the distinct A reservation/B finalization/idle-stop chain,
+and joins the signed Q wire/index/EOF through `VerifyQPreSignV3`. It refuses
+changed, missing or wrongly signed bytes. It returns no physical gate verdict:
+the ACP/OS blobs and installed-input inventory still need fixed capture
+schemas and independent measured-byte checks, and gate attempts and required
+negative cases still need authenticated enumeration. T21 needs its separate
+cooperative R-only form. The public v3 gate remains unqualified.
 
 The separate `mm-qualification-verify-release --host-v3` command parses the
 supplied owner root, policy, trusted Sigstore roots, exact release and Souls

@@ -348,7 +348,7 @@ func qReservationJoinV3(envelope []byte, key ed25519.PublicKey, idx qIndexV3) er
 			Profile        string `json:"profile_in_force"`
 		} `json:"measurement_binding"`
 	}
-	if json.Unmarshal(payload, &p) != nil || p.Contract != "machine/v1" || p.Kind != "stage2a-reservation" || p.SchemaVersion != 1 || p.AdmissionChallengeSHA256 != idx.LaunchChallengeSHA256 || p.HostID != idx.HostID || p.Assignment.InstallationID != idx.InstallationID || p.Assignment.SoulID != idx.SoulID || p.Assignment.StartID != idx.StartID || p.MeasurementBinding.InstallationID != idx.InstallationID || p.MeasurementBinding.SoulID != idx.SoulID || p.MeasurementBinding.StartID != idx.StartID || p.MeasurementBinding.HostID != idx.HostID || p.MeasurementBinding.Profile != idx.Profile {
+	if json.Unmarshal(payload, &p) != nil || p.Contract != "machine/v2" || p.Kind != "stage2a-reservation" || p.SchemaVersion != 2 || p.AdmissionChallengeSHA256 != idx.LaunchChallengeSHA256 || p.HostID != idx.HostID || p.Assignment.InstallationID != idx.InstallationID || p.Assignment.SoulID != idx.SoulID || p.Assignment.StartID != idx.StartID || p.MeasurementBinding.InstallationID != idx.InstallationID || p.MeasurementBinding.SoulID != idx.SoulID || p.MeasurementBinding.StartID != idx.StartID || p.MeasurementBinding.HostID != idx.HostID || p.MeasurementBinding.Profile != idx.Profile {
 		return ErrUnqualified
 	}
 	return nil
