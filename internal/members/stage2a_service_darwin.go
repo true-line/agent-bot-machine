@@ -32,30 +32,42 @@ type Stage2aService struct {
 }
 
 type stage2aLiveReservation struct {
-	digest, policyDigest string
-	envelope             []byte
-	request              SoulRunRequest
-	payload              stage2aReservationPayload
-	payloadV3            []byte
-	runModeV3            stage2aReservationRunModeV3
-	runtimeRefV3         stage2aDomainInventoryRefV3
-	proofDigest          string
-	bridgeProof          [32]byte
-	bridgeAssignment     []byte
-	finalizationEnvelope []byte
-	bindReceiptSHA256    string
-	runnerPID, bridgePID int
-	childLauncherPID     int
-	runnerProcess        soulKernelProcessSnapshot
-	bridgeProcess        soulKernelProcessSnapshot
-	childLauncherProcess soulKernelProcessSnapshot
-	childGrantSHA256     string
-	childGrantExpiresAt  time.Time
-	childPID             int
-	childProcess         soulKernelProcessSnapshot
-	childReceiptEnvelope []byte
-	liveSequence         uint64
-	hello                *stage2aHelloState
+	digest, policyDigest           string
+	envelope                       []byte
+	request                        SoulRunRequest
+	payload                        stage2aReservationPayload
+	payloadV3                      []byte
+	runModeV3                      stage2aReservationRunModeV3
+	runtimeRefV3                   stage2aDomainInventoryRefV3
+	proofDigest                    string
+	bridgeProof                    [32]byte
+	bridgeAssignment               []byte
+	finalizationEnvelope           []byte
+	bindReceiptSHA256              string
+	runnerPID, bridgePID           int
+	childLauncherPID               int
+	runnerProcess                  soulKernelProcessSnapshot
+	bridgeProcess                  soulKernelProcessSnapshot
+	childLauncherProcess           soulKernelProcessSnapshot
+	childGrantSHA256               string
+	childGrantExpiresAt            time.Time
+	childPID                       int
+	childProcess                   soulKernelProcessSnapshot
+	childReceiptEnvelope           []byte
+	twoMemberChildren              *stage2aTwoMemberObservation
+	memberSetAssignmentEnvelope    []byte
+	memberSetAssignmentExpires     time.Time
+	memberBAuthorityEnvelope       []byte
+	provisionalHQMap               []byte
+	provisionalHQMapSHA256         string
+	memberChildGrants              map[string]stage2aMemberChildGrant
+	memberChildObservationEnvelope []byte
+	memberChildObservationExpires  time.Time
+	memberReadyEnvelope            []byte
+	memberReadyExpires             time.Time
+	protectedQ                     *stage2aProtectedQRun
+	liveSequence                   uint64
+	hello                          *stage2aHelloState
 }
 
 func NewStage2aService(key ed25519.PrivateKey) *Stage2aService {
@@ -124,10 +136,16 @@ func (s *Stage2aService) Lookup(hqUID int, epoch string, q Stage2aLookupRequest)
 		if err != nil || !bytes.Equal(raw, runtime.PolicyRaw) || p.Runner.PackageRoot != q.PackagePath || reply.InstallationID != "" {
 			return Stage2aLookupReply{}, errStage2aReservationAuthority
 		}
+		preparedStart, err := stage2aQualificationPreparedStart(index.Binding.InstallationID,
+			p.Binding.InstalledPlanDigest)
+		if err != nil {
+			return Stage2aLookupReply{}, errStage2aReservationAuthority
+		}
 		reply = Stage2aLookupReply{
 			InstallationID: p.Binding.InstallationID, PlanID: p.Binding.PlanID,
 			PlanDigest:    p.Binding.InstalledPlanDigest,
 			RunnerAccount: p.Runner.Account, BridgeAccount: p.Bridge.Account,
+			QualificationStartID: preparedStart,
 		}
 	}
 	if reply.InstallationID == "" {
@@ -141,6 +159,10 @@ func (s *Stage2aService) Reserve(hqUID int, epoch string, request Stage2aReserve
 	defer s.mu.Unlock()
 	var reply Stage2aReserveReply
 	if len(s.key) != ed25519.PrivateKeySize || s.reserveV3 == nil || epoch != request.HQEpoch || len(s.active) >= 128 {
+		return reply, errStage2aReservationAuthority
+	}
+	preparedStart, err := stage2aQualificationPreparedStart(request.InstallationID, request.PlanDigest)
+	if err != nil || preparedStart != "" && request.StartID != preparedStart {
 		return reply, errStage2aReservationAuthority
 	}
 	// The only positive route supplies authority from the fixed offline A
@@ -162,8 +184,27 @@ func (s *Stage2aService) Reserve(hqUID int, epoch string, request Stage2aReserve
 	}
 	// A's installed opt-in consumes Q and captures the baseline after the
 	// durable reservation, before a bridge proof or live runner is published.
-	if err := captureStage2aProtectedBaseline(hqUID, epoch, guard, got, result, key, s.sign); err != nil {
+	// Keep lease renewal for other active starts responsive while Q and the
+	// reviewed owner driver perform their bounded local exchange.
+	var protectedQ *stage2aProtectedQRun
+	err = func() error {
+		s.mu.Unlock()
+		defer s.mu.Lock()
+		var captureErr error
+		protectedQ, captureErr = captureStage2aProtectedRun(hqUID, epoch, guard, got, result, key, s.sign)
+		return captureErr
+	}()
+	if err != nil {
 		return reply, err
+	}
+	installed := false
+	defer func() {
+		if !installed {
+			protectedQ.abort()
+		}
+	}()
+	if len(s.active) >= 128 || s.active[got.sha256] != nil {
+		return reply, errStage2aReservationAuthority
 	}
 	// Role plumbing still uses a legacy field projection. The guard authenticates
 	// the full v3 reservation and mode before any role can execute.
@@ -182,7 +223,9 @@ func (s *Stage2aService) Reserve(hqUID int, epoch string, request Stage2aReserve
 	s.active[got.sha256] = &stage2aLiveReservation{
 		digest: got.sha256, policyDigest: result.PolicyDigest, envelope: got.envelope,
 		payload: payload, payloadV3: result.Expected, runModeV3: result.Mode, runtimeRefV3: guard.r, request: req, proofDigest: stage2aReservationSHA256(proof[:]), bridgeProof: proof,
+		protectedQ: protectedQ,
 	}
+	installed = true
 	return Stage2aReserveReply{EnvelopeBase64URL: stage2aEncodeEnvelope(got.envelope), SHA256: got.sha256}, nil
 }
 
@@ -262,6 +305,12 @@ func (s *Stage2aService) Exec(hqUID int, epoch, digest, role, nonce string, pid 
 			ReservationV3:                r.payloadV3,
 			ReservationRunModeV3:         string(r.runModeV3),
 		}
+		memberSet, err := stage2aRunnerMemberSetFromA(r, p, invocation,
+			s.key.Public().(ed25519.PublicKey), time.Now())
+		if err != nil {
+			return reply, errStage2aReservationAuthority
+		}
+		invocation.RunnerExec.MemberSetAssignmentEnvelopeBase64URL = memberSet
 	} else {
 		invocation.BridgeExec = &Stage2aBridgeExec{
 			Executable:          p.BridgeExecutable,

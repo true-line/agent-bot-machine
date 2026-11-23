@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,7 @@ type stage2aHelloState struct {
 	helloSHA256          string
 	requestID            string
 	members              []string
+	roles                []stage2aHelloMember
 	aborted              bool
 	finalized            bool
 }
@@ -227,7 +229,8 @@ func (s *Stage2aService) HelloStart(hqUID int, epoch string, q Stage2aHelloStart
 		q.BrokerBindReceiptSHA256 != r.bindReceiptSHA256 ||
 		hello.SoulID != p.Binding.SoulID || hello.InstallationID != q.InstallationID ||
 		hello.DefinitionDigest != p.Binding.ClaimedDefinitionDigest ||
-		p.Binding.ProfileInForce != "managed-protected" {
+		p.Binding.ProfileInForce != "managed-protected" ||
+		!stage2aHelloMatchesFrozenMembers(p, hello.RequestedRoles) {
 		return reply, errStage2aReservationAuthority
 	}
 	if stage2aHelloCheckLive(r, p, q.Stage2aStopRequest) != nil {
@@ -245,6 +248,8 @@ func (s *Stage2aService) HelloStart(hqUID int, epoch string, q Stage2aHelloStart
 		members = append(members, role.MemberID)
 	}
 	slices.Sort(members)
+	roles := slices.Clone(hello.RequestedRoles)
+	slices.SortFunc(roles, func(a, b stage2aHelloMember) int { return strings.Compare(a.MemberID, b.MemberID) })
 	b := p.Binding
 	payload := Stage2aHelloStartPayload{
 		Schema: "agent-bot-machine/stage2a-hello-start/v1", Stage2aStopRequest: q.Stage2aStopRequest,
@@ -267,7 +272,7 @@ func (s *Stage2aService) HelloStart(hqUID int, epoch string, q Stage2aHelloStart
 		return reply, errStage2aReservationAuthority
 	}
 	r.hello = &stage2aHelloState{startEnvelope: envelope, helloSHA256: q.HelloPayloadSHA256,
-		requestID: hello.RequestID, members: members, peerProcess: peer}
+		requestID: hello.RequestID, members: members, roles: roles, peerProcess: peer}
 	return Stage2aHelloReply{EnvelopeBase64URL: base64.RawURLEncoding.EncodeToString(envelope),
 		SHA256: stage2aReservationSHA256(envelope)}, nil
 }
@@ -285,6 +290,7 @@ func (s *Stage2aService) HelloFinalize(hqUID int, epoch string, q Stage2aHelloFi
 	r, p, expires, err := s.current(hqUID, epoch, q.ReservationSHA256)
 	if err != nil || !stage2aMatchesStopSelectors(r, q.Stage2aStopRequest, hqUID) ||
 		r.hello == nil || r.hello.aborted || r.hello.finalized ||
+		len(r.memberSetAssignmentEnvelope) != 0 || len(p.MemberBridgeQualifications) != 0 ||
 		stage2aReservationSHA256(r.hello.startEnvelope) != q.StartEnvelopeSHA256 ||
 		!stage2aHelloExpectedMatches(q, r, p) ||
 		stage2aHelloCheckLive(r, p, q.Stage2aStopRequest) != nil ||
@@ -386,5 +392,8 @@ func (s *Stage2aService) AbortHello(hqUID int, epoch string, q Stage2aStopReques
 	} else {
 		r.hello.aborted = true
 	}
+	// A failed prelaunch Hello cannot leave the optional Q observer or its
+	// A-only owner-driver socket alive after the start is denied.
+	r.protectedQ.abort()
 	return nil
 }

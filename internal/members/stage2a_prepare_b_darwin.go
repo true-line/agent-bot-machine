@@ -114,7 +114,15 @@ func (s *Stage2aService) PrepareB(hqUID int, epoch string, q Stage2aPrepareBRequ
 		HeadersDigest: p.BridgeQualification.HeadersSHA256, ClientKeyDigest: p.BridgeQualification.ClientKeySHA256,
 		HTTPHost: p.BridgeQualification.HTTPHost, MessagesQuery: p.BridgeQualification.MessagesQuery,
 	}
-	raw, err := json.Marshal(assignment)
+	var raw []byte
+	if len(p.MemberBridgeQualifications) != 0 || len(r.memberSetAssignmentEnvelope) != 0 {
+		if len(p.MemberBridgeQualifications) != 2 || len(r.memberSetAssignmentEnvelope) == 0 {
+			return reply, errStage2aReservationAuthority
+		}
+		raw, err = s.stage2aBuildBMemberFD3(r, p, assignment, expires)
+	} else {
+		raw, err = json.Marshal(assignment)
+	}
 	if err != nil || len(raw) == 0 || len(raw) > stage2aBridgeMaxAssignment || stage2aStrictJSON(raw) != nil {
 		return reply, errStage2aReservationAuthority
 	}

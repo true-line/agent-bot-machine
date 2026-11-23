@@ -40,6 +40,8 @@ func decodeSoulProtectedLaunch(raw []byte) (*SoulProtectedLaunchInstall, error) 
 	legacy := request.Schema == stage2aInstallSchema && request.RuntimeV3 == nil
 	v3 := request.Schema == stage2aRuntimeInstallSchemaV3 && request.RuntimeV3 != nil
 	if (!legacy && !v3) || !stage2aAbsolutePath(request.ArtifactSource) ||
+		(request.OwnerPlanMemberSetSHA256 != "" &&
+			(!v3 || !stage2aPrefixedDigest.MatchString(request.OwnerPlanMemberSetSHA256))) ||
 		!stage2aAbsolutePath(request.BridgeBinarySource) ||
 		!stage2aAbsolutePath(request.DefinitionSource) || !stage2aAbsolutePath(request.LaunchInputsSource) ||
 		len(request.Policy) == 0 || len(request.Policy) > 40<<10 {
@@ -118,6 +120,8 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 	d := json.NewDecoder(bytes.NewReader(r.Policy))
 	d.DisallowUnknownFields()
 	if d.Decode(&policy) != nil || d.Decode(new(any)) != io.EOF ||
+		(r.OwnerPlanMemberSetSHA256 == "" && len(policy.MemberBridgeQualifications) != 0) ||
+		(r.OwnerPlanMemberSetSHA256 != "" && !stage2aValidMemberBridgeQualificationRows(policy.MemberBridgeQualifications, policy.BridgeQualification)) ||
 		policy.Schema != "agent-bot-machine/stage2a-installed-authority/v1" ||
 		policy.PlanOwner != in.Invoker || policy.MachineUID < 400 || policy.MachineGID < 1 ||
 		policy.HQUID < 300 || policy.HQUID > 399 ||

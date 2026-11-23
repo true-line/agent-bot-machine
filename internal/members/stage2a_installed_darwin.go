@@ -46,31 +46,32 @@ type stage2aInstalledDirectory struct {
 }
 
 type stage2aInstalledPolicy struct {
-	Schema              string                       `json:"schema"`
-	MachineAccount      string                       `json:"machine_account"`
-	MachineUID          int                          `json:"machine_uid"`
-	MachineGID          int                          `json:"machine_gid"`
-	PlanOwner           string                       `json:"plan_owner"`
-	HQUID               int                          `json:"hq_uid"`
-	ApprovedUntil       string                       `json:"approved_until"`
-	Plan                json.RawMessage              `json:"canonical_plan"`
-	Receipt             json.RawMessage              `json:"root_receipt"`
-	Claims              stage2aInstalledDirectory    `json:"claims"`
-	SnapshotNamespace   stage2aInstalledDirectory    `json:"snapshot_namespace"`
-	RelayParent         stage2aInstalledDirectory    `json:"relay_parent"`
-	LegacySpent         []string                     `json:"legacy_spent_start_ids"`
-	LauncherSHA256      string                       `json:"launcher_sha256"`
-	ArtifactPath        string                       `json:"artifact_path"`
-	Runner              SoulRunner                   `json:"runner"`
-	Bridge              SoulBridge                   `json:"bridge"`
-	Binding             Stage2aMeasurementBinding    `json:"measurement_binding"`
-	Definition          []Stage2aDefinitionRecord    `json:"definition"`
-	LaunchInputs        Stage2aLaunchInputRecords    `json:"launch_inputs"`
-	Node                string                       `json:"node"`
-	Entry               string                       `json:"entry"`
-	BridgeExecutable    HarnessArtifact              `json:"bridge_executable"`
-	BridgeQualification Stage2aBridgeQualification   `json:"bridge_qualification"`
-	RuntimeV3           *stage2aDomainInventoryRefV3 `json:"runtime_v3,omitempty"`
+	Schema                     string                             `json:"schema"`
+	MachineAccount             string                             `json:"machine_account"`
+	MachineUID                 int                                `json:"machine_uid"`
+	MachineGID                 int                                `json:"machine_gid"`
+	PlanOwner                  string                             `json:"plan_owner"`
+	HQUID                      int                                `json:"hq_uid"`
+	ApprovedUntil              string                             `json:"approved_until"`
+	Plan                       json.RawMessage                    `json:"canonical_plan"`
+	Receipt                    json.RawMessage                    `json:"root_receipt"`
+	Claims                     stage2aInstalledDirectory          `json:"claims"`
+	SnapshotNamespace          stage2aInstalledDirectory          `json:"snapshot_namespace"`
+	RelayParent                stage2aInstalledDirectory          `json:"relay_parent"`
+	LegacySpent                []string                           `json:"legacy_spent_start_ids"`
+	LauncherSHA256             string                             `json:"launcher_sha256"`
+	ArtifactPath               string                             `json:"artifact_path"`
+	Runner                     SoulRunner                         `json:"runner"`
+	Bridge                     SoulBridge                         `json:"bridge"`
+	Binding                    Stage2aMeasurementBinding          `json:"measurement_binding"`
+	Definition                 []Stage2aDefinitionRecord          `json:"definition"`
+	LaunchInputs               Stage2aLaunchInputRecords          `json:"launch_inputs"`
+	Node                       string                             `json:"node"`
+	Entry                      string                             `json:"entry"`
+	BridgeExecutable           HarnessArtifact                    `json:"bridge_executable"`
+	BridgeQualification        Stage2aBridgeQualification         `json:"bridge_qualification"`
+	MemberBridgeQualifications []stage2aMemberBridgeQualification `json:"member_bridge_qualifications,omitempty"`
+	RuntimeV3                  *stage2aDomainInventoryRefV3       `json:"runtime_v3,omitempty"`
 }
 
 func stage2aReadRootFile(path string, maximum int64, modes ...uint16) ([]byte, error) {

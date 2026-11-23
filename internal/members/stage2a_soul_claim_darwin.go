@@ -43,7 +43,8 @@ func stage2aCheckFrozenSoulClaim(identity Stage2aSnapshotIdentity, records []Sta
 func stage2aReadFrozenClaimFile(identity Stage2aSnapshotIdentity, records []Stage2aDefinitionRecord,
 	relative string) ([]byte, error) {
 	invalid := errors.New("invalid frozen Soul claim descriptor")
-	if relative != "Contents/SoulInfo.json" && relative != "Contents/SoulLock.json" {
+	if relative != "Contents/SoulInfo.json" && relative != "Contents/SoulLock.json" &&
+		relative != "Contents/opt/stock-claude.json" {
 		return nil, invalid
 	}
 	var want *Stage2aDefinitionRecord
@@ -75,7 +76,22 @@ func stage2aReadFrozenClaimFile(identity Stage2aSnapshotIdentity, records []Stag
 	if err != nil || contents.Mode&unix.S_IFMT != unix.S_IFDIR || checkDarwinACLs([]string{contentsPath}) != nil {
 		return nil, invalid
 	}
-	fd, err := unix.Openat(contentsFD, filepath.Base(relative), stage2aFileOpenFlags, 0)
+	parentFD := contentsFD
+	if relative == "Contents/opt/stock-claude.json" {
+		optFD, openErr := unix.Openat(contentsFD, "opt", stage2aDirectoryOpenFlags, 0)
+		if openErr != nil {
+			return nil, invalid
+		}
+		defer unix.Close(optFD)
+		optPath := filepath.Join(contentsPath, "opt")
+		opt, checkErr := stage2aCheckedNode(optFD, identity.OwnerUID, identity.OwnerGID)
+		if checkErr != nil || opt.Mode&unix.S_IFMT != unix.S_IFDIR ||
+			checkDarwinACLs([]string{optPath}) != nil {
+			return nil, invalid
+		}
+		parentFD = optFD
+	}
+	fd, err := unix.Openat(parentFD, filepath.Base(relative), stage2aFileOpenFlags, 0)
 	if err != nil {
 		return nil, invalid
 	}

@@ -14,11 +14,12 @@ type Stage2aLookupRequest struct {
 }
 
 type Stage2aLookupReply struct {
-	InstallationID string `json:"installation_id"`
-	PlanID         string `json:"plan_id"`
-	PlanDigest     string `json:"plan_digest"`
-	RunnerAccount  string `json:"runner_account"`
-	BridgeAccount  string `json:"bridge_account"`
+	InstallationID       string `json:"installation_id"`
+	PlanID               string `json:"plan_id"`
+	PlanDigest           string `json:"plan_digest"`
+	RunnerAccount        string `json:"runner_account"`
+	BridgeAccount        string `json:"bridge_account"`
+	QualificationStartID string `json:"qualification_start_id,omitempty"`
 }
 
 func ParseStage2aLookupRequest(raw []byte) (Stage2aLookupRequest, error) {

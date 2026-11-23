@@ -11,6 +11,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qwts/managed-machine/internal/diag"
@@ -21,6 +22,11 @@ import (
 // signature, and writes one signed JSON line back. It returns when ctx is
 // cancelled.
 func Serve(ctx context.Context, ln net.Listener, g *Gate, priv ed25519.PrivateKey, peer func(net.Conn) (int, error), hooks Hooks) error {
+	const maxInFlight = 32
+	slots := make(chan struct{}, maxInFlight)
+	var workers sync.WaitGroup
+	var ordinaryHooks sync.Mutex
+	defer workers.Wait()
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
@@ -33,11 +39,30 @@ func Serve(ctx context.Context, ln net.Listener, g *Gate, priv ed25519.PrivateKe
 			}
 			return err
 		}
-		handleConn(conn, g, priv, peer, hooks)
+		select {
+		case slots <- struct{}{}:
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				defer func() { <-slots }()
+				handleConnScoped(conn, g, priv, peer, hooks, &ordinaryHooks)
+			}()
+		case <-ctx.Done():
+			_ = conn.Close()
+			return nil
+		}
 	}
 }
 
 func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.Conn) (int, error), hooks Hooks) {
+	handleConnScoped(conn, g, priv, peer, hooks, nil)
+}
+
+// The daemon admits bounded concurrent Stage 2a calls so a slow Q exchange
+// cannot starve short child/runner lease renewals. Other hooks retain their
+// historical serial execution. Gate.verify serializes pairing and nonce state.
+func handleConnScoped(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.Conn) (int, error), hooks Hooks,
+	ordinaryHooks *sync.Mutex) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 	reader := bufio.NewReader(io.LimitReader(conn, maxMessage))
@@ -72,6 +97,10 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 				res = hooks.reply(req)
 			}
 		} else {
+			if ordinaryHooks != nil {
+				ordinaryHooks.Lock()
+				defer ordinaryHooks.Unlock()
+			}
 			res = hooks.reply(req)
 			if req.Verb == deviceVerb && res.OK {
 				unlock, err := lockDeviceDelivery(g.Dir, req, res.Body)
@@ -185,7 +214,7 @@ func (h Hooks) reply(req Request) Response {
 			return deviceUnavailable()
 		}
 		return h.HQDevice(req)
-	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb:
+	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aCaptureSelectorVerb, stage2aControlProbeVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aMemberSetAssignVerb, stage2aMemberProvisionalMapVerb, stage2aMemberChildGrantVerb, stage2aMemberChildObserveVerb, stage2aMemberLiveVerb, stage2aMemberReadyVerb:
 		if h.Stage2a == nil {
 			return refused(diag.DaemonUnimplemented, "Stage 2a reserve authority is unavailable")
 		}

@@ -28,6 +28,37 @@ func TestStage2aV2ProtectedApplyAndStartStayClosed(t *testing.T) {
 	}
 }
 
+func TestStage2aOwnerReviewedMemberSetSelector(t *testing.T) {
+	request := SoulProtectedLaunchInstall{
+		Schema:           stage2aRuntimeInstallSchemaV3,
+		MachinePublicKey: hex.EncodeToString(bytes.Repeat([]byte{'k'}, ed25519.PublicKeySize)),
+		ArtifactSource:   "/reviewed/artifact", BridgeBinarySource: "/reviewed/bridge",
+		DefinitionSource: "/reviewed/definition", LaunchInputsSource: "/reviewed/inputs",
+		RuntimeV3: &stage2aRuntimeV3Install{}, Policy: json.RawMessage(`{}`),
+		OwnerPlanMemberSetSHA256: "sha256:" + strings.Repeat("a", 64),
+	}
+	decode := func() error {
+		raw, err := json.Marshal(request)
+		if err != nil {
+			return err
+		}
+		_, err = decodeSoulProtectedLaunch(raw)
+		return err
+	}
+	if err := decode(); err != nil {
+		t.Fatalf("reviewed member-set digest refused: %v", err)
+	}
+	request.OwnerPlanMemberSetSHA256 = strings.Repeat("a", 64)
+	if decode() == nil {
+		t.Fatal("unprefixed member-set digest accepted")
+	}
+	request.OwnerPlanMemberSetSHA256 = "sha256:" + strings.Repeat("a", 64)
+	request.Schema, request.RuntimeV3 = stage2aInstallSchema, nil
+	if decode() == nil {
+		t.Fatal("legacy install accepted a two-member owner selector")
+	}
+}
+
 func TestStage2aInstalledPolicyMustMatchReviewedTemplate(t *testing.T) {
 	key := ed25519.PublicKey(strings.Repeat("k", ed25519.PublicKeySize))
 	p := stage2aInstalledPolicy{

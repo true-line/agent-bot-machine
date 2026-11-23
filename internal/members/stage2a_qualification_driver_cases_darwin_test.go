@@ -86,6 +86,119 @@ func TestStage2aQualificationDriverPairsFixedSchedule(t *testing.T) {
 	}
 }
 
+func TestStage2aLiveDriverRetainsQSequenceAndPreallocatedT03Challenge(t *testing.T) {
+	a, driver := net.Pipe()
+	defer a.Close()
+	defer driver.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	begin := driverCaseBegin("managed-protected")
+	challenge := base64.RawURLEncoding.EncodeToString(bytesOf(32, 9))
+	done := make(chan error, 1)
+	go func() {
+		done <- serveStage2aQualificationDriverCasesAtSequence(ctx, driver, begin,
+			stage2aDriverLiveStart, 3, nil, func(_ context.Context, command stage2aDriverCommand) (string, error) {
+				return stage2aQualificationSHA256([]byte(command.Challenge)), nil
+			})
+	}()
+	seen := 0
+	trace, err := exchangeStage2aDriverCasesAtSequence(ctx, a, begin, stage2aDriverLiveStart,
+		3, map[int]string{6: challenge}, func() error { return nil },
+		func(_ context.Context, command stage2aDriverCommand, digest string) (stage2aDriverCorroboration, error) {
+			if command.Sequence != 3+seen || (command.Sequence == 6 && command.Challenge != challenge) ||
+				digest != stage2aQualificationSHA256([]byte(command.Challenge)) {
+				return stage2aDriverCorroboration{}, errors.New("Q sequence or T03 challenge changed")
+			}
+			return stage2aDriverCorroboration{
+				artifact: []byte(command.Challenge), osWitness: []byte(`{"fixture":true}`),
+				probe: stage2aQualificationObserveV1{Paths: []stage2aQualificationPathRequestV1{
+					{Role: "a-selected", Path: "/private/var/db/managed-machine"},
+				}},
+			}, nil
+		}, func(stage2aQualificationObserveV1) ([]byte, error) { seen++; return nil, nil })
+	if err != nil || len(trace) != 4 || seen != 4 {
+		t.Fatalf("live sequence exchange refused: trace=%d seen=%d err=%v", len(trace), seen, err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStage2aDriverKeepsOneConnectionAcrossBaselineAndLive(t *testing.T) {
+	a, driver := net.Pipe()
+	defer a.Close()
+	defer driver.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	begin := driverCaseBegin("managed-protected")
+	done := make(chan error, 1)
+	go func() {
+		capture := func(_ context.Context, command stage2aDriverCommand) (string, error) {
+			return stage2aQualificationSHA256([]byte(command.Challenge)), nil
+		}
+		if err := serveStage2aQualificationDriverCasesAtSequence(ctx, driver, begin,
+			stage2aDriverBeforeLaunch, 1, nil, capture); err != nil {
+			done <- err
+			return
+		}
+		done <- serveStage2aQualificationDriverCasesAtSequence(ctx, driver, begin,
+			stage2aDriverLiveStart, 3, nil, capture)
+	}()
+	sequence := 0
+	verify := func(_ context.Context, command stage2aDriverCommand, digest string) (stage2aDriverCorroboration, error) {
+		if command.Sequence != sequence+1 || digest != stage2aQualificationSHA256([]byte(command.Challenge)) {
+			return stage2aDriverCorroboration{}, errStage2aReservationAuthority
+		}
+		return stage2aDriverCorroboration{
+			artifact: []byte(command.Challenge), osWitness: []byte(`{"fixture":true}`),
+			probe: stage2aQualificationObserveV1{Paths: []stage2aQualificationPathRequestV1{
+				{Role: "a-selected", Path: "/private/var/db/managed-machine"},
+			}},
+		}, nil
+	}
+	observe := func(stage2aQualificationObserveV1) ([]byte, error) { sequence++; return nil, nil }
+	for _, phase := range []struct {
+		name  stage2aDriverRunPhase
+		first int
+	}{
+		{stage2aDriverBeforeLaunch, 1},
+		{stage2aDriverLiveStart, 3},
+	} {
+		trace, err := exchangeStage2aDriverCasesAtSequence(ctx, a, begin, phase.name,
+			phase.first, nil, func() error { return nil }, verify, observe)
+		if err != nil || len(trace) != len(stage2aDriverSchedule(begin.Profile, phase.name)) {
+			t.Fatalf("%s reused connection: trace=%d err=%v", phase.name, len(trace), err)
+		}
+	}
+	if sequence != 6 {
+		t.Fatalf("Q observation sequence = %d, want 6", sequence)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStage2aLiveJoinRequiresRetainedQSequence(t *testing.T) {
+	command := stage2aDriverCommand{
+		Profile: "managed-protected", Phase: stage2aDriverLiveStart,
+		Gate: "T03", Event: "direct-route-refused", Sequence: 6,
+	}
+	if !stage2aLiveJoinScheduleMatch(command) {
+		t.Fatal("retained Q T03 sequence refused")
+	}
+	for _, sequence := range []int{0, 4, 5, 7} {
+		command.Sequence = sequence
+		if stage2aLiveJoinScheduleMatch(command) {
+			t.Fatalf("phase-local or foreign sequence %d accepted", sequence)
+		}
+	}
+	command.Sequence = 6
+	command.Event = "policy-baseline"
+	if stage2aLiveJoinScheduleMatch(command) {
+		t.Fatal("baseline event accepted at live T03 sequence")
+	}
+}
+
 func TestStage2aQualificationDriverRejectsArtifactReplayAndUnverifiedCase(t *testing.T) {
 	for _, replay := range []bool{true, false} {
 		a, driver := net.Pipe()

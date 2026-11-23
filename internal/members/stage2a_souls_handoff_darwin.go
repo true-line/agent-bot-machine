@@ -15,12 +15,13 @@ import (
 const stage2aSoulsStartLimit = 64 << 10
 
 type stage2aSoulsProtectedStart struct {
-	Schema                       string                    `json:"schema"`
-	ReservationEnvelopeBase64URL string                    `json:"reservation_envelope_base64url"`
-	ReservationSHA256            string                    `json:"reservation_sha256"`
-	MachinePinPath               string                    `json:"machine_pin_path"`
-	LaunchInputRecords           Stage2aLaunchInputRecords `json:"launch_input_records"`
-	StateRoot                    string                    `json:"state_root"`
+	Schema                               string                    `json:"schema"`
+	ReservationEnvelopeBase64URL         string                    `json:"reservation_envelope_base64url"`
+	ReservationSHA256                    string                    `json:"reservation_sha256"`
+	MachinePinPath                       string                    `json:"machine_pin_path"`
+	LaunchInputRecords                   Stage2aLaunchInputRecords `json:"launch_input_records"`
+	StateRoot                            string                    `json:"state_root"`
+	MemberSetAssignmentEnvelopeBase64URL string                    `json:"member_set_assignment_envelope_base64url,omitempty"`
 }
 
 func verifyStage2aRunnerReservation(run Stage2aRunnerExec, in Stage2aRoleInvocation,
@@ -57,6 +58,12 @@ func verifyStage2aRunnerReservation(run Stage2aRunnerExec, in Stage2aRoleInvocat
 		r.ReaderUID != uint32(start.RunnerUID) || r.ReaderGID != uint32(start.RunnerGID) || r.MachineUID != uint32(start.MachineUID) ||
 		recheckHQStage2aDomainFiles(r) != nil {
 		return empty, invalid
+	}
+	if run.MemberSetAssignmentEnvelopeBase64URL != "" {
+		if _, err := verifyStage2aRunnerMemberSetAssignment(run.MemberSetAssignmentEnvelopeBase64URL,
+			in, pub, now); err != nil {
+			return empty, invalid
+		}
 	}
 	launchDigest, _, err := Stage2aLaunchInputDigest(in.Launch)
 	if err != nil || launchDigest != binding.LaunchInputMeasurement {
@@ -118,14 +125,22 @@ func stage2aOpenRunnerStateDir(parent int, name, path string, runner SoulRunner)
 }
 
 func marshalStage2aSoulsProtectedStart(envelope, digest string, launch Stage2aLaunchInputRecords,
-	stateRoot string) ([]byte, error) {
+	stateRoot, memberSetEnvelope string) ([]byte, error) {
 	if !validStage2aExecDigest(digest) || envelope == "" || stateRoot == "" {
 		return nil, errors.New("invalid protected Souls start")
 	}
+	schema := "agent-bot-souls/protected-start/v1"
+	if memberSetEnvelope != "" {
+		if _, err := decodeStage2aRoleBase64(memberSetEnvelope, 16<<10); err != nil {
+			return nil, errors.New("invalid protected member assignment encoding")
+		}
+		schema = "agent-bot-souls/protected-start/v2"
+	}
 	raw, err := json.Marshal(stage2aSoulsProtectedStart{
-		Schema: "agent-bot-souls/protected-start/v1", ReservationEnvelopeBase64URL: envelope,
+		Schema: schema, ReservationEnvelopeBase64URL: envelope,
 		ReservationSHA256: digest, MachinePinPath: SoulAuthorityPin,
 		LaunchInputRecords: launch, StateRoot: stateRoot,
+		MemberSetAssignmentEnvelopeBase64URL: memberSetEnvelope,
 	})
 	if err != nil || len(raw) > stage2aSoulsStartLimit || stage2aStrictJSON(raw) != nil {
 		return nil, errors.New("protected Souls start exceeds the fixed input contract")

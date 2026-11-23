@@ -33,7 +33,11 @@ func RunStage2aQualificationOwnerDriver() error {
 		!slices.Equal(os.Args, review.Argv) || verifyQualificationExecutable(review.Executable.Path, review.Executable.SHA256) != nil {
 		return errStage2aReservationAuthority
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	maxLife := 60 * time.Second
+	if install.Review.DriverLive && !install.Review.DriverBaselineOnly {
+		maxLife = 10 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), maxLife)
 	defer cancel()
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", review.Socket)
 	if err != nil {
@@ -48,17 +52,23 @@ func RunStage2aQualificationOwnerDriver() error {
 	if err != nil || !stage2aQualificationKernelMatches(observed.Kernel, peer.PID, install.AdminUID, install.AdminGID) {
 		return errStage2aReservationAuthority
 	}
-	return serveStage2aDriverBaseline(ctx, conn, review, install.Review.Provider, install.AdminUID, func() error {
-		current, err := observeSoulProcess(peer.PID, review.Authority.Path, review.AuthorityArgv)
-		if err != nil || !sameSoulKernelProcess(current.Kernel, observed.Kernel) {
-			return errStage2aReservationAuthority
-		}
-		return nil
-	})
+	return serveStage2aDriverBaselineMode(ctx, conn, review, install.Review.Provider,
+		install.AdminUID, install.Review.DriverLive, func() error {
+			current, err := observeSoulProcess(peer.PID, review.Authority.Path, review.AuthorityArgv)
+			if err != nil || !sameSoulKernelProcess(current.Kernel, observed.Kernel) {
+				return errStage2aReservationAuthority
+			}
+			return nil
+		})
 }
 
 func serveStage2aDriverBaseline(ctx context.Context, conn net.Conn, review stage2aDriverReview,
 	provider qualificationFile, adminUID int, checkA func() error) error {
+	return serveStage2aDriverBaselineMode(ctx, conn, review, provider, adminUID, false, checkA)
+}
+
+func serveStage2aDriverBaselineMode(ctx context.Context, conn net.Conn, review stage2aDriverReview,
+	provider qualificationFile, adminUID int, live bool, checkA func() error) error {
 	if conn.SetReadDeadline(time.Now().Add(10*time.Second)) != nil || checkA() != nil {
 		return errStage2aReservationAuthority
 	}
@@ -93,6 +103,18 @@ func serveStage2aDriverBaseline(ctx context.Context, conn net.Conn, review stage
 		})
 	if err != nil {
 		return err
+	}
+	if live {
+		// A live review must produce a separately verified live phase before
+		// this worker can report success. Retain the authenticated connection
+		// until a live command or cutoff; the source callback is unavailable
+		// here, so either outcome remains a fail-closed incomplete run.
+		deadline, ok := ctx.Deadline()
+		if !ok || conn.SetReadDeadline(deadline) != nil {
+			return errStage2aDriverLiveUnsupported
+		}
+		_, _ = readStage2aQualificationFrame(conn)
+		return errStage2aDriverLiveUnsupported
 	}
 	// Keep the authenticated generation alive until A has corroborated the
 	// last response and closed its side of the one-use connection.

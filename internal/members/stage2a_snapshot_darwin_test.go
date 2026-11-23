@@ -74,6 +74,78 @@ func stage2aObservedFixture(t *testing.T) (string, []Stage2aDefinitionRecord) {
 	return root, records
 }
 
+func TestStage2aExactStockCLIStagingDescriptorLimit(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"runtime", "runtime/bin"} {
+		if err := os.Mkdir(filepath.Join(root, dir), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"claude", "other"} {
+		path := filepath.Join(root, "runtime/bin", name)
+		file, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Truncate(int64(stage2aStockCLISizeBytes)); err != nil {
+			file.Close()
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, 0550); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"runtime/bin", "runtime", ""} {
+		if err := os.Chmod(filepath.Join(root, dir), 0555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, dir := range []string{"", "runtime", "runtime/bin"} {
+			_ = os.Chmod(filepath.Join(root, dir), 0700)
+		}
+	})
+	dir, err := os.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dir.Close()
+	uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
+	size := stage2aStockCLISizeBytes
+	approved := Stage2aDefinitionRecord{Path: stage2aStockCLIPath, Kind: "regular",
+		Mode: "0550", Size: &size, SHA256: stage2aStockCLISHA256}
+	opened, _, err := stage2aOpenSourceFile(int(dir.Fd()), approved.Path, uid, gid, approved, false)
+	if err != nil {
+		t.Fatalf("exact approved sparse CLI descriptor refused: %v", err)
+	}
+	if _, err := stage2aCheckedSourceNode(int(opened.Fd()), uid, gid, false); err == nil {
+		opened.Close()
+		t.Fatal("frozen-definition 256 MiB descriptor limit was weakened")
+	}
+	opened.Close()
+	for name, mutate := range map[string]func(*Stage2aDefinitionRecord){
+		"other path": func(r *Stage2aDefinitionRecord) { r.Path = "runtime/bin/other" },
+		"wrong hash": func(r *Stage2aDefinitionRecord) { r.SHA256 = "a" + stage2aStockCLISHA256[1:] },
+		"wrong mode": func(r *Stage2aDefinitionRecord) { r.Mode = "0440" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := approved
+			mutate(&changed)
+			if file, _, err := stage2aOpenSourceFile(int(dir.Fd()), changed.Path, uid, gid, changed, false); err == nil {
+				file.Close()
+				t.Fatal("unapproved oversized source descriptor accepted")
+			}
+		})
+	}
+	if file, _, err := stage2aOpenSourceFile(int(dir.Fd()), "runtime/bin/other", uid, gid, approved, false); err == nil {
+		file.Close()
+		t.Fatal("approved CLI record opened a different source path")
+	}
+}
+
 func TestStage2aRuntimeSnapshotPublishesImplicitDirectories(t *testing.T) {
 	source := t.TempDir()
 	parent := t.TempDir()

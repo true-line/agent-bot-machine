@@ -52,6 +52,48 @@ func TestStage2aLaunchInputDigestMatchesSyntheticFullObject(t *testing.T) {
 	}
 }
 
+func TestStage2aExactStockCLIExceptionKeepsGenericBounds(t *testing.T) {
+	input := stage2aLaunchFixture(t)
+	size := stage2aStockCLISizeBytes
+	input.Files = append(input.Files, Stage2aDefinitionRecord{
+		Path: stage2aStockCLIPath, Kind: "regular", Mode: "0550",
+		Size: &size, SHA256: stage2aStockCLISHA256,
+	})
+	if _, _, err := Stage2aLaunchInputDigest(input); err != nil {
+		t.Fatalf("exact selected stock CLI refused: %v", err)
+	}
+	for name, edit := range map[string]func(*Stage2aDefinitionRecord){
+		"other path": func(v *Stage2aDefinitionRecord) { v.Path = "runtime/bin/other" },
+		"other mode": func(v *Stage2aDefinitionRecord) { v.Mode = "0440" },
+		"other SHA":  func(v *Stage2aDefinitionRecord) { v.SHA256 = strings.Repeat("a", 64) },
+		"one byte more": func(v *Stage2aDefinitionRecord) {
+			n := stage2aStockCLISizeBytes + 1
+			v.Size = &n
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := cloneStage2aLaunch(t, input)
+			edit(&changed.Files[len(changed.Files)-1])
+			if _, _, err := Stage2aLaunchInputDigest(changed); err == nil {
+				t.Fatal("changed oversized stock CLI accepted")
+			}
+		})
+	}
+	duplicate := cloneStage2aLaunch(t, input)
+	duplicate.Files = append(duplicate.Files, duplicate.Files[len(duplicate.Files)-1])
+	if _, _, err := Stage2aLaunchInputDigest(duplicate); err == nil {
+		t.Fatal("duplicate stock CLI accepted")
+	}
+	aggregate := cloneStage2aLaunch(t, input)
+	for i := 0; i < 4; i++ {
+		n := uint64(stage2aMaxFileBytes)
+		aggregate.Files[i].Size = &n
+	}
+	if _, _, err := Stage2aLaunchInputDigest(aggregate); err == nil {
+		t.Fatal("stock CLI bypassed the 1 GiB external aggregate")
+	}
+}
+
 func TestStage2aLaunchInputDigestBindsEveryNonFileInput(t *testing.T) {
 	baseline := stage2aLaunchFixture(t)
 	want, _, err := Stage2aLaunchInputDigest(baseline)

@@ -23,8 +23,15 @@ func serveStage2aQualificationDriverCases(ctx context.Context, conn net.Conn, be
 
 func serveStage2aQualificationDriverCasesFrom(ctx context.Context, conn net.Conn, begin stage2aQualificationBeginV1,
 	phase stage2aDriverRunPhase, first []byte, capture func(context.Context, stage2aDriverCommand) (string, error)) error {
+	return serveStage2aQualificationDriverCasesAtSequence(ctx, conn, begin, phase, 1, first, capture)
+}
+
+func serveStage2aQualificationDriverCasesAtSequence(ctx context.Context, conn net.Conn, begin stage2aQualificationBeginV1,
+	phase stage2aDriverRunPhase, firstSequence int, first []byte,
+	capture func(context.Context, stage2aDriverCommand) (string, error)) error {
 	schedule := stage2aDriverSchedule(begin.Profile, phase)
-	if ctx == nil || len(schedule) == 0 || capture == nil || ctx.Err() != nil {
+	if ctx == nil || len(schedule) == 0 || capture == nil || ctx.Err() != nil ||
+		firstSequence < 1 || firstSequence+len(schedule)-1 > 1024 {
 		return errStage2aReservationAuthority
 	}
 	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
@@ -46,7 +53,7 @@ func serveStage2aQualificationDriverCasesFrom(ctx context.Context, conn net.Conn
 				return err
 			}
 		}
-		command, err := parseStage2aDriverCommand(raw, begin, phase, i+1, want)
+		command, err := parseStage2aDriverCommand(raw, begin, phase, firstSequence+i, want)
 		if err != nil || challenges[command.Challenge] {
 			return errStage2aReservationAuthority
 		}

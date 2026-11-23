@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qwts/managed-machine/internal/diag"
@@ -23,47 +24,55 @@ const timestampSkew = 5 * time.Minute
 // Request is one signed command. Fields the catalog did not declare are
 // rejected by DisallowUnknownFields before a signature is considered.
 type Request struct {
-	Verb                 string `json:"verb"`
-	Name                 string `json:"name,omitempty"`
-	Option               string `json:"option,omitempty"`
-	Target               string `json:"target,omitempty"`
-	DeviceSession        string `json:"session,omitempty"`
-	HQEpoch              string `json:"hq_epoch,omitempty"`
-	ReceiptBody          string `json:"receipt_body,omitempty"`
-	ReceiptJTI           string `json:"receipt_jti,omitempty"`
-	ReceiptKID           string `json:"receipt_kid,omitempty"`
-	ReceiptSignature     string `json:"receipt_signature,omitempty"`
-	Stage2aRequest       string `json:"stage2a_request,omitempty"`
-	stage2aReserve       members.Stage2aReserveRequest
-	stage2aExec          stage2aExecRequest
-	stage2aChildReady    members.Stage2aChildReadyRequest
-	stage2aVerifyB       members.Stage2aVerifyBRequest
-	stage2aPrepareB      members.Stage2aPrepareBRequest
-	stage2aStop          members.Stage2aStopRequest
-	stage2aFinalizeB     members.Stage2aFinalizeBRequest
-	stage2aLive          members.Stage2aLiveRequest
-	stage2aProvider      members.Stage2aProviderRequest
-	stage2aLookup        members.Stage2aLookupRequest
-	stage2aHelloStart    members.Stage2aHelloStartRequest
-	stage2aHelloFinalize members.Stage2aHelloFinalizeRequest
-	stage2aHelloAbort    members.Stage2aStopRequest
-	stage2aPeerRole      members.Stage2aPeerRequest
-	stage2aEpoch         string
-	peerUID              int
-	ChallengeNonce       string           `json:"challenge_nonce,omitempty"`
-	OwnerSignature       string           `json:"owner_signature,omitempty"`
-	PlanID               string           `json:"plan_id,omitempty"`
-	PlanDigest           string           `json:"plan_digest,omitempty"`
-	Soul                 string           `json:"soul,omitempty"`
-	Harness              string           `json:"harness,omitempty"`
-	SessionID            string           `json:"session_id,omitempty"`
-	CatalogKey           *CatalogKey      `json:"catalog_key,omitempty"`
-	Floor                *CatalogFloor    `json:"floor,omitempty"`
-	Envelope             *CatalogEnvelope `json:"envelope,omitempty"`
-	Timestamp            int64            `json:"timestamp"`
-	Nonce                string           `json:"nonce"`
-	PublicKey            string           `json:"public_key"`
-	Signature            string           `json:"signature"`
+	Verb                        string `json:"verb"`
+	Name                        string `json:"name,omitempty"`
+	Option                      string `json:"option,omitempty"`
+	Target                      string `json:"target,omitempty"`
+	DeviceSession               string `json:"session,omitempty"`
+	HQEpoch                     string `json:"hq_epoch,omitempty"`
+	ReceiptBody                 string `json:"receipt_body,omitempty"`
+	ReceiptJTI                  string `json:"receipt_jti,omitempty"`
+	ReceiptKID                  string `json:"receipt_kid,omitempty"`
+	ReceiptSignature            string `json:"receipt_signature,omitempty"`
+	Stage2aRequest              string `json:"stage2a_request,omitempty"`
+	stage2aReserve              members.Stage2aReserveRequest
+	stage2aExec                 stage2aExecRequest
+	stage2aChildReady           members.Stage2aChildReadyRequest
+	stage2aCaptureSelector      members.Stage2aCaptureSelectorRequest
+	stage2aControlProbe         members.Stage2aProtectedControlProbeUpload
+	stage2aVerifyB              members.Stage2aVerifyBRequest
+	stage2aPrepareB             members.Stage2aPrepareBRequest
+	stage2aStop                 members.Stage2aStopRequest
+	stage2aFinalizeB            members.Stage2aFinalizeBRequest
+	stage2aLive                 members.Stage2aLiveRequest
+	stage2aProvider             members.Stage2aProviderRequest
+	stage2aLookup               members.Stage2aLookupRequest
+	stage2aHelloStart           members.Stage2aHelloStartRequest
+	stage2aHelloFinalize        members.Stage2aHelloFinalizeRequest
+	stage2aHelloAbort           members.Stage2aStopRequest
+	stage2aPeerRole             members.Stage2aPeerRequest
+	stage2aMemberSetAssign      members.Stage2aMemberSetAssignmentRequest
+	stage2aMemberProvisionalMap members.Stage2aMemberProvisionalMapRequest
+	stage2aMemberChildGrant     members.Stage2aMemberChildGrantRequest
+	stage2aMemberChildObserve   members.Stage2aMemberChildObservationRequest
+	stage2aMemberLive           members.Stage2aMemberLiveRequest
+	stage2aMemberReady          members.Stage2aMemberReadyRequest
+	stage2aEpoch                string
+	peerUID                     int
+	ChallengeNonce              string           `json:"challenge_nonce,omitempty"`
+	OwnerSignature              string           `json:"owner_signature,omitempty"`
+	PlanID                      string           `json:"plan_id,omitempty"`
+	PlanDigest                  string           `json:"plan_digest,omitempty"`
+	Soul                        string           `json:"soul,omitempty"`
+	Harness                     string           `json:"harness,omitempty"`
+	SessionID                   string           `json:"session_id,omitempty"`
+	CatalogKey                  *CatalogKey      `json:"catalog_key,omitempty"`
+	Floor                       *CatalogFloor    `json:"floor,omitempty"`
+	Envelope                    *CatalogEnvelope `json:"envelope,omitempty"`
+	Timestamp                   int64            `json:"timestamp"`
+	Nonce                       string           `json:"nonce"`
+	PublicKey                   string           `json:"public_key"`
+	Signature                   string           `json:"signature"`
 }
 
 // Response is signed by the daemon. Signature is over the other fields.
@@ -132,6 +141,7 @@ func (p Pairing) allows(key ed25519.PublicKey) bool {
 // match the daemon account — agent-daemon and the Terminal thin client
 // run in the user account.
 type Gate struct {
+	mu      sync.Mutex
 	Pairing Pairing
 	// Dir is the daemon state directory. When set, verify reads the pairing
 	// files before authorizing so a revocation or a confirmed replacement
@@ -143,6 +153,8 @@ type Gate struct {
 }
 
 func (g *Gate) verify(peerUID int, raw []byte) (Request, string, string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	var req Request
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
@@ -282,7 +294,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose, deviceVerb, approveMembersVerb, stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aLiveVerb, stage2aFinalizeBVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose, deviceVerb, approveMembersVerb, stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aLiveVerb, stage2aFinalizeBVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aCaptureSelectorVerb, stage2aControlProbeVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aMemberSetAssignVerb, stage2aMemberProvisionalMapVerb, stage2aMemberChildGrantVerb, stage2aMemberChildObserveVerb, stage2aMemberLiveVerb, stage2aMemberReadyVerb, "bootstrap":
 		return true
 	default:
 		return false

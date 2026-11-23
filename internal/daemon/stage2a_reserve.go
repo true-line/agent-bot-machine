@@ -22,10 +22,18 @@ const stage2aFinalizeBVerb = "stage2a-finalize-b"
 const stage2aLiveVerb = "stage2a-live"
 const stage2aProviderVerb = "stage2a-provider"
 const stage2aChildReadyVerb = "stage2a-child-ready"
+const stage2aCaptureSelectorVerb = "stage2a-capture-selector"
+const stage2aControlProbeVerb = "stage2a-control-probe-upload"
 const stage2aHelloStartVerb = "stage2a-hello-start"
 const stage2aHelloFinalizeVerb = "stage2a-hello-finalize"
 const stage2aHelloAbortVerb = "stage2a-hello-abort"
 const stage2aPeerRoleVerb = "stage2a-peer-role"
+const stage2aMemberSetAssignVerb = "stage2a-member-set-assign"
+const stage2aMemberProvisionalMapVerb = "stage2a-member-provisional-map"
+const stage2aMemberChildGrantVerb = "stage2a-member-child-grant"
+const stage2aMemberChildObserveVerb = "stage2a-member-child-observe"
+const stage2aMemberLiveVerb = "stage2a-member-live"
+const stage2aMemberReadyVerb = "stage2a-member-ready"
 
 var stage2aExecDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -38,9 +46,12 @@ type stage2aExecRequest struct {
 
 func isStage2aVerb(verb string) bool {
 	return verb == stage2aReserveVerb || verb == stage2aExecVerb ||
-		verb == stage2aVerifyBVerb || verb == stage2aLookupVerb || verb == stage2aListVerb || verb == stage2aPrepareBVerb || verb == stage2aStopVerb || verb == stage2aFinalizeBVerb || verb == stage2aLiveVerb || verb == stage2aProviderVerb || verb == stage2aChildReadyVerb ||
+		verb == stage2aVerifyBVerb || verb == stage2aLookupVerb || verb == stage2aListVerb || verb == stage2aPrepareBVerb || verb == stage2aStopVerb || verb == stage2aFinalizeBVerb || verb == stage2aLiveVerb || verb == stage2aProviderVerb || verb == stage2aChildReadyVerb || verb == stage2aCaptureSelectorVerb || verb == stage2aControlProbeVerb ||
 		verb == stage2aHelloStartVerb || verb == stage2aHelloFinalizeVerb || verb == stage2aHelloAbortVerb ||
-		verb == stage2aPeerRoleVerb
+		verb == stage2aPeerRoleVerb || verb == stage2aMemberSetAssignVerb ||
+		verb == stage2aMemberProvisionalMapVerb || verb == stage2aMemberChildGrantVerb ||
+		verb == stage2aMemberChildObserveVerb || verb == stage2aMemberLiveVerb ||
+		verb == stage2aMemberReadyVerb
 }
 
 func stage2aFields(req *Request, raw []byte) (string, string) {
@@ -50,9 +61,13 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 		}
 		return "", ""
 	}
+	maxRequest := 8192
+	if req.Verb == stage2aControlProbeVerb {
+		maxRequest = 16 << 10
+	}
 	fields, ok := deviceObject(raw)
 	if !ok || !deviceKeys(fields, "verb", "stage2a_request", "nonce", "timestamp", "public_key", "signature") ||
-		len(req.Stage2aRequest) == 0 || len(req.Stage2aRequest) > base64.RawURLEncoding.EncodedLen(8192) {
+		len(req.Stage2aRequest) == 0 || len(req.Stage2aRequest) > base64.RawURLEncoding.EncodedLen(maxRequest) {
 		return diag.DaemonUndeclared, "invalid Stage 2a request fields"
 	}
 	decoded, err := base64.RawURLEncoding.Strict().DecodeString(req.Stage2aRequest)
@@ -137,12 +152,76 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 		req.stage2aChildReady = parsed
 		return "", ""
 	}
+	if req.Verb == stage2aCaptureSelectorVerb {
+		parsed, err := members.ParseStage2aCaptureSelectorRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a capture selector request"
+		}
+		req.stage2aCaptureSelector = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aControlProbeVerb {
+		parsed, err := members.ParseStage2aProtectedControlProbeUpload(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a protected control probe upload"
+		}
+		req.stage2aControlProbe = parsed
+		return "", ""
+	}
 	if req.Verb == stage2aHelloStartVerb {
 		parsed, err := members.ParseStage2aHelloStartRequest(decoded)
 		if err != nil {
 			return diag.DaemonUndeclared, "invalid Stage 2a Hello start"
 		}
 		req.stage2aHelloStart = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aMemberSetAssignVerb {
+		parsed, err := members.ParseStage2aMemberSetAssignmentRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a member-set assignment request"
+		}
+		req.stage2aMemberSetAssign = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aMemberProvisionalMapVerb {
+		parsed, err := members.ParseStage2aMemberProvisionalMapRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a provisional member map"
+		}
+		req.stage2aMemberProvisionalMap = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aMemberChildGrantVerb {
+		parsed, err := members.ParseStage2aMemberChildGrantRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a member child grant"
+		}
+		req.stage2aMemberChildGrant = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aMemberChildObserveVerb {
+		parsed, err := members.ParseStage2aMemberChildObservationRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a member child observation"
+		}
+		req.stage2aMemberChildObserve = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aMemberLiveVerb {
+		parsed, err := members.ParseStage2aMemberLiveRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a member live request"
+		}
+		req.stage2aMemberLive = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aMemberReadyVerb {
+		parsed, err := members.ParseStage2aMemberReadyRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a member Ready request"
+		}
+		req.stage2aMemberReady = parsed
 		return "", ""
 	}
 	if req.Verb == stage2aHelloFinalizeVerb {

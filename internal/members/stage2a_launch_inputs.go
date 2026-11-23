@@ -19,6 +19,13 @@ import (
 
 const stage2aLaunchPurpose = "agent-bot/stage2a-launch-inputs/v1"
 
+const (
+	stage2aStockCLIPath      = "runtime/bin/claude"
+	stage2aStockCLISHA256    = "e85547190ef8cd983033ba61b17194045a6fea00035da349efeabed86badacc9"
+	stage2aStockCLISizeBytes = uint64(354630016)
+	stage2aStockCLIMaxBytes  = uint64(384 << 20)
+)
+
 var stage2aEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var stage2aCDHash = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
@@ -271,6 +278,24 @@ func stage2aValidLaunchStrings(input Stage2aLaunchInputRecords) bool {
 		stage2aValidJSONStrings(input.EffectiveConfig, 0, &nodes)
 }
 
+// This exact oversized stock CLI is admitted for measurement only. The
+// reviewed plan, frozen manifest, sealed R row and installed bytes still
+// have to join before a one-use start can be authorized.
+func stage2aQualifiedStockCLIRecord(file Stage2aDefinitionRecord) bool {
+	return file.Path == stage2aStockCLIPath && file.Kind == "regular" && file.Mode == "0550" &&
+		file.Size != nil && *file.Size == stage2aStockCLISizeBytes &&
+		*file.Size <= stage2aStockCLIMaxBytes && file.SHA256 == stage2aStockCLISHA256
+}
+
+func stage2aHasQualifiedStockCLIRecord(files []Stage2aDefinitionRecord) bool {
+	for _, file := range files {
+		if stage2aQualifiedStockCLIRecord(file) {
+			return true
+		}
+	}
+	return false
+}
+
 func stage2aLaunchFiles(files []Stage2aDefinitionRecord) (map[string]bool, error) {
 	invalid := errors.New("invalid Stage 2a launch-input file records")
 	if len(files) == 0 || len(files) > 64 {
@@ -287,7 +312,8 @@ func stage2aLaunchFiles(files []Stage2aDefinitionRecord) (map[string]bool, error
 	for i, file := range files {
 		if !stage2aRecordPath(file.Path) || !stage2aReadOnlyMode(file.Mode) ||
 			file.Kind != "regular" || file.Size == nil || file.SHA256 == "" ||
-			!soulDigest.MatchString(file.SHA256) || *file.Size > stage2aMaxFileBytes ||
+			!soulDigest.MatchString(file.SHA256) ||
+			(*file.Size > stage2aMaxFileBytes && !stage2aQualifiedStockCLIRecord(file)) ||
 			total > stage2aMaxTotalBytes-*file.Size ||
 			(i != 0 && file.Path <= previous) || aliases[strings.ToLower(file.Path)] {
 			return nil, invalid

@@ -72,15 +72,20 @@ type Stage2aHelloReply struct {
 }
 
 type stage2aHelloClaim struct {
-	Contract         string `json:"contract"`
-	RequestID        string `json:"request_id"`
-	SoulID           string `json:"soul_id"`
-	DefinitionDigest string `json:"definition_digest"`
-	InstallationID   string `json:"installation_id"`
-	RequestedProfile string `json:"requested_profile"`
-	RequestedRoles   []struct {
-		MemberID string `json:"member_id"`
-	} `json:"requested_roles"`
+	Contract         string               `json:"contract"`
+	RequestID        string               `json:"request_id"`
+	SoulID           string               `json:"soul_id"`
+	DefinitionDigest string               `json:"definition_digest"`
+	InstallationID   string               `json:"installation_id"`
+	RequestedProfile string               `json:"requested_profile"`
+	RequestedRoles   []stage2aHelloMember `json:"requested_roles"`
+}
+
+type stage2aHelloMember struct {
+	MemberID       string `json:"member_id"`
+	Role           string `json:"role"`
+	AdapterID      string `json:"adapter_id"`
+	AdapterVersion string `json:"adapter_version"`
 }
 
 func ParseStage2aHelloStartRequest(raw []byte) (Stage2aHelloStartRequest, error) {

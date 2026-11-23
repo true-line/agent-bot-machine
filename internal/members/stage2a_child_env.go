@@ -3,6 +3,7 @@ package members
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 )
 
 // SHA-256 of the literal fixture key "ssh-placeholder"; it contains no
@@ -14,6 +15,13 @@ const stage2aFixtureClientKeySHA256 = "sha256:da4fec28d868ca5cf8f00f43869f703f13
 // merged into the stock adapter process.
 func stage2aChildEnvironment(runner SoulRunner, start SoulStartAssignment,
 	input Stage2aLaunchInputRecords) (string, map[string]string, error) {
+	return stage2aMemberChildEnvironment(runner, start, input, "")
+}
+
+// A two-member grant supplies the selector from the signed assignment. The
+// selector partitions every mutable directory used by the stock adapter.
+func stage2aMemberChildEnvironment(runner SoulRunner, start SoulStartAssignment,
+	input Stage2aLaunchInputRecords, memberSelector string) (string, map[string]string, error) {
 	invalid := errors.New("invalid protected stock child environment")
 	if runner.Account != soulRunnerName(runner.InstallationID) ||
 		start.InstallationID != runner.InstallationID || !soulStartID.MatchString(start.StartID) ||
@@ -31,7 +39,11 @@ func stage2aChildEnvironment(runner SoulRunner, start SoulStartAssignment,
 	if !ok || !stage2aBindingID.MatchString(model) {
 		return "", nil, invalid
 	}
-	root := filepath.Join(darwinSoulRunnerHome(runner.Account), "state", "child-"+soulEndpointStartSlot(runner.InstallationID, start.StartID))
+	stateName, err := stage2aChildStateName(runner.InstallationID, start.StartID, memberSelector)
+	if err != nil {
+		return "", nil, invalid
+	}
+	root := filepath.Join(darwinSoulRunnerHome(runner.Account), "state", stateName)
 	workdir := filepath.Join(root, "work")
 	tmp := filepath.Join(root, "tmpdir")
 	env := map[string]string{
@@ -52,4 +64,17 @@ func stage2aChildEnvironment(runner SoulRunner, start SoulStartAssignment,
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 	}
 	return workdir, env, nil
+}
+
+func stage2aChildStateName(installationID, startID, memberSelector string) (string, error) {
+	if !soulInstallationID.MatchString(installationID) || !soulStartID.MatchString(startID) ||
+		(memberSelector != "" && (len(memberSelector) != 67 ||
+			!strings.HasPrefix(memberSelector, "mb_") || !soulDigest.MatchString(memberSelector[3:]))) {
+		return "", errors.New("invalid protected stock child state selector")
+	}
+	name := "child-" + soulEndpointStartSlot(installationID, startID)
+	if memberSelector != "" {
+		name += "-" + memberSelector
+	}
+	return name, nil
 }

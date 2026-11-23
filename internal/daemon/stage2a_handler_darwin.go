@@ -51,6 +51,12 @@ func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
 		case stage2aChildReadyVerb:
 			state = "child-ready"
 			body, err = service.ChildReady(req.peerUID, req.stage2aEpoch, req.stage2aChildReady)
+		case stage2aCaptureSelectorVerb:
+			state = "capture-selected"
+			body, err = service.CaptureSelector(req.peerUID, req.stage2aEpoch, req.stage2aCaptureSelector)
+		case stage2aControlProbeVerb:
+			state = "control-probe-stored"
+			body, err = service.StoreProtectedControlProbe(req.peerUID, req.stage2aEpoch, req.stage2aControlProbe)
 		case stage2aHelloStartVerb:
 			state = "hello-started"
 			body, err = service.HelloStart(req.peerUID, req.stage2aEpoch, req.stage2aHelloStart)
@@ -66,6 +72,24 @@ func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
 		case stage2aPeerRoleVerb:
 			state = "peer-verified"
 			body, err = service.PeerRole(req.peerUID, req.stage2aEpoch, req.stage2aPeerRole)
+		case stage2aMemberSetAssignVerb:
+			state = "member-set-assigned"
+			body, err = service.MemberSetAssign(req.peerUID, req.stage2aEpoch, req.stage2aMemberSetAssign)
+		case stage2aMemberProvisionalMapVerb:
+			state = "member-map-withheld"
+			body, err = service.MemberProvisionalMap(req.peerUID, req.stage2aEpoch, req.stage2aMemberProvisionalMap)
+		case stage2aMemberChildGrantVerb:
+			state = "member-child-granted"
+			body, err = service.MemberChildGrant(req.peerUID, req.stage2aEpoch, req.stage2aMemberChildGrant)
+		case stage2aMemberChildObserveVerb:
+			state = "member-children-observed"
+			body, err = service.MemberChildObserve(req.peerUID, req.stage2aEpoch, req.stage2aMemberChildObserve)
+		case stage2aMemberLiveVerb:
+			state = "member-live"
+			body, err = service.MemberLive(req.peerUID, req.stage2aEpoch, req.stage2aMemberLive)
+		case stage2aMemberReadyVerb:
+			state = "member-ready"
+			body, err = service.MemberReady(req.peerUID, req.stage2aEpoch, req.stage2aMemberReady)
 		default:
 			return refused(diag.DaemonUnimplemented, "unsupported Stage 2a verb")
 		}

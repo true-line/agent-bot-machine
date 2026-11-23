@@ -16,7 +16,10 @@ type SoulProtectedLaunchInstall struct {
 	DefinitionSource   string                   `json:"definition_source"`
 	LaunchInputsSource string                   `json:"launch_inputs_source"`
 	RuntimeV3          *stage2aRuntimeV3Install `json:"runtime_v3,omitempty"`
-	Policy             json.RawMessage          `json:"policy"`
+	// The owner selects the exact frozen two-member projection in the
+	// approved install plan. Legacy single-member plans omit this field.
+	OwnerPlanMemberSetSHA256 string          `json:"owner_plan_member_set_sha256,omitempty"`
+	Policy                   json.RawMessage `json:"policy"`
 }
 
 // Retirement reviews the original install and disables only its per-Soul
