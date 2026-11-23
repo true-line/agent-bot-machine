@@ -51,6 +51,13 @@ func stage2aInstallSealNoIP() bool {
 	return true
 }
 
+// Darwin reports the primary GID in getgroups even when the privileged
+// handoff sets an empty supplementary group list. No other group may survive.
+func stage2aInstallSealOnlyPrimaryGroup(gid int) bool {
+	groups, err := os.Getgroups()
+	return err == nil && len(groups) == 1 && groups[0] == gid
+}
+
 func stage2aSealPreparedSnapshotAt(a stage2aAdminSnapshots, prepared stage2aPreparedSnapshot,
 	name string, approved []Stage2aDefinitionRecord, runtime bool) (Stage2aSnapshotIdentity, string, error) {
 	var empty Stage2aSnapshotIdentity
@@ -148,6 +155,7 @@ func RunStage2aInstallSeal() int {
 		request.Policy.MachineUID < 400 || request.Policy.MachineGID <= 0 ||
 		os.Getuid() != request.Policy.MachineUID || os.Geteuid() != request.Policy.MachineUID ||
 		os.Getgid() != request.Policy.MachineGID || os.Getegid() != request.Policy.MachineGID ||
+		!stage2aInstallSealOnlyPrimaryGroup(request.Policy.MachineGID) ||
 		request.Policy.Binding.PlanID == "" || request.Policy.Binding.InstalledPlanDigest == "" {
 		return refuse()
 	}
