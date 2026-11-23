@@ -18,6 +18,10 @@ func cooperativeSpentName(installationID, startID string) string {
 	return ".cooperative-spent-" + soulStartClaimName(installationID, startID)
 }
 
+func cooperativePendingName(installationID, startID string) string {
+	return ".cooperative-pending-" + soulStartClaimName(installationID, startID)
+}
+
 // spendSoulCooperativeStart consumes a start in the separately installed
 // A-owned claim directory. Its loader must supply the descriptor identity and
 // a historical cross-profile replay check. A lost reply remains spent; a

@@ -157,6 +157,7 @@ func TestStage2aV3AdapterChildEnvRequiresSealedRRow(t *testing.T) {
 	if err := stage2aAdapterChildEnvV3(input, &q, ref, inv); err != nil {
 		t.Fatalf("sealed R adapter refused: %v", err)
 	}
+
 	qualified := cloneStage2aLaunch(t, input)
 	qualifiedInventory := inv
 	qualifiedInventory.Files = append([]stage2aDomainFileV3(nil), inv.Files...)
@@ -174,6 +175,15 @@ func TestStage2aV3AdapterChildEnvRequiresSealedRRow(t *testing.T) {
 	}
 	if err := stage2aAdapterChildEnvV3(qualified, &q, ref, qualifiedInventory); err != nil {
 		t.Fatalf("exact stock CLI sealed R join refused: %v", err)
+	}
+
+	cooperative := cloneStage2aLaunch(t, input)
+	cooperative.EffectiveConfig["profile"] = "managed-cooperative"
+	if err := stage2aAdapterChildEnvV3(cooperative, &q, ref, inv); err != nil {
+		t.Fatalf("separately sealed cooperative R adapter refused: %v", err)
+	}
+	if stage2aAdapterChildEnv(cooperative, &q, ref.Snapshot.Path) == nil {
+		t.Fatal("legacy protected child path accepted cooperative profile")
 	}
 	withoutCLI := cloneStage2aLaunch(t, input)
 	for i := range withoutCLI.Files {

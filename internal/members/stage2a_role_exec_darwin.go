@@ -38,7 +38,7 @@ func RunStage2aRole(command string) int {
 	case "soul-run":
 	case "soul-bridge":
 		role = "bridge"
-	case "soul-child":
+	case "soul-child", "cooperative-soul-child":
 		role = "child"
 	default:
 		return harnessRefused
@@ -72,6 +72,12 @@ func RunStage2aRole(command string) int {
 	line, err := input.ReadSlice('\n')
 	if err != nil || inputFile.SetReadDeadline(time.Time{}) != nil {
 		return harnessRefused
+	}
+	if command == "cooperative-soul-child" {
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGHUP, syscall.SIGTERM, os.Interrupt)
+		defer cancel()
+		return runStage2aCooperativeChild(ctx, line, challenge, pub,
+			input, inputFile, os.Stdout, os.Stderr)
 	}
 	in, err := verifyStage2aRoleGrant(line, challenge, pub, time.Now())
 	if err != nil || os.Getenv("SUDO_UID") != strconv.Itoa(in.Start.HQUID) {

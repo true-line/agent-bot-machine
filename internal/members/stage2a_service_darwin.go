@@ -19,14 +19,19 @@ import (
 )
 
 type Stage2aReserveReply struct {
-	EnvelopeBase64URL string `json:"envelope_base64url"`
-	SHA256            string `json:"sha256"`
+	EnvelopeBase64URL                    string `json:"envelope_base64url"`
+	SHA256                               string `json:"sha256"`
+	BridgeAssignmentEnvelopeBase64URL    string `json:"bridge_assignment_envelope_base64url,omitempty"`
+	BridgeAssignmentSHA256               string `json:"bridge_assignment_sha256,omitempty"`
+	MemberSetAssignmentEnvelopeBase64URL string `json:"member_set_assignment_envelope_base64url,omitempty"`
+	MemberSetAssignmentSHA256            string `json:"member_set_assignment_sha256,omitempty"`
 }
 
 type Stage2aService struct {
 	mu                sync.Mutex
 	key               ed25519.PrivateKey
 	active            map[string]*stage2aLiveReservation
+	cooperativeActive map[string]*soulCooperativeLiveV3
 	candidateGrantsV3 stage2aCandidateGrantRegistryV3
 	reserveV3         func(int, string, Stage2aReserveRequest, *stage2aSignedCandidateGrantV3) (stage2aReservation, stage2aReservationWorkerReplyV3, error)
 }
@@ -71,7 +76,9 @@ type stage2aLiveReservation struct {
 }
 
 func NewStage2aService(key ed25519.PrivateKey) *Stage2aService {
-	return &Stage2aService{key: key, active: make(map[string]*stage2aLiveReservation), candidateGrantsV3: make(stage2aCandidateGrantRegistryV3)}
+	return &Stage2aService{key: key, active: make(map[string]*stage2aLiveReservation),
+		cooperativeActive: make(map[string]*soulCooperativeLiveV3),
+		candidateGrantsV3: make(stage2aCandidateGrantRegistryV3)}
 }
 
 func (s *Stage2aService) sign(preimage []byte) ([]byte, error) {

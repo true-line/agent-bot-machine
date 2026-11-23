@@ -3,7 +3,7 @@ package main
 import "testing"
 
 func TestStage2aFixedLauncherRoutesChildRole(t *testing.T) {
-	for _, role := range []string{"soul-run", "soul-bridge", "soul-child"} {
+	for _, role := range []string{"soul-run", "soul-bridge", "soul-child", "cooperative-soul-child"} {
 		got, ok := stage2aRoleCommand("darwin", []string{"managed-machine", role})
 		if !ok || got != role {
 			t.Fatalf("fixed role %q was not dispatched: %q, %t", role, got, ok)

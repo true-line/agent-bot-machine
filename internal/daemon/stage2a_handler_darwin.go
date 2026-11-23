@@ -11,8 +11,11 @@ import (
 	"github.com/qwts/managed-machine/internal/members"
 )
 
-func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
+func stage2aHandler(key ed25519.PrivateKey, dir, account string) func(Request) Response {
 	service := members.NewStage2aService(key)
+	paired := func(commitment string, run func() error) error {
+		return CheckHQUpgradePair(dir, account, commitment, run)
+	}
 	return func(req Request) Response {
 		var body any
 		var err error
@@ -26,6 +29,88 @@ func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
 			body, err = service.Lookup(req.peerUID, req.stage2aEpoch, req.stage2aLookup)
 		case stage2aReserveVerb:
 			body, err = service.Reserve(req.peerUID, req.stage2aEpoch, req.stage2aReserve)
+		case stage2aCooperativeReserveVerb:
+			state = "cooperative-reserved"
+			body, err = service.ReserveCooperativeV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeReserve, func(digest string) (members.Saved, error) {
+					return findUniqueCooperativeHPlan(account, digest)
+				}, paired)
+		case stage2aCooperativeReserveResultVerb:
+			state = "cooperative-reserve-result"
+			body, err = service.CooperativeReserveResultV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeReserve.SoulCooperativeReserveRequest, paired)
+		case stage2aCooperativeAttachVerb:
+			state = "cooperative-attached"
+			body, err = service.AttachCooperativeVerified(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeAttach, paired)
+		case stage2aCooperativeStopVerb:
+			state = "cooperative-stopped"
+			body, err = service.StopCooperativeVerified(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeStop, paired)
+		case stage2aCooperativeProjectionVerb:
+			state = "cooperative-launch-inputs"
+			body, err = service.CooperativeLaunchProjection(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeStop, paired)
+		case stage2aCooperativeLookupVerb:
+			state = "cooperative-found"
+			body, err = service.LookupCooperativeInstalled(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeLookup, paired)
+		case stage2aCooperativeLiveVerb:
+			state = "cooperative-live"
+			body, err = service.CooperativeLiveV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeLive, paired)
+		case stage2aCooperativeBExecVerb:
+			state = "cooperative-b-granted"
+			body, err = service.CooperativeBExec(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeBExec, paired)
+		case stage2aCooperativeBVerifyVerb:
+			state = "cooperative-b-verified"
+			body, err = service.CooperativeVerifyB(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeBVerify, paired)
+		case stage2aCooperativeBObserveVerb:
+			state = "cooperative-b-observed"
+			body, err = service.CooperativeObserveB(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeBObserve, paired)
+		case stage2aCooperativeMemberPolicyVerb:
+			state = "cooperative-member-policy"
+			body, err = service.CooperativeMemberPolicy(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeMemberPolicy, paired)
+		case stage2aCooperativeChildExecVerb:
+			state = "cooperative-child-granted"
+			body, err = service.CooperativeChildExec(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeChildExec, paired)
+		case stage2aCooperativeProvisionalMapVerb:
+			state = "cooperative-provisional-map"
+			body, err = service.CooperativeProvisionalMap(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeProvisionalMap, paired)
+		case stage2aCooperativeChildObserveVerb:
+			state = "cooperative-child-observed"
+			body, err = service.CooperativeChildObserve(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeChildObserve, paired)
+		case stage2aCooperativeMemberReadyVerb:
+			state = "cooperative-member-ready"
+			body, err = service.CooperativeMemberReady(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeMemberReady, paired)
+		case stage2aCooperativeBLiveVerb:
+			state = "cooperative-b-live"
+			body, err = service.CooperativeBLive(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeBLive, paired)
+		case stage2aCooperativeMemberLiveVerb:
+			state = "cooperative-member-live"
+			body, err = service.CooperativeMemberLive(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeMemberLive, paired)
+		case stage2aCooperativeRelayIngressVerb:
+			state = "cooperative-relay-ingress"
+			body, err = service.CooperativeRelayIngress(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeRelayIngress, paired)
+		case stage2aCooperativeRelayPeerVerb:
+			state = "cooperative-relay-peer"
+			body, err = service.CooperativeRelayPeer(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeRelayPeer, paired)
+		case stage2aCooperativeAbortVerb:
+			state = "cooperative-aborted"
+			body, err = service.AbortCooperativePreAttach(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeStop, paired)
 		case stage2aExecVerb:
 			state = "granted"
 			q := req.stage2aExec

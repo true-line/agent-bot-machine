@@ -61,6 +61,12 @@ func brewPrefix(target string) string {
 }
 
 func main() {
+	if runtime.GOOS == "darwin" && len(os.Args) == 2 && os.Args[1] == "cooperative-soul-bridge" {
+		os.Exit(members.RunSoulCooperativeBRole())
+	}
+	if runtime.GOOS == "darwin" && len(os.Args) == 3 && os.Args[1] == "cooperative-dispatch" {
+		os.Exit(members.RunSoulCooperativeDispatch(os.Args[2]))
+	}
 	if runtime.GOOS == "darwin" && len(os.Args) >= 2 && os.Args[1] == "stage2a-qualification-remove" {
 		if err := members.RunStage2aQualificationQRemove(members.ApplyDeps{DaemonState: membersDaemonState}, os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -251,7 +257,7 @@ func stage2aRoleCommand(goos string, argv []string) (string, bool) {
 		return "", false
 	}
 	switch argv[1] {
-	case "soul-run", "soul-bridge", "soul-child":
+	case "soul-run", "soul-bridge", "soul-child", "cooperative-soul-child":
 		return argv[1], true
 	default:
 		return "", false
