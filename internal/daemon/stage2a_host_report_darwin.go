@@ -7,10 +7,12 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/qwts/managed-machine/internal/members"
 	"github.com/qwts/managed-machine/internal/qualification"
 )
 
@@ -20,7 +22,7 @@ import (
 // policyAt must load and verify the installed owner policy and revision ledger
 // for its exact argument time; it is called again after keyd returns.
 func signStage2aHostReportV3(ctx context.Context, adminHome string, machine ed25519.PrivateKey,
-	report, executionCompletionEnvelope []byte, hostID, signerID string,
+	report, executionCompletionEnvelope, candidateReservation []byte, hostID, signerID string,
 	policyAt func(time.Time) (qualification.VerifiedPolicy, error), provider deviceProvider) ([]byte, error) {
 	if os.Getuid() == 0 || os.Getuid() != os.Geteuid() || len(machine) != ed25519.PrivateKeySize ||
 		len(report) == 0 || len(report) > qualification.MaxReportBytes ||
@@ -43,6 +45,24 @@ func signStage2aHostReportV3(ctx context.Context, adminHome string, machine ed25
 	before := time.Now()
 	if qualification.VerifyExecutionCompletionBeforeSignV3(report, executionCompletionEnvelope,
 		machine.Public().(ed25519.PublicKey), before) != nil {
+		return nil, errHQDevice
+	}
+	var kind struct {
+		Profile string `json:"profile_in_force"`
+	}
+	if json.Unmarshal(report, &kind) != nil {
+		return nil, errHQDevice
+	}
+	switch kind.Profile {
+	case "managed-protected":
+		if members.VerifyStage2aCandidateReportJoinV3(report, candidateReservation, machine.Public().(ed25519.PublicKey)) != nil {
+			return nil, errHQDevice
+		}
+	case "managed-cooperative":
+		if len(candidateReservation) != 0 {
+			return nil, errHQDevice
+		}
+	default:
 		return nil, errHQDevice
 	}
 	policy, err := policyAt(before)

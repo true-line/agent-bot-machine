@@ -201,7 +201,7 @@ func loadStage2aInstalledPolicyWithLease(key ed25519.PublicKey, hqUID int, epoch
 	if err != nil || !bytes.Equal(p.Plan, bytes.TrimSuffix(canonicalPlan, []byte{'\n'})) ||
 		p.Binding.InstalledPlanDigest != strings.TrimPrefix(stage2aReservationSHA256(canonicalPlan), "sha256:") ||
 		!stage2aInstalledPolicyMatchesPlan(p, approvedPlan, key) ||
-		stage2aAdapterChildEnv(p.LaunchInputs, &p.BridgeQualification,
+		p.RuntimeV3 == nil && stage2aAdapterChildEnv(p.LaunchInputs, &p.BridgeQualification,
 			p.Binding.Snapshots.LaunchInputs.RootPath) != nil {
 		return p, nil, errStage2aReservationAuthority
 	}
@@ -272,6 +272,71 @@ func loadStage2aInstalledPolicyWithLease(key ed25519.PublicKey, hqUID int, epoch
 // RawMessage is compacted when the installed policy is marshaled. Compare
 // that exact JSON representation to the protected root receipt while keeping
 // the root receipt itself as the independent authority.
+// A uses the installed v3 loader for v3 live execution. Legacy records can
+// only authorize the preexisting path and cannot supply an R ref.
+func loadStage2aActiveExecutionPolicy(key ed25519.PublicKey, hqUID int, epoch string,
+	r *stage2aLiveReservation) (stage2aInstalledPolicy, []byte, error) {
+	if r == nil {
+		return stage2aInstalledPolicy{}, nil, errStage2aReservationAuthority
+	}
+	switch r.runModeV3 {
+	case stage2aQualifiedRunV3, stage2aCandidateRunV3:
+		runtime, err := stage2aLoadInstalledRuntimeV3(key, hqUID, epoch, r.request.InstallationID)
+		if err != nil || runtime.VerifiedR.ref != r.runtimeRefV3 ||
+			stage2aValidateRuntimeExecutionRowsV3(runtime.Policy, runtime.VerifiedR.ref, runtime.Inventory) != nil {
+			return stage2aInstalledPolicy{}, nil, errStage2aReservationAuthority
+		}
+		return runtime.Policy, runtime.PolicyRaw, nil
+	case "":
+		if r.runtimeRefV3 != (stage2aDomainInventoryRefV3{}) {
+			return stage2aInstalledPolicy{}, nil, errStage2aReservationAuthority
+		}
+		return loadStage2aInstalledPolicy(key, hqUID, epoch, r.request.InstallationID)
+	default:
+		return stage2aInstalledPolicy{}, nil, errStage2aReservationAuthority
+	}
+}
+
+func stage2aValidateRuntimeExecutionRowsV3(p stage2aInstalledPolicy, ref stage2aDomainInventoryRefV3,
+	inv stage2aDomainInventoryV3) error {
+	if stage2aRunnerCodeRowsV3(ref, inv, p.Node, p.Entry) != nil ||
+		stage2aAdapterChildEnvV3(p.LaunchInputs, &p.BridgeQualification, ref, inv) != nil {
+		return errStage2aReservationAuthority
+	}
+	return nil
+}
+
+func stage2aRecheckExecutionCode(r *stage2aLiveReservation, p stage2aInstalledPolicy) error {
+	if r == nil {
+		return errStage2aReservationAuthority
+	}
+	if r.runModeV3 == "" && p.RuntimeV3 == nil {
+		return stage2aAdapterChildEnv(p.LaunchInputs, &p.BridgeQualification, p.Binding.Snapshots.LaunchInputs.RootPath)
+	}
+	if r.runModeV3 != stage2aQualifiedRunV3 && r.runModeV3 != stage2aCandidateRunV3 {
+		return errStage2aReservationAuthority
+	}
+	ref := r.runtimeRefV3
+	lease, err := time.Parse(time.RFC3339Nano, p.ApprovedUntil)
+	if err != nil || !time.Now().Before(lease) || p.RuntimeV3 == nil || *p.RuntimeV3 != ref {
+		return errStage2aReservationAuthority
+	}
+	verified, err := stage2aObserveInstalledDomainV3(ref.Snapshot.Path, ref.Sidecar.Path,
+		ref.MachineUID, ref.ReaderUID, ref.ReaderGID, ref.OwnerPlanDigest, ref.ReviewedSourceInventoryDigest)
+	if err != nil || verified.ref != ref || stage2aRecheckVerifiedDomainV3(verified) != nil {
+		return errStage2aReservationAuthority
+	}
+	_, raw, err := stage2aV3SidecarAt(ref.Sidecar.Path, ref.MachineUID, ref.ReaderGID)
+	if err != nil {
+		return err
+	}
+	inv, digest, err := stage2aDomainInventoryDigestV3(raw)
+	if err != nil || digest != ref.InventoryDigest {
+		return errStage2aReservationAuthority
+	}
+	return stage2aValidateRuntimeExecutionRowsV3(p, ref, inv)
+}
+
 func stage2aInstalledReceiptMatchesRoot(installed, root []byte) bool {
 	if stage2aStrictJSON(root) != nil {
 		return false

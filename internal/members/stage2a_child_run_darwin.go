@@ -37,8 +37,11 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 		child.SandboxSHA256 != "sha256:"+harnessSHA(soulChildProfile) ||
 		child.RelaySocket != in.Start.Relay.SocketPath ||
 		child.ExecutableSHA256 != in.Launch.ComponentDigests["adapter"] ||
-		!stage2aSystemImageSelected(in.Launch, "/usr/bin/sandbox-exec") ||
-		stage2aAdapterChildEnv(in.Launch, nil, in.Binding.Snapshots.LaunchInputs.RootPath) != nil {
+		child.RuntimeV3 == nil || !stage2aSystemImageSelected(in.Launch, "/usr/bin/sandbox-exec") {
+		return harnessRefused
+	}
+	rInventory, err := stage2aCheckChildCodeV3(*child.RuntimeV3, child.Executable, child.ExecutableSHA256)
+	if err != nil || stage2aAdapterChildEnvV3(in.Launch, nil, *child.RuntimeV3, rInventory) != nil {
 		return harnessRefused
 	}
 	expires, err := time.Parse(time.RFC3339Nano, child.GrantExpiresAt)

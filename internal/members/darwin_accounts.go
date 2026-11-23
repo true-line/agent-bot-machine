@@ -361,7 +361,12 @@ func freeDarwinID(users, groups map[string]string, directoryUsed func(string) (b
 
 // Serialize Directory Services changes made by approved plans. The lock
 // is private to root, inside the receipt directory created at claim time.
-func darwinCreateRoleAccount(name, home, label string, expectedID int) (result error) {
+func darwinCreateRoleAccount(name, home, label string, expectedID int) error {
+	return darwinCreateRoleAccountUsing(name, home, label, expectedID, freeDarwinID)
+}
+
+func darwinCreateRoleAccountUsing(name, home, label string, expectedID int,
+	selectID func(map[string]string, map[string]string, func(string) (bool, error)) (int, error)) (result error) {
 	lock, err := os.OpenFile(filepath.Join(receiptsDir(), ".role-account.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
@@ -391,7 +396,7 @@ func darwinCreateRoleAccount(name, home, label string, expectedID int) (result e
 	if expectedID != 0 {
 		checkID = protectedDarwinIDUsed
 	}
-	id, err := freeDarwinID(users, groups, checkID)
+	id, err := selectID(users, groups, checkID)
 	if err != nil {
 		return err
 	}

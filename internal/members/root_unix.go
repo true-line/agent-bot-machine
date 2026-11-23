@@ -37,8 +37,9 @@ var rootEnv = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C"}
 
 // OSRoot changes the running host. Every method needs root.
 type OSRoot struct {
-	upgradeApproval  Approval
-	checkUpgradePair upgradePairGuard
+	upgradeApproval    Approval
+	checkUpgradePair   upgradePairGuard
+	protectedHQUpgrade func(Step) error
 }
 
 func runProgram(name string, args ...string) error {
@@ -373,6 +374,9 @@ func (OSRoot) PreflightHQ() error {
 // the HQ account; the status round trip uses the approved owner's UID.
 func (r OSRoot) ActivateHQ(step Step) error {
 	if step.Action == upgradeAction {
+		if r.protectedHQUpgrade != nil {
+			return r.protectedHQUpgrade(step)
+		}
 		return activateUpgrade(step, r.upgradeApproval, r.checkUpgradePair)
 	}
 	if runtime.GOOS == "darwin" {

@@ -1,5 +1,7 @@
 package members
 
+import "encoding/json"
+
 const (
 	Stage2aRoleExecPurpose = "agent-bot/stage2a-exec/v1"
 	SoulAuthorityPin       = launchRuntimeDir + "/soul-authority.pub"
@@ -42,6 +44,8 @@ type Stage2aRunnerExec struct {
 	Entry                        string                    `json:"entry"`
 	ReservationEnvelopeBase64URL string                    `json:"reservation_envelope_base64url"`
 	ReservationSHA256            string                    `json:"reservation_sha256"`
+	ReservationRunModeV3         string                    `json:"reservation_run_mode_v3,omitempty"`
+	ReservationV3                json.RawMessage           `json:"reservation_v3,omitempty"`
 }
 
 type Stage2aBridgeExec struct {
@@ -53,18 +57,19 @@ type Stage2aBridgeExec struct {
 // The child command is selected from the installed, owner-reviewed launch
 // inputs. HQ supplies no executable, argument, environment or socket value.
 type Stage2aChildExec struct {
-	ReservationSHA256       string                  `json:"reservation_sha256"`
-	FinalizationSHA256      string                  `json:"finalization_sha256"`
-	HelloFinalizationSHA256 string                  `json:"hello_finalization_sha256"`
-	BindReceiptSHA256       string                  `json:"bind_receipt_sha256"`
-	Runner                  Stage2aLiveRoleIdentity `json:"runner"`
-	Bridge                  Stage2aLiveRoleIdentity `json:"bridge"`
-	Executable              string                  `json:"executable"`
-	ExecutableSHA256        string                  `json:"executable_sha256"`
-	RelaySocket             string                  `json:"relay_socket"`
-	SandboxPath             string                  `json:"sandbox_path"`
-	SandboxSHA256           string                  `json:"sandbox_sha256"`
-	GrantExpiresAt          string                  `json:"grant_expires_at"`
-	Workdir                 string                  `json:"workdir"`
-	Environment             map[string]string       `json:"environment"`
+	ReservationSHA256       string                       `json:"reservation_sha256"`
+	FinalizationSHA256      string                       `json:"finalization_sha256"`
+	HelloFinalizationSHA256 string                       `json:"hello_finalization_sha256"`
+	BindReceiptSHA256       string                       `json:"bind_receipt_sha256"`
+	Runner                  Stage2aLiveRoleIdentity      `json:"runner"`
+	Bridge                  Stage2aLiveRoleIdentity      `json:"bridge"`
+	Executable              string                       `json:"executable"`
+	ExecutableSHA256        string                       `json:"executable_sha256"`
+	RuntimeV3               *stage2aDomainInventoryRefV3 `json:"runtime_v3,omitempty"`
+	RelaySocket             string                       `json:"relay_socket"`
+	SandboxPath             string                       `json:"sandbox_path"`
+	SandboxSHA256           string                       `json:"sandbox_sha256"`
+	GrantExpiresAt          string                       `json:"grant_expires_at"`
+	Workdir                 string                       `json:"workdir"`
+	Environment             map[string]string            `json:"environment"`
 }

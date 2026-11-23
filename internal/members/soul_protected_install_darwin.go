@@ -156,9 +156,11 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 			policy.MachineUID, policy.Runner.GID) {
 		return Plan{}, invalid
 	}
-	if !stage2aRuntimeFile(policy.Binding.Snapshots.LaunchInputs.RootPath, policy.Node, "bin/node", policy.LaunchInputs.Files, true) ||
-		!stage2aRuntimeFile(policy.Binding.Snapshots.LaunchInputs.RootPath, policy.Entry, "bin/agent-bot-souls.mjs", policy.LaunchInputs.Files, false) ||
-		policy.LaunchInputs.SelectedCommand != policy.Node ||
+	if r.RuntimeV3 == nil && (!stage2aRuntimeFile(policy.Binding.Snapshots.LaunchInputs.RootPath, policy.Node, "bin/node", policy.LaunchInputs.Files, true) ||
+		!stage2aRuntimeFile(policy.Binding.Snapshots.LaunchInputs.RootPath, policy.Entry, "bin/agent-bot-souls.mjs", policy.LaunchInputs.Files, false)) {
+		return Plan{}, invalid
+	}
+	if policy.LaunchInputs.SelectedCommand != policy.Node ||
 		policy.LaunchInputs.SandboxPolicyDigest != "sha256:"+harnessSHA(soulRunnerProfile) ||
 		!slices.Equal(policy.LaunchInputs.Argv, stage2aRunnerArgvTemplate(policy.Node,
 			policy.Entry, policy.Binding.Snapshots.Definition.RootPath, policy.Binding.ProfileInForce)) ||
@@ -185,13 +187,21 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 		return Plan{}, invalid
 	}
 	launchDigest, _, err := Stage2aLaunchInputDigest(policy.LaunchInputs)
-	if err != nil || launchDigest != policy.Binding.LaunchInputMeasurement ||
-		stage2aAdapterChildEnv(policy.LaunchInputs, &policy.BridgeQualification,
-			policy.Binding.Snapshots.LaunchInputs.RootPath) != nil {
+	if err != nil || launchDigest != policy.Binding.LaunchInputMeasurement {
 		return Plan{}, invalid
 	}
-	if r.RuntimeV3 != nil {
-		if _, _, err := stage2aReadReviewedRuntimeV3(*r.RuntimeV3, policy.Binding.InstallationID); err != nil {
+	if r.RuntimeV3 == nil {
+		if stage2aAdapterChildEnv(policy.LaunchInputs, &policy.BridgeQualification, policy.Binding.Snapshots.LaunchInputs.RootPath) != nil {
+			return Plan{}, invalid
+		}
+	} else {
+		installationID := policy.Binding.InstallationID
+		space, name, _, nameErr := stage2aDomainNamesV3("R-runtime", installationID)
+		inventory, _, err := stage2aReadReviewedRuntimeV3(*r.RuntimeV3, installationID)
+		ref := stage2aDomainInventoryRefV3{Domain: "R-runtime", InstallationID: installationID,
+			InventoryDigest: r.RuntimeV3.InventoryDigest, Snapshot: stage2aDomainNodeRefV3{Path: filepath.Join(space, name)}}
+		if nameErr != nil || err != nil || stage2aRunnerCodeRowsV3(ref, inventory, policy.Node, policy.Entry) != nil ||
+			stage2aAdapterChildEnvV3(policy.LaunchInputs, &policy.BridgeQualification, ref, inventory) != nil {
 			return Plan{}, invalid
 		}
 	}

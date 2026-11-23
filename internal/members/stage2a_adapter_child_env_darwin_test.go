@@ -132,3 +132,24 @@ func TestStage2aProtectedAdapterChildEnvMatchesOwnerQualification(t *testing.T) 
 		})
 	}
 }
+
+func TestStage2aV3AdapterChildEnvRequiresSealedRRow(t *testing.T) {
+	input, q := stage2aChildEnvFixture(t)
+	ref := stage2aDomainInventoryRefV3{Domain: "R-runtime", InstallationID: "install-one",
+		Snapshot: stage2aDomainNodeRefV3{Path: "/private/sealed-r"}}
+	executable := ref.Snapshot.Path + "/runtime/bin/claude-agent-acp"
+	input.HostProjection.Adapters["fixture-adapter"].(map[string]any)["command"] = []any{executable}
+	inv := stage2aDomainInventoryV3{Domain: "R-runtime", InstallationID: ref.InstallationID,
+		Files: []stage2aDomainFileV3{{Path: "runtime/bin/claude-agent-acp", ComponentID: "adapter",
+			Mode: "0550", SHA256: input.ComponentDigests["adapter"]}}}
+	if err := stage2aAdapterChildEnvV3(input, &q, ref, inv); err != nil {
+		t.Fatalf("sealed R adapter refused: %v", err)
+	}
+	if stage2aAdapterChildEnv(input, &q, "/private/stage2a/snapshot-launch") == nil {
+		t.Fatal("legacy launch snapshot accepted the R-only child path")
+	}
+	inv.Files[0].ComponentID = "souls"
+	if stage2aAdapterChildEnvV3(input, &q, ref, inv) == nil {
+		t.Fatal("nonadapter sealed R row accepted")
+	}
+}

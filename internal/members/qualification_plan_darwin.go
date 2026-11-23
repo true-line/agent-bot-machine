@@ -57,7 +57,7 @@ func CheckDarwinHarnessQualification(saved Saved, owner string, uid int) error {
 	if r.Adapter.Launch.Driver.Path != "" {
 		files = append(files, r.Adapter.Launch.Driver)
 	}
-	for _, file := range files {
+	for _, file := range append(files, qualificationCandidateFiles(r)...) {
 		if err := verifyQualificationFile(file); err != nil {
 			return err
 		}

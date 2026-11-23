@@ -32,11 +32,12 @@ var digestHex = regexp.MustCompile(`^[a-f0-9]{64}$`)
 // HQService identifies an installed, operator-approved interim release.
 // Machine never downloads, extracts, or executes the payload as root.
 type HQService struct {
-	Archive        string `json:"archive,omitempty"`
-	ReleaseDir     string `json:"release_dir"`
-	ArtifactSHA256 string `json:"artifact_sha256"`
-	Node           string `json:"node"`
-	NodeSHA256     string `json:"node_sha256"`
+	Archive        string            `json:"archive,omitempty"`
+	ReleaseDir     string            `json:"release_dir"`
+	ArtifactSHA256 string            `json:"artifact_sha256"`
+	Node           string            `json:"node"`
+	NodeSHA256     string            `json:"node_sha256"`
+	Stage2a        *hqStage2aService `json:"stage2a,omitempty"`
 }
 
 func decodeHQService(raw []byte) (*HQService, error) {
@@ -53,6 +54,11 @@ func decodeHQService(raw []byte) (*HQService, error) {
 }
 
 func (s HQService) validate() error {
+	if s.Stage2a != nil {
+		if err := s.Stage2a.validate(); err != nil {
+			return err
+		}
+	}
 	paths := []string{s.ReleaseDir, s.Node}
 	if s.Archive != "" {
 		paths = append(paths, s.Archive)

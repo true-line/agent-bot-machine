@@ -23,7 +23,7 @@ func runStage2aRunner(ctx context.Context, request SoulRunRequest, start SoulSta
 	runner SoulRunner, bridge SoulBridge, binding Stage2aMeasurementBinding,
 	launchInputs Stage2aLaunchInputRecords, definition []Stage2aDefinitionRecord,
 	node, entry, reservationEnvelopeBase64URL, reservationSHA256 string,
-	acp io.Reader, control, stdout, status *os.File) int {
+	runtimeRef stage2aDomainInventoryRefV3, acp io.Reader, control, stdout, status *os.File) int {
 	expires, err := time.Parse(time.RFC3339Nano, start.ExpiresAt)
 	if err != nil || time.Until(expires) <= 0 || time.Until(expires) > 30*time.Second ||
 		!request.valid() || start.Schema != "agent-bot-machine/soul-start-assignment/v2" ||
@@ -46,8 +46,8 @@ func runStage2aRunner(ctx context.Context, request SoulRunRequest, start SoulSta
 		return harnessRefused
 	}
 	root := binding.Snapshots.LaunchInputs
-	if !stage2aRuntimeFile(root.RootPath, node, "bin/node", launchInputs.Files, true) ||
-		!stage2aRuntimeFile(root.RootPath, entry, "bin/agent-bot-souls.mjs", launchInputs.Files, false) {
+	rInventory, err := stage2aCheckRunnerCodeV3(runtimeRef, node, entry)
+	if err != nil {
 		return harnessRefused
 	}
 	if err := stage2aCheckRuntimeSnapshot(root, launchInputs.Files); err != nil {
@@ -64,7 +64,7 @@ func runStage2aRunner(ctx context.Context, request SoulRunRequest, start SoulSta
 	if launchInputs.SandboxPolicyDigest != "sha256:"+harnessSHA(soulRunnerProfile) ||
 		launchInputs.SelectedCommand != node ||
 		launchInputs.EffectiveConfig["profile"] != binding.ProfileInForce ||
-		stage2aAdapterChildEnv(launchInputs, nil, root.RootPath) != nil ||
+		stage2aAdapterChildEnvV3(launchInputs, nil, runtimeRef, rInventory) != nil ||
 		!stage2aSystemImageSelected(launchInputs, "/usr/bin/sandbox-exec") {
 		return harnessRefused
 	}

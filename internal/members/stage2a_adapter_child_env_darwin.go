@@ -12,6 +12,21 @@ import (
 const stage2aAdapterChildEnvSchema = "agent-bot-souls/adapter-child-env/v1"
 
 func stage2aAdapterChildEnv(input Stage2aLaunchInputRecords, qualification *Stage2aBridgeQualification, root string) error {
+	return stage2aAdapterChildEnvWithRows(input, qualification, root, nil)
+}
+
+func stage2aAdapterChildEnvV3(input Stage2aLaunchInputRecords, qualification *Stage2aBridgeQualification,
+	ref stage2aDomainInventoryRefV3, inv stage2aDomainInventoryV3) error {
+	if ref.Domain != "R-runtime" || inv.Domain != "R-runtime" ||
+		ref.InstallationID != inv.InstallationID || !stage2aAbsolutePath(ref.Snapshot.Path) ||
+		len(inv.Files) == 0 {
+		return errStage2aReservationAuthority
+	}
+	return stage2aAdapterChildEnvWithRows(input, qualification, ref.Snapshot.Path, inv.Files)
+}
+
+func stage2aAdapterChildEnvWithRows(input Stage2aLaunchInputRecords,
+	qualification *Stage2aBridgeQualification, root string, rFiles []stage2aDomainFileV3) error {
 	invalid := errors.New("invalid protected adapter child environment")
 	if input.EffectiveConfig["profile"] != "managed-protected" {
 		return invalid
@@ -67,10 +82,20 @@ func stage2aAdapterChildEnv(input Stage2aLaunchInputRecords, qualification *Stag
 		return invalid
 	}
 	measured := false
-	for _, file := range input.Files {
-		if file.Path == relative && file.Kind == "regular" && stage2aReadOnlyMode(file.Mode) &&
-			(file.Mode[2]-'0')&1 != 0 && input.ComponentDigests["adapter"] == "sha256:"+file.SHA256 {
-			measured = true
+	if rFiles != nil {
+		for _, file := range rFiles {
+			if file.Path == relative && file.ComponentID == "adapter" &&
+				file.Path == "runtime/bin/claude-agent-acp" && file.Mode == "0550" &&
+				input.ComponentDigests["adapter"] == file.SHA256 {
+				measured = true
+			}
+		}
+	} else {
+		for _, file := range input.Files {
+			if file.Path == relative && file.Kind == "regular" && stage2aReadOnlyMode(file.Mode) &&
+				(file.Mode[2]-'0')&1 != 0 && input.ComponentDigests["adapter"] == "sha256:"+file.SHA256 {
+				measured = true
+			}
 		}
 	}
 	if !measured {

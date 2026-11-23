@@ -25,7 +25,7 @@ func (s *Stage2aService) execChild(hqUID int, epoch, digest, nonce string, pid i
 		r.runnerPID <= 1 || r.bridgePID <= 1 || r.childLauncherPID != 0 || r.liveSequence == 0 {
 		return reply, errStage2aReservationAuthority
 	}
-	p, raw, err := loadStage2aInstalledPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, r.request.InstallationID)
+	p, raw, err := loadStage2aActiveExecutionPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, r)
 	if err != nil || stage2aReservationSHA256(raw) != r.policyDigest ||
 		p.Binding.InstallationID != r.request.InstallationID ||
 		p.Binding.LaunchInputMeasurement != r.payload.MeasurementBinding.LaunchInputMeasurement ||
@@ -58,7 +58,7 @@ func (s *Stage2aService) execChild(hqUID int, epoch, digest, nonce string, pid i
 		observeInstalledStage2aLaunchInputs(snapshots, p.Binding, p.LaunchInputs) != nil ||
 		stage2aCheckRunnerSnapshot(p.Binding.Snapshots.Definition, p.Definition) != nil ||
 		stage2aCheckRuntimeSnapshot(p.Binding.Snapshots.LaunchInputs, p.LaunchInputs.Files) != nil ||
-		stage2aAdapterChildEnv(p.LaunchInputs, &p.BridgeQualification, p.Binding.Snapshots.LaunchInputs.RootPath) != nil {
+		(r.runModeV3 == "" && stage2aRecheckExecutionCode(r, p) != nil) {
 		return reply, errStage2aReservationAuthority
 	}
 	if trustedPath(OSHost{}, SoulChildSandbox, false) != nil ||
@@ -87,6 +87,7 @@ func (s *Stage2aService) execChild(hqUID int, epoch, digest, nonce string, pid i
 	approvedUntil, err := time.Parse(time.RFC3339Nano, p.ApprovedUntil)
 	expires := minStage2aTime(now.Add(stage2aChildGrantLife), approvedUntil)
 	if err != nil || !expires.After(now) || expires.Sub(now) > stage2aChildGrantLife ||
+		(r.runModeV3 != "" && stage2aRecheckExecutionCode(r, p) != nil) ||
 		checkStage2aGrantedRoleProcess(pid, p.Runner.UID, p.Runner.GID, "child", childProcess) != nil ||
 		checkStage2aGrantedRoleProcess(r.runnerPID, p.Runner.UID, p.Runner.GID, "runner", r.runnerProcess) != nil ||
 		checkStage2aGrantedRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge", r.bridgeProcess) != nil {
@@ -102,6 +103,9 @@ func (s *Stage2aService) execChild(hqUID int, epoch, digest, nonce string, pid i
 		SandboxSHA256:  "sha256:" + harnessSHA(soulChildProfile),
 		GrantExpiresAt: expires.UTC().Format(time.RFC3339Nano),
 		Workdir:        workdir, Environment: environment,
+	}
+	if r.runModeV3 != "" {
+		child.RuntimeV3 = &r.runtimeRefV3
 	}
 	invocation := Stage2aRoleInvocation{
 		Request: r.request, Start: r.payload.Assignment.SoulStartAssignment,

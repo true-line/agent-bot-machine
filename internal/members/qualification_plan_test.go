@@ -205,3 +205,46 @@ func TestQualificationFieldsRejectControlsAndDuplicateCodePaths(t *testing.T) {
 		t.Fatal("accepted duplicate code input path")
 	}
 }
+
+func TestCandidateQualificationPlanRequiresExactHostAndInputs(t *testing.T) {
+	request := validQualificationRequest()
+	request.SchemaVersion = 2
+	if err := validateQualificationRequest(request); err == nil {
+		t.Fatal("candidate request lacking its exact reviewed inputs was accepted")
+	}
+	request.Candidate = &qualificationCandidatePlan{
+		HostUUID:            "A0000000-0000-0000-0000-000000000001",
+		InstallationID:      "inst_0000000000000001",
+		InstalledPlanDigest: strings.Repeat("a", 64),
+		RuntimeInventorySHA: strings.Repeat("b", 64),
+		ComponentID:         "adapter",
+		Manifest:            qualificationFile{"/private/tmp/manifest.json", strings.Repeat("c", 64)},
+		TestPlan:            qualificationFile{"/private/tmp/gate-plan.json", strings.Repeat("d", 64)},
+	}
+	if err := validateQualificationRequest(request); err != nil {
+		t.Fatalf("exact candidate inputs refused: %v", err)
+	}
+	run := &QualificationRun{RequestSHA256: strings.Repeat("e", 64), Request: request,
+		MemberState: "disposable", OneUse: true, Gates: fixedQualificationGates()}
+	before, err := qualificationPlan(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := before.Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Request.Candidate.TestPlan.SHA256 = strings.Repeat("f", 64)
+	after, err := qualificationPlan(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := after.Canonical()
+	if err != nil || string(changed) == string(canonical) {
+		t.Fatal("changing the test plan did not change the owner review")
+	}
+	request.SchemaVersion = 1
+	if err := validateQualificationRequest(request); err == nil {
+		t.Fatal("schema-1 request accepted candidate authority")
+	}
+}

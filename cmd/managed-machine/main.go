@@ -61,12 +61,32 @@ func brewPrefix(target string) string {
 }
 
 func main() {
+	if runtime.GOOS == "darwin" && len(os.Args) >= 2 && os.Args[1] == "stage2a-qualification-remove" {
+		if err := members.RunStage2aQualificationQRemove(members.ApplyDeps{DaemonState: membersDaemonState}, os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(78)
+		}
+		return
+	}
+	if runtime.GOOS == "darwin" && len(os.Args) >= 2 && os.Args[1] == "stage2a-qualification-install" {
+		if err := members.RunStage2aQualificationQInstall(members.ApplyDeps{DaemonState: membersDaemonState}, os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(78)
+		}
+		return
+	}
 	if runtime.GOOS == "darwin" && len(os.Args) == 2 {
 		switch os.Args[1] {
+		case "stage2a-qualification-observe":
+			os.Exit(members.RunStage2aQualificationQ())
 		case "harness-run":
 			os.Exit(members.RunHarness())
 		case "stage2a-seal":
 			os.Exit(members.RunStage2aInstallSeal())
+		case "stage2a-h-withdraw":
+			os.Exit(members.RunStage2aHQWithdraw())
+		case "stage2a-h-evidence":
+			os.Exit(members.RunStage2aHQEvidence(daemon.ReadStage2aHQWorkerKey, daemon.CheckHQUpgradePair))
 		}
 	}
 	if role, ok := stage2aRoleCommand(runtime.GOOS, os.Args); ok {

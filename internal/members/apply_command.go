@@ -247,7 +247,17 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 			return failure(diag.MembersApplyFailed, "cannot verify prior HQ apply receipt: %v", err)
 		}
 	}
-	var r Root = OSRoot{upgradeApproval: approval, checkUpgradePair: pairCheck}
+	root := OSRoot{upgradeApproval: approval, checkUpgradePair: pairCheck}
+	if saved.HQService != nil && saved.HQService.Stage2a != nil {
+		if !realUpgrade {
+			return failure(diag.MembersNotApproved, hqStage2aCutoverRefusal)
+		}
+		root.protectedHQUpgrade, err = prepareHQStage2aApply(saved, approval, owner, daemonAccount, pairCheck)
+		if err != nil {
+			return failure(diag.MembersNotApproved, "%v", err)
+		}
+	}
+	var r Root = root
 	if deps.Root != nil {
 		r = deps.Root()
 	}

@@ -81,12 +81,13 @@ func RunStage2aRole(command string) int {
 	defer cancel()
 	if role == "runner" {
 		run := in.RunnerExec
-		if err := verifyStage2aRunnerReservation(*run, in, pub, time.Now()); err != nil {
+		runtimeRef, err := verifyStage2aRunnerReservation(*run, in, pub, time.Now())
+		if err != nil {
 			return harnessRefused
 		}
 		return runStage2aRunner(ctx, in.Request, in.Start, in.Runner, in.Bridge, in.Binding,
 			in.Launch, run.Definition, run.Node, run.Entry, run.ReservationEnvelopeBase64URL,
-			run.ReservationSHA256, input, inputFile, os.Stdout, os.Stderr)
+			run.ReservationSHA256, runtimeRef, input, inputFile, os.Stdout, os.Stderr)
 	}
 	if role == "child" {
 		var grant Stage2aExecReply
