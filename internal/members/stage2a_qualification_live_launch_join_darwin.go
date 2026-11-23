@@ -53,10 +53,7 @@ func stage2aLiveJoinCommand(session *stage2aQualificationSessionV1,
 		len(requestFrame) < 5 || int(binary.BigEndian.Uint32(requestFrame[:4])) != len(requestFrame)-4 {
 		return false
 	}
-	schedule := stage2aDriverSchedule(command.Profile, command.Phase)
-	if command.Sequence < 1 || command.Sequence > len(schedule) ||
-		schedule[command.Sequence-1].Gate != command.Gate ||
-		schedule[command.Sequence-1].Event != command.Event {
+	if !stage2aLiveJoinScheduleMatch(command) {
 		return false
 	}
 	deadline, err := time.Parse(time.RFC3339Nano, session.begin.DeadlineAt)
@@ -69,6 +66,19 @@ func stage2aLiveJoinCommand(session *stage2aQualificationSessionV1,
 	}
 	canonical, err := marshalStage2aReservationJCS(command)
 	return err == nil && bytes.Equal(requestFrame[4:], canonical)
+}
+
+func stage2aLiveJoinScheduleMatch(command stage2aDriverCommand) bool {
+	if command.Profile != "managed-protected" || command.Phase != stage2aDriverLiveStart {
+		return false
+	}
+	schedule := stage2aDriverSchedule(command.Profile, command.Phase)
+	// The live phase continues the same Q session after its baseline. A
+	// sequence reset here would join an unrelated pre-launch observation.
+	first := len(stage2aDriverSchedule(command.Profile, stage2aDriverBeforeLaunch)) + 1
+	index := command.Sequence - first
+	return index >= 0 && index < len(schedule) &&
+		schedule[index].Gate == command.Gate && schedule[index].Event == command.Event
 }
 
 // observeStage2aLiveLaunchJoin is A-local: the caller supplies only A's

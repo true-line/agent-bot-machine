@@ -112,14 +112,27 @@ type stage2aDriverVerify func(context.Context, stage2aDriverCommand, string) (st
 func runStage2aQualificationDriverCases(ctx context.Context, conn *net.UnixConn, peer stage2aQualificationDriverPeer,
 	begin stage2aQualificationBeginV1, phase stage2aDriverRunPhase, checkLive func() error,
 	verify stage2aDriverVerify, observe func(stage2aQualificationObserveV1) ([]byte, error)) ([]stage2aDriverEvidence, error) {
+	if conn != nil {
+		defer conn.Close()
+	}
+	return runStage2aQualificationDriverCasesAtSequence(ctx, conn, peer, begin, phase, 1, nil,
+		checkLive, verify, observe)
+}
+
+// A retained Q session uses one monotonically increasing command/observation
+// sequence across baseline and live phases. A preallocated challenge is used
+// only for the exact T03 sequence that A signed before child I/O began.
+func runStage2aQualificationDriverCasesAtSequence(ctx context.Context, conn *net.UnixConn, peer stage2aQualificationDriverPeer,
+	begin stage2aQualificationBeginV1, phase stage2aDriverRunPhase, firstSequence int,
+	preallocated map[int]string, checkLive func() error,
+	verify stage2aDriverVerify, observe func(stage2aQualificationObserveV1) ([]byte, error)) ([]stage2aDriverEvidence, error) {
 	if conn == nil {
 		return nil, errStage2aReservationAuthority
 	}
-	defer conn.Close()
 	if checkLive == nil {
 		return nil, errStage2aReservationAuthority
 	}
-	return exchangeStage2aDriverCases(ctx, conn, begin, phase, func() error {
+	return exchangeStage2aDriverCasesAtSequence(ctx, conn, begin, phase, firstSequence, preallocated, func() error {
 		if err := peer.recheck(); err != nil {
 			return err
 		}
@@ -130,12 +143,29 @@ func runStage2aQualificationDriverCases(ctx context.Context, conn *net.UnixConn,
 func exchangeStage2aDriverCases(ctx context.Context, conn net.Conn, begin stage2aQualificationBeginV1,
 	phase stage2aDriverRunPhase, checkLive func() error, verify stage2aDriverVerify,
 	observe func(stage2aQualificationObserveV1) ([]byte, error)) ([]stage2aDriverEvidence, error) {
+	return exchangeStage2aDriverCasesAtSequence(ctx, conn, begin, phase, 1, nil, checkLive, verify, observe)
+}
+
+func exchangeStage2aDriverCasesAtSequence(ctx context.Context, conn net.Conn, begin stage2aQualificationBeginV1,
+	phase stage2aDriverRunPhase, firstSequence int, preallocated map[int]string,
+	checkLive func() error, verify stage2aDriverVerify,
+	observe func(stage2aQualificationObserveV1) ([]byte, error)) ([]stage2aDriverEvidence, error) {
 	schedule := stage2aDriverSchedule(begin.Profile, phase)
 	deadline, err := time.Parse(time.RFC3339Nano, begin.DeadlineAt)
 	if ctx == nil || checkLive == nil || verify == nil || observe == nil || len(schedule) == 0 ||
+		firstSequence < 1 || firstSequence+len(schedule)-1 > 1024 ||
 		err != nil || !time.Now().Before(deadline) || !stage2aQualificationDigest(begin.ReservationSHA256) ||
 		!stage2aQualificationDigest(begin.TestPlanSHA256) || len(begin.SessionID) != 32 || !stage2aQualificationHex(begin.SessionID) {
 		return nil, errStage2aReservationAuthority
+	}
+	if len(preallocated) > 1 {
+		return nil, errStage2aReservationAuthority
+	}
+	for sequence := range preallocated {
+		index := sequence - firstSequence
+		if index < 0 || index >= len(schedule) || schedule[index] != (stage2aDriverCase{"T03", "direct-route-refused"}) {
+			return nil, errStage2aReservationAuthority
+		}
 	}
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
@@ -144,6 +174,7 @@ func exchangeStage2aDriverCases(ctx context.Context, conn net.Conn, begin stage2
 	defer stop()
 	trace := make([]stage2aDriverEvidence, 0, len(schedule))
 	usedArtifacts := make(map[string]bool, len(schedule))
+	usedChallenges := make(map[string]bool, len(schedule))
 	for i, step := range schedule {
 		frameDeadline := time.Now().Add(30 * time.Second)
 		if deadline.Before(frameDeadline) {
@@ -153,15 +184,30 @@ func exchangeStage2aDriverCases(ctx context.Context, conn net.Conn, begin stage2
 			conn.SetDeadline(frameDeadline) != nil || ctx.Err() != nil {
 			return nil, errStage2aReservationAuthority
 		}
-		var nonce [32]byte
-		if _, err := rand.Read(nonce[:]); err != nil {
-			return nil, err
+		sequence := firstSequence + i
+		challenge := preallocated[sequence]
+		if challenge == "" {
+			var nonce [32]byte
+			if _, err := rand.Read(nonce[:]); err != nil {
+				return nil, err
+			}
+			challenge = base64.RawURLEncoding.EncodeToString(nonce[:])
+		} else {
+			decoded, err := base64.RawURLEncoding.Strict().DecodeString(challenge)
+			if err != nil || len(decoded) != 32 || base64.RawURLEncoding.EncodeToString(decoded) != challenge ||
+				step.Gate != "T03" || step.Event != "direct-route-refused" {
+				return nil, errStage2aReservationAuthority
+			}
 		}
+		if usedChallenges[challenge] {
+			return nil, errStage2aReservationAuthority
+		}
+		usedChallenges[challenge] = true
 		command := stage2aDriverCommand{
 			Schema: stage2aDriverCaseSchema, Kind: "capture", SessionID: begin.SessionID,
 			InstallationID: begin.InstallationID, StartID: begin.StartID,
 			ReservationSHA256: begin.ReservationSHA256, TestPlanSHA256: begin.TestPlanSHA256,
-			Challenge: base64.RawURLEncoding.EncodeToString(nonce[:]), Sequence: i + 1, Profile: begin.Profile,
+			Challenge: challenge, Sequence: sequence, Profile: begin.Profile,
 			Phase: phase, Gate: step.Gate, Event: step.Event,
 		}
 		request, err := writeStage2aQualificationFrame(conn, command)

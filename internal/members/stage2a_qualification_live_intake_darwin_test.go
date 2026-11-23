@@ -86,7 +86,7 @@ func TestStage2aLiveIntakeRetainsExactBytesAndRefusesReplay(t *testing.T) {
 		InstallationID: begin.InstallationID, StartID: begin.StartID,
 		ReservationSHA256: begin.ReservationSHA256, TestPlanSHA256: begin.TestPlanSHA256,
 		Challenge: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0xcc}, 32)),
-		Sequence:  4, Profile: begin.Profile, Phase: stage2aDriverLiveStart,
+		Sequence:  6, Profile: begin.Profile, Phase: stage2aDriverLiveStart,
 		Gate: "T03", Event: "direct-route-refused",
 	}
 	var request bytes.Buffer
