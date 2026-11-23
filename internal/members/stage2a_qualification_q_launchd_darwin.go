@@ -119,6 +119,11 @@ func takeStage2aQualificationQTrigger(install stage2aQualificationQInstall) (str
 	if _, err := fmt.Fprintln(uc, os.Getpid()); err != nil {
 		return "", err
 	}
+	// A reads the PID through EOF. launchd can retain its socket reference
+	// while Q waits on the separate session socket, so close our write half.
+	if err := uc.CloseWrite(); err != nil {
+		return "", err
+	}
 	// The observer gets no copy of the A-only trigger on inherited stdio.
 	fd, err := unix.Open("/dev/null", unix.O_RDWR|unix.O_CLOEXEC, 0)
 	if err != nil {
