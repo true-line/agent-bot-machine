@@ -216,3 +216,88 @@ func TestStage2aInstalledInventoryProducerMatchesOfflineConsumerV3(t *testing.T)
 		t.Fatal("producer accepted a writable selected executable")
 	}
 }
+
+func TestStage2aInstalledInventoryPrivateArchiveV3(t *testing.T) {
+	a, binding, definition, launch := stage2aInventoryFixtureV3(t)
+	evidence, err := buildStage2aInstalledInputEvidenceV3(a, binding, definition, launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := filepath.Join(base, "claims")
+	if err := os.Mkdir(claims, 0700); err != nil {
+		t.Fatal(err)
+	}
+	var stat unix.Stat_t
+	if err := unix.Stat(claims, &stat); err != nil {
+		t.Fatal(err)
+	}
+	store := stage2aAdminClaimStore{path: claims, uid: stat.Uid, gid: stat.Gid,
+		device: stat.Dev, inode: stat.Ino, birthtime: stat.Btim,
+		legacyUnspent: func(string, string) error { return nil }}
+	uri, sha, err := publishStage2aInstalledInputEvidenceV3(store, evidence)
+	if err != nil || sha != evidence.sha256 ||
+		uri != "qualification://stage2a/blob/"+strings.TrimPrefix(sha, "sha256:") {
+		t.Fatalf("A archive publication failed: %q %q %v", uri, sha, err)
+	}
+	for _, item := range []struct {
+		role string
+		raw  []byte
+	}{
+		{"definition_records", evidence.blobs["definition_records"]},
+		{"launch_input_records", evidence.blobs["launch_input_records"]},
+		{"host_adapters_json", evidence.blobs["host_adapters_json"]},
+		{"host_installation_json", evidence.blobs["host_installation_json"]},
+		{"installed_inputs", evidence.inventory},
+	} {
+		ref := stage2aInstalledInputRef(item.role, item.raw)
+		observed, err := qualification.ResolveGateObjectV3(claims, ref.URI, ref.SHA256, 4<<20)
+		if err != nil || string(observed) != string(item.raw) {
+			t.Fatalf("A archive object %s differs: %v", item.role, err)
+		}
+		name := strings.TrimPrefix(ref.SHA256, "sha256:")
+		path := filepath.Join(claims, "objects", "sha256", name[:2], name)
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode() != 0600 {
+			t.Fatalf("archive object %s lacks private regular mode: %v", item.role, err)
+		}
+	}
+	if _, _, err := publishStage2aInstalledInputEvidenceV3(store, evidence); err != nil {
+		t.Fatalf("identical content-addressed replay refused: %v", err)
+	}
+	definitionRaw := evidence.blobs["definition_records"]
+	definitionName := strings.TrimPrefix(stage2aQualificationSHA256(definitionRaw), "sha256:")
+	definitionPath := filepath.Join(claims, "objects", "sha256", definitionName[:2], definitionName)
+	changed := append([]byte(nil), definitionRaw...)
+	changed[0] ^= 1
+	if err := os.WriteFile(definitionPath, changed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := publishStage2aInstalledInputEvidenceV3(store, evidence); err == nil {
+		t.Fatal("A archive reused a changed same-name object")
+	}
+	wrong := store
+	wrong.uid++
+	if _, _, err := publishStage2aInstalledInputEvidenceV3(wrong, evidence); err == nil {
+		t.Fatal("archive publisher accepted the wrong A account")
+	}
+	symlinked := filepath.Join(base, "symlinked-claims")
+	if err := os.Mkdir(symlinked, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(claims, filepath.Join(symlinked, "objects")); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Stat(symlinked, &stat); err != nil {
+		t.Fatal(err)
+	}
+	symlinkStore := stage2aAdminClaimStore{path: symlinked, uid: stat.Uid, gid: stat.Gid,
+		device: stat.Dev, inode: stat.Ino, birthtime: stat.Btim,
+		legacyUnspent: func(string, string) error { return nil }}
+	if _, _, err := publishStage2aInstalledInputEvidenceV3(symlinkStore, evidence); err == nil {
+		t.Fatal("archive publisher followed a substituted objects directory")
+	}
+}

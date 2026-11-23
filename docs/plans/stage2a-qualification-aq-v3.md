@@ -225,9 +225,16 @@ to opened R inventory paths and the adapter release attestation. The
 `measurement_binding.package_sha256` names the Machine package and is a
 different subject; this draft never equates those two package digests.
 
-This component currently prepares an unsigned wrapper and nested bytes.
-There is no production A archive publisher or A-signed segment issuer for
-it yet. The physical segment attestation must bind the exact wrapper digest
+The source-only A archive helper publishes the unsigned wrapper and four
+nested blobs in the pinned A-private qualification store under
+`objects/sha256/<prefix>/<digest>`. It verifies the wrapper's exact canonical
+bytes and nested references, creates no-follow A-owned mode-0700 directories,
+uses exclusive mode-0600 full-sync object commits, and only reuses an existing
+name after rechecking its exact bytes and private metadata. A disposable native
+test passes a producer-to-archive-to-offline read, identical replay, changed
+same-name object refusal, wrong-A-account refusal and symlinked archive-parent
+refusal. This helper has no production caller or A-signed segment issuer yet.
+The physical segment attestation must bind the exact wrapper digest
 before an offline verifier can credit the observation. Raw ACP/OS custody,
 case inventory, native results, and T21's distinct form remain separate
 requirements. No public acceptance gate uses this component yet.
