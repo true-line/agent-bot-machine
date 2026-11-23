@@ -798,8 +798,12 @@ and its H/R peer ownership from those reviewed identities.
 `PrepareSoulCooperativeReservation` signs a purpose-separated, canonical
 30-second reservation only from an installed authority, after its caller has
 rechecked the root applied receipt, live pairing and frozen bytes. It requires
-a durable installation/start spend before returning the signature. Lost
-responses and retries cannot recover a spent start. The installed loader,
+a durable installation/start spend before returning the signature. The A-owned
+claim store creates a permanent spent-start marker and one active-installation
+marker under an installation lock. A different start cannot enter while that
+marker exists, and only the matching start may release it after an independent
+containment check. Lost responses and retries cannot recover a spent start.
+The installed loader,
 owner-approved apply, paired daemon verbs, fixed launcher, signed completion
 and HQ production wiring remain implementation gates; this plan and proof code
 alone does not enable a host launch or qualify T21.
