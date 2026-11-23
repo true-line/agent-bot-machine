@@ -25,6 +25,22 @@ func prepareHQStage2aSeal(rec launchRecord, planDigest string, raw []byte) (stag
 	if err != nil {
 		return empty, err
 	}
+	if err := stage2aVerifyHSourceFilesV3(s.InventorySource, s.Components[0].ManifestSource,
+		s.Components[0].ArtifactSource, s.Components[1].ArtifactSource, 0,
+		stage2aHSourceReleasePinsV3{
+			InstallationID: s.InstallationID, InventoryDigest: s.InventoryDigest,
+			Limits: s.InventoryLimits, HQCommit: s.Components[0].SourceCommit,
+			HQArtifactSHA256:     s.Components[0].ArtifactSHA256,
+			NodeArtifactSHA256:   s.Components[1].ArtifactSHA256,
+			SourceManifestSHA256: s.Components[0].ManifestSHA256,
+			ContractsTag:         s.ContractsSource.Tag, PrivateCandidate: s.ContractsSource.PrivateCandidate,
+			ContractsCommit:     s.ContractsSource.Commit,
+			ContractsFullDigest: s.ContractsSource.FullDigest, ContractsFullFiles: s.ContractsSource.FullFiles,
+			ContractsRuntimeDigest: s.ContractsSource.RuntimeDigest,
+			ContractsRuntimeFiles:  s.ContractsSource.RuntimeFiles, Excluded: s.ExcludedHQReleasePaths,
+		}); err != nil {
+		return empty, err
+	}
 	namespace, snapshot, sidecar, err := stage2aDomainNamesV3("H-code", s.InstallationID)
 	if err != nil || launch.Namespace != namespace || launch.Root != filepath.Join(namespace, snapshot) ||
 		launch.InventoryPath != filepath.Join(namespace, sidecar) {
