@@ -41,9 +41,8 @@ func TestStage2aMemberSelectorUsesContractPreimage(t *testing.T) {
 		got == stage2aMemberSelector("sha256:"+strings.Repeat("b", 64), "m_lead", "ln_0123456789abcdef01234567") {
 		t.Fatal("member selector did not bind reservation and member")
 	}
-	if got := stage2aMemberSelector("sha256:2fcf23c02b279b697825fd0b7fd60b742171bcd3d68194b3cbe3d6b6121fc2aa",
-		"m_lead", "ln_0123456789abcdef01234567");
-		got != "mb_4093be8cfbe94a55dca9044f834637679d5d41dee5662d1771183a65404f2abd" {
+	if got := stage2aMemberSelector("sha256:68e1a9e7703efe4e62b2e1d0732d4211cf049ad7f02a39d33a5b364aaf41af18",
+		"m_lead", "ln_0123456789abcdef01234567"); got != "mb_d86a2563023a8d1282eca73aa7c12d23f660d98764d14d3083bbcc95f00124ea" {
 		t.Fatalf("selector differs from Contracts #85: %s", got)
 	}
 }
