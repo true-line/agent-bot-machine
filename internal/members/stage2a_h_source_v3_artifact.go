@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -194,18 +195,19 @@ var stage2aHSourceNonInstalledV3 = map[string]bool{
 	"tests/soul-contracts-cache.test.mjs":                              true,
 	"tests/soul-contracts-pin.test.mjs":                                true,
 	"tests/stage2a-child-role.test.mjs":                                true,
+	"tests/stage2a-capture-machine-channel.test.mjs":                   true,
 	"tests/stage2a-cooperative-admission.test.mjs":                     true,
 	"tests/stage2a-cooperative-owner.test.mjs":                         true,
 	"tests/stage2a-h-preloader.test.mjs":                               true,
-	"tests/stage2a-capture-machine-channel.test.mjs":                   true,
-	"tests/stage2a-qualification-provider.test.mjs":                    true,
-	"tests/t02-machine-capture.test.mjs":                               true,
 	"tests/stage2a-protected-admission.test.mjs":                       true,
 	"tests/stage2a-protected-start.test.mjs":                           true,
+	"tests/stage2a-qualification-provider.test.mjs":                    true,
+	"tests/stage2a-relay-peer.test.mjs":                                true,
 	"tests/stage2a-r-admission.test.mjs":                               true,
 	"tests/stage2a-reservation-v3.test.mjs":                            true,
 	"tests/stage2a-reservation.test.mjs":                               true,
 	"tests/stage2a-selected-code.test.mjs":                             true,
+	"tests/t02-machine-capture.test.mjs":                               true,
 	"tests/support/comms-checkout.mjs":                                 true,
 	"tests/support/member-client-contracts.mjs":                        true,
 	"tests/support/notice-consumer-cases.mjs":                          true,
@@ -223,6 +225,7 @@ type stage2aHSourceReleasePinsV3 struct {
 	NodeArtifactSHA256     string
 	SourceManifestSHA256   string
 	ContractsTag           string
+	PrivateCandidate       bool
 	ContractsCommit        string
 	ContractsFullDigest    string
 	ContractsFullFiles     int
@@ -238,14 +241,15 @@ type stage2aHSourceContractRowV3 struct {
 }
 
 type stage2aHSourcePinFileV3 struct {
-	SchemaVersion   int      `json:"schema_version"`
-	Repository      string   `json:"repository"`
-	Tag             string   `json:"tag"`
-	Commit          string   `json:"commit"`
-	Paths           []string `json:"paths"`
-	DigestAlgorithm string   `json:"digest_algorithm"`
-	Digest          string   `json:"digest"`
-	Files           int      `json:"files"`
+	SchemaVersion    int      `json:"schema_version"`
+	Repository       string   `json:"repository"`
+	Tag              string   `json:"tag,omitempty"`
+	PrivateCandidate bool     `json:"private_candidate,omitempty"`
+	Commit           string   `json:"commit"`
+	Paths            []string `json:"paths"`
+	DigestAlgorithm  string   `json:"digest_algorithm"`
+	Digest           string   `json:"digest"`
+	Files            int      `json:"files"`
 }
 
 type stage2aHSourceReleaseMetadataV3 struct {
@@ -305,7 +309,14 @@ func stage2aVerifyHSourceBytesV3(invRaw, sourceManifest []byte,
 		!stage2aPrefixedDigest.MatchString(pins.SourceManifestSHA256) ||
 		!stage2aPrefixedDigest.MatchString(pins.ContractsFullDigest) ||
 		!stage2aPrefixedDigest.MatchString(pins.ContractsRuntimeDigest) ||
-		!stage2aHSourceTagV3.MatchString(pins.ContractsTag) ||
+		!(pins.PrivateCandidate && pins.ContractsTag == "" &&
+			pins.ContractsCommit == "7cd038f9bc2d814398ba1feb6b7d4b136fe349d0" &&
+			pins.ContractsFullDigest == "sha256:24ab6136f4410661fca4b923380f3c3ba134397248f3a8ba00e17dce47341f48" &&
+			pins.ContractsFullFiles == 584 &&
+			pins.ContractsRuntimeDigest == "sha256:752f8a8b364ef8f281c69aa55d6dbcdeadd0ad34420073a7979101dd7443b046" &&
+			pins.ContractsRuntimeFiles == 392 &&
+			slices.Equal(pins.Excluded, hqStage2aContractsFixturePathsPrivate88[:]) ||
+			!pins.PrivateCandidate && stage2aHSourceTagV3.MatchString(pins.ContractsTag)) ||
 		!stage2aHSourceCommitV3.MatchString(pins.ContractsCommit) ||
 		pins.ContractsFullFiles < 1 || pins.ContractsFullFiles > 1024 ||
 		pins.ContractsRuntimeFiles < 1 || pins.ContractsRuntimeFiles > pins.ContractsFullFiles ||
@@ -469,7 +480,8 @@ func stage2aVerifyHSourceBytesV3(invRaw, sourceManifest []byte,
 	if decoder.Decode(&contractsPin) != nil || decoder.Decode(new(any)) != io.EOF ||
 		contractsPin.SchemaVersion != 1 ||
 		contractsPin.Repository != "https://github.com/true-line/soul-contracts.git" ||
-		contractsPin.Tag != pins.ContractsTag || contractsPin.Commit != pins.ContractsCommit ||
+		contractsPin.Tag != pins.ContractsTag || contractsPin.PrivateCandidate != pins.PrivateCandidate ||
+		contractsPin.Commit != pins.ContractsCommit ||
 		len(contractsPin.Paths) != 3 || contractsPin.Paths[0] != "errors" ||
 		contractsPin.Paths[1] != "fixtures" || contractsPin.Paths[2] != "schemas" ||
 		contractsPin.DigestAlgorithm != "sha256-manifest-v1" ||
