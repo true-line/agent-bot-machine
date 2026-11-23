@@ -181,6 +181,11 @@ func (s *Stage2aService) directQCurrentV3(uid int, epoch string,
 		stage2aRecheckVerifiedDomainV3(live.h) != nil || r.ref != live.installed.RuntimeV3 {
 		return nil, errSoulCooperativeAuthority
 	}
+	var receipt Receipt
+	if json.Unmarshal(installed.RootReceipt, &receipt) != nil ||
+		receipt.PlanID != q.PlanID || receipt.PlanDigest != q.PlanDigest {
+		return nil, errSoulCooperativeAuthority
+	}
 	paths, err := cooperativeLaunchPaths(q.InstallationID)
 	if err != nil {
 		return nil, errSoulCooperativeAuthority
