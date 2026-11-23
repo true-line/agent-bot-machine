@@ -72,6 +72,9 @@ func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
 		case stage2aPeerRoleVerb:
 			state = "peer-verified"
 			body, err = service.PeerRole(req.peerUID, req.stage2aEpoch, req.stage2aPeerRole)
+		case stage2aMemberSetAssignVerb:
+			state = "member-set-assigned"
+			body, err = service.MemberSetAssign(req.peerUID, req.stage2aEpoch, req.stage2aMemberSetAssign)
 		default:
 			return refused(diag.DaemonUnimplemented, "unsupported Stage 2a verb")
 		}

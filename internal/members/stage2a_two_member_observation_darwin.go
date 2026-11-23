@@ -177,7 +177,15 @@ func stage2aFrozenStockAdapterCLI(p stage2aInstalledPolicy, roles []stage2aHello
 	commandPath, commandSHA256 string) (string, string, bool) {
 	const manifestPath = "Contents/opt/stock-claude.json"
 	raw, err := stage2aReadFrozenClaimFile(p.Binding.Snapshots.Definition, p.Definition, manifestPath)
-	if err != nil || stage2aStrictJSON(raw) != nil {
+	if err != nil {
+		return "", "", false
+	}
+	return stage2aStockManifestCLI(raw, roles, commandPath, commandSHA256, p.LaunchInputs.Files)
+}
+
+func stage2aStockManifestCLI(raw []byte, roles []stage2aHelloMember,
+	commandPath, commandSHA256 string, files []Stage2aDefinitionRecord) (string, string, bool) {
+	if stage2aStrictJSON(raw) != nil {
 		return "", "", false
 	}
 	var manifest struct {
@@ -213,7 +221,7 @@ func stage2aFrozenStockAdapterCLI(p stage2aInstalledPolicy, roles []stage2aHello
 		return "", "", false
 	}
 	matched := 0
-	for _, file := range p.LaunchInputs.Files {
+	for _, file := range files {
 		if file.Path == "runtime/bin/claude" {
 			if file.Kind != "regular" || file.SHA256 != strings.TrimPrefix(manifest.AdjacentCLISHA256, "sha256:") {
 				return "", "", false

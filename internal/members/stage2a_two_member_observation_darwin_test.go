@@ -3,6 +3,7 @@
 package members
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -134,5 +135,51 @@ func TestStage2aOwnerMemberSetMatchesContractsSyntheticVector(t *testing.T) {
 		"/fixture/r/adapter/fixture-cli", "sha256:4575517e516023fd0698342aec5e470a7533a94b5cf003b172af874cf773817f")
 	if err != nil || got != "sha256:40758695d8a20df897316151f464059180d45739b2a018ef8d6ea097f5d2baf3" {
 		t.Fatalf("owner projection differs from Contracts #85: %s %v", got, err)
+	}
+}
+
+func TestStage2aStockManifestRequiresMeasuredAdjacentCLI(t *testing.T) {
+	roles := []stage2aHelloMember{
+		{MemberID: "m_lead", Role: "lead", AdapterID: "claude-code", AdapterVersion: "0.109.0"},
+		{MemberID: "m_spec", Role: "specialist", AdapterID: "claude-code", AdapterVersion: "0.109.0"},
+	}
+	command := "/frozen/r/runtime/bin/claude-agent-acp"
+	commandSHA := "sha256:" + strings.Repeat("a", 64)
+	cliSHA := "sha256:" + strings.Repeat("b", 64)
+	manifest := map[string]string{
+		"adapter_id": "claude-code", "adapter_version": "0.109.0",
+		"executable": "claude-agent-acp", "executable_sha256": commandSHA,
+		"adjacent_cli": "claude", "adjacent_cli_sha256": cliSHA,
+	}
+	files := []Stage2aDefinitionRecord{{Path: "runtime/bin/claude", Kind: "regular", SHA256: strings.TrimPrefix(cliSHA, "sha256:")}}
+	check := func() bool {
+		raw, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path, sha, ok := stage2aStockManifestCLI(raw, roles, command, commandSHA, files)
+		return ok && path == "/frozen/r/runtime/bin/claude" && sha == cliSHA
+	}
+	if !check() {
+		t.Fatal("measured adjacent CLI declaration refused")
+	}
+	manifest["adjacent_cli_sha256"] = "sha256:" + strings.Repeat("c", 64)
+	if check() {
+		t.Fatal("changed manifest CLI bytes accepted")
+	}
+	manifest["adjacent_cli_sha256"] = cliSHA
+	files[0].SHA256 = strings.Repeat("c", 64)
+	if check() {
+		t.Fatal("external CLI record changed without refusal")
+	}
+	files[0].SHA256 = strings.TrimPrefix(cliSHA, "sha256:")
+	manifest["adjacent_cli"] = "../sibling"
+	if check() {
+		t.Fatal("nonadjacent CLI path accepted")
+	}
+	manifest["adjacent_cli"] = "claude"
+	raw := []byte(`{"adapter_id":"claude-code","adapter_id":"claude-code"}`)
+	if _, _, ok := stage2aStockManifestCLI(raw, roles, command, commandSHA, files); ok {
+		t.Fatal("duplicate manifest key accepted")
 	}
 }
