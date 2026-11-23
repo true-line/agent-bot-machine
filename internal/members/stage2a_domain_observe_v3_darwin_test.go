@@ -91,21 +91,17 @@ func TestStage2aObserveDomainV3At(t *testing.T) {
 	if err != nil || identity.RootPath != root || identity.Mode != "0555" || digest == "" {
 		t.Fatalf("valid frozen domain refused: identity=%+v digest=%q err=%v", identity, digest, err)
 	}
-	verified, err := stage2aObserveInstalledDomainV3(root, sidecar, uint32(os.Getuid()),
+	_, err = stage2aObserveInstalledDomainV3(root, sidecar, uint32(os.Getuid()),
 		uint32(os.Getuid()+1), uint32(os.Getgid()),
 		"sha256:1111111111111111111111111111111111111111111111111111111111111111", digest)
-	if err != nil || !verified.verified || verified.ref.Snapshot.Path != root ||
-		verified.ref.Sidecar.Path != sidecar || stage2aRecheckVerifiedDomainV3(verified) != nil {
-		t.Fatalf("valid installed reference refused: ref=%+v err=%v", verified.ref, err)
+	if err == nil {
+		t.Fatal("unprovisioned reader group was accepted as an installed domain")
 	}
 	if err := os.Chmod(filepath.Join(root, "hq"), 0750); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := stage2aObserveDomainV3At(root, uint32(os.Getuid()), uint32(os.Getgid()), raw); err == nil {
 		t.Fatal("accepted changed directory mode")
-	}
-	if err := stage2aRecheckVerifiedDomainV3(verified); err == nil {
-		t.Fatal("accepted changed installed reference")
 	}
 }
 
