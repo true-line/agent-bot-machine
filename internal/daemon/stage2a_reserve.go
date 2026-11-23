@@ -34,6 +34,7 @@ const stage2aMemberChildGrantVerb = "stage2a-member-child-grant"
 const stage2aMemberChildObserveVerb = "stage2a-member-child-observe"
 const stage2aMemberLiveVerb = "stage2a-member-live"
 const stage2aMemberReadyVerb = "stage2a-member-ready"
+const stage2aMemberRuntimeVerb = "stage2a-member-runtime"
 
 var stage2aExecDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -51,7 +52,7 @@ func isStage2aVerb(verb string) bool {
 		verb == stage2aPeerRoleVerb || verb == stage2aMemberSetAssignVerb ||
 		verb == stage2aMemberProvisionalMapVerb || verb == stage2aMemberChildGrantVerb ||
 		verb == stage2aMemberChildObserveVerb || verb == stage2aMemberLiveVerb ||
-		verb == stage2aMemberReadyVerb
+		verb == stage2aMemberReadyVerb || verb == stage2aMemberRuntimeVerb
 }
 
 func stage2aFields(req *Request, raw []byte) (string, string) {
@@ -214,6 +215,14 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 			return diag.DaemonUndeclared, "invalid Stage 2a member live request"
 		}
 		req.stage2aMemberLive = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aMemberRuntimeVerb {
+		parsed, err := members.ParseStage2aMemberRuntimeRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a member runtime request"
+		}
+		req.stage2aMemberRuntime = parsed
 		return "", ""
 	}
 	if req.Verb == stage2aMemberReadyVerb {
