@@ -18,6 +18,11 @@ var stage2aDriverCommandFields = []string{
 // capture returns the digest of out-of-band evidence, never its payload.
 func serveStage2aQualificationDriverCases(ctx context.Context, conn net.Conn, begin stage2aQualificationBeginV1,
 	phase stage2aDriverRunPhase, capture func(context.Context, stage2aDriverCommand) (string, error)) error {
+	return serveStage2aQualificationDriverCasesFrom(ctx, conn, begin, phase, nil, capture)
+}
+
+func serveStage2aQualificationDriverCasesFrom(ctx context.Context, conn net.Conn, begin stage2aQualificationBeginV1,
+	phase stage2aDriverRunPhase, first []byte, capture func(context.Context, stage2aDriverCommand) (string, error)) error {
 	schedule := stage2aDriverSchedule(begin.Profile, phase)
 	if ctx == nil || len(schedule) == 0 || capture == nil || ctx.Err() != nil {
 		return errStage2aReservationAuthority
@@ -29,9 +34,13 @@ func serveStage2aQualificationDriverCases(ctx context.Context, conn net.Conn, be
 		if ctx.Err() != nil || conn.SetDeadline(time.Now().Add(60*time.Second)) != nil || ctx.Err() != nil {
 			return errStage2aReservationAuthority
 		}
-		raw, err := readStage2aQualificationFrame(conn)
-		if err != nil {
-			return err
+		raw := first
+		if i != 0 || raw == nil {
+			var err error
+			raw, err = readStage2aQualificationFrame(conn)
+			if err != nil {
+				return err
+			}
 		}
 		command, err := parseStage2aDriverCommand(raw, begin, phase, i+1, want)
 		if err != nil || challenges[command.Challenge] {

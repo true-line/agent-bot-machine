@@ -18,6 +18,8 @@ type stage2aDriverReview struct {
 	Socket         string            `json:"owner_driver_socket"`
 	Executable     qualificationFile `json:"owner_driver_executable"`
 	Argv           []string          `json:"owner_driver_argv"`
+	Policy         qualificationFile `json:"owner_driver_policy"`
+	AuthorityArgv  []string          `json:"owner_driver_authority_argv"`
 }
 
 func loadStage2aQualificationDriverReview(testPlan qualificationFile) (stage2aDriverReview, error) {

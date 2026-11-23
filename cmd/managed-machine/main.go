@@ -77,6 +77,12 @@ func main() {
 	}
 	if runtime.GOOS == "darwin" && len(os.Args) == 2 {
 		switch os.Args[1] {
+		case "stage2a-qualification-owner-driver":
+			if err := members.RunStage2aQualificationOwnerDriver(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(78)
+			}
+			return
 		case "stage2a-qualification-observe":
 			os.Exit(members.RunStage2aQualificationQ())
 		case "harness-run":
