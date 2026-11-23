@@ -87,7 +87,8 @@ func RunStage2aRole(command string) int {
 		}
 		return runStage2aRunner(ctx, in.Request, in.Start, in.Runner, in.Bridge, in.Binding,
 			in.Launch, run.Definition, run.Node, run.Entry, run.ReservationEnvelopeBase64URL,
-			run.ReservationSHA256, runtimeRef, input, inputFile, os.Stdout, os.Stderr)
+			run.ReservationSHA256, run.MemberSetAssignmentEnvelopeBase64URL,
+			runtimeRef, input, inputFile, os.Stdout, os.Stderr)
 	}
 	if role == "child" {
 		var grant Stage2aExecReply

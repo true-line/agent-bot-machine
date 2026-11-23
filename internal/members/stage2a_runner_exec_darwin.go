@@ -22,7 +22,8 @@ import (
 func runStage2aRunner(ctx context.Context, request SoulRunRequest, start SoulStartAssignment,
 	runner SoulRunner, bridge SoulBridge, binding Stage2aMeasurementBinding,
 	launchInputs Stage2aLaunchInputRecords, definition []Stage2aDefinitionRecord,
-	node, entry, reservationEnvelopeBase64URL, reservationSHA256 string,
+	node, entry, reservationEnvelopeBase64URL, reservationSHA256,
+	memberSetAssignmentEnvelopeBase64URL string,
 	runtimeRef stage2aDomainInventoryRefV3, acp io.Reader, control, stdout, status *os.File) int {
 	expires, err := time.Parse(time.RFC3339Nano, start.ExpiresAt)
 	if err != nil || time.Until(expires) <= 0 || time.Until(expires) > 30*time.Second ||
@@ -95,11 +96,11 @@ func runStage2aRunner(ctx context.Context, request SoulRunRequest, start SoulSta
 		return harnessRefused
 	}
 	stateRoot, err := stage2aRunnerStateRoot(runner)
-	if err != nil {
+	if err != nil || !stage2aRunnerMemberSetStillLive(memberSetAssignmentEnvelopeBase64URL, time.Now()) {
 		return harnessRefused
 	}
 	protectedStart, err := marshalStage2aSoulsProtectedStart(reservationEnvelopeBase64URL,
-		reservationSHA256, launchInputs, stateRoot)
+		reservationSHA256, launchInputs, stateRoot, memberSetAssignmentEnvelopeBase64URL)
 	if err != nil {
 		return harnessRefused
 	}

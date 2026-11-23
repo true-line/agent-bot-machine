@@ -39,13 +39,14 @@ type Stage2aRoleInvocation struct {
 }
 
 type Stage2aRunnerExec struct {
-	Definition                   []Stage2aDefinitionRecord `json:"definition"`
-	Node                         string                    `json:"node"`
-	Entry                        string                    `json:"entry"`
-	ReservationEnvelopeBase64URL string                    `json:"reservation_envelope_base64url"`
-	ReservationSHA256            string                    `json:"reservation_sha256"`
-	ReservationRunModeV3         string                    `json:"reservation_run_mode_v3,omitempty"`
-	ReservationV3                json.RawMessage           `json:"reservation_v3,omitempty"`
+	Definition                           []Stage2aDefinitionRecord `json:"definition"`
+	Node                                 string                    `json:"node"`
+	Entry                                string                    `json:"entry"`
+	ReservationEnvelopeBase64URL         string                    `json:"reservation_envelope_base64url"`
+	ReservationSHA256                    string                    `json:"reservation_sha256"`
+	ReservationRunModeV3                 string                    `json:"reservation_run_mode_v3,omitempty"`
+	ReservationV3                        json.RawMessage           `json:"reservation_v3,omitempty"`
+	MemberSetAssignmentEnvelopeBase64URL string                    `json:"member_set_assignment_envelope_base64url,omitempty"`
 }
 
 type Stage2aBridgeExec struct {
