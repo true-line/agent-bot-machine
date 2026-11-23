@@ -90,6 +90,7 @@ func stage2aValidateHDescriptorV3(p stage2aHServiceDescriptorPayloadV3,
 		return invalid
 	}
 	componentIDs := make(map[string]bool, len(p.Components))
+	componentRows := make(map[string]int, len(p.Components))
 	previous := ""
 	for _, c := range p.Components {
 		if !stage2aBindingID.MatchString(c.ComponentID) || c.ComponentID <= previous ||
@@ -99,6 +100,7 @@ func stage2aValidateHDescriptorV3(p stage2aHServiceDescriptorPayloadV3,
 			return invalid
 		}
 		componentIDs[c.ComponentID] = true
+		componentRows[c.ComponentID] = 0
 		previous = c.ComponentID
 	}
 	files := make(map[string]stage2aDomainFileV3, len(inv.Files))
@@ -106,7 +108,13 @@ func stage2aValidateHDescriptorV3(p stage2aHServiceDescriptorPayloadV3,
 		if !componentIDs[f.ComponentID] {
 			return invalid
 		}
+		componentRows[f.ComponentID]++
 		files[filepath.Join(h.Snapshot.Path, filepath.FromSlash(f.Path))] = f
+	}
+	for _, count := range componentRows {
+		if count == 0 {
+			return invalid
+		}
 	}
 	matchFile := func(path, digest string) bool {
 		if !stage2aAbsolutePath(path) || !strings.HasPrefix(path, h.Snapshot.Path+string(filepath.Separator)) ||
@@ -118,6 +126,13 @@ func stage2aValidateHDescriptorV3(p stage2aHServiceDescriptorPayloadV3,
 	}
 	r := p.Runtime
 	o := p.OuterLaunch
+	selectedPaths := map[string]bool{}
+	for _, path := range []string{r.NodePath, r.PreloaderPath, r.EntryPath, r.GuardModulePath, o.HelperPath} {
+		if selectedPaths[path] {
+			return invalid
+		}
+		selectedPaths[path] = true
+	}
 	if !matchFile(r.NodePath, r.NodeSHA256) || !matchFile(r.PreloaderPath, r.PreloaderSHA256) ||
 		!matchFile(r.EntryPath, r.EntrySHA256) || !matchFile(r.GuardModulePath, r.GuardModuleSHA256) ||
 		!matchFile(o.HelperPath, o.HelperSHA256) ||

@@ -64,6 +64,24 @@ func TestStage2aHDescriptorBindsReviewedPlanAndInstalledRowsV3(t *testing.T) {
 	if stage2aValidateHDescriptorV3(p, p.HInventory, plan, changedInventory, pub) == nil {
 		t.Fatal("accepted changed installed Node bytes")
 	}
+	unusedRelease := p
+	unusedRelease.Components = append(append([]stage2aHReleaseComponentV3(nil), p.Components...),
+		stage2aHReleaseComponentV3{ComponentID: "zz", ReleaseArtifactSHA256: p.Components[0].ReleaseArtifactSHA256,
+			ReleaseAttestationSHA256: p.Components[0].ReleaseAttestationSHA256,
+			ReleaseManifestSHA256:    p.Components[0].ReleaseManifestSHA256})
+	unusedPlan := plan
+	unusedPlan.descriptor = unusedRelease
+	if stage2aValidateHDescriptorV3(unusedRelease, p.HInventory, unusedPlan, inv, pub) == nil {
+		t.Fatal("accepted release component with no installed H row")
+	}
+	aliasedGuard := p
+	aliasedGuard.Runtime.GuardModulePath = p.Runtime.EntryPath
+	aliasedGuard.Runtime.GuardModuleSHA256 = p.Runtime.EntrySHA256
+	aliasPlan := plan
+	aliasPlan.descriptor = aliasedGuard
+	if stage2aValidateHDescriptorV3(aliasedGuard, p.HInventory, aliasPlan, inv, pub) == nil {
+		t.Fatal("accepted aliased H entry and guard module")
+	}
 	plan.verified = false
 	if stage2aValidateHDescriptorV3(p, p.HInventory, plan, inv, pub) == nil {
 		t.Fatal("accepted unverified owner plan")
