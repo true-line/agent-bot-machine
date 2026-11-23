@@ -25,6 +25,14 @@ plan, selected release manifests, A key and signed H/R binding. The new v3
 component does not change the v1/v2 parser limits or lift
 `stage2aProtectedStartContractReady=false`.
 
+For later cooperative starts, A reads the fixed root-owned applied H upgrade
+receipt and checks its retained exact install approval, canonical saved plan,
+H descriptor witness, installed signed descriptor, and current live pair. The
+approval's ten-minute TTL authorizes the installation ceremony; expiry or
+pruning of that transient approval file does not invalidate a correctly
+installed H. A fresh one-use reservation is still required for each start.
+Missing, changed, retired, or unpaired installed authority fails closed.
+
 The owner approved v3 structural ceilings of 512 files, 1,024 child directories,
 384 MiB per file, 1 GiB per domain, and a 2 MiB sidecar on 2026-11-22.
 This did not approve any selected source, installation plan or protected
@@ -65,6 +73,9 @@ the root receipt, snapshot and audit claim for review.
   protected preloader/guard and v3 one-use reservation must be reviewed
   together before the protected-start gate can open. T01/T02/T03/T21 require
   separate physical evidence on the designated host.
+- An expired install approval in a matching applied root receipt remains
+  install evidence, while a started receipt, mismatched plan or A key, absent
+  H witness, or failed live pair cannot authorize a later reservation.
 - The paired v3 R install accepts only exact source and manifest pins, rejects
   added/missing source rows and changed bytes, and records one A-sealed R ref
   in both installed policy and applied root receipt. A failed or partial

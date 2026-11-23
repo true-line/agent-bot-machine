@@ -7,6 +7,76 @@ import (
 	"time"
 )
 
+func TestRetainedCooperativeHReceiptSurvivesInstallApprovalExpiry(t *testing.T) {
+	service, _ := stage2aHQTestService(t)
+	s := service.Stage2a
+	s.CooperativeOnly = true
+	s.RuntimeInstallationID = ""
+	owner := "owner"
+	launch, err := s.launch(owner, s.AuthorityKeySHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch.LauncherSHA256 = s.AuthorityKeySHA256
+	rec := launchRecord{Service: service, Stage2a: launch,
+		Plist: renderHQStage2aPlist(renderLaunchPlist(service, 501, owner, launchControlV2), launch.OuterArgv), OwnerUID: 501}
+	previousID := "plan-20261122T141516Z-abcd"
+	previous := Plan{Version: PlanVersion, HQAccount: DarwinHQAccount, Dir: DarwinDir}
+	priorDigest, err := previous.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, err := json.Marshal(launchUpgrade{PreviousID: previousID, PreviousDigest: priorDigest, Next: rec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := Plan{Version: PlanVersion, HQAccount: DarwinHQAccount, Dir: DarwinDir, Steps: []Step{
+		{Kind: KindHQAccount}, {Kind: KindService, Action: upgradeAction, Target: launchLabel, Owner: owner, Content: string(step)},
+	}}
+	digest, err := plan.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := Saved{PlanID: "plan-20261122T141517Z-abcd", PlanDigest: digest, HQService: &service,
+		UpgradeFrom: &priorServicePlan{ID: previousID, Plan: previous}, Plan: plan}
+	approvedAt := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Second)
+	fingerprint := strings.Repeat("f", 64)
+	approval := Approval{Purpose: UpgradePurpose, PlanID: saved.PlanID, PlanDigest: digest,
+		MachineFingerprint: fingerprint, PairCommitment: strings.Repeat("e", 64),
+		ApprovedAt: approvedAt.Format(approvalTime), ExpiresAt: approvedAt.Add(ApprovalTTL).Format(approvalTime)}
+	witness := stage2aDomainSidecarRefV3{stage2aDomainNodeRefV3: stage2aDomainNodeRefV3{
+		Path: hqStage2aDescriptor, OwnerUID: uint32(s.MachineUID), OwnerGID: uint32(s.ReaderGID), Mode: "0440"},
+		SizeBytes: 10, SHA256: "sha256:" + strings.Repeat("a", 64)}
+	journal, err := json.Marshal(hqStage2aJournalDescriptor{Descriptor: &witness})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := Receipt{PlanID: saved.PlanID, PlanDigest: digest, Owner: owner,
+		HQAccount: DarwinHQAccount, Dir: DarwinDir, Result: "applied",
+		StartedAt:  approvedAt.Add(time.Minute).Format(approvalTime),
+		FinishedAt: approvedAt.Add(2 * time.Minute).Format(approvalTime),
+		Upgrade:    &upgradeReceiptEvidence{Approval: approval, ProtectedDescriptor: journal}}
+	if _, got, _, err := retainedCooperativeHReceipt(saved, receipt, owner, fingerprint); err != nil || got != approval {
+		t.Fatalf("applied H receipt lost its expired install approval: %v", err)
+	}
+	for _, mutate := range []func(*Receipt){
+		func(r *Receipt) { r.Result = "started" },
+		func(r *Receipt) { r.StartedAt = approvedAt.Add(ApprovalTTL).Format(approvalTime) },
+		func(r *Receipt) { r.Upgrade = &upgradeReceiptEvidence{Approval: approval} },
+		func(r *Receipt) {
+			changed := approval
+			changed.MachineFingerprint = strings.Repeat("0", 64)
+			r.Upgrade = &upgradeReceiptEvidence{Approval: changed, ProtectedDescriptor: journal}
+		},
+	} {
+		changed := receipt
+		mutate(&changed)
+		if _, _, _, err := retainedCooperativeHReceipt(saved, changed, owner, fingerprint); err == nil {
+			t.Fatal("changed or incomplete applied H receipt was accepted")
+		}
+	}
+}
+
 func TestStage2aHQCooperativePlanSeparatesRuntimeMode(t *testing.T) {
 	s, _ := stage2aHQTestService(t)
 	if err := s.Stage2a.validate(); err != nil {
