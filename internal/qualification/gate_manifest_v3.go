@@ -17,6 +17,23 @@ func ResolveSignedGateManifestsV3(envelope []byte, policy VerifiedPolicy,
 	if err != nil {
 		return nil, ErrUnqualified
 	}
+	return resolveSignedGateManifests(report, root)
+}
+
+// ResolveSignedGateManifestsV4 resolves the exact T01-T03 or T21 manifest
+// bytes named by an owner-designated v4 host report. It checks local object
+// integrity and manifest selectors, not segment issuers, physical observations
+// or installed inputs. No gate credit or launch authority follows from it.
+func ResolveSignedGateManifestsV4(envelope []byte, policy VerifiedPolicy,
+	root string, now time.Time) (map[string][]byte, error) {
+	report, err := VerifyHostReportV4(envelope, policy, now)
+	if err != nil {
+		return nil, ErrUnqualified
+	}
+	return resolveSignedGateManifests(report, root)
+}
+
+func resolveSignedGateManifests(report []byte, root string) (map[string][]byte, error) {
 	var document struct {
 		ProfileInForce string `json:"profile_in_force"`
 		Host           struct {
