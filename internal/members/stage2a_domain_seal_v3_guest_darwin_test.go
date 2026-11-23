@@ -38,6 +38,15 @@ func TestStage2aV3GuestSealHAndR(t *testing.T) {
 	if aUID < 400 || hUID == aUID || rUID == aUID || hGID == rGID {
 		t.Fatal("guest A/H/R numeric identities overlap")
 	}
+	for _, reader := range []struct {
+		name     string
+		uid, gid int
+	}{{hName, hUID, hGID}, {rName, rUID, rGID}} {
+		if err := verifyStage2aInstalledGroup(reader.name, reader.gid,
+			aName, aUID, reader.name, reader.uid); err != nil {
+			t.Fatalf("guest Directory Services group %s is not dedicated: %v", reader.name, err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(stage2aDomainSnapshotParentV3), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -177,6 +186,14 @@ func TestStage2aV3GuestSealHAndR(t *testing.T) {
 				LauncherSHA256: launcherHash,
 				Prepared: stage2aPreparedSnapshot{WrapperPath: wrapper, Wrapper: wrapperID,
 					Stage: stageID, Digest: digest}, Inventory: raw,
+			}
+			if err := r.validate(); err != nil {
+				t.Fatalf("guest root request invalid before A handoff: %v", err)
+			}
+			observed, observedDigest, err := stage2aObserveDomainV3AtMode(stage,
+				uint32(aUID), uint32(tc.gid), raw, true)
+			if err != nil || observed != stageID || observedDigest != digest {
+				t.Fatalf("guest private source invalid before A handoff: %+v %s %v", observed, observedDigest, err)
 			}
 			ref, err := stage2aSealDomainV3AsAdmin(r)
 			if err != nil || ref.Domain != tc.domain || ref.FileCount != tc.files ||

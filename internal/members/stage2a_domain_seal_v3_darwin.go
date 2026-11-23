@@ -98,6 +98,7 @@ func stage2aOpenPreparedV3Sidecar(wrapperFD int, path string, ownerUID, readerGI
 func stage2aSealDomainV3At(r stage2aDomainSealRequestV3) (stage2aVerifiedDomainRefV3, error) {
 	var empty stage2aVerifiedDomainRefV3
 	if r.validate() != nil {
+		stage2aGuestSealDiagnostic("A-request", errStage2aReservationAuthority)
 		return empty, errStage2aReservationAuthority
 	}
 	a := stage2aAdminSnapshots{uid: uint32(r.MachineUID), runnerReadGID: uint32(r.ReaderGID),
@@ -108,6 +109,7 @@ func stage2aSealDomainV3At(r stage2aDomainSealRequestV3) (stage2aVerifiedDomainR
 		}}
 	a.namespaceInode, a.namespaceBirth = r.Namespace.identity()
 	if err := a.check(); err != nil {
+		stage2aGuestSealDiagnostic("A-namespace-or-group", err)
 		return empty, err
 	}
 	parentFD, err := unix.Open(r.Namespace.Path, stage2aDirectoryOpenFlags, 0)
@@ -186,21 +188,34 @@ func runStage2aDomainSealV3(raw []byte) int {
 	var r stage2aDomainSealRequestV3
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&r) != nil || decoder.Decode(new(any)) != io.EOF || r.validate() != nil ||
-		!stage2aInstallSealNoIP() || os.Getuid() != r.MachineUID || os.Geteuid() != r.MachineUID ||
+	if decoder.Decode(&r) != nil || decoder.Decode(new(any)) != io.EOF || r.validate() != nil {
+		stage2aGuestSealDiagnostic("A-decode-or-request", errStage2aReservationAuthority)
+		return refuse()
+	}
+	if !stage2aInstallSealNoIP() {
+		stage2aGuestSealDiagnostic("A-no-network", errStage2aReservationAuthority)
+		return refuse()
+	}
+	if os.Getuid() != r.MachineUID || os.Geteuid() != r.MachineUID ||
 		os.Getgid() != r.MachineGID || os.Getegid() != r.MachineGID ||
 		!stage2aInstallSealOnlyPrimaryGroup(r.MachineGID) {
+		stage2aGuestSealDiagnostic("A-identity", errStage2aReservationAuthority)
 		return refuse()
 	}
 	me, err := os.Executable()
 	if err != nil || me != SoulLauncher {
+		stage2aGuestSealDiagnostic("A-executable", err)
 		return refuse()
 	}
 	binary, err := managerBytes()
 	if err != nil || harnessSHA(binary) != r.LauncherSHA256 {
+		stage2aGuestSealDiagnostic("A-launcher-hash", err)
 		return refuse()
 	}
 	v, err := stage2aSealDomainV3At(r)
+	if err != nil {
+		stage2aGuestSealDiagnostic("A-seal", err)
+	}
 	if err != nil || json.NewEncoder(os.Stdout).Encode(stage2aInstallSealReply{
 		Identity: Stage2aSnapshotIdentity{RootPath: v.ref.Snapshot.Path,
 			Device: v.ref.Snapshot.Device, Inode: v.ref.Snapshot.Inode,
@@ -219,6 +234,7 @@ func runStage2aDomainSealV3(raw []byte) int {
 func stage2aSealDomainV3AsAdmin(r stage2aDomainSealRequestV3) (stage2aDomainInventoryRefV3, error) {
 	var empty stage2aDomainInventoryRefV3
 	if r.validate() != nil || os.Getuid() != 0 || os.Geteuid() != 0 {
+		stage2aGuestSealDiagnostic("root-request", errStage2aReservationAuthority)
 		return empty, errStage2aReservationAuthority
 	}
 	raw, err := json.Marshal(r)
@@ -227,10 +243,23 @@ func stage2aSealDomainV3AsAdmin(r stage2aDomainSealRequestV3) (stage2aDomainInve
 	}
 	reply, err := stage2aRunSealHelper(r.MachineUID, r.MachineGID, raw)
 	_, snapshotName, sidecarName, _ := stage2aDomainNamesV3(r.Domain, r.InstallationID)
+	inv, inventoryDigest, inventoryErr := stage2aDomainInventoryDigestV3(r.Inventory)
 	if err != nil || reply.DomainV3 == nil || reply.DomainV3.Snapshot.Path != filepath.Join(r.Namespace.Path, snapshotName) ||
 		reply.DomainV3.Sidecar.Path != filepath.Join(r.Namespace.Path, sidecarName) ||
+		inventoryErr != nil || reply.DomainV3.Contract != "machine/v3" ||
+		reply.DomainV3.Kind != "stage2a-inventory-ref" || reply.DomainV3.SchemaVersion != 3 ||
+		reply.DomainV3.Domain != r.Domain || reply.DomainV3.InstallationID != r.InstallationID ||
+		reply.DomainV3.MachineUID != uint32(r.MachineUID) ||
+		reply.DomainV3.ReaderUID != uint32(r.ReaderUID) ||
+		reply.DomainV3.ReaderGID != uint32(r.ReaderGID) ||
+		reply.DomainV3.OwnerPlanDigest != r.OwnerPlanDigest ||
+		reply.DomainV3.ReviewedSourceInventoryDigest != r.ReviewedDigest ||
 		reply.DomainV3.InventoryDigest != r.ReviewedDigest ||
-		reply.DomainV3.OwnerPlanDigest != r.OwnerPlanDigest {
+		reply.DomainV3.InventoryDigest != inventoryDigest ||
+		reply.DomainV3.FileCount != len(inv.Files) ||
+		reply.DomainV3.DirectoryCount != len(inv.Directories) ||
+		reply.DomainV3.TotalBytes != inv.TotalBytes {
+		stage2aGuestSealDiagnostic("root-reply", errStage2aReservationAuthority)
 		return empty, errStage2aReservationAuthority
 	}
 	identity, digest, err := stage2aObserveDomainV3At(reply.DomainV3.Snapshot.Path,

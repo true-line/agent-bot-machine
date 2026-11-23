@@ -4,6 +4,7 @@ package members
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -193,5 +194,26 @@ func TestStage2aDomainSealRequestV3UsesInstalledLauncherDigest(t *testing.T) {
 	r.LauncherSHA256 = "sha256:" + r.LauncherSHA256
 	if err := r.validate(); err == nil {
 		t.Fatal("accepted incompatible prefixed launcher digest")
+	}
+}
+
+func TestStage2aDomainSealReplyV3RoundTrip(t *testing.T) {
+	ref := stage2aDomainInventoryRefV3{Contract: "machine/v3", Kind: "stage2a-inventory-ref",
+		SchemaVersion: 3, Domain: "H-code", InstallationID: "hq-test-1",
+		Snapshot: stage2aDomainNodeRefV3{Path: "/private/test/snap_aaa", Device: "1", Inode: "2",
+			Generation: "3", BirthtimeNS: "4", OwnerUID: 620, OwnerGID: 621, Mode: "0555"},
+		Sidecar: stage2aDomainSidecarRefV3{stage2aDomainNodeRefV3: stage2aDomainNodeRefV3{
+			Path: "/private/test/inventory.jcs", Device: "1", Inode: "5", Generation: "6",
+			BirthtimeNS: "7", OwnerUID: 620, OwnerGID: 621, Mode: "0440"}, SizeBytes: 100,
+			SHA256: "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+	}
+	raw, err := json.Marshal(stage2aInstallSealReply{DomainV3: &ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded stage2aInstallSealReply
+	if err := json.Unmarshal(raw, &decoded); err != nil || decoded.DomainV3 == nil ||
+		*decoded.DomainV3 != ref || decoded.DomainV3.Sidecar.Path != ref.Sidecar.Path {
+		t.Fatalf("A reply lost v3 sidecar identity: %s %v", raw, err)
 	}
 }
