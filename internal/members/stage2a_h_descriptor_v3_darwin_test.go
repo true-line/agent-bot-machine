@@ -72,6 +72,15 @@ func TestStage2aHDescriptorBindsReviewedPlanAndInstalledRowsV3(t *testing.T) {
 	if stage2aValidateHDescriptorV3(badSource, p.HInventory, badSourcePlan, inv, pub) == nil {
 		t.Fatal("accepted invalid owner-pinned component source")
 	}
+	emptyTag := ""
+	badTag := p
+	badTag.Components = append([]stage2aHReleaseComponentV3(nil), p.Components...)
+	badTag.Components[1].SourceTag = &emptyTag
+	badTagPlan := plan
+	badTagPlan.descriptor = badTag
+	if stage2aValidateHDescriptorV3(badTag, p.HInventory, badTagPlan, inv, pub) == nil {
+		t.Fatal("accepted a present but empty source tag")
+	}
 	unusedRelease := p
 	unusedRelease.Components = append(append([]stage2aHReleaseComponentV3(nil), p.Components...),
 		stage2aHReleaseComponentV3{ComponentID: "zz", ReleaseArtifactSHA256: p.Components[0].ReleaseArtifactSHA256,

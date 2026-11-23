@@ -21,12 +21,12 @@ var (
 )
 
 type stage2aHReleaseComponentV3 struct {
-	ComponentID           string `json:"component_id"`
-	SourceRepository      string `json:"source_repository"`
-	SourceCommit          string `json:"source_commit"`
-	SourceTag             string `json:"source_tag,omitempty"`
-	ReleaseArtifactSHA256 string `json:"release_artifact_sha256"`
-	ReleaseManifestSHA256 string `json:"release_manifest_sha256"`
+	ComponentID           string  `json:"component_id"`
+	SourceRepository      string  `json:"source_repository"`
+	SourceCommit          string  `json:"source_commit"`
+	SourceTag             *string `json:"source_tag,omitempty"`
+	ReleaseArtifactSHA256 string  `json:"release_artifact_sha256"`
+	ReleaseManifestSHA256 string  `json:"release_manifest_sha256"`
 }
 
 type stage2aHOuterLaunchV3 struct {
@@ -105,7 +105,7 @@ func stage2aValidateHDescriptorV3(p stage2aHServiceDescriptorPayloadV3,
 		if !stage2aBindingID.MatchString(c.ComponentID) || c.ComponentID <= previous ||
 			!stage2aV3SourceRepository.MatchString(c.SourceRepository) ||
 			!stage2aV3SourceCommit.MatchString(c.SourceCommit) ||
-			(c.SourceTag != "" && !stage2aV3SourceTag.MatchString(c.SourceTag)) ||
+			(c.SourceTag != nil && !stage2aV3SourceTag.MatchString(*c.SourceTag)) ||
 			!stage2aPrefixedDigest.MatchString(c.ReleaseArtifactSHA256) ||
 			!stage2aPrefixedDigest.MatchString(c.ReleaseManifestSHA256) {
 			return invalid
