@@ -355,6 +355,7 @@ func qReservationJoinCurrentV3(payload []byte, idx qIndexV3, kind string, cooper
 		Contract                 string          `json:"contract"`
 		Kind                     string          `json:"kind"`
 		SchemaVersion            int             `json:"schema_version"`
+		AdapterTransport         string          `json:"adapter_transport"`
 		HostID                   string          `json:"host_id"`
 		AdmissionChallengeSHA256 string          `json:"admission_challenge_sha256"`
 		Assignment               json.RawMessage `json:"assignment"`
@@ -364,6 +365,10 @@ func qReservationJoinCurrentV3(payload []byte, idx qIndexV3, kind string, cooper
 		p.SchemaVersion != 3 || p.HostID != idx.HostID ||
 		p.AdmissionChallengeSHA256 != idx.LaunchChallengeSHA256 ||
 		len(p.Assignment) == 0 || len(p.MeasurementBinding) == 0 {
+		return ErrUnqualified
+	}
+	if cooperative && p.AdapterTransport != "brokered-b" ||
+		!cooperative && p.AdapterTransport != "" {
 		return ErrUnqualified
 	}
 	assignment, err := strictObject(p.Assignment, 48<<10)

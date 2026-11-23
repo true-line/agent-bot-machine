@@ -54,6 +54,31 @@ func TestVerifyQPreSignCurrentProfilesV3(t *testing.T) {
 				changed, ed25519.PublicKey(key), now); err == nil {
 				t.Fatal("changed signed reservation accepted")
 			}
+			if name == "cooperative" {
+				reservation, err := qSignedRecordV3([]byte(vector.Reservation),
+					cooperativeReservationPurposeV3, 3, ed25519.PublicKey(key))
+				if err != nil {
+					t.Fatal(err)
+				}
+				index, err := qSignedRecordV3([]byte(vector.Index), QFrameIndexPurposeV3, 1,
+					ed25519.PublicKey(key))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var payload map[string]any
+				var idx qIndexV3
+				if json.Unmarshal(reservation, &payload) != nil || json.Unmarshal(index, &idx) != nil {
+					t.Fatal("invalid pinned fixture payload")
+				}
+				payload["adapter_transport"] = "direct"
+				changedPayload, err := json.Marshal(payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if qReservationJoinCurrentV3(changedPayload, idx, "soul-cooperative-reservation", true) == nil {
+					t.Fatal("cooperative Q joined non-B transport")
+				}
+			}
 		})
 	}
 	cooperative := vectors.Profiles["cooperative"]
