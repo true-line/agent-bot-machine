@@ -46,6 +46,11 @@ func (r *stage2aLiveReservation) observeTwoMemberChildren(p stage2aInstalledPoli
 		return errStage2aReservationAuthority
 	}
 	adapterID, _ := p.LaunchInputs.EffectiveConfig["adapter_id"].(string)
+	if len(r.hello.roles) != 2 || r.hello.roles[0].AdapterID != adapterID ||
+		r.hello.roles[1].AdapterID != adapterID ||
+		r.hello.roles[0].AdapterVersion != r.hello.roles[1].AdapterVersion {
+		return errStage2aReservationAuthority
+	}
 	adapter, _ := p.LaunchInputs.HostProjection.Adapters[adapterID].(map[string]any)
 	command, _ := adapter["command"].([]any)
 	if len(command) != 1 {
