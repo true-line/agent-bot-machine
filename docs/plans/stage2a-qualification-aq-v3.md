@@ -159,6 +159,86 @@ A signature by itself grants no gate credit. The producer, capture formats,
 T21 segment form, and gate-specific inventory remain open; public v3
 acceptance stays closed.
 
+### Compact installed-input object under review
+
+The proposed `installed_inputs` blob is a canonical RFC 8785 JSON object,
+at most 1 MiB, with exact top-level fields `schema_version` (1), `kind`
+(`stage2a-installed-inputs`), `installation_id`, `soul_id`, `start_id`,
+`launch_id`, `host_id`, `profile`, `plan_id`, `installed_plan_digest`,
+`measurement_binding_sha256`, `definition_records`,
+`launch_input_records`, `host_adapters_json`, `host_installation_json`,
+`definition_snapshot`, `launch_inputs_snapshot`, `opened_files`, and
+`observed_at`. The four nested references use the segment's exact
+`{role,uri,sha256,size_bytes,issuer}` tuple, issuer `machine-a`, and
+content-addressed `qualification://stage2a/blob/<lowercase-sha256>` URIs.
+Their roles match their field names. They address the exact canonical
+definition record array (up to 4 MiB), launch-input object (up to 1 MiB),
+and the two separately opened host JSON files (up to 64 KiB each). The
+measurement binding digest is the ordinary SHA-256 of its exact canonical
+bytes; the definition and launch record hashes retain their separate
+owner-approved purpose plus NUL preimages.
+
+`opened_files` lists every regular file in the two approved snapshots,
+sorted by `scope/path`, where `scope` is `definition` or `launch`. Each row
+has exactly `scope`, `path`, `size_bytes`, `mode`, `sha256`, `owner_uid`,
+`owner_gid`, `device`, `inode`, `generation`, `birthtime_ns`, `link_count`,
+`acl_allow_count`, and `observed_at`. A must produce each row from a
+no-follow descriptor read under its pinned namespace, comparing metadata
+before and after hashing and rejecting allow ACLs, changed bytes, extra
+entries, and changed snapshot identity. The offline consumer joins every
+row to the exact record bytes, both snapshot identities, the selected
+command under either approved snapshot, all eight named component and
+sandbox-policy digest references to launch files, the effective profile,
+and the separately hashed host projection files. It does not archive large
+executable bytes.
+The offline resolver also requires the authenticated A stop time and A
+segment-signing time: every opened-file timestamp and the wrapper timestamp
+must fall from the signed idle stop through the segment signature, inclusive.
+The caller must verify the stop and segment signatures and the segment's exact
+`installed_inputs_sha256` before crediting that join. Passing arbitrary times
+to the component is not A authentication.
+The companion `ResolveSignedInstalledInputInventoryV3` component verifies
+both envelopes against an independently enrolled A Ed25519 key, joins the
+signed idle stop and attestation to the same installation, start, launch,
+host, profile, plan and measurement binding, checks the exact stop and
+inventory digests, then applies the bounded offline inventory check. It does
+not authenticate the reservation/Q chain, attest a release, or prove a gate.
+
+The current wrapper covers the frozen definition and R-readable launch-input
+snapshot. It does not attest a separate H-readable HQ/Comms/contracts code
+domain or join that domain to a signed release. The two-domain binding,
+access and measurement limits still need a reviewed contract. H and R must
+not gain a shared writable or readable group through this draft.
+The current `Stage2aLaunchInputRecords` v1 source contract and this offline
+consumer require eight component digests backed by R-snapshot files, including
+`harness` and `test_provider`. The owner has clarified that the base
+HQ/Machine/Souls install is harness-free and does not request Stage 2a
+protected-launch qualification. A protected pilot is a separate, owner-reviewed
+selection; ACP/Claude and any other selected test inputs must be measured
+exactly. The current eight-component v1 protected schema is not silently
+reinterpreted for the base install. A reviewed successor must specify optional
+component mapping and the separate H code measurement before this draft can
+credit an installed protected pilot.
+The signed v3 qualification's `adapter.package_sha256` and
+`launch.executable`/`launch.code_inputs` claims need an exact reviewed mapping
+to opened R inventory paths and the adapter release attestation. The
+`measurement_binding.package_sha256` names the Machine package and is a
+different subject; this draft never equates those two package digests.
+
+The source-only A archive helper publishes the unsigned wrapper and four
+nested blobs in the pinned A-private qualification store under
+`objects/sha256/<prefix>/<digest>`. It verifies the wrapper's exact canonical
+bytes and nested references, creates no-follow A-owned mode-0700 directories,
+uses exclusive mode-0600 full-sync object commits, and only reuses an existing
+name after rechecking its exact bytes and private metadata. A disposable native
+test passes a producer-to-archive-to-offline read, identical replay, changed
+same-name object refusal, wrong-A-account refusal and symlinked archive-parent
+refusal. This helper has no production caller or A-signed segment issuer yet.
+The physical segment attestation must bind the exact wrapper digest
+before an offline verifier can credit the observation. Raw ACP/OS custody,
+case inventory, native results, and T21's distinct form remain separate
+requirements. No public acceptance gate uses this component yet.
+
 The portable `ResolveSignedProtectedSegmentsV3` component follows the signed
 protected report's T01/T02/T03 gate references, verifies each completed and
 stopped segment manifest and A attestation, resolves all ten exact local blob
@@ -186,6 +266,83 @@ reservation, validate every record against the owner plan, and prove A's
 descriptor-read installed-file, snapshot and process custody. The raw ACP/OS
 captures, source issuer, T21 form and physical case inventory also remain
 necessary before public v3 acceptance.
+
+The portable `parseHRMeasurementBindingV3` component accepts only the
+ordinary `machine/v3` H/R binding from soul-contracts v0.9.0 (introduced in
+v0.8.0). It checks inherited nonroot A snapshot constraints, the exact derived
+R snapshot and sidecar names, the owner plan and inventory digest joins,
+selected H descriptor digest, ordered R source/artifact/manifest claims, the
+distinct adapter qualification attestation, and broker executable fields. The
+synthetic Contracts vector and changed H/R, release, plan and source-tag
+refusals are parser tests. This component is not a signed reservation verifier
+and does not open public v3 acceptance. A first-qualification candidate
+requires a separate purpose and binding; it cannot satisfy this ordinary parser by
+omitting the adapter qualification attestation.
+
+The separate first-qualification component consumes the distinct signed
+candidate reservation from Contracts v0.9.0. It derives only the fixed
+`machine/v2` summary carried by the v3 host report, verifies the A signature
+under the independently enrolled Machine key, and joins the full reservation
+envelope digest, admission challenge, host and Soul identity, selected adapter
+ZIP, executable and ordered code-input paths to the report. When the full
+protected report supplies its bridge principals, the A UID and sealed R reader
+UID/GID must match the reported Machine and runner account. Its tests use the
+exact Contracts candidate vector and the Machine H producer's paired report
+summary. This check does not verify approval spending, the sealed R files,
+Q/ACP/OS captures or any physical T result. The ordinary release attestation
+still follows qualification and the public acceptance gate remains closed.
+
+The earlier managed-cooperative T21 diagnostic consumes the distinct A-signed
+`agent-bot/soul-cooperative-reservation/v3` envelope from Contracts #75
+(merged reviewed head `2076eb64022921624a75dd271d024bc02e2ef55a`).
+That direct-transport vector was superseded for the protected B route by
+Contracts v0.10.1 and v0.10.2; this earlier diagnostic grants no brokered-B
+qualification.
+It verifies the enrolled A key and exact canonical bytes, derives the fixed
+`machine/v2` host-report projection, and joins the report to the H descriptor,
+sealed R inventory, frozen definition and launch roots, runner UID/GID,
+H-owned per-start admission and runner-scoped broker endpoints, H-hosted broker
+module identity, released adapter claim, challenge and
+reservation digest. Its paired synthetic vector and substitution tests are
+source-level evidence only. The complete H descriptor, R sidecar and
+cooperative launch-input records must still be resolved and remeasured from
+A-custodied bytes. A separate offline R sidecar parser checks canonical
+inventory bytes, the purpose-separated R digest, sidecar size/hash, the exact
+file and directory closure, numeric ceilings, release-path uniqueness and the
+signed R reference counts. It does not authenticate file contents or custody.
+The offline `CheckCooperativeHostReportRInventoryV3` diagnostic composes the
+designated-host report signature, A-signed cooperative reservation and exact
+R sidecar, then requires the reported adapter executable and every code-input
+digest to equal a row for that adapter component in the sidecar. It also
+requires an executable inventory mode and refuses another component's file,
+an unlisted path, or a coherent sidecar replacement with changed code bytes.
+The cooperative parser checks the derived per-installation start socket name.
+It accepts an optional qualification-provider config only when its exact
+canonical bytes match the signed digest; ordinary cooperative starts can omit
+that test-only config. The matching launch-input harness/provider pins still
+need independent measurement.
+It remains a claim-to-inventory join: the actual sealed files, component
+release manifest, Q runner and physical T21 result are not established by it.
+One-use spending, release attestation, T21 segment artifacts and physical
+results remain separate gates; this diagnostic cannot return a positive Stage
+2a acceptance result.
+
+The protected B successor in Contracts v0.10.2 binds two distinct A-signed
+canonical envelopes. The R-visible primary reservation selects exactly
+`adapter_transport: "brokered-b"` and carries the digest of the static B
+launch object plus explicit member and relay endpoints. The H/B-only
+`agent-bot/soul-cooperative-bridge-assignment/v3` envelope binds the SHA-256 of
+the complete primary envelope and carries the full B launch object and broker
+endpoint. `VerifyCooperativeBridgeAssignmentV3` checks both signatures under
+the independently enrolled Machine public key, exact canonical bytes and
+field sets, host/installation/start/launch/plan/HQ epoch/time equality,
+measurement binding, exact digest joins, Machine-derived R/B accounts and
+UID/GID ranges, endpoint paths/modes/peer and parent identity claims, and the
+ordered `sandbox-exec` argv. Tests use the released synthetic B vector and
+coherently re-signed substitutions. This helper is source-only: it neither
+measures installed B/R files or live socket parents nor verifies one-use
+spending, release attestation, raw Q/ACP/OS captures, physical T21, or a v3
+report/completion successor. The public acceptance result remains unqualified.
 
 The separate `mm-qualification-verify-release --host-v3` command parses the
 supplied owner root, policy, trusted Sigstore roots, exact release and Souls

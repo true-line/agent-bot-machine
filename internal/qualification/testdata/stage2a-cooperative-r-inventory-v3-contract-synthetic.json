@@ -1,0 +1,57 @@
+{
+  "inventory_jcs": "{\"contract\":\"machine/v3\",\"directories\":[{\"kind\":\"directory\",\"mode\":\"0550\",\"path\":\"adapter\"},{\"kind\":\"directory\",\"mode\":\"0550\",\"path\":\"bin\"}],\"domain\":\"R-runtime\",\"files\":[{\"component_id\":\"adapter\",\"kind\":\"regular\",\"mode\":\"0550\",\"path\":\"adapter/cli\",\"release_path\":\"cli\",\"sha256\":\"sha256:5555555555555555555555555555555555555555555555555555555555555555\",\"size_bytes\":400},{\"component_id\":\"adapter\",\"kind\":\"regular\",\"mode\":\"0440\",\"path\":\"adapter/library.mjs\",\"release_path\":\"library.mjs\",\"sha256\":\"sha256:6666666666666666666666666666666666666666666666666666666666666666\",\"size_bytes\":500},{\"component_id\":\"souls\",\"kind\":\"regular\",\"mode\":\"0440\",\"path\":\"bin/agent-bot-souls.mjs\",\"release_path\":\"bin/agent-bot-souls.mjs\",\"sha256\":\"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"size_bytes\":200},{\"component_id\":\"souls\",\"kind\":\"regular\",\"mode\":\"0550\",\"path\":\"bin/node\",\"release_path\":\"bin/node\",\"sha256\":\"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"size_bytes\":100},{\"component_id\":\"souls\",\"kind\":\"regular\",\"mode\":\"0440\",\"path\":\"package.json\",\"release_path\":\"package.json\",\"sha256\":\"sha256:b2cd9cab11c7121349847c767cd940385fab3067eb2dab51662fae77c1220f8d\",\"size_bytes\":49}],\"installation_id\":\"inst_0000000000000001\",\"kind\":\"stage2a-domain-inventory\",\"limits\":{\"max_file_bytes\":402653184,\"max_files\":512,\"max_total_bytes\":1073741824},\"schema_version\":3,\"total_bytes\":1249}",
+  "note": "Synthetic A-sealed R inventory sidecar; test rows only.",
+  "package_json_bytes": "{\"name\":\"agent-bot-souls\",\"version\":\"0.0.0-test\"}",
+  "reference": {
+    "contract": "machine/v3",
+    "directory_count": 2,
+    "domain": "R-runtime",
+    "file_count": 5,
+    "installation_id": "inst_0000000000000001",
+    "inventory_digest": "sha256:e1caba048f3b8c30ec658f37b97298a8e4b14bf4ffd9aa2a3432f7d454d05e3a",
+    "kind": "stage2a-inventory-ref",
+    "machine_uid": 501,
+    "owner_plan_digest": "sha256:471d910cb2d1a1a0edc8ded4d07b8edceace4bfd17e05e287ae59236623de87c",
+    "reader_gid": 331,
+    "reader_uid": 331,
+    "reviewed_source_inventory_digest": "sha256:e1caba048f3b8c30ec658f37b97298a8e4b14bf4ffd9aa2a3432f7d454d05e3a",
+    "schema_version": 3,
+    "sidecar": {
+      "birthtime_ns": "1795356916000000000",
+      "device": "1",
+      "generation": "4",
+      "inode": "900",
+      "mode": "0440",
+      "owner_gid": 331,
+      "owner_uid": 501,
+      "path": "/private/var/db/managed-machine/soul-snapshots/r_23bc1c3252f7992b4298/inventory_6594547120bbfa77564d4abe.jcs",
+      "sha256": "sha256:b90a7169641f3ca5f8110877d4d5698e2f4aa9bd7fbed83b0d46d1db18460a3a",
+      "size_bytes": 1422
+    },
+    "snapshot": {
+      "birthtime_ns": "1795356916000000000",
+      "device": "1",
+      "generation": "4",
+      "inode": "800",
+      "mode": "0555",
+      "owner_gid": 331,
+      "owner_uid": 501,
+      "path": "/private/var/db/managed-machine/soul-snapshots/r_23bc1c3252f7992b4298/snap_6594547120bbfa77564d4abe"
+    },
+    "total_bytes": 1249
+  },
+  "souls_release_manifest": [
+    {
+      "path": "bin/agent-bot-souls.mjs",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    {
+      "path": "bin/node",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "path": "package.json",
+      "sha256": "b2cd9cab11c7121349847c767cd940385fab3067eb2dab51662fae77c1220f8d"
+    }
+  ]
+}

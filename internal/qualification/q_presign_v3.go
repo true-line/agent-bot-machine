@@ -8,18 +8,20 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	QFrameIndexPurposeV3  = "agent-bot/stage2a-q-frame-index/v1"
-	QFinishedEOFPurposeV3 = "agent-bot/stage2a-q-finished-eof/v1"
-	qReservationPurposeV3 = "agent-bot/stage2a-reservation/v2"
-	qSessionSchemaV3      = "soul-conformance/qualification-session/v1"
-	qFrameMaxV3           = 65536
-	qStreamMaxV3          = 128 * (qFrameMaxV3 + 4)
+	QFrameIndexPurposeV3           = "agent-bot/stage2a-q-frame-index/v1"
+	QFinishedEOFPurposeV3          = "agent-bot/stage2a-q-finished-eof/v1"
+	qReservationPurposeV3          = "agent-bot/stage2a-reservation/v2"
+	qProtectedReservationPurposeV3 = "agent-bot/stage2a-reservation/v3"
+	qSessionSchemaV3               = "soul-conformance/qualification-session/v1"
+	qFrameMaxV3                    = 65536
+	qStreamMaxV3                   = 128 * (qFrameMaxV3 + 4)
 )
 
 var (
@@ -35,6 +37,7 @@ var (
 type VerifiedQPreSignV3 struct {
 	verified                                                              bool
 	SessionID, CohortID, InstallationID, SoulID, StartID, HostID, Profile string
+	AdapterTransport                                                      string
 	ReservationSHA256, WireSHA256, IndexSHA256, EOFReceiptSHA256          string
 	QSourceSHA256, TestPlanSHA256                                         string
 	ObservationCount                                                      int
@@ -207,6 +210,24 @@ func qPathV3(value string) bool {
 // its full lifecycle is checked by the separate one-use verifier.
 func VerifyQPreSignV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope []byte,
 	machineKey ed25519.PublicKey, now time.Time) (VerifiedQPreSignV3, error) {
+	return verifyQPreSignWithTransportV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope,
+		machineKey, now, "brokered-b")
+}
+
+// VerifyQPreSignDirectCooperativeV3 accepts only the separate direct-Comms
+// cooperative reservation. It cannot substitute for brokered-B publication.
+func VerifyQPreSignDirectCooperativeV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope []byte,
+	machineKey ed25519.PublicKey, now time.Time) (VerifiedQPreSignV3, error) {
+	verified, err := verifyQPreSignWithTransportV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope,
+		machineKey, now, "direct-comms")
+	if err != nil || verified.Profile != "managed-cooperative" || verified.AdapterTransport != "direct-comms" {
+		return VerifiedQPreSignV3{}, ErrUnqualified
+	}
+	return verified, nil
+}
+
+func verifyQPreSignWithTransportV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope []byte,
+	machineKey ed25519.PublicKey, now time.Time, cooperativeTransport string) (VerifiedQPreSignV3, error) {
 	var zero VerifiedQPreSignV3
 	if now.IsZero() || len(wireRaw) == 0 || len(wireRaw) > 32<<20 {
 		return zero, ErrUnqualified
@@ -249,7 +270,8 @@ func VerifyQPreSignV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope [
 	if e1 != nil || e2 != nil || e3 != nil || eofAt.After(issued) || issued.After(eofAt.Add(30*time.Second)) || !eofIssued.Equal(issued) || issued.After(now) {
 		return zero, ErrUnqualified
 	}
-	if digest(reservationEnvelope) != idx.ReservationSHA256 || qReservationJoinV3(reservationEnvelope, machineKey, idx) != nil {
+	if digest(reservationEnvelope) != idx.ReservationSHA256 ||
+		qReservationJoinV3(reservationEnvelope, machineKey, idx, cooperativeTransport) != nil {
 		return zero, ErrUnqualified
 	}
 	begin, e1 := decode(wire.Begin, qFrameMaxV3+4)
@@ -288,7 +310,11 @@ func VerifyQPreSignV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope [
 	if digest(ordered.Bytes()) != idx.OrderedFramesSHA256 || qVerifyTranscriptV3(beginRaw, readyRaw, reqRaw, obsRaw, finishRaw, finishedRaw, observations, idx, eofAt) != nil {
 		return zero, ErrUnqualified
 	}
-	return VerifiedQPreSignV3{verified: true, SessionID: idx.SessionID, CohortID: idx.CohortID, InstallationID: idx.InstallationID, SoulID: idx.SoulID, StartID: idx.StartID, HostID: idx.HostID, Profile: idx.Profile, ReservationSHA256: idx.ReservationSHA256, WireSHA256: idx.WireSHA256, IndexSHA256: digest(indexEnvelope), EOFReceiptSHA256: digest(eofEnvelope), QSourceSHA256: idx.QSourceSHA256, TestPlanSHA256: idx.TestPlanSHA256, ObservationCount: idx.ObservationCount}, nil
+	transport := ""
+	if idx.Profile == "managed-cooperative" {
+		transport = cooperativeTransport
+	}
+	return VerifiedQPreSignV3{verified: true, SessionID: idx.SessionID, CohortID: idx.CohortID, InstallationID: idx.InstallationID, SoulID: idx.SoulID, StartID: idx.StartID, HostID: idx.HostID, Profile: idx.Profile, AdapterTransport: transport, ReservationSHA256: idx.ReservationSHA256, WireSHA256: idx.WireSHA256, IndexSHA256: digest(indexEnvelope), EOFReceiptSHA256: digest(eofEnvelope), QSourceSHA256: idx.QSourceSHA256, TestPlanSHA256: idx.TestPlanSHA256, ObservationCount: idx.ObservationCount}, nil
 }
 
 func qLowerHexV3(s string) bool {
@@ -324,7 +350,105 @@ func qPrintableV3(s string, max int) bool {
 	return true
 }
 
-func qReservationJoinV3(envelope []byte, key ed25519.PublicKey, idx qIndexV3) error {
+func qReservationJoinV3(envelope []byte, key ed25519.PublicKey, idx qIndexV3, cooperativeTransport string) error {
+	if idx.Profile == "managed-cooperative" {
+		if cooperativeTransport != "direct-comms" && cooperativeTransport != "brokered-b" {
+			return ErrUnqualified
+		}
+		payload, err := qSignedRecordV3(envelope, cooperativeReservationPurposeV3, 3, key)
+		if err != nil {
+			return ErrUnqualified
+		}
+		return qReservationJoinCurrentV3(payload, idx, "soul-cooperative-reservation", cooperativeTransport)
+	}
+	if idx.Profile != "managed-protected" {
+		return ErrUnqualified
+	}
+	if payload, err := qSignedRecordV3(envelope, qProtectedReservationPurposeV3, 3, key); err == nil {
+		return qReservationJoinCurrentV3(payload, idx, "stage2a-reservation", "")
+	}
+	return qReservationJoinLegacyV3(envelope, key, idx)
+}
+
+// The Q pre-sign component joins the exact current A-signed reservation and
+// its complete v3 measurement binding. One-use spending, installed bytes,
+// release provenance and physical gate verdicts remain separate checks.
+func qReservationJoinCurrentV3(payload []byte, idx qIndexV3, kind, cooperativeTransport string) error {
+	fields, err := canonicalBytes(payload, 64<<10)
+	if err != nil {
+		return ErrUnqualified
+	}
+	var p struct {
+		Contract                 string          `json:"contract"`
+		Kind                     string          `json:"kind"`
+		SchemaVersion            int             `json:"schema_version"`
+		AdapterTransport         string          `json:"adapter_transport"`
+		HostID                   string          `json:"host_id"`
+		AdmissionChallengeSHA256 string          `json:"admission_challenge_sha256"`
+		Assignment               json.RawMessage `json:"assignment"`
+		MeasurementBinding       json.RawMessage `json:"measurement_binding"`
+	}
+	if json.Unmarshal(payload, &p) != nil || p.Contract != "machine/v3" || p.Kind != kind ||
+		p.SchemaVersion != 3 || p.HostID != idx.HostID ||
+		p.AdmissionChallengeSHA256 != idx.LaunchChallengeSHA256 ||
+		len(p.Assignment) == 0 || len(p.MeasurementBinding) == 0 {
+		return ErrUnqualified
+	}
+	if p.AdapterTransport != cooperativeTransport {
+		return ErrUnqualified
+	}
+	if cooperativeTransport != "" {
+		endpoints, err := strictObject(fields["endpoints"], 48<<10)
+		if err != nil {
+			return ErrUnqualified
+		}
+		if cooperativeTransport == "direct-comms" {
+			if !hasFields(endpoints, "admission", "broker") || fields["bridge_launch_sha256"] != nil {
+				return ErrUnqualified
+			}
+		} else if cooperativeTransport == "brokered-b" {
+			var bridgeLaunchSHA string
+			if !hasFields(endpoints, "admission", "member", "relay") ||
+				json.Unmarshal(fields["bridge_launch_sha256"], &bridgeLaunchSHA) != nil ||
+				!validSHA(bridgeLaunchSHA) {
+				return ErrUnqualified
+			}
+		} else {
+			return ErrUnqualified
+		}
+	}
+	assignment, err := strictObject(p.Assignment, 48<<10)
+	if err != nil {
+		return ErrUnqualified
+	}
+	var ids struct {
+		InstallationID string `json:"installation_id"`
+		SoulID         string `json:"soul_id"`
+		StartID        string `json:"start_id"`
+		LaunchID       string `json:"launch_id"`
+	}
+	if json.Unmarshal(p.Assignment, &ids) != nil || ids.InstallationID != idx.InstallationID ||
+		ids.SoulID != idx.SoulID || ids.StartID != idx.StartID || ids.LaunchID == "" ||
+		assignment["installation_id"] == nil || assignment["soul_id"] == nil ||
+		assignment["start_id"] == nil || assignment["launch_id"] == nil {
+		return ErrUnqualified
+	}
+	var binding hrMeasurementBindingV3
+	if cooperativeTransport != "" {
+		binding, err = parseCooperativeMeasurementBindingV3(fields["measurement_binding"])
+	} else {
+		binding, err = parseHRMeasurementBindingV3(fields["measurement_binding"])
+	}
+	if err != nil || binding.Base.InstallationID != idx.InstallationID ||
+		binding.Base.SoulID != idx.SoulID || binding.Base.StartID != idx.StartID ||
+		binding.Base.LaunchID != ids.LaunchID || binding.Base.HostID != idx.HostID ||
+		binding.Base.ProfileInForce != idx.Profile {
+		return ErrUnqualified
+	}
+	return nil
+}
+
+func qReservationJoinLegacyV3(envelope []byte, key ed25519.PublicKey, idx qIndexV3) error {
 	payload, err := qSignedRecordV3(envelope, qReservationPurposeV3, 2, key)
 	if err != nil {
 		return ErrUnqualified
@@ -356,7 +480,7 @@ func qReservationJoinV3(envelope []byte, key ed25519.PublicKey, idx qIndexV3) er
 
 func qVerifyTranscriptV3(beginRaw, readyRaw []byte, requests, observations [][]byte,
 	finishRaw, finishedRaw, observationFrames []byte, idx qIndexV3, eofAt time.Time) error {
-	if !qExactObjectV3(beginRaw, "schema", "kind", "session_id", "challenge_base64url", "cohort_id", "installation_id", "soul_id", "start_id", "host_id", "profile", "reservation_sha256", "test_plan_sha256", "suite_revision", "ps_sha256", "path_roots", "q_uid", "q_gid", "deadline_at") {
+	if !qExactObjectV3(beginRaw, "schema", "kind", "session_id", "challenge_base64url", "cohort_id", "installation_id", "soul_id", "start_id", "host_id", "profile", "reservation_sha256", "test_plan_sha256", "suite_revision", "ps_sha256", "path_roots", "q_uid", "q_gid", "deadline_at", "require_argv_proof") {
 		return ErrUnqualified
 	}
 	var begin struct {
@@ -378,8 +502,9 @@ func qVerifyTranscriptV3(beginRaw, readyRaw []byte, requests, observations [][]b
 		QUID              int      `json:"q_uid"`
 		QGID              int      `json:"q_gid"`
 		DeadlineAt        string   `json:"deadline_at"`
+		RequireArgvProof  bool     `json:"require_argv_proof"`
 	}
-	if json.Unmarshal(beginRaw, &begin) != nil || begin.Schema != qSessionSchemaV3 || begin.Kind != "begin" || begin.SessionID != idx.SessionID || begin.CohortID != idx.CohortID || begin.InstallationID != idx.InstallationID || begin.SoulID != idx.SoulID || begin.StartID != idx.StartID || begin.HostID != idx.HostID || begin.Profile != idx.Profile || begin.ReservationSHA256 != idx.ReservationSHA256 || begin.TestPlanSHA256 != idx.TestPlanSHA256 || begin.QUID != idx.QUID || begin.QGID != idx.QGID || len(begin.SuiteRevision) != 40 || !qLowerHexV3(begin.SuiteRevision) || !validSHA(begin.PSSHA256) || len(begin.PathRoots) < 1 || len(begin.PathRoots) > 16 {
+	if json.Unmarshal(beginRaw, &begin) != nil || begin.Schema != qSessionSchemaV3 || begin.Kind != "begin" || begin.SessionID != idx.SessionID || begin.CohortID != idx.CohortID || begin.InstallationID != idx.InstallationID || begin.SoulID != idx.SoulID || begin.StartID != idx.StartID || begin.HostID != idx.HostID || begin.Profile != idx.Profile || begin.ReservationSHA256 != idx.ReservationSHA256 || begin.TestPlanSHA256 != idx.TestPlanSHA256 || begin.QUID != idx.QUID || begin.QGID != idx.QGID || !begin.RequireArgvProof || len(begin.SuiteRevision) != 40 || !qLowerHexV3(begin.SuiteRevision) || !validSHA(begin.PSSHA256) || len(begin.PathRoots) < 1 || len(begin.PathRoots) > 16 {
 		return ErrUnqualified
 	}
 	challenge, err := decode(begin.Challenge, 32)
@@ -397,22 +522,26 @@ func qVerifyTranscriptV3(beginRaw, readyRaw []byte, requests, observations [][]b
 		}
 		roots[root] = true
 	}
-	if !qExactObjectV3(readyRaw, "schema", "kind", "session_id", "challenge_sha256", "sequence", "pid", "uid", "gid", "source_sha256", "captured_at") {
+	if !qExactObjectV3(readyRaw, "schema", "kind", "session_id", "challenge_sha256", "sequence", "pid", "uid", "gid", "source_sha256", "captured_at", "exec_path", "argv") {
 		return ErrUnqualified
 	}
 	var ready struct {
-		Schema          string `json:"schema"`
-		Kind            string `json:"kind"`
-		SessionID       string `json:"session_id"`
-		ChallengeSHA256 string `json:"challenge_sha256"`
-		Sequence        int    `json:"sequence"`
-		PID             int    `json:"pid"`
-		UID             int    `json:"uid"`
-		GID             int    `json:"gid"`
-		SourceSHA256    string `json:"source_sha256"`
-		CapturedAt      string `json:"captured_at"`
+		Schema          string   `json:"schema"`
+		Kind            string   `json:"kind"`
+		SessionID       string   `json:"session_id"`
+		ChallengeSHA256 string   `json:"challenge_sha256"`
+		Sequence        int      `json:"sequence"`
+		PID             int      `json:"pid"`
+		UID             int      `json:"uid"`
+		GID             int      `json:"gid"`
+		SourceSHA256    string   `json:"source_sha256"`
+		CapturedAt      string   `json:"captured_at"`
+		ExecPath        string   `json:"exec_path"`
+		Argv            []string `json:"argv"`
 	}
-	if json.Unmarshal(readyRaw, &ready) != nil || ready.Schema != qSessionSchemaV3 || ready.Kind != "ready" || ready.SessionID != idx.SessionID || ready.ChallengeSHA256 != idx.QChallengeSHA256 || ready.Sequence != 0 || ready.PID != idx.QPID || ready.UID != idx.QUID || ready.GID != idx.QGID || ready.SourceSHA256 != idx.QSourceSHA256 {
+	// Q's challenged argv is joined to A's signed index. The separate installed
+	// launchd and kernel-image evidence must still establish what actually ran.
+	if json.Unmarshal(readyRaw, &ready) != nil || ready.Schema != qSessionSchemaV3 || ready.Kind != "ready" || ready.SessionID != idx.SessionID || ready.ChallengeSHA256 != idx.QChallengeSHA256 || ready.Sequence != 0 || ready.PID != idx.QPID || ready.UID != idx.QUID || ready.GID != idx.QGID || ready.SourceSHA256 != idx.QSourceSHA256 || ready.ExecPath != idx.QExecutable || !slices.Equal(ready.Argv, idx.QArgv) {
 		return ErrUnqualified
 	}
 	last, err := qTimeParsedV3(ready.CapturedAt)
