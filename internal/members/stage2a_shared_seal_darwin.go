@@ -4,8 +4,10 @@ package members
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -15,6 +17,8 @@ import (
 
 const stage2aSharedSealSchema = "agent-bot-machine/stage2a-shared-install-seal/v1"
 const stage2aCooperativeRSealPurpose = "agent-bot/stage2a-cooperative-r-seal/v1"
+const stage2aCooperativeDefinitionSealPurpose = "agent-bot/stage2a-cooperative-definition-seal/v1"
+const stage2aCooperativeInputsSealPurpose = "agent-bot/stage2a-cooperative-inputs-seal/v1"
 
 // Only the root installer may hand an already prepared tree to the fixed,
 // network-denied A helper. The helper has no caller-selected executable,
@@ -59,6 +63,7 @@ func stage2aRunSealHelper(adminUID, adminGID int, raw []byte) (stage2aInstallSea
 type stage2aSharedSealRequest struct {
 	Schema         string                    `json:"schema"`
 	Purpose        string                    `json:"purpose"`
+	Kind           string                    `json:"kind,omitempty"`
 	MachineAccount string                    `json:"machine_account"`
 	MachineUID     int                       `json:"machine_uid"`
 	MachineGID     int                       `json:"machine_gid"`
@@ -76,7 +81,7 @@ type stage2aSharedSealRequest struct {
 func (r stage2aSharedSealRequest) validate() error {
 	namespace, err := stage2aFrozenNamespace(r.InstallationID)
 	if err != nil || r.Schema != stage2aSharedSealSchema ||
-		r.Purpose != stage2aCooperativeRSealPurpose ||
+		!r.validPurposeAndKind() ||
 		r.MachineUID < 400 || r.MachineGID <= 0 ||
 		r.RunnerUID < 300 || r.RunnerUID > 399 || r.RunnerGID != r.RunnerUID ||
 		r.MachineUID == r.RunnerUID ||
@@ -91,11 +96,44 @@ func (r stage2aSharedSealRequest) validate() error {
 		filepath.Dir(r.Prepared.WrapperPath) != namespace {
 		return errStage2aReservationAuthority
 	}
-	digest, _, err := Stage2aDefinitionDigest(r.Approved)
-	if err != nil || digest != r.ApprovedDigest || stage2aRunnerReadableInventory(r.Approved) != nil {
+	approved := r.Approved
+	if r.Kind == "inputs" {
+		approved, err = stage2aExpandedRuntimeRecords(approved)
+		if err != nil {
+			return errStage2aReservationAuthority
+		}
+		raw, err := json.Marshal(approved)
+		if err != nil || fmt.Sprintf("sha256:%x", sha256.Sum256(raw)) != r.ApprovedDigest ||
+			stage2aRunnerReadableInventory(approved) != nil {
+			return errStage2aReservationAuthority
+		}
+		return nil
+	}
+	digest, _, err := Stage2aDefinitionDigest(approved)
+	if err != nil || digest != r.ApprovedDigest || stage2aRunnerReadableInventory(approved) != nil {
 		return errStage2aReservationAuthority
 	}
 	return nil
+}
+
+func (r stage2aSharedSealRequest) validPurposeAndKind() bool {
+	switch r.Kind {
+	case "":
+		return r.Purpose == stage2aCooperativeRSealPurpose
+	case "definition":
+		return r.Purpose == stage2aCooperativeDefinitionSealPurpose
+	case "inputs":
+		return r.Purpose == stage2aCooperativeInputsSealPurpose
+	default:
+		return false
+	}
+}
+
+func (r stage2aSharedSealRequest) snapshotKind() string {
+	if r.Kind == "" {
+		return "cooperative-r"
+	}
+	return r.Kind
 }
 
 func runStage2aSharedSeal(raw []byte) int {
@@ -129,8 +167,9 @@ func runStage2aSharedSeal(raw []byte) int {
 				request.RunnerAccount, request.RunnerUID)
 		},
 	}
-	name := stage2aInstallSnapshotName(request.InstallationID, "cooperative-r")
-	identity, digest, err := stage2aSealPreparedSnapshotAt(a, request.Prepared, name, request.Approved, false)
+	name := stage2aInstallSnapshotName(request.InstallationID, request.snapshotKind())
+	identity, digest, err := stage2aSealPreparedSnapshotAt(a, request.Prepared, name,
+		request.Approved, request.Kind == "inputs")
 	if err != nil || json.NewEncoder(os.Stdout).Encode(stage2aInstallSealReply{Identity: identity, Digest: digest}) != nil {
 		return refuse()
 	}
@@ -140,6 +179,10 @@ func runStage2aSharedSeal(raw []byte) int {
 // Root independently reopens the final tree; a child reply never becomes the
 // installed receipt solely by claiming a digest or path.
 func stage2aSealCooperativeRAsAdmin(r stage2aSharedSealRequest) (Stage2aSnapshotIdentity, string, error) {
+	return stage2aSealCooperativeSnapshotAsAdmin(r)
+}
+
+func stage2aSealCooperativeSnapshotAsAdmin(r stage2aSharedSealRequest) (Stage2aSnapshotIdentity, string, error) {
 	var empty Stage2aSnapshotIdentity
 	if r.validate() != nil {
 		return empty, "", errStage2aReservationAuthority
@@ -150,14 +193,23 @@ func stage2aSealCooperativeRAsAdmin(r stage2aSharedSealRequest) (Stage2aSnapshot
 	}
 	reply, err := stage2aRunSealHelper(r.MachineUID, r.MachineGID, raw)
 	if err != nil || reply.Identity.RootPath != filepath.Join(r.Namespace.Path,
-		stage2aInstallSnapshotName(r.InstallationID, "cooperative-r")) ||
+		stage2aInstallSnapshotName(r.InstallationID, r.snapshotKind())) ||
 		reply.Identity.OwnerUID != uint32(r.MachineUID) ||
 		reply.Identity.OwnerGID != uint32(r.RunnerGID) ||
 		reply.Identity.Mode != "0555" || reply.Digest != r.ApprovedDigest {
 		return empty, "", errStage2aReservationAuthority
 	}
-	observed, digest, err := observeStage2aSourceAt(reply.Identity.RootPath,
-		uint32(r.MachineUID), uint32(r.RunnerGID), r.Approved, false)
+	observe := observeStage2aSourceAt
+	approved := r.Approved
+	if r.Kind == "inputs" {
+		observe = observeStage2aRuntimeAt
+		approved, err = stage2aExpandedRuntimeRecords(r.Approved)
+		if err != nil {
+			return empty, "", err
+		}
+	}
+	observed, digest, err := observe(reply.Identity.RootPath,
+		uint32(r.MachineUID), uint32(r.RunnerGID), approved, false)
 	if err != nil || observed != reply.Identity || digest != reply.Digest {
 		return empty, "", errors.New("Stage 2a cooperative R seal differs on root observation")
 	}

@@ -33,7 +33,29 @@ const stage2aMemberProvisionalMapVerb = "stage2a-member-provisional-map"
 const stage2aMemberChildGrantVerb = "stage2a-member-child-grant"
 const stage2aMemberChildObserveVerb = "stage2a-member-child-observe"
 const stage2aMemberLiveVerb = "stage2a-member-live"
+
 const stage2aMemberReadyVerb = "stage2a-member-ready"
+
+const stage2aCooperativeReserveVerb = "stage2a-cooperative-reserve-v3"
+const stage2aCooperativeReserveResultVerb = "stage2a-cooperative-reserve-result-v3"
+const stage2aCooperativeAttachVerb = "stage2a-cooperative-attach-v3"
+const stage2aCooperativeStopVerb = "stage2a-cooperative-stop-v3"
+const stage2aCooperativeProjectionVerb = "stage2a-cooperative-launch-inputs-v3"
+const stage2aCooperativeLookupVerb = "stage2a-cooperative-lookup-v3"
+const stage2aCooperativeLiveVerb = "stage2a-cooperative-live-v3"
+const stage2aCooperativeAbortVerb = "stage2a-cooperative-abort-v3"
+const stage2aCooperativeBExecVerb = "stage2a-cooperative-b-exec-v3"
+const stage2aCooperativeBVerifyVerb = "stage2a-cooperative-b-verify-v3"
+const stage2aCooperativeBObserveVerb = "stage2a-cooperative-b-observe-v3"
+const stage2aCooperativeMemberPolicyVerb = "stage2a-cooperative-member-policy-v3"
+const stage2aCooperativeChildExecVerb = "stage2a-cooperative-child-exec-v3"
+const stage2aCooperativeProvisionalMapVerb = "stage2a-cooperative-provisional-map-v3"
+const stage2aCooperativeChildObserveVerb = "stage2a-cooperative-child-observe-v3"
+const stage2aCooperativeMemberReadyVerb = "stage2a-cooperative-member-ready-v3"
+const stage2aCooperativeBLiveVerb = "stage2a-cooperative-b-live-v3"
+const stage2aCooperativeMemberLiveVerb = "stage2a-cooperative-member-live-v3"
+const stage2aCooperativeRelayPeerVerb = "stage2a-cooperative-relay-peer-v3"
+const stage2aCooperativeRelayIngressVerb = "stage2a-cooperative-relay-ingress-v3"
 
 var stage2aExecDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -51,7 +73,18 @@ func isStage2aVerb(verb string) bool {
 		verb == stage2aPeerRoleVerb || verb == stage2aMemberSetAssignVerb ||
 		verb == stage2aMemberProvisionalMapVerb || verb == stage2aMemberChildGrantVerb ||
 		verb == stage2aMemberChildObserveVerb || verb == stage2aMemberLiveVerb ||
-		verb == stage2aMemberReadyVerb
+		verb == stage2aMemberReadyVerb ||
+		verb == stage2aCooperativeReserveVerb || verb == stage2aCooperativeReserveResultVerb ||
+		verb == stage2aCooperativeAttachVerb || verb == stage2aCooperativeStopVerb ||
+		verb == stage2aCooperativeProjectionVerb || verb == stage2aCooperativeLookupVerb ||
+		verb == stage2aCooperativeLiveVerb || verb == stage2aCooperativeAbortVerb ||
+		verb == stage2aCooperativeBExecVerb || verb == stage2aCooperativeBVerifyVerb ||
+		verb == stage2aCooperativeBObserveVerb || verb == stage2aCooperativeMemberPolicyVerb ||
+		verb == stage2aCooperativeChildExecVerb || verb == stage2aCooperativeProvisionalMapVerb ||
+		verb == stage2aCooperativeChildObserveVerb || verb == stage2aCooperativeMemberReadyVerb ||
+		verb == stage2aCooperativeBLiveVerb || verb == stage2aCooperativeMemberLiveVerb ||
+		verb == stage2aCooperativeRelayPeerVerb || verb == stage2aCooperativeRelayIngressVerb
+
 }
 
 func stage2aFields(req *Request, raw []byte) (string, string) {
@@ -78,6 +111,142 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 		if string(decoded) != "{}" {
 			return diag.DaemonUndeclared, "invalid Stage 2a installed list request"
 		}
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeReserveVerb || req.Verb == stage2aCooperativeReserveResultVerb {
+		parsed, err := members.ParseSoulCooperativeStartRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative reserve request"
+		}
+		req.stage2aCooperativeReserve = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeAttachVerb {
+		parsed, err := members.ParseSoulCooperativeAttachRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative attach request"
+		}
+		req.stage2aCooperativeAttach = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeStopVerb || req.Verb == stage2aCooperativeProjectionVerb || req.Verb == stage2aCooperativeAbortVerb {
+		parsed, err := members.ParseStage2aStopRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative selectors"
+		}
+		req.stage2aCooperativeStop = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeLookupVerb {
+		parsed, err := members.ParseStage2aLookupRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative lookup request"
+		}
+		req.stage2aCooperativeLookup = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeLiveVerb {
+		parsed, err := members.ParseSoulCooperativeLiveRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative live request"
+		}
+		req.stage2aCooperativeLive = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeBExecVerb {
+		parsed, err := members.ParseSoulCooperativeBExecRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative B exec request"
+		}
+		req.stage2aCooperativeBExec = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeBVerifyVerb {
+		parsed, err := members.ParseSoulCooperativeBVerifyRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative B verify request"
+		}
+		req.stage2aCooperativeBVerify = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeBObserveVerb {
+		parsed, err := members.ParseSoulCooperativeBObserveRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative B observation request"
+		}
+		req.stage2aCooperativeBObserve = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeMemberPolicyVerb {
+		parsed, err := members.ParseSoulCooperativeMemberPolicyRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative member policy request"
+		}
+		req.stage2aCooperativeMemberPolicy = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeChildExecVerb {
+		parsed, err := members.ParseSoulCooperativeChildExecRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative child exec request"
+		}
+		req.stage2aCooperativeChildExec = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeProvisionalMapVerb {
+		parsed, err := members.ParseSoulCooperativeProvisionalMapRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative provisional map"
+		}
+		req.stage2aCooperativeProvisionalMap = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeChildObserveVerb {
+		parsed, err := members.ParseSoulCooperativeChildObserveRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative child observation"
+		}
+		req.stage2aCooperativeChildObserve = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeMemberReadyVerb {
+		parsed, err := members.ParseSoulCooperativeMemberReadyRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative member Ready request"
+		}
+		req.stage2aCooperativeMemberReady = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeBLiveVerb {
+		parsed, err := members.ParseSoulCooperativeBLiveRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative B live request"
+		}
+		req.stage2aCooperativeBLive = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeMemberLiveVerb {
+		parsed, err := members.ParseSoulCooperativeMemberLiveRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative member live request"
+		}
+		req.stage2aCooperativeMemberLive = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeRelayIngressVerb {
+		parsed, err := members.ParseSoulCooperativeRelayIngressRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative relay ingress request"
+		}
+		req.stage2aCooperativeRelayIngress = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeRelayPeerVerb {
+		parsed, err := members.ParseSoulCooperativeRelayPeerRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative relay peer request"
+		}
+		req.stage2aCooperativeRelayPeer = parsed
 		return "", ""
 	}
 	if req.Verb == stage2aReserveVerb {

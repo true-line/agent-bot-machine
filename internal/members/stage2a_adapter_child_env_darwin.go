@@ -13,23 +13,26 @@ import (
 const stage2aAdapterChildEnvSchema = "agent-bot-souls/adapter-child-env/v1"
 
 func stage2aAdapterChildEnv(input Stage2aLaunchInputRecords, qualification *Stage2aBridgeQualification, root string) error {
-	return stage2aAdapterChildEnvWithRows(input, qualification, root, nil)
+	return stage2aAdapterChildEnvWithRows(input, qualification, root, nil, "managed-protected")
 }
 
 func stage2aAdapterChildEnvV3(input Stage2aLaunchInputRecords, qualification *Stage2aBridgeQualification,
 	ref stage2aDomainInventoryRefV3, inv stage2aDomainInventoryV3) error {
 	if ref.Domain != "R-runtime" || inv.Domain != "R-runtime" ||
 		ref.InstallationID != inv.InstallationID || !stage2aAbsolutePath(ref.Snapshot.Path) ||
-		len(inv.Files) == 0 {
+		len(inv.Files) == 0 ||
+		(input.EffectiveConfig["profile"] != "managed-protected" &&
+			input.EffectiveConfig["profile"] != "managed-cooperative") {
 		return errStage2aReservationAuthority
 	}
-	return stage2aAdapterChildEnvWithRows(input, qualification, ref.Snapshot.Path, inv.Files)
+	return stage2aAdapterChildEnvWithRows(input, qualification, ref.Snapshot.Path, inv.Files,
+		input.EffectiveConfig["profile"].(string))
 }
 
 func stage2aAdapterChildEnvWithRows(input Stage2aLaunchInputRecords,
-	qualification *Stage2aBridgeQualification, root string, rFiles []stage2aDomainFileV3) error {
+	qualification *Stage2aBridgeQualification, root string, rFiles []stage2aDomainFileV3, profile string) error {
 	invalid := errors.New("invalid protected adapter child environment")
-	if input.EffectiveConfig["profile"] != "managed-protected" {
+	if input.EffectiveConfig["profile"] != profile {
 		return invalid
 	}
 	raw, ok := input.EffectiveConfig["adapter_child_env"].(map[string]any)

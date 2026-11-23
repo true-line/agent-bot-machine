@@ -214,7 +214,9 @@ func (h Hooks) reply(req Request) Response {
 			return deviceUnavailable()
 		}
 		return h.HQDevice(req)
-	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aCaptureSelectorVerb, stage2aControlProbeVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aMemberSetAssignVerb, stage2aMemberProvisionalMapVerb, stage2aMemberChildGrantVerb, stage2aMemberChildObserveVerb, stage2aMemberLiveVerb, stage2aMemberReadyVerb:
+
+	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aCaptureSelectorVerb, stage2aControlProbeVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aMemberSetAssignVerb, stage2aMemberProvisionalMapVerb, stage2aMemberChildGrantVerb, stage2aMemberChildObserveVerb, stage2aMemberLiveVerb, stage2aMemberReadyVerb, stage2aCooperativeReserveVerb, stage2aCooperativeReserveResultVerb, stage2aCooperativeAttachVerb, stage2aCooperativeStopVerb, stage2aCooperativeProjectionVerb, stage2aCooperativeLookupVerb, stage2aCooperativeLiveVerb, stage2aCooperativeAbortVerb, stage2aCooperativeBExecVerb, stage2aCooperativeBVerifyVerb, stage2aCooperativeBObserveVerb, stage2aCooperativeMemberPolicyVerb, stage2aCooperativeChildExecVerb, stage2aCooperativeProvisionalMapVerb, stage2aCooperativeChildObserveVerb, stage2aCooperativeMemberReadyVerb, stage2aCooperativeBLiveVerb, stage2aCooperativeMemberLiveVerb, stage2aCooperativeRelayPeerVerb, stage2aCooperativeRelayIngressVerb:
+
 		if h.Stage2a == nil {
 			return refused(diag.DaemonUnimplemented, "Stage 2a reserve authority is unavailable")
 		}
