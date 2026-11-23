@@ -107,6 +107,14 @@ func TestVerifyQPreSignCurrentProfilesV3(t *testing.T) {
 	}
 	cooperative := vectors.Profiles["cooperative"]
 	protected := vectors.Profiles["protected"]
+	protectedKey, err := base64.RawURLEncoding.Strict().DecodeString(protected.Issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyQPreSignDirectCooperativeV3([]byte(protected.Wire), []byte(protected.Index),
+		[]byte(protected.EOF), []byte(protected.Reservation), ed25519.PublicKey(protectedKey), now); err == nil {
+		t.Fatal("direct cooperative entry point accepted protected run")
+	}
 	key, err := base64.RawURLEncoding.Strict().DecodeString(cooperative.Issuer)
 	if err != nil {
 		t.Fatal(err)

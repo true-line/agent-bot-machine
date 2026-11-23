@@ -218,8 +218,12 @@ func VerifyQPreSignV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope [
 // cooperative reservation. It cannot substitute for brokered-B publication.
 func VerifyQPreSignDirectCooperativeV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope []byte,
 	machineKey ed25519.PublicKey, now time.Time) (VerifiedQPreSignV3, error) {
-	return verifyQPreSignWithTransportV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope,
+	verified, err := verifyQPreSignWithTransportV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope,
 		machineKey, now, "direct-comms")
+	if err != nil || verified.Profile != "managed-cooperative" || verified.AdapterTransport != "direct-comms" {
+		return VerifiedQPreSignV3{}, ErrUnqualified
+	}
+	return verified, nil
 }
 
 func verifyQPreSignWithTransportV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope []byte,
