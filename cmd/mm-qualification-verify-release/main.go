@@ -19,7 +19,7 @@ import (
 	"github.com/qwts/managed-machine/internal/qualification"
 )
 
-const usage = "usage: mm-qualification-verify-release [-bridge-v2 -souls-build-bundle FILE -souls-package FILE -souls-trusted-root FILE] -owner-root FILE -owner-key-id ID -policy-envelope FILE -trusted-root FILE -bundle FILE -bundle-sha256 SHA256 -qualification FILE -protected-envelope FILE -cooperative-envelope FILE"
+const usage = "usage: mm-qualification-verify-release [-bridge-v2 | -host-v3 -machine-root FILE -protected-execution FILE -cooperative-execution FILE -protected-commitment FILE -cooperative-commitment FILE] [-souls-build-bundle FILE -souls-package FILE -souls-trusted-root FILE] -owner-root FILE -owner-key-id ID -policy-envelope FILE -trusted-root FILE -bundle FILE -bundle-sha256 SHA256 -qualification FILE -protected-envelope FILE -cooperative-envelope FILE"
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
@@ -54,6 +54,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("mm-qualification-verify-release", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	bridgeV2 := fs.Bool("bridge-v2", false, "require the bridge-aware v2 protected release")
+	hostV3 := fs.Bool("host-v3", false, "require a v3 release and two Machine-signed completed-run chains")
+	machineRootPath := fs.String("machine-root", "", "independently reviewed enrolled Machine Ed25519 public key as lowercase hex")
+	protectedExecutionPath := fs.String("protected-execution", "", "protected pre-sign completion envelope")
+	cooperativeExecutionPath := fs.String("cooperative-execution", "", "cooperative pre-sign completion envelope")
+	protectedCommitmentPath := fs.String("protected-commitment", "", "protected post-sign report commitment")
+	cooperativeCommitmentPath := fs.String("cooperative-commitment", "", "cooperative post-sign report commitment")
 	soulsBundlePath := fs.String("souls-build-bundle", "", "local signed Souls build receipt bundle")
 	soulsPackagePath := fs.String("souls-package", "", "exact delivered Souls package tgz")
 	soulsRootPath := fs.String("souls-trusted-root", "", "owner-policy-pinned Souls Sigstore trusted root")
@@ -69,8 +75,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if fs.Parse(args) != nil || fs.NArg() != 0 || *rootPath == "" || *ownerKeyID == "" ||
 		*policyPath == "" || *trustedRootPath == "" || *bundlePath == "" || *bundleSHA == "" ||
 		*qualificationPath == "" || *protectedPath == "" || *cooperativePath == "" ||
-		(*bridgeV2 && (*soulsBundlePath == "" || *soulsPackagePath == "" || *soulsRootPath == "")) ||
-		(!*bridgeV2 && (*soulsBundlePath != "" || *soulsPackagePath != "" || *soulsRootPath != "")) {
+		(*bridgeV2 && *hostV3) ||
+		((*bridgeV2 || *hostV3) && (*soulsBundlePath == "" || *soulsPackagePath == "" || *soulsRootPath == "")) ||
+		(!*bridgeV2 && !*hostV3 && (*soulsBundlePath != "" || *soulsPackagePath != "" || *soulsRootPath != "")) ||
+		(*hostV3 && (*machineRootPath == "" || *protectedExecutionPath == "" || *cooperativeExecutionPath == "" || *protectedCommitmentPath == "" || *cooperativeCommitmentPath == "")) ||
+		(!*hostV3 && (*machineRootPath != "" || *protectedExecutionPath != "" || *cooperativeExecutionPath != "" || *protectedCommitmentPath != "")) {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
@@ -93,7 +102,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	var soulsBundle, soulsRoot []byte
 	var soulsPackageSHA string
-	if *bridgeV2 {
+	if *bridgeV2 || *hostV3 {
 		soulsBundle, e1 = readBounded(*soulsBundlePath, 4<<20)
 		soulsRoot, e2 = readBounded(*soulsRootPath, 1<<20)
 		soulsPackageSHA, e3 = hashPackage(*soulsPackagePath)
@@ -108,7 +117,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// independently measure installed inputs before any launch decision.
 	var policy qualification.VerifiedPolicy
 	var err error
-	if *bridgeV2 {
+	if *hostV3 {
+		policy, err = qualification.VerifyOwnerPolicyV3(policyEnvelope, *ownerKeyID, ed25519.PublicKey(root), 0, "", now)
+	} else if *bridgeV2 {
 		policy, err = qualification.VerifyOwnerPolicyV2(policyEnvelope, *ownerKeyID, ed25519.PublicKey(root), 0, "", now)
 	} else {
 		policy, err = qualification.VerifyOwnerPolicy(policyEnvelope, *ownerKeyID, ed25519.PublicKey(root), 0, "", now)
@@ -118,7 +129,35 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	var release qualification.VerifiedRelease
-	if *bridgeV2 {
+	var protectedExecution, cooperativeExecution, protectedCommitment, cooperativeCommitment []byte
+	if *hostV3 {
+		machineRootHex, readErr := readBounded(*machineRootPath, 65)
+		machineRoot, decodeErr := hex.DecodeString(strings.TrimSuffix(string(machineRootHex), "\n"))
+		if readErr != nil || decodeErr != nil || len(machineRoot) != ed25519.PublicKeySize ||
+			hex.EncodeToString(machineRoot) != strings.TrimSuffix(string(machineRootHex), "\n") {
+			fmt.Fprintln(stderr, qualification.ErrUnqualified)
+			return 1
+		}
+		protectedExecution, e1 = readBounded(*protectedExecutionPath, 2*qualification.MaxReportBytes)
+		cooperativeExecution, e2 = readBounded(*cooperativeExecutionPath, 2*qualification.MaxReportBytes)
+		protectedCommitment, e3 = readBounded(*protectedCommitmentPath, 2*qualification.MaxReportBytes)
+		cooperativeCommitment, e4 = readBounded(*cooperativeCommitmentPath, 2*qualification.MaxReportBytes)
+		if errors.Join(e1, e2, e3, e4) != nil {
+			fmt.Fprintln(stderr, qualification.ErrUnqualified)
+			return 1
+		}
+		_, buildErr := qualification.VerifySoulsBuildReceiptV3(policy, soulsRoot, soulsBundle, qualificationJSON, soulsPackageSHA, now)
+		if buildErr != nil {
+			fmt.Fprintln(stderr, qualification.ErrUnqualified)
+			return 1
+		}
+		release, err = qualification.VerifyReleaseAttestationV3(policy, trustedRootJSON, bundleJSON, qualificationJSON, *bundleSHA, now)
+		if err == nil {
+			err = qualification.VerifyReleasedReportsV3(release, policy, qualificationJSON,
+				protectedEnvelope, cooperativeEnvelope, protectedExecution, cooperativeExecution,
+				protectedCommitment, cooperativeCommitment, machineRoot, now)
+		}
+	} else if *bridgeV2 {
 		build, buildErr := qualification.VerifySoulsBuildReceiptV2(policy, soulsRoot, soulsBundle, qualificationJSON, soulsPackageSHA, now)
 		if buildErr != nil {
 			fmt.Fprintln(stderr, qualification.ErrUnqualified)
@@ -140,19 +179,28 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	qualificationDigest := sha256.Sum256(qualificationJSON)
 	result := struct {
-		SchemaVersion       int      `json:"schema_version"`
-		BundleSHA256        string   `json:"bundle_sha256"`
-		QualificationSHA    string   `json:"qualification_sha256"`
-		HostReportSHA256s   []string `json:"host_report_sha256s"`
-		HostEnvelopeSHA256s []string `json:"host_envelope_sha256s,omitempty"`
-		PolicySHA           string   `json:"policy_sha256,omitempty"`
-		PolicyEnvelopeSHA   string   `json:"policy_envelope_sha256,omitempty"`
-		SoulsBuildBundleSHA string   `json:"souls_build_bundle_sha256,omitempty"`
-		SoulsPackageSHA     string   `json:"souls_package_sha256,omitempty"`
-		SoulsSourceTree     string   `json:"souls_source_tree,omitempty"`
+		SchemaVersion              int      `json:"schema_version"`
+		BundleSHA256               string   `json:"bundle_sha256"`
+		QualificationSHA           string   `json:"qualification_sha256"`
+		HostReportSHA256s          []string `json:"host_report_sha256s"`
+		HostEnvelopeSHA256s        []string `json:"host_envelope_sha256s,omitempty"`
+		PolicySHA                  string   `json:"policy_sha256,omitempty"`
+		PolicyEnvelopeSHA          string   `json:"policy_envelope_sha256,omitempty"`
+		SoulsBuildBundleSHA        string   `json:"souls_build_bundle_sha256,omitempty"`
+		SoulsPackageSHA            string   `json:"souls_package_sha256,omitempty"`
+		SoulsSourceTree            string   `json:"souls_source_tree,omitempty"`
+		ExecutionCompletionSHA256s []string `json:"execution_completion_sha256s,omitempty"`
+		CompletedRunSHA256s        []string `json:"completed_run_sha256s,omitempty"`
 	}{SchemaVersion: 1, BundleSHA256: *bundleSHA, QualificationSHA: "sha256:" + hex.EncodeToString(qualificationDigest[:]), HostReportSHA256s: release.HostReportDigests()}
-	if *bridgeV2 {
-		result.SchemaVersion = 2
+	if *bridgeV2 || *hostV3 {
+		if *hostV3 {
+			result.SchemaVersion = 3
+			sha := func(raw []byte) string { sum := sha256.Sum256(raw); return "sha256:" + hex.EncodeToString(sum[:]) }
+			result.ExecutionCompletionSHA256s = []string{sha(protectedExecution), sha(cooperativeExecution)}
+			result.CompletedRunSHA256s = []string{sha(protectedCommitment), sha(cooperativeCommitment)}
+		} else {
+			result.SchemaVersion = 2
+		}
 		result.HostEnvelopeSHA256s = release.HostEnvelopeDigests()
 		var envelope qualification.Envelope
 		if json.Unmarshal(policyEnvelope, &envelope) != nil {
