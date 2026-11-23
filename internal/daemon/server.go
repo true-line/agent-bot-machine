@@ -214,7 +214,7 @@ func (h Hooks) reply(req Request) Response {
 			return deviceUnavailable()
 		}
 		return h.HQDevice(req)
-	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aCaptureSelectorVerb, stage2aControlProbeVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aMemberSetAssignVerb, stage2aMemberProvisionalMapVerb, stage2aMemberChildGrantVerb, stage2aMemberChildObserveVerb, stage2aMemberLiveVerb:
+	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aCaptureSelectorVerb, stage2aControlProbeVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aMemberSetAssignVerb, stage2aMemberProvisionalMapVerb, stage2aMemberChildGrantVerb, stage2aMemberChildObserveVerb, stage2aMemberLiveVerb, stage2aMemberReadyVerb:
 		if h.Stage2a == nil {
 			return refused(diag.DaemonUnimplemented, "Stage 2a reserve authority is unavailable")
 		}

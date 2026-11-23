@@ -144,7 +144,7 @@ func TestStage2aProtectedHandshakeVerbsReachAuthority(t *testing.T) {
 	for _, verb := range []string{stage2aChildReadyVerb, stage2aCaptureSelectorVerb, stage2aHelloStartVerb,
 		stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aMemberSetAssignVerb,
 		stage2aMemberProvisionalMapVerb, stage2aMemberChildGrantVerb,
-		stage2aMemberChildObserveVerb, stage2aMemberLiveVerb} {
+		stage2aMemberChildObserveVerb, stage2aMemberLiveVerb, stage2aMemberReadyVerb} {
 		t.Run(verb, func(t *testing.T) {
 			if !knownVerb(verb) || !isStage2aVerb(verb) {
 				t.Fatal("protected handshake verb is not admitted by both protocol gates")

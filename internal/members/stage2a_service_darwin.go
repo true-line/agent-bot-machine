@@ -63,6 +63,8 @@ type stage2aLiveReservation struct {
 	memberChildGrants              map[string]stage2aMemberChildGrant
 	memberChildObservationEnvelope []byte
 	memberChildObservationExpires  time.Time
+	memberReadyEnvelope            []byte
+	memberReadyExpires             time.Time
 	protectedQ                     *stage2aProtectedQRun
 	liveSequence                   uint64
 	hello                          *stage2aHelloState
