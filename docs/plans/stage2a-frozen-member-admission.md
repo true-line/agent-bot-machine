@@ -18,6 +18,13 @@ adapter process or confer T01, T03 or T21 credit.
 - A missing, extra, duplicated or changed member refuses before Machine
   signs the Hello start. The existing signed Hello payload digest then binds
   the exact canonical claim bytes.
+- A separate pre-finalization observer can freeze two distinct child launcher
+  and stock child kernel identities under the same reviewed R installation
+  and B account, including the selected command path and measured digest.
+  It samples both pairs again after collection to reject PID
+  reuse or replacement. This collector has no daemon verb or signing path;
+  per-member grants and B arm receipts remain required before either member
+  can be marked ready.
 - The current single child and endpoint reservation remains single child.
   A separate reviewed contract and implementation must bind each stock
   process and broker runtime before two members can qualify together.
@@ -29,6 +36,8 @@ adapter process or confer T01, T03 or T21 credit.
   and changed-version claims.
 - A changed Soul ID or duplicate JSON key in the frozen file refuses.
 - The existing canonical Hello and post-Hello finalization tests still pass.
+- The nonauthorizing two-child observer refuses a missing member, duplicate
+  child PID, wrong member ID, changed UID and reused PID/start identity.
 
 ## Replay
 

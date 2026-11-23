@@ -54,6 +54,7 @@ type stage2aLiveReservation struct {
 	childPID             int
 	childProcess         soulKernelProcessSnapshot
 	childReceiptEnvelope []byte
+	twoMemberChildren    *stage2aTwoMemberObservation
 	protectedQ           *stage2aProtectedQRun
 	liveSequence         uint64
 	hello                *stage2aHelloState
