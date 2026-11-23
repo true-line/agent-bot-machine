@@ -108,6 +108,32 @@ func candidateReportJoinV3(reportRaw, reservationEnvelope []byte,
 		string(report["suite_revision"]) != `"`+reservation.Attempt.SuiteRevision+`"` {
 		return zero, ErrUnqualified
 	}
+	// The full protected report supplies these principals. A compact producer
+	// summary may omit bridge/host, but the public host-report shape requires
+	// both and this join then binds the R reader to the actual runner account.
+	if hostRaw, present := report["host"]; present {
+		var host struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(hostRaw, &host) != nil || host.ID != binding.Base.HostID {
+			return zero, ErrUnqualified
+		}
+	}
+	if bridgeRaw, present := report["bridge"]; present {
+		var bridge struct {
+			Principals struct {
+				MachineUID       uint32 `json:"machine_uid"`
+				RunnerUID        uint32 `json:"runner_uid"`
+				RunnerPrivateGID uint32 `json:"runner_private_gid"`
+			} `json:"principals"`
+		}
+		if json.Unmarshal(bridgeRaw, &bridge) != nil ||
+			bridge.Principals.MachineUID != binding.RInventory.MachineUID ||
+			bridge.Principals.RunnerUID != binding.RInventory.ReaderUID ||
+			bridge.Principals.RunnerPrivateGID != binding.RInventory.ReaderGID {
+			return zero, ErrUnqualified
+		}
+	}
 	var recordedAt string
 	if json.Unmarshal(report["recorded_at"], &recordedAt) != nil {
 		return zero, ErrUnqualified

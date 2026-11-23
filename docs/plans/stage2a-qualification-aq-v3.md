@@ -284,7 +284,9 @@ candidate reservation from Contracts v0.9.0. It derives only the fixed
 `machine/v2` summary carried by the v3 host report, verifies the A signature
 under the independently enrolled Machine key, and joins the full reservation
 envelope digest, admission challenge, host and Soul identity, selected adapter
-ZIP, executable and ordered code-input paths to the report. Its tests use the
+ZIP, executable and ordered code-input paths to the report. When the full
+protected report supplies its bridge principals, the A UID and sealed R reader
+UID/GID must match the reported Machine and runner account. Its tests use the
 exact Contracts candidate vector and the Machine H producer's paired report
 summary. This check does not verify approval spending, the sealed R files,
 Q/ACP/OS captures or any physical T result. The ordinary release attestation

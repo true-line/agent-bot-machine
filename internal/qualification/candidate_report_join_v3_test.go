@@ -39,6 +39,29 @@ func TestCandidateReportReservationJoinV3ProducerVector(t *testing.T) {
 	if _, err := candidateReportJoinV3(report, []byte(v.ReservationEnvelopeJCS), key); err != nil {
 		t.Fatal("rejected paired H and Contracts producer vectors:", err)
 	}
+	var withPrincipals map[string]any
+	if json.Unmarshal(report, &withPrincipals) != nil {
+		t.Fatal("invalid H producer sample")
+	}
+	withPrincipals["host"] = map[string]any{"id": "synthetic-host"}
+	withPrincipals["bridge"] = map[string]any{"principals": map[string]any{
+		"machine_uid": float64(501), "runner_uid": float64(331), "runner_private_gid": float64(331),
+	}}
+	fullSummary, err := json.Marshal(withPrincipals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := candidateReportJoinV3(fullSummary, []byte(v.ReservationEnvelopeJCS), key); err != nil {
+		t.Fatal("rejected matching host and runner principals:", err)
+	}
+	withPrincipals["bridge"].(map[string]any)["principals"].(map[string]any)["runner_uid"] = float64(332)
+	wrongRunner, err := json.Marshal(withPrincipals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := candidateReportJoinV3(wrongRunner, []byte(v.ReservationEnvelopeJCS), key); err == nil {
+		t.Fatal("accepted R reader substitution for report runner")
+	}
 	for name, mutate := range map[string]func(map[string]any){
 		"other reservation": func(r map[string]any) {
 			r["run_evidence"].(map[string]any)["reservation"].(map[string]any)["sha256"] = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
