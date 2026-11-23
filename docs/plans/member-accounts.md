@@ -787,8 +787,9 @@ completed-run record and signed v3 host report are separate later evidence.
 selected cooperative route while refusing every protected claim. A protected
 reservation refusal is terminal for that request; it never selects this route.
 
-**Target.** `SoulCooperativeLaunchPolicy` is a separate owner-reviewable
-`soul-cooperative-launch-install` shape. It pins the host, paired HQ epoch,
+**Target.** `members plan --soul-cooperative-launch-install <request.json>`
+saves a separate owner-reviewable `soul-cooperative-launch-install` plan. It
+pins the host, paired HQ epoch,
 dedicated runner identity, owner source path, frozen runner package and
 definition digests, Node, entry, launcher and approval end. A request carries
 only the installation, start, owner package path, plan digest, host, epoch and
@@ -800,7 +801,7 @@ rechecked the root applied receipt, live pairing and frozen bytes. It requires
 a durable installation/start spend before returning the signature. Lost
 responses and retries cannot recover a spent start. The installed loader,
 owner-approved apply, paired daemon verbs, fixed launcher, signed completion
-and HQ independent verifier remain implementation gates; this contract code
+and HQ production wiring remain implementation gates; this plan and proof code
 alone does not enable a host launch or qualify T21.
 
 **Acceptance.** A positive synthetic test verifies the signed reviewed

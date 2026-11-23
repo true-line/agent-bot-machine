@@ -141,7 +141,8 @@ func (p SoulCooperativeLaunchPolicy) validate() error {
 		p.Runner.Account != soulRunnerName(p.Runner.InstallationID) || p.Runner.UID < 300 || p.Runner.UID > 399 ||
 		p.Runner.GID != p.Runner.UID || p.Runner.UID == p.HQUID ||
 		!cooperativeAbsolute(p.SourcePackagePath) || p.SourcePackagePath == p.Runner.PackageRoot ||
-		!cooperativeAbsolute(p.Runner.PackageRoot) || !soulDigest.MatchString(p.Runner.PackageSHA256) ||
+		!cooperativeAbsolute(p.Runner.PackageRoot) || p.Runner.PackageRoot != cooperativeArtifactPath(p.Runner.InstallationID) ||
+		!soulDigest.MatchString(p.Runner.PackageSHA256) ||
 		!soulDigest.MatchString(p.ArtifactSHA256) || !soulDigest.MatchString(p.DefinitionSHA256) ||
 		!cooperativeAbsolute(p.NodePath) || !soulDigest.MatchString(p.NodeSHA256) ||
 		p.Entry == "" || p.Entry == "." || len(p.Entry) > 1024 || strings.HasPrefix(p.Entry, "/") || path.Clean(p.Entry) != p.Entry ||

@@ -21,7 +21,7 @@ func cooperativeFixture(t *testing.T) (SoulCooperativeLaunchPolicy, SoulCooperat
 		HQEpoch: strings.Repeat("a", 64), MachinePublicKey: base64.RawURLEncoding.EncodeToString(private.Public().(ed25519.PublicKey)),
 		SourcePackagePath: "/var/agent-bot-hq/candidates/hello.soul",
 		Runner: SoulRunner{SoulID: "agent_12345678-1234-1234-1234-123456789abc", InstallationID: id,
-			Account: soulRunnerName(id), UID: 311, GID: 311, PackageRoot: "/var/agent-bot-soul-runner-test/frozen.soul",
+			Account: soulRunnerName(id), UID: 311, GID: 311, PackageRoot: cooperativeArtifactPath(id),
 			PackageSHA256: strings.Repeat("b", 64)},
 		ArtifactSHA256: strings.Repeat("c", 64), DefinitionSHA256: strings.Repeat("d", 64),
 		NodePath: "/opt/agent-bot/node", NodeSHA256: strings.Repeat("e", 64),
@@ -164,5 +164,34 @@ func TestSoulCooperativeParsersRefuseAmbiguity(t *testing.T) {
 	request, _ := json.Marshal(q)
 	if _, err := ParseSoulCooperativeReserveRequest(append(request[:len(request)-1], []byte(`,"profile":"managed-cooperative"}`)...)); err == nil {
 		t.Fatal("duplicate request field accepted")
+	}
+}
+
+func TestSoulCooperativePlanIsSeparateAndReviewable(t *testing.T) {
+	p, _, _, _ := cooperativeFixture(t)
+	h := &fakeHost{accounts: map[string]Account{
+		DarwinHQAccount:  {Name: DarwinHQAccount, UID: p.HQUID, GID: p.HQUID},
+		p.Runner.Account: {Name: p.Runner.Account, UID: p.Runner.UID, GID: p.Runner.GID},
+	}}
+	plan, err := Build(Input{SoulCooperativeLaunch: &p, HQAccount: DarwinHQAccount,
+		Dir: DarwinDir, Platform: PlatformDarwin, Invoker: "owner"}, h)
+	if err != nil || plan.Purpose != SoulCooperativeLaunchInstallPurpose ||
+		plan.SoulProtectedLaunch != nil || len(plan.Steps) != 1 || plan.Steps[0].Kind != "soul-cooperative-launch" {
+		t.Fatalf("separate cooperative review plan: %v, %+v", err, plan)
+	}
+	digest, err := plan.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := Saved{SoulCooperativeLaunch: &p, PlanID: "plan-20261122T120000Z-abcd",
+		PlanDigest: digest, Plan: plan}
+	if _, err := saved.CanonicalForReview(); err != nil {
+		t.Fatalf("review exact cooperative plan: %v", err)
+	}
+	altered := p
+	altered.Profile = "managed-protected"
+	saved.SoulCooperativeLaunch = &altered
+	if _, err := saved.CanonicalForReview(); err == nil {
+		t.Fatal("protected profile was accepted as cooperative review")
 	}
 }

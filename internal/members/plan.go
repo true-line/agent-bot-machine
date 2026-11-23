@@ -94,18 +94,19 @@ const (
 
 // Input is what the owner asked for.
 type Input struct {
-	HarnessAccounts     bool
-	SoulRunnerAccounts  []SoulRunnerAccount
-	SoulBridgeAccounts  []SoulBridgeAccount
-	SoulProtectedLaunch *SoulProtectedLaunchInstall
-	SoulProtectedRetire *SoulProtectedLaunchRetire
-	upgradeObservation  *upgradeObservation
-	UpgradeFrom         *priorServicePlan
-	HarnessLaunch       *HarnessPolicyRecord
-	HQService           *HQService
-	HQAccount           string
-	Dir                 string
-	Members             []string
+	HarnessAccounts       bool
+	SoulRunnerAccounts    []SoulRunnerAccount
+	SoulBridgeAccounts    []SoulBridgeAccount
+	SoulProtectedLaunch   *SoulProtectedLaunchInstall
+	SoulCooperativeLaunch *SoulCooperativeLaunchPolicy
+	SoulProtectedRetire   *SoulProtectedLaunchRetire
+	upgradeObservation    *upgradeObservation
+	UpgradeFrom           *priorServicePlan
+	HarnessLaunch         *HarnessPolicyRecord
+	HQService             *HQService
+	HQAccount             string
+	Dir                   string
+	Members               []string
 	// Invoker is the account running the plan. It can never be a member.
 	Invoker string
 	// Platform is PlatformDarwin on macOS and empty on Linux. It is not part
@@ -197,16 +198,17 @@ type Step struct {
 
 // Plan is the exact request the owner approves.
 type Plan struct {
-	Version             int                         `json:"version"`
-	HQAccount           string                      `json:"hq_account"`
-	Dir                 string                      `json:"dir"`
-	Members             []string                    `json:"members"`
-	Steps               []Step                      `json:"steps"`
-	Purpose             string                      `json:"purpose,omitempty"`
-	SoulRunners         []SoulRunnerAccount         `json:"soul_runners,omitempty"`
-	SoulBridges         []SoulBridgeAccount         `json:"soul_bridges,omitempty"`
-	SoulProtectedLaunch *SoulProtectedLaunchInstall `json:"soul_protected_launch,omitempty"`
-	SoulProtectedRetire *SoulProtectedLaunchRetire  `json:"soul_protected_retire,omitempty"`
+	Version               int                          `json:"version"`
+	HQAccount             string                       `json:"hq_account"`
+	Dir                   string                       `json:"dir"`
+	Members               []string                     `json:"members"`
+	Steps                 []Step                       `json:"steps"`
+	Purpose               string                       `json:"purpose,omitempty"`
+	SoulRunners           []SoulRunnerAccount          `json:"soul_runners,omitempty"`
+	SoulBridges           []SoulBridgeAccount          `json:"soul_bridges,omitempty"`
+	SoulProtectedLaunch   *SoulProtectedLaunchInstall  `json:"soul_protected_launch,omitempty"`
+	SoulCooperativeLaunch *SoulCooperativeLaunchPolicy `json:"soul_cooperative_launch,omitempty"`
+	SoulProtectedRetire   *SoulProtectedLaunchRetire   `json:"soul_protected_retire,omitempty"`
 }
 
 // Refusal is a host or request the plan will not touch. Code is one of the
@@ -292,6 +294,9 @@ func Build(in Input, h Host) (Plan, error) {
 	}
 	if in.SoulProtectedLaunch != nil {
 		return buildSoulProtectedLaunch(in, h)
+	}
+	if in.SoulCooperativeLaunch != nil {
+		return buildSoulCooperativeLaunch(in, h)
 	}
 	if in.SoulBridgeAccounts != nil {
 		return buildSoulBridgeAccounts(in, h)
