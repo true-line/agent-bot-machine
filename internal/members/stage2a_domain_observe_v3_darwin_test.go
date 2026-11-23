@@ -191,6 +191,14 @@ func TestStage2aDomainSealRequestV3UsesInstalledLauncherDigest(t *testing.T) {
 	if err := r.validate(); err != nil {
 		t.Fatalf("unprefixed installed launcher digest refused: %v", err)
 	}
+	rawRequest, err := json.Marshal(r)
+	if err != nil || stage2aStrictJSONBounded(rawRequest, 3<<20, stage2aV3MaxJSONNodes) != nil {
+		t.Fatalf("valid A handoff JSON refused: %v", err)
+	}
+	var decoded stage2aDomainSealRequestV3
+	if err := json.Unmarshal(rawRequest, &decoded); err != nil || decoded.validate() != nil {
+		t.Fatalf("A handoff round-trip refused: %v", err)
+	}
 	r.LauncherSHA256 = "sha256:" + r.LauncherSHA256
 	if err := r.validate(); err == nil {
 		t.Fatal("accepted incompatible prefixed launcher digest")

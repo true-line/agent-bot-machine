@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
@@ -120,5 +121,26 @@ func TestStage2aV3InventoryMaximumFileAndDirectoryClosure(t *testing.T) {
 	}{Schema: "agent-bot-machine/stage2a-domain-install-seal/v3", Inventory: raw})
 	if err != nil || stage2aStrictJSONBounded(outer, 3<<20, stage2aV3MaxJSONNodes) != nil {
 		t.Fatalf("v3 outer handoff budget refused maximum inventory: %v", err)
+	}
+}
+
+func TestStage2aV3InventoryDepthMatchesSealer(t *testing.T) {
+	for _, depth := range []int{16, 17} {
+		inv := stage2aV3TestInventory()
+		inv.Directories = nil
+		parent := ""
+		for i := 0; i < depth; i++ {
+			parent = strings.TrimPrefix(parent+"/d", "/")
+			inv.Directories = append(inv.Directories,
+				stage2aDomainDirectoryV3{Path: parent, Kind: "directory", Mode: "0550"})
+		}
+		inv.Files = []stage2aDomainFileV3{{Path: parent + "/f", Kind: "regular", Mode: "0440",
+			SHA256:      "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+			ComponentID: "depth-fixture", ReleasePath: parent + "/f"}}
+		inv.TotalBytes = 0
+		_, _, err := stage2aDomainInventoryDigestV3(stage2aV3TestCanonical(t, inv))
+		if depth == 16 && err != nil || depth == 17 && err == nil {
+			t.Fatalf("depth %d parser/sealer mismatch: %v", depth, err)
+		}
 	}
 }

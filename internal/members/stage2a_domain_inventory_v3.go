@@ -119,7 +119,8 @@ func stage2aDomainInventoryDigestV3(raw []byte) (stage2aDomainInventoryV3, strin
 	previous := ""
 	for _, file := range inv.Files {
 		folded := strings.ToLower(file.Path)
-		if !stage2aV3InventoryRecordPath(file.Path) || file.Path <= previous || seen[folded] ||
+		if !stage2aV3InventoryRecordPath(file.Path) || strings.Count(file.Path, "/") > 16 ||
+			file.Path <= previous || seen[folded] ||
 			file.Kind != "regular" || file.Mode != "0440" && file.Mode != "0550" ||
 			file.SizeBytes > inv.Limits.MaxFileBytes || !stage2aPrefixedDigest.MatchString(file.SHA256) ||
 			!stage2aBindingID.MatchString(file.ComponentID) ||
