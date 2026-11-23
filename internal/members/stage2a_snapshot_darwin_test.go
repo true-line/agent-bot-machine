@@ -83,6 +83,7 @@ func TestStage2aRuntimeSnapshotPublishesImplicitDirectories(t *testing.T) {
 	contents := map[string]string{
 		"host/adapters.json":              `{}`,
 		"host/installation.json":          `{}`,
+		"runtime/bin.js":                  "sibling",
 		"runtime/bin/node":                "node",
 		"runtime/bin/agent-bot-souls.mjs": "souls",
 	}
