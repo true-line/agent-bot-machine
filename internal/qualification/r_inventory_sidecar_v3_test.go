@@ -112,7 +112,7 @@ func TestRAdapterReportInventoryV3ContractVector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := parseHRMeasurementBindingV3(reservation["measurement_binding"])
+	binding, err := parseCooperativeMeasurementBindingV3(reservation["measurement_binding"])
 	if err != nil {
 		t.Fatal("invalid reservation binding:", err)
 	}

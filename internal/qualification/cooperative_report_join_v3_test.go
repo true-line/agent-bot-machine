@@ -75,6 +75,7 @@ func TestCooperativeReportReservationJoinV3ContractVector(t *testing.T) {
 	report["recorded_at"] = reservation["expires_at"]
 	run := report["run_evidence"].(map[string]any)
 	run["reservation"].(map[string]any)["sha256"] = digest(envelope)
+	run["challenge_sha256"] = reservation["admission_challenge_sha256"]
 	reportRaw := cooperativeTestJCSV3(t, report)
 	if err := cooperativeReportJoinV3(reportRaw, envelope, key); err != nil {
 		t.Fatal("rejected signed cooperative Contracts vector and matching host summary:", err)
@@ -110,7 +111,42 @@ func TestCooperativeReportReservationJoinV3ContractVector(t *testing.T) {
 	seed := make([]byte, ed25519.SeedSize)
 	private := ed25519.NewKeyFromSeed(seed)
 	public := private.Public().(ed25519.PublicKey)
+	var ordinary map[string]any
+	if json.Unmarshal(payload, &ordinary) != nil {
+		t.Fatal("invalid signed payload")
+	}
+	delete(ordinary, "qualification_provider")
+	ordinaryPayload := cooperativeTestJCSV3(t, ordinary)
+	ordinaryEnvelope := cooperativeTestJCSV3(t, machineRecordV3{
+		SchemaVersion:            3,
+		Purpose:                  cooperativeReservationPurposeV3,
+		IssuerPublicKeyBase64URL: base64.RawURLEncoding.EncodeToString(public),
+		PayloadSHA256:            digest(ordinaryPayload),
+		PayloadBase64URL:         base64.RawURLEncoding.EncodeToString(ordinaryPayload),
+		SignatureBase64URL: base64.RawURLEncoding.EncodeToString(
+			ed25519.Sign(private, preimage(cooperativeReservationPurposeV3, ordinaryPayload))),
+	})
+	var ordinaryReport map[string]any
+	if json.Unmarshal(reportRaw, &ordinaryReport) != nil {
+		t.Fatal("invalid host report")
+	}
+	ordinaryReport["run_evidence"].(map[string]any)["reservation"].(map[string]any)["sha256"] = digest(ordinaryEnvelope)
+	if err := cooperativeReportJoinV3(cooperativeTestJCSV3(t, ordinaryReport), ordinaryEnvelope, public); err != nil {
+		t.Fatal("refused ordinary cooperative reservation without qualification provider:", err)
+	}
 	for name, mutate := range map[string]func(map[string]any){
+		"protected broker substitution": func(p map[string]any) {
+			binding := p["measurement_binding"].(map[string]any)
+			delete(binding, "hq_broker")
+			binding["broker_executable"] = map[string]any{
+				"path":                   "/private/var/db/managed-machine/bridge",
+				"sha256":                 digest([]byte("bridge")),
+				"provider_config_sha256": digest([]byte("provider")),
+			}
+		},
+		"provider digest substitution": func(p map[string]any) {
+			p["qualification_provider"].(map[string]any)["config_sha256"] = digest([]byte("other provider"))
+		},
 		"runner substitution": func(p map[string]any) {
 			p["assignment"].(map[string]any)["runner_uid"] = float64(332)
 		},

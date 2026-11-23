@@ -234,7 +234,7 @@ func CheckCooperativeHostReportRInventoryV3(hostEnvelope, reservationEnvelope,
 	if err != nil || fields["measurement_binding"] == nil {
 		return ErrUnqualified
 	}
-	binding, err := parseHRMeasurementBindingV3(fields["measurement_binding"])
+	binding, err := parseCooperativeMeasurementBindingV3(fields["measurement_binding"])
 	if err != nil {
 		return ErrUnqualified
 	}

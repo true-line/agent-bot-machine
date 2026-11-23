@@ -3,6 +3,8 @@ package qualification
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"path"
 	"regexp"
@@ -34,6 +36,11 @@ func validCooperativeEndpointV3(e cooperativeEndpointV3, hqUID, runnerUID, runne
 		e.DirMode == 0o2750 && e.SocketMode == 0o660
 }
 
+func cooperativeAdmissionSocketV3(installationID, startID string) string {
+	sum := sha256.Sum256([]byte("agent-bot-soul-endpoint-start/v1\x00" + installationID + "\x00" + startID))
+	return hex.EncodeToString(sum[:10]) + ".sock"
+}
+
 // cooperativeReportJoinV3 authenticates a separate A-signed managed-cooperative
 // reservation and joins its frozen H/R identity to the designated-host report.
 // It does not verify one-use spending, the installed bytes, segment artifacts,
@@ -45,15 +52,50 @@ func cooperativeReportJoinV3(reportRaw, reservationEnvelope []byte,
 		return ErrUnqualified
 	}
 	fields, err := canonicalBytes(payload, 48<<10)
-	if err != nil || !hasFields(fields, "contract", "kind", "schema_version", "host_id",
+	if err != nil {
+		return ErrUnqualified
+	}
+	names := []string{"contract", "kind", "schema_version", "host_id",
 		"issued_at", "expires_at", "installed_plan_receipt_sha256", "assignment",
-		"endpoints", "measurement_binding", "admission_challenge_sha256") ||
+		"endpoints", "measurement_binding", "admission_challenge_sha256"}
+	if provider, present := fields["qualification_provider"]; present {
+		names = append(names, "qualification_provider")
+		providerFields, err := strictObject(provider, 48<<10)
+		if err != nil || !hasFields(providerFields, "config_base64url", "config_sha256") {
+			return ErrUnqualified
+		}
+		var value struct {
+			ConfigBase64URL string `json:"config_base64url"`
+			ConfigSHA256    string `json:"config_sha256"`
+		}
+		if json.Unmarshal(provider, &value) != nil || !validSHA(value.ConfigSHA256) {
+			return ErrUnqualified
+		}
+		config, err := decode(value.ConfigBase64URL, 48<<10)
+		if err != nil || digest(config) != value.ConfigSHA256 {
+			return ErrUnqualified
+		}
+		configFields, err := canonicalBytes(config, 48<<10)
+		if err != nil || !hasFields(configFields, "model", "request_sha256", "response_text") {
+			return ErrUnqualified
+		}
+		var configValue struct {
+			Model         string `json:"model"`
+			RequestSHA256 string `json:"request_sha256"`
+			ResponseText  string `json:"response_text"`
+		}
+		if json.Unmarshal(config, &configValue) != nil || configValue.Model == "" ||
+			!validSHA(configValue.RequestSHA256) || configValue.ResponseText == "" {
+			return ErrUnqualified
+		}
+	}
+	if !hasFields(fields, names...) ||
 		string(fields["contract"]) != `"machine/v3"` ||
 		string(fields["kind"]) != `"soul-cooperative-reservation"` ||
 		string(fields["schema_version"]) != "3" {
 		return ErrUnqualified
 	}
-	binding, err := parseHRMeasurementBindingV3(fields["measurement_binding"])
+	binding, err := parseCooperativeMeasurementBindingV3(fields["measurement_binding"])
 	if err != nil || binding.Base.ProfileInForce != "managed-cooperative" {
 		return ErrUnqualified
 	}
@@ -153,7 +195,8 @@ func cooperativeReportJoinV3(reportRaw, reservationEnvelope []byte,
 		!validCooperativeEndpointV3(reservation.Endpoints.Broker,
 			reservation.Assignment.HQUID, reservation.Assignment.RunnerUID, reservation.Assignment.RunnerGID) ||
 		path.Base(path.Dir(reservation.Endpoints.Admission.Directory)) != "c" ||
-		path.Base(reservation.Endpoints.Admission.SocketPath) != reservation.Assignment.StartID+".sock" ||
+		path.Base(reservation.Endpoints.Admission.SocketPath) != cooperativeAdmissionSocketV3(
+			reservation.Assignment.InstallationID, reservation.Assignment.StartID) ||
 		reservation.Endpoints.Broker.Directory !=
 			"/Library/Application Support/ai.true-line.agent-bot-hq/broker/"+reservation.Assignment.RunnerAccount ||
 		reservation.Endpoints.Broker.SocketPath != reservation.Endpoints.Broker.Directory+"/broker.sock" ||

@@ -293,11 +293,15 @@ Q/ACP/OS captures or any physical T result. The ordinary release attestation
 still follows qualification and the public acceptance gate remains closed.
 
 The managed-cooperative T21 diagnostic consumes the distinct A-signed
-`agent-bot/soul-cooperative-reservation/v3` envelope from draft Contracts #74 (review head `eb6ed1ecd46c08c8337dfc3ed09e353511b50683`).
+`agent-bot/soul-cooperative-reservation/v3` envelope from Contracts successor
+#75 (merged reviewed head `2076eb64022921624a75dd271d024bc02e2ef55a`,
+pending its immutable successor tag). This source replaced the closed draft
+#74 vector.
 It verifies the enrolled A key and exact canonical bytes, derives the fixed
 `machine/v2` host-report projection, and joins the report to the H descriptor,
 sealed R inventory, frozen definition and launch roots, runner UID/GID,
-H-owned per-start admission and runner-scoped broker endpoints, released adapter claim, challenge and
+H-owned per-start admission and runner-scoped broker endpoints, H-hosted broker
+module identity, released adapter claim, challenge and
 reservation digest. Its paired synthetic vector and substitution tests are
 source-level evidence only. The complete H descriptor, R sidecar and
 cooperative launch-input records must still be resolved and remeasured from
@@ -311,6 +315,11 @@ R sidecar, then requires the reported adapter executable and every code-input
 digest to equal a row for that adapter component in the sidecar. It also
 requires an executable inventory mode and refuses another component's file,
 an unlisted path, or a coherent sidecar replacement with changed code bytes.
+The cooperative parser checks the derived per-installation start socket name.
+It accepts an optional qualification-provider config only when its exact
+canonical bytes match the signed digest; ordinary cooperative starts can omit
+that test-only config. The matching launch-input harness/provider pins still
+need independent measurement.
 It remains a claim-to-inventory join: the actual sealed files, component
 release manifest, Q runner and physical T21 result are not established by it.
 One-use spending, release attestation, T21 segment artifacts and physical

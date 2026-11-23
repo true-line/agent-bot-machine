@@ -85,6 +85,11 @@ type hrBrokerExecutableV3 struct {
 	ProviderConfigSHA256 string `json:"provider_config_sha256"`
 }
 
+type hrHQBrokerV3 struct {
+	ModulePath   string `json:"module_path"`
+	ModuleSHA256 string `json:"module_sha256"`
+}
+
 // hrMeasurementBindingV3 is the strict portable shape of the Machine v3
 // reservation binding. It is only a parsed claim: the caller must separately
 // authenticate the reservation, H descriptor, R installed bytes, release
@@ -96,6 +101,7 @@ type hrMeasurementBindingV3 struct {
 	RComponents              []hrReleaseComponentV3
 	AdapterRelease           hrAdapterReleaseV3
 	BrokerExecutable         hrBrokerExecutableV3
+	HQBroker                 hrHQBrokerV3
 }
 
 func hrNodeNumbersV3(device, inode, generation, birthtime string) bool {
@@ -209,19 +215,38 @@ func hrComponentsV3(raw []byte) ([]hrReleaseComponentV3, error) {
 }
 
 // parseHRMeasurementBindingV3 consumes the exact release-backed machine/v3
-// H/R binding. It serves ordinary protected and managed-cooperative claims;
-// the first-qualification candidate has a distinct binding. The common
+// H/R binding. It serves ordinary protected claims; managed-cooperative and
+// first-qualification reservations have distinct bindings. The common
 // frozen definition/launch fields retain the v2 nonroot A constraints.
 func parseHRMeasurementBindingV3(raw []byte) (hrMeasurementBindingV3, error) {
+	return parseHRMeasurementBindingModeV3(raw, false)
+}
+
+// The cooperative reservation carries an H-hosted broker module instead of
+// the protected B executable. Keep those fixed shapes purpose-separated.
+func parseCooperativeMeasurementBindingV3(raw []byte) (hrMeasurementBindingV3, error) {
+	return parseHRMeasurementBindingModeV3(raw, true)
+}
+
+func parseHRMeasurementBindingModeV3(raw []byte, cooperative bool) (hrMeasurementBindingV3, error) {
 	var zero hrMeasurementBindingV3
 	fields, err := canonicalBytes(raw, MaxReportBytes)
-	if err != nil || !hasFields(fields, "contract", "kind", "schema_version",
+	if err != nil {
+		return zero, ErrUnqualified
+	}
+	names := []string{"contract", "kind", "schema_version",
 		"installation_id", "soul_id", "start_id", "launch_id", "host_id", "hq_epoch",
 		"plan_id", "installed_plan_digest", "package_sha256", "profile_in_force",
 		"claimed_definition_digest", "definition_measurement",
 		"launch_input_measurement", "snapshots", "soul_artifact_sha256",
 		"h_service_descriptor_digest", "r_inventory", "r_components",
-		"adapter_release", "broker_executable") {
+		"adapter_release"}
+	if cooperative {
+		names = append(names, "hq_broker")
+	} else {
+		names = append(names, "broker_executable")
+	}
+	if !hasFields(fields, names...) {
 		return zero, ErrUnqualified
 	}
 	if string(fields["contract"]) != `"machine/v3"` ||
@@ -295,17 +320,32 @@ func parseHRMeasurementBindingV3(raw []byte) (hrMeasurementBindingV3, error) {
 	if !matched {
 		return zero, ErrUnqualified
 	}
-	brokerFields, err := strictObject(fields["broker_executable"], MaxReportBytes)
-	if err != nil || !hasFields(brokerFields, "path", "sha256", "provider_config_sha256") {
-		return zero, ErrUnqualified
-	}
-	var broker hrBrokerExecutableV3
-	if json.Unmarshal(fields["broker_executable"], &broker) != nil ||
-		!reportPath(broker.Path) || !validSHA(broker.SHA256) ||
-		!validSHA(broker.ProviderConfigSHA256) {
-		return zero, ErrUnqualified
-	}
-	return hrMeasurementBindingV3{Base: base, HServiceDescriptorDigest: hDigest,
+	result := hrMeasurementBindingV3{Base: base, HServiceDescriptorDigest: hDigest,
 		RInventory: r, RComponents: components, AdapterRelease: adapter,
-		BrokerExecutable: broker}, nil
+	}
+	if cooperative {
+		brokerFields, err := strictObject(fields["hq_broker"], MaxReportBytes)
+		if err != nil || !hasFields(brokerFields, "module_path", "module_sha256") {
+			return zero, ErrUnqualified
+		}
+		var broker hrHQBrokerV3
+		if json.Unmarshal(fields["hq_broker"], &broker) != nil ||
+			!reportPath(broker.ModulePath) || !validSHA(broker.ModuleSHA256) {
+			return zero, ErrUnqualified
+		}
+		result.HQBroker = broker
+	} else {
+		brokerFields, err := strictObject(fields["broker_executable"], MaxReportBytes)
+		if err != nil || !hasFields(brokerFields, "path", "sha256", "provider_config_sha256") {
+			return zero, ErrUnqualified
+		}
+		var broker hrBrokerExecutableV3
+		if json.Unmarshal(fields["broker_executable"], &broker) != nil ||
+			!reportPath(broker.Path) || !validSHA(broker.SHA256) ||
+			!validSHA(broker.ProviderConfigSHA256) {
+			return zero, ErrUnqualified
+		}
+		result.BrokerExecutable = broker
+	}
+	return result, nil
 }
