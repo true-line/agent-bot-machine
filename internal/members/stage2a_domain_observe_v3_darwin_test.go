@@ -225,3 +225,31 @@ func TestStage2aDomainSealReplyV3RoundTrip(t *testing.T) {
 		t.Fatalf("A reply lost v3 sidecar identity: %s %v", raw, err)
 	}
 }
+
+func TestStage2aAdminDirectoryTraverseOnlyParent(t *testing.T) {
+	if os.Getuid() < 400 {
+		t.Skip("requires nonroot test UID")
+	}
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(parent, "namespace")
+	if err := os.Mkdir(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0111); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0700) })
+	fd, err := unix.Open(parent, stage2aDirectoryOpenFlags, 0)
+	if err == nil {
+		unix.Close(fd)
+		t.Fatal("read-only descriptor unexpectedly opened execute-only parent")
+	}
+	dir, err := openStage2aAdminDirectory(child, uint32(os.Getuid()))
+	if err != nil {
+		t.Fatalf("A could not traverse execute-only ancestor: %v", err)
+	}
+	dir.Close()
+}

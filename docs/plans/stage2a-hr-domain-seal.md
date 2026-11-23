@@ -18,6 +18,8 @@ reviewed H or R file and directory closure, checks the dedicated reader group,
 exclusively publishes the snapshot and sibling sidecar in their distinct
 installation namespaces, seals the root `0555` and sidecar `0440`, syncs and
 remeasures both. Root independently reobserves the returned reference.
+The shared root-owned `0711` parent is traverse-only; A walks it with held
+no-follow search descriptors and opens the final A-owned namespace for read.
 Every protected use must recheck the installed nodes and compare the owner
 plan, selected release manifests, A key and signed H/R binding. The new v3
 component does not change the v1/v2 parser limits or lift
