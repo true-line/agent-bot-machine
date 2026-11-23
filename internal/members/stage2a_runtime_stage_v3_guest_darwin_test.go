@@ -3,6 +3,7 @@
 package members
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -96,9 +97,11 @@ func TestStage2aV3GuestInstallRuntime(t *testing.T) {
 	}
 	namespace, _, _, _ := stage2aDomainNamesV3("R-runtime", installationID)
 	t.Cleanup(func() { _ = os.RemoveAll(namespace) })
-	observed, err := stage2aObserveInstalledDomainV3(ref.Snapshot.Path, ref.Sidecar.Path,
-		uint32(aUID), uint32(rUID), uint32(rGID), ref.OwnerPlanDigest, digest)
-	if err != nil || observed.ref != ref || ref.FileCount != 1 || ref.TotalBytes != uint64(len(data)) {
+	observed, observedDigest, err := stage2aObserveDomainV3At(ref.Snapshot.Path, uint32(aUID), uint32(rGID), raw)
+	sidecar, sidecarRaw, sidecarErr := stage2aV3SidecarAt(ref.Sidecar.Path, uint32(aUID), uint32(rGID))
+	if err != nil || sidecarErr != nil || stage2aV3SnapshotRef(observed) != ref.Snapshot ||
+		observedDigest != digest || sidecar != ref.Sidecar || !bytes.Equal(sidecarRaw, raw) ||
+		ref.ReaderUID != uint32(rUID) || ref.FileCount != 1 || ref.TotalBytes != uint64(len(data)) {
 		t.Fatalf("installed R ref differs: %+v %v", ref, err)
 	}
 	t.Logf("COMPONENT_ONLY R root-to-A install sealed files=%d bytes=%d digest=%s", ref.FileCount, ref.TotalBytes, ref.InventoryDigest)
