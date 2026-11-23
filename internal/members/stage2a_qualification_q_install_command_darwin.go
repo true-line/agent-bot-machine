@@ -69,26 +69,13 @@ func RunStage2aQualificationQInstall(deps ApplyDeps, args []string) error {
 		return err
 	}
 	savedRaw, err := readQualificationInput(filepath.Join(state, "members", "plans", plan.PlanID+".json"))
-	var saved Saved
-	if err != nil || json.Unmarshal(savedRaw, &saved) != nil || saved.PlanID != plan.PlanID ||
-		saved.PlanDigest != plan.Install.Review.PlanDigest || saved.QualificationRun == nil {
+	if err != nil {
 		return errStage2aReservationAuthority
 	}
-	request := saved.QualificationRun.Request
-	candidate := request.Candidate
+	if _, err := decodeStage2aQualificationQPlan(savedRaw, plan.Install); err != nil {
+		return err
+	}
 	review := plan.Install.Review
-	if request.SchemaVersion != 2 || candidate == nil || validateQualificationRequest(request) != nil ||
-		candidate.HostUUID != review.HostUUID || request.Host.ID != review.HostID ||
-		candidate.InstallationID != review.InstallationID || candidate.InstalledPlanDigest != review.InstalledPlanDigest ||
-		candidate.TestPlan != review.TestPlan || request.TestProvider.ConfigPath != review.Provider.Path ||
-		request.TestProvider.ConfigSHA != review.Provider.SHA256 ||
-		request.Runner.BinaryPath != plan.Install.Source.Path || request.Runner.BinarySHA != plan.Install.Source.SHA256 {
-		return errStage2aReservationAuthority
-	}
-	canonical, err := saved.CanonicalForReview()
-	if err != nil || stage2aQualificationSHA256(canonical) != "sha256:"+saved.PlanDigest {
-		return errStage2aReservationAuthority
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := observeStage2aQualificationHost(ctx, review.HostUUID); err != nil {
