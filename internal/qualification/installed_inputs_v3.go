@@ -243,13 +243,19 @@ func installedSelectedCommandV3(command string, binding measurementBinding,
 // ResolveInstalledInputInventoryV3 checks one content-addressed compact
 // inventory and its nested record/host-projection objects against the signed
 // per-start binding supplied by its caller. The caller must first authenticate
-// that binding and the inventory digest via A's segment attestation. This
-// function does not measure live installed files or authenticate A custody.
+// that binding, the idle-stop time, the segment-signing time, and the inventory
+// digest via A's signed stop and segment attestation. Every descriptor read
+// must follow the stop and precede the signature. This function does not
+// measure live installed files or authenticate A custody.
 func ResolveInstalledInputInventoryV3(root string, inventoryRaw, bindingRaw []byte,
-	now time.Time) (VerifiedInstalledInputInventoryV3, error) {
+	stoppedAt, signedAt, now time.Time) (VerifiedInstalledInputInventoryV3, error) {
 	var zero VerifiedInstalledInputInventoryV3
+	if stoppedAt.IsZero() || signedAt.IsZero() || now.IsZero() ||
+		signedAt.Before(stoppedAt) || signedAt.After(now) {
+		return zero, ErrUnqualified
+	}
 	fields, err := canonicalBytes(inventoryRaw, 1<<20)
-	if err != nil || !hasFields(fields, "schema_version", "kind", "installation_id", "soul_id", "start_id", "launch_id", "host_id", "profile", "plan_id", "installed_plan_digest", "measurement_binding_sha256", "definition_records", "launch_input_records", "host_adapters_json", "host_installation_json", "definition_snapshot", "launch_inputs_snapshot", "opened_files", "observed_at") || now.IsZero() {
+	if err != nil || !hasFields(fields, "schema_version", "kind", "installation_id", "soul_id", "start_id", "launch_id", "host_id", "profile", "plan_id", "installed_plan_digest", "measurement_binding_sha256", "definition_records", "launch_input_records", "host_adapters_json", "host_installation_json", "definition_snapshot", "launch_inputs_snapshot", "opened_files", "observed_at") {
 		return zero, ErrUnqualified
 	}
 	jcs, err := jsoncanonicalizer.Transform(inventoryRaw)
@@ -294,7 +300,7 @@ func ResolveInstalledInputInventoryV3(root string, inventoryRaw, bindingRaw []by
 		return zero, ErrUnqualified
 	}
 	observedAt, err := parseTime(inventory.ObservedAt)
-	if err != nil || observedAt.After(now) {
+	if err != nil || observedAt.Before(stoppedAt) || observedAt.After(signedAt) {
 		return zero, ErrUnqualified
 	}
 	objects := map[string][]byte{}
@@ -408,7 +414,7 @@ func ResolveInstalledInputInventoryV3(root string, inventoryRaw, bindingRaw []by
 			return zero, ErrUnqualified
 		}
 		at, err := parseTime(opened.ObservedAt)
-		if err != nil || at.After(observedAt) {
+		if err != nil || at.Before(stoppedAt) || at.After(observedAt) {
 			return zero, ErrUnqualified
 		}
 		previous = key

@@ -191,6 +191,12 @@ command under either approved snapshot, all eight named component and
 sandbox-policy digest references to launch files, the effective profile,
 and the separately hashed host projection files. It does not archive large
 executable bytes.
+The offline resolver also requires the authenticated A stop time and A
+segment-signing time: every opened-file timestamp and the wrapper timestamp
+must fall from the signed idle stop through the segment signature, inclusive.
+The caller must verify the stop and segment signatures and the segment's exact
+`installed_inputs_sha256` before crediting that join. Passing arbitrary times
+to the component is not A authentication.
 
 The current wrapper covers the frozen definition and R-readable launch-input
 snapshot. It does not attest a separate H-readable HQ/Comms/contracts code

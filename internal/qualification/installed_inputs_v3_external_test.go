@@ -96,7 +96,7 @@ func inventoryFixtureV3(t *testing.T) (string, map[string]any, []byte) {
 				"mode": rec.Mode, "sha256": rec.SHA256, "owner_uid": 500, "owner_gid": 703,
 				"device": "1", "inode": "2001", "generation": "1",
 				"birthtime_ns": "1795300000000000000", "link_count": 1,
-				"acl_allow_count": 0, "observed_at": "2026-11-22T12:00:00Z",
+				"acl_allow_count": 0, "observed_at": "2026-11-22T12:00:04Z",
 			})
 		}
 	}
@@ -116,24 +116,40 @@ func inventoryFixtureV3(t *testing.T) (string, map[string]any, []byte) {
 		"definition_records":         refs["definition_records"], "launch_input_records": refs["launch_input_records"],
 		"host_adapters_json": refs["host_adapters_json"], "host_installation_json": refs["host_installation_json"],
 		"definition_snapshot": snapshots["definition"], "launch_inputs_snapshot": snapshots["launch_inputs"],
-		"opened_files": files, "observed_at": "2026-11-22T12:00:01Z",
+		"opened_files": files, "observed_at": "2026-11-22T12:00:04.5Z",
 	}
 	return root, inventory, report.MeasurementBinding
 }
 
 func TestInstalledInventoryOfflineJoinV3(t *testing.T) {
 	root, inventory, binding := inventoryFixtureV3(t)
+	stoppedAt := time.Date(2026, 11, 22, 12, 0, 3, 0, time.UTC)
+	signedAt := time.Date(2026, 11, 22, 12, 0, 5, 0, time.UTC)
 	check := func(object map[string]any) error {
 		raw, err := json.Marshal(object)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = qualification.ResolveInstalledInputInventoryV3(root, raw, binding,
+		_, err = qualification.ResolveInstalledInputInventoryV3(root, raw, binding, stoppedAt, signedAt,
 			time.Date(2026, 11, 22, 13, 0, 0, 0, time.UTC))
 		return err
 	}
 	if err := check(inventory); err != nil {
 		t.Fatalf("exact byte vector rejected: %v", err)
+	}
+	for name, bounds := range map[string][2]time.Time{
+		"stop after opened rows":   {time.Date(2026, 11, 22, 12, 0, 4, 1, time.UTC), signedAt},
+		"signature before wrapper": {stoppedAt, time.Date(2026, 11, 22, 12, 0, 4, 0, time.UTC)},
+		"signature before stop":    {signedAt, stoppedAt},
+	} {
+		raw, err := json.Marshal(inventory)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := qualification.ResolveInstalledInputInventoryV3(root, raw, binding,
+			bounds[0], bounds[1], time.Date(2026, 11, 22, 13, 0, 0, 0, time.UTC)); err == nil {
+			t.Errorf("accepted %s", name)
+		}
 	}
 	files := inventory["opened_files"].([]map[string]any)
 	for name, change := range map[string]func(){
@@ -192,7 +208,9 @@ func TestInstalledInventoryRejectsUnmeasuredComponentWithMatchingRecordDigestV3(
 		t.Fatal(err)
 	}
 	if _, err := qualification.ResolveInstalledInputInventoryV3(root, changedInventory,
-		changedBinding, time.Date(2026, 11, 22, 13, 0, 0, 0, time.UTC)); err == nil {
+		changedBinding, time.Date(2026, 11, 22, 12, 0, 3, 0, time.UTC),
+		time.Date(2026, 11, 22, 12, 0, 5, 0, time.UTC),
+		time.Date(2026, 11, 22, 13, 0, 0, 0, time.UTC)); err == nil {
 		t.Fatal("unmeasured component accepted despite recomputed matching record and binding digests")
 	}
 }
@@ -237,7 +255,9 @@ func TestInstalledInventoryRejectsBrokenDefinitionTreeWithMatchingDigestV3(t *te
 		t.Fatal(err)
 	}
 	if _, err := qualification.ResolveInstalledInputInventoryV3(root, changedInventory,
-		changedBinding, time.Date(2026, 11, 22, 13, 0, 0, 0, time.UTC)); err == nil {
+		changedBinding, time.Date(2026, 11, 22, 12, 0, 3, 0, time.UTC),
+		time.Date(2026, 11, 22, 12, 0, 5, 0, time.UTC),
+		time.Date(2026, 11, 22, 13, 0, 0, 0, time.UTC)); err == nil {
 		t.Fatal("broken definition parent accepted despite recomputed matching digests")
 	}
 }

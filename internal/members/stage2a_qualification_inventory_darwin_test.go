@@ -126,10 +126,12 @@ func stage2aInventoryFixtureV3(t *testing.T) (stage2aAdminSnapshots,
 
 func TestStage2aInstalledInventoryProducerMatchesOfflineConsumerV3(t *testing.T) {
 	a, binding, definition, launch := stage2aInventoryFixtureV3(t)
+	stoppedAt := time.Now().Add(-time.Second)
 	got, err := buildStage2aInstalledInputEvidenceV3(a, binding, definition, launch)
 	if err != nil {
 		t.Fatal(err)
 	}
+	signedAt := time.Now()
 	if len(got.blobs) != 4 || len(got.inventory) == 0 || got.sha256 != stage2aQualificationSHA256(got.inventory) {
 		t.Fatal("producer omitted a nested blob or inventory digest")
 	}
@@ -150,7 +152,7 @@ func TestStage2aInstalledInventoryProducerMatchesOfflineConsumerV3(t *testing.T)
 		t.Fatal(err)
 	}
 	verified, err := qualification.ResolveInstalledInputInventoryV3(root, got.inventory,
-		bindingRaw, time.Now().Add(time.Second))
+		bindingRaw, stoppedAt, signedAt, time.Now().Add(time.Second))
 	if err != nil || verified.InventorySHA256 != got.sha256 || verified.FileCount != 17 {
 		t.Fatalf("A bytes do not verify offline: %+v %v", verified, err)
 	}
@@ -163,11 +165,13 @@ func TestStage2aInstalledInventoryProducerMatchesOfflineConsumerV3(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	definitionStoppedAt := time.Now().Add(-time.Second)
 	definitionEvidence, err := buildStage2aInstalledInputEvidenceV3(a,
 		definitionBinding, definition, definitionCommand)
 	if err != nil {
 		t.Fatalf("A refused approved frozen-definition command: %v", err)
 	}
+	definitionSignedAt := time.Now()
 	for _, raw := range definitionEvidence.blobs {
 		sum := sha256.Sum256(raw)
 		name := fmt.Sprintf("%x", sum)
@@ -184,7 +188,7 @@ func TestStage2aInstalledInventoryProducerMatchesOfflineConsumerV3(t *testing.T)
 		t.Fatal(err)
 	}
 	if _, err := qualification.ResolveInstalledInputInventoryV3(root, definitionEvidence.inventory,
-		definitionBindingRaw, time.Now().Add(time.Second)); err != nil {
+		definitionBindingRaw, definitionStoppedAt, definitionSignedAt, time.Now().Add(time.Second)); err != nil {
 		t.Fatalf("offline verifier refused approved frozen-definition command: %v", err)
 	}
 	var changed map[string]any
@@ -195,7 +199,7 @@ func TestStage2aInstalledInventoryProducerMatchesOfflineConsumerV3(t *testing.T)
 	rows[0].(map[string]any)["sha256"] = strings.Repeat("0", 64)
 	tampered, _ := json.Marshal(changed)
 	if _, err := qualification.ResolveInstalledInputInventoryV3(root, tampered,
-		bindingRaw, time.Now().Add(time.Second)); err == nil {
+		bindingRaw, stoppedAt, signedAt, time.Now().Add(time.Second)); err == nil {
 		t.Fatal("offline verifier accepted changed A file hash")
 	}
 	wrong := a
