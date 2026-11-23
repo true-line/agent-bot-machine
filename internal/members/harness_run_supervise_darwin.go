@@ -167,7 +167,14 @@ func superviseHarnessStarted(ctx context.Context, cmd *exec.Cmd, acp io.Reader, 
 	logDone := make(chan struct{})
 	go func() { reporter.relay(logRead); close(logDone) }()
 	inputDone := make(chan struct{})
-	go func() { _, _ = io.Copy(write, acp); write.Close(); close(inputDone) }()
+	if ready {
+		go func() { _, _ = io.Copy(write, acp); write.Close(); close(inputDone) }()
+	} else {
+		// A rejected child receipt or Live lease must not consume or forward
+		// buffered ACP bytes while the process group is being closed.
+		write.Close()
+		close(inputDone)
+	}
 	tick := time.NewTicker(30 * time.Millisecond)
 	defer tick.Stop()
 monitor:
