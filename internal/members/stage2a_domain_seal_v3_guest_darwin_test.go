@@ -56,11 +56,14 @@ func TestStage2aV3GuestSealHAndR(t *testing.T) {
 		t.Fatal(err)
 	}
 	unix.Close(commonFD)
-	binary, err := managerBytes()
+	binary, err := os.ReadFile(SoulLauncher)
 	if err != nil {
 		t.Fatalf("install exact test SoulLauncher first: %v", err)
 	}
 	launcherHash := harnessSHA(binary)
+	if want := os.Getenv("STAGE2A_V3_GUEST_LAUNCHER_SHA256"); want == "" || want != launcherHash {
+		t.Fatalf("installed SoulLauncher hash %s differs from exact guest build %s", launcherHash, want)
+	}
 	for _, tc := range []struct {
 		name, domain, reader string
 		uid, gid             int
