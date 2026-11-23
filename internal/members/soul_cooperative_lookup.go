@@ -12,6 +12,8 @@ type SoulCooperativeLookupReplyV3 struct {
 	RunnerUID         int    `json:"runner_uid"`
 	RunnerGID         int    `json:"runner_gid"`
 	AdmissionDir      string `json:"admission_directory"`
+	AdmissionSocket   string `json:"admission_socket_path"`
+	ReviewedStartID   string `json:"reviewed_start_id"`
 	BrokerSocketPath  string `json:"broker_socket_path"`
 	AdapterTransport  string `json:"adapter_transport"`
 }

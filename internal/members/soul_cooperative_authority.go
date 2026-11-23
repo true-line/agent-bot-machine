@@ -107,6 +107,7 @@ type SoulCooperativeLaunchPolicy struct {
 	AdapterRelease         *soulCooperativeAdapterV3   `json:"adapter_release,omitempty"`
 	HQBroker               *soulCooperativeBrokerV3    `json:"hq_broker,omitempty"`
 	AdapterTransport       string                      `json:"adapter_transport,omitempty"`
+	ReviewedStartID        string                      `json:"reviewed_start_id,omitempty"`
 	QualificationProvider  *Stage2aBridgeQualification `json:"qualification_provider,omitempty"`
 	AdapterCodeInputs      []string                    `json:"adapter_code_inputs,omitempty"`
 }
@@ -244,6 +245,9 @@ func (p SoulCooperativeLaunchPolicy) validate() error {
 			p.StateRoot != path.Join("/private/var", "agent-bot-soul-runner-"+p.Runner.Account, "state") {
 			return errSoulCooperativeAuthority
 		}
+		if _, err := cooperativeReviewedAdmission(p); err != nil {
+			return errSoulCooperativeAuthority
+		}
 		launchDigest, _, launchErr := Stage2aLaunchInputDigest(*p.LaunchInputs)
 		if launchErr != nil || launchDigest != p.LaunchInputMeasurement ||
 			p.LaunchInputs.AdapterTransport != p.AdapterTransport ||
@@ -261,7 +265,7 @@ func (p SoulCooperativeLaunchPolicy) validate() error {
 		}
 	}
 	if (p.Schema != soulCooperativeInstallSchema && p.Schema != soulCooperativeRuntimeInstallSchemaV3) ||
-		(p.Schema == soulCooperativeInstallSchema && p.RuntimeV3 != nil) ||
+		(p.Schema == soulCooperativeInstallSchema && (p.RuntimeV3 != nil || p.ReviewedStartID != "")) ||
 		(p.Schema == soulCooperativeRuntimeInstallSchemaV3 && (p.RuntimeV3 == nil ||
 			!stage2aPrefixedDigest.MatchString(p.RuntimeV3.InventoryDigest) ||
 			p.AdapterRelease == nil || p.HQBroker == nil ||
@@ -293,9 +297,9 @@ func (p SoulCooperativeLaunchPolicy) validate() error {
 	return nil
 }
 
-// The provider executable has its own Q component digest. This separate
-// digest commits the owner-frozen response configuration in measured launch
-// inputs and, later, in the signed one-use reservation.
+// The inline Machine provider uses owner-frozen response configuration.
+// Bind its exact bytes separately from the Q component evidence in the
+// measured launch inputs and later in the signed one-use reservation.
 func cooperativeProviderConfigMatchesLaunchInputs(provider *Stage2aBridgeQualification,
 	inputs *Stage2aLaunchInputRecords) error {
 	if inputs == nil {
@@ -455,6 +459,20 @@ func cooperativeEndpoint(p SoulCooperativeLaunchPolicy, startID string) (SoulCoo
 	return SoulCooperativeEndpoint{Directory: directory, SocketPath: socket,
 		OwnerUID: p.HQUID, GroupGID: p.Runner.GID, DirMode: 02750, SocketMode: 0660,
 		PeerUID: p.Runner.UID}, nil
+}
+
+// cooperativeReviewedAdmission binds the socket in the frozen argv to the
+// one start ID reviewed as part of the installed direct-comms plan.
+func cooperativeReviewedAdmission(p SoulCooperativeLaunchPolicy) (SoulCooperativeEndpoint, error) {
+	if !soulStartID.MatchString(p.ReviewedStartID) || p.LaunchInputs == nil {
+		return SoulCooperativeEndpoint{}, errSoulCooperativeAuthority
+	}
+	admission, err := cooperativeEndpoint(p, p.ReviewedStartID)
+	argv := p.LaunchInputs.Argv
+	if err != nil || len(argv) < 7 || argv[5] != "--admission-socket" || argv[6] != admission.SocketPath {
+		return SoulCooperativeEndpoint{}, errSoulCooperativeAuthority
+	}
+	return admission, nil
 }
 
 func cooperativeBrokerEndpoint(p SoulCooperativeLaunchPolicy) (SoulCooperativeEndpoint, error) {

@@ -157,6 +157,14 @@ func TestCooperativeLostReserveReplyReadsOriginalJournalWithoutSpending(t *testi
 	input.EffectiveConfig["profile"] = "managed-cooperative"
 	input.AdapterTransport = stage2aDirectComms
 	delete(input.ComponentDigests, "bridge")
+	p.ReviewedStartID = q.StartID
+	admission, err := cooperativeEndpoint(p, q.StartID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Argv = []string{input.SelectedCommand, "bin/agent-bot-souls.mjs", "run", "--soul",
+		p.Runner.PackageRoot, "--admission-socket", admission.SocketPath}
+	p.LaunchInputs = &input
 	measurement, _, err := Stage2aLaunchInputDigest(input)
 	if err != nil {
 		t.Fatal(err)
@@ -173,6 +181,7 @@ func TestCooperativeLostReserveReplyReadsOriginalJournalWithoutSpending(t *testi
 		IssuedAt: issued.Format(time.RFC3339Nano), ExpiresAt: expires,
 		InstalledPlanReceiptSHA256: fmt.Sprintf("sha256:%x", sha256.Sum256(installed.RootReceipt)),
 		AdapterTransport:           stage2aDirectComms, AdmissionChallengeSHA256: q.AdmissionChallengeSHA256,
+		Endpoints: soulCooperativeEndpointsV3{Admission: soulCooperativeEndpointWire(admission)},
 		Assignment: soulCooperativeAssignmentV3{InstallationID: q.InstallationID, StartID: q.StartID,
 			LaunchID: q.LaunchID, PlanID: receipt.PlanID, PlanDigest: q.PlanDigest,
 			HQEpoch: q.HQEpoch, RunnerUID: p.Runner.UID, RunnerGID: p.Runner.GID,

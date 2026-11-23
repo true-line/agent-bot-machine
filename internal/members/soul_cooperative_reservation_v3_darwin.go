@@ -239,7 +239,7 @@ func prepareSoulCooperativeReservationV3(a soulCooperativeVerifiedStartV3,
 		!q.valid() || !soulLaunchID.MatchString(q.LaunchID) ||
 		!stage2aPrefixedDigest.MatchString(q.AdmissionChallengeSHA256) ||
 		q.Profile != "managed-cooperative" || q.HostID != p.HostID ||
-		q.InstallationID != p.Runner.InstallationID || q.HQEpoch != p.HQEpoch ||
+		q.InstallationID != p.Runner.InstallationID || q.HQEpoch != p.HQEpoch || q.StartID != p.ReviewedStartID ||
 		q.PlanDigest == "" || a.r.ref != a.installed.RuntimeV3 ||
 		!a.r.verified || !a.h.verified ||
 		stage2aRecheckVerifiedDomainV3(a.r) != nil ||
@@ -272,7 +272,7 @@ func prepareSoulCooperativeReservationV3(a soulCooperativeVerifiedStartV3,
 			return empty, errSoulCooperativeAuthority
 		}
 	}
-	admission, err := cooperativeEndpoint(p, q.StartID)
+	admission, err := cooperativeReviewedAdmission(p)
 	if err != nil {
 		return empty, err
 	}

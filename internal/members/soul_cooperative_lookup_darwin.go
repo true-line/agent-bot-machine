@@ -55,7 +55,7 @@ func (s *Stage2aService) LookupCooperativeInstalled(hqUID int, epoch string,
 			!ValidApproval(receipt.PlanID, receipt.PlanDigest) {
 			return errSoulCooperativeAuthority
 		}
-		admission, e := cooperativeEndpoint(current.Policy, "st_000000000000000000000000")
+		admission, e := cooperativeReviewedAdmission(current.Policy)
 		if e != nil {
 			return errSoulCooperativeAuthority
 		}
@@ -69,7 +69,8 @@ func (s *Stage2aService) LookupCooperativeInstalled(hqUID int, epoch string,
 			PlanDigest: receipt.PlanDigest, HostID: p.HostID, HQEpoch: p.HQEpoch,
 			HQInstallationID: p.HQInstallationID, HOwnerPlanDigest: p.HOwnerPlanDigest,
 			RunnerUID: p.Runner.UID, RunnerGID: p.Runner.GID,
-			AdmissionDir: admission.Directory, BrokerSocketPath: broker.SocketPath,
+			AdmissionDir: admission.Directory, AdmissionSocket: admission.SocketPath,
+			ReviewedStartID: p.ReviewedStartID, BrokerSocketPath: broker.SocketPath,
 			AdapterTransport: p.AdapterTransport}
 		return nil
 	})
@@ -127,7 +128,8 @@ func readCooperativeReserveResult(dir *os.File, store stage2aAdminClaimStore,
 ) (Stage2aReserveReply, error) {
 	var receipt Receipt
 	p := installed.Policy
-	if store.checkDirectory(dir) != nil || p.SourcePackagePath != q.PackagePath ||
+	admission, admissionErr := cooperativeReviewedAdmission(p)
+	if admissionErr != nil || q.StartID != p.ReviewedStartID || store.checkDirectory(dir) != nil || p.SourcePackagePath != q.PackagePath ||
 		p.Runner.InstallationID != q.InstallationID || p.HostID != q.HostID || p.HQEpoch != q.HQEpoch ||
 		json.Unmarshal(installed.RootReceipt, &receipt) != nil ||
 		!ValidApproval(receipt.PlanID, receipt.PlanDigest) || receipt.PlanDigest != q.PlanDigest {
@@ -136,6 +138,7 @@ func readCooperativeReserveResult(dir *os.File, store stage2aAdminClaimStore,
 	_, request, signed, err := readSoulCooperativeRecoveryRequest(dir, store, q.InstallationID, q.StartID, p, key)
 	if err != nil || signed.HostID != q.HostID ||
 		signed.InstalledPlanReceiptSHA256 != fmt.Sprintf("sha256:%x", sha256.Sum256(installed.RootReceipt)) ||
+		signed.Endpoints.Admission != soulCooperativeEndpointWire(admission) ||
 		signed.Assignment.StartID != q.StartID || signed.Assignment.LaunchID != q.LaunchID ||
 		signed.Assignment.PlanID != receipt.PlanID || signed.Assignment.PlanDigest != receipt.PlanDigest ||
 		signed.Assignment.HQEpoch != q.HQEpoch || signed.AdmissionChallengeSHA256 != q.AdmissionChallengeSHA256 ||

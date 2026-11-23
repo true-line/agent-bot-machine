@@ -63,7 +63,7 @@ func (s *Stage2aService) ReserveCooperativeV3(hqUID int, epoch string,
 	}
 	key := s.key.Public().(ed25519.PublicKey)
 	installed, _, err := loadSoulCooperativeInstalledV3(key, hqUID, epoch, q.InstallationID)
-	if err != nil {
+	if err != nil || installed.Policy.ReviewedStartID != q.StartID {
 		return reply, errSoulCooperativeAuthority
 	}
 	selector, err := cooperativeHSelectorFromInstalled(installed)

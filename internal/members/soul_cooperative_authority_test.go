@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"reflect"
 	"strings"
 	"testing"
@@ -305,5 +306,82 @@ func TestSoulCooperativePlanIsSeparateAndReviewable(t *testing.T) {
 	saved.SoulCooperativeLaunch = &altered
 	if _, err := saved.CanonicalForReview(); err == nil {
 		t.Fatal("protected profile was accepted as cooperative review")
+	}
+}
+
+func TestDirectCooperativePlanPinsReviewedStartAndAdmissionSocket(t *testing.T) {
+	p, q, _, _ := cooperativeFixture(t)
+	p.Schema, p.AdapterTransport = soulCooperativeRuntimeInstallSchemaV3, stage2aDirectComms
+	p.ReviewedStartID = q.StartID
+	p.HQInstallationID, p.HOwnerPlanDigest = "hq-cooperative", strings.Repeat("a", 64)
+	p.MachineUID, p.MachineGID = 501, 20
+	p.StateRoot = "/private/var/agent-bot-soul-runner-" + p.Runner.Account + "/state"
+	p.DefinitionSource, p.LaunchInputsSource = p.SourcePackagePath, "/private/var/review/launch-inputs"
+	p.Definition = stage2aSyntheticRecords()
+	p.DefinitionMeasurement, _, _ = Stage2aDefinitionDigest(p.Definition)
+	rNamespace, rSnapshot, _, err := stage2aDomainNamesV3("R-runtime", p.Runner.InstallationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defNamespace, err := cooperativeFrozenNamespace(p.Runner.InstallationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hNamespace, hSnapshot, _, err := stage2aDomainNamesV3("H-code", p.HQInstallationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.RuntimeRoot = path.Join(rNamespace, rSnapshot)
+	p.Runner.PackageRoot = path.Join(defNamespace, cooperativeSnapshotName(p.Runner.InstallationID, "definition"))
+	p.NodePath, p.Entry, p.LauncherPath = path.Join(p.RuntimeRoot, "bin/node"), "bin/agent-bot-souls.mjs", SoulLauncher
+	digest := "sha256:" + strings.Repeat("a", 64)
+	p.AdapterCodeInputs = []string{"adapter/index.js"}
+	p.AdapterRelease = &soulCooperativeAdapterV3{ComponentID: "adapter", ExecutablePath: path.Join(p.RuntimeRoot, "adapter/index.js"),
+		PackageSHA256: digest, ReleaseManifestSHA256: digest, ReleaseAttestationSHA256: digest,
+		ExecutableSHA256: digest, CodeInputsDigest: digest, CodeInputCount: 1}
+	p.RuntimeV3 = &stage2aRuntimeV3Install{InventoryDigest: digest, Components: []stage2aRuntimeV3ComponentPin{
+		{ComponentID: "adapter", ReleaseArtifactSHA256: digest, ReleaseManifestSHA256: digest}}}
+	p.HQBroker = &soulCooperativeBrokerV3{ModulePath: path.Join(hNamespace, hSnapshot, "broker.mjs"), ModuleSHA256: digest}
+	admission, err := cooperativeEndpoint(p, p.ReviewedStartID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := stage2aLaunchFixture(t)
+	input.EffectiveConfig["profile"] = "managed-cooperative"
+	input.AdapterTransport = stage2aDirectComms
+	delete(input.ComponentDigests, "bridge")
+	delete(input.ComponentDigests, "harness")
+	delete(input.ComponentDigests, "test_provider")
+	input.SelectedCommand = p.NodePath
+	input.Argv = []string{p.NodePath, path.Join(p.RuntimeRoot, p.Entry), "run", "--soul",
+		p.Runner.PackageRoot, "--admission-socket", admission.SocketPath,
+		"--broker-socket", path.Join(DarwinBrokerDir, p.Runner.Account, "broker.sock"),
+		"--profile", "managed-cooperative", "--cooperative-start-fd", "3"}
+	p.LaunchInputs = &input
+	p.LaunchInputMeasurement, _, err = Stage2aLaunchInputDigest(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.validate(); err != nil {
+		t.Fatalf("exact owner-reviewed plan refused: %v", err)
+	}
+	other := p
+	other.ReviewedStartID = "st_ffffffffffffffffffffffff"
+	if err := other.validate(); err == nil {
+		t.Fatal("reviewed start changed without matching socket")
+	}
+	other.ReviewedStartID = ""
+	if err := other.validate(); err == nil {
+		t.Fatal("direct plan without reviewed start accepted")
+	}
+	changed := cloneStage2aLaunch(t, input)
+	changed.Argv[6] = path.Join(admission.Directory, "other.sock")
+	p.LaunchInputs = &changed
+	p.LaunchInputMeasurement, _, err = Stage2aLaunchInputDigest(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.validate(); err == nil {
+		t.Fatal("re-digested argv accepted a socket outside the reviewed start")
 	}
 }
