@@ -13,6 +13,7 @@ An A-started, dedicated qualification process Q must be tied to the exact owner-
 - After launchd starts Q, A binds the accepted Unix peer to the kernel PID, real/effective/saved UID, real/primary/saved GID, parent PID, process start, and Node image. It observes the image between two matching kernel snapshots to reject PID reuse. It checks the Q group set and rechecks that identity around every protocol frame.
 - A sends a fresh one-use challenge only after authenticating the peer. The pinned Q code reports its exact executable and argv in Ready with the challenge digest; A compares those fields to the installed command. A validates the same fields again when joining the final canonical transcript. Missing, changed, or extra fields fail closed.
 - The proof stays inside the existing A/Q qualification exchange and signed reservation. A continues to hold keys and protected operations in its secure administrator account.
+- A proposed owner-driver control listener uses a separate socket in A's existing mode-0700 `<A home>/.config/agent-machine` state directory. A derives the path from its installed account, no-follow checks its ancestry and exact owner/mode, refuses a preexisting socket, binds a mode-0600 one-use socket, and proves that the recorded pathname reaches its listener with a same-process challenge. It rechecks parent and socket inode/birth identity and authenticates the kernel peer UID/PID/start and exact reviewed executable/argv before consuming any control message. The listener does not implement a driver protocol or admit a physical report by itself. The final signed driver and owner plan must pin the exact home, path, code, argv, and case protocol before activation; no root-run driver or new shared socket is permitted.
 
 ## Acceptance
 
@@ -21,6 +22,7 @@ An A-started, dedicated qualification process Q must be tied to the exact owner-
 - A missing active-start claim, substituted reservation bytes, or second Q session for one start is refused before Q is launched.
 - A missing trigger EOF is refused within the bounded launch window; a disposable guest must also demonstrate that the reviewed Q completes the trigger handshake before Ready is assessed.
 - The same run must be repeated on the exact owner-approved physical host with both dedicated R accounts, released H/R/Souls/Contracts pins, protected cutoff, and safe retirement before any physical T credit is claimed.
+- A driver transport with the wrong state directory, UID/GID, socket inode, peer PID/start, executable, or argv is refused. A leftover socket is never silently adopted or unlinked before a reviewed recovery decision.
 
 ## Replay
 
