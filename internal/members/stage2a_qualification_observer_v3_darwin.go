@@ -13,7 +13,8 @@ import (
 // handshake. No request reaches this function through the Q transport.
 func openStage2aQualificationObserverV3(ctx context.Context,
 	begin stage2aQualificationBeginV1, raw []byte, expected stage2aQualificationReservationV3,
-	key ed25519.PublicKey, checkLiveRun func() error) (*stage2aQualificationSessionV1, func() error, error) {
+	key ed25519.PublicKey, store stage2aAdminClaimStore,
+	checkLiveRun func() error) (*stage2aQualificationSessionV1, func() error, error) {
 	if ctx == nil || checkLiveRun == nil || checkLiveRun() != nil {
 		return nil, nil, errQualificationAdmissionUnavailable
 	}
@@ -51,6 +52,11 @@ func openStage2aQualificationObserverV3(ctx context.Context,
 	now := time.Now()
 	if _, err := stage2aQualificationReservationJoinV3(expected,
 		stage2aQualificationSessionResultV1{begin: begin, startedAt: now, eofObservedAt: now}, raw, key); err != nil {
+		return nil, nil, err
+	}
+	// Consume the exact A-owned start before Q can connect. A failed spawn,
+	// handshake or daemon restart leaves this session unavailable for replay.
+	if err := claimStage2aQualificationSessionV3(store, begin, raw); err != nil {
 		return nil, nil, err
 	}
 	listener, err := newStage2aQualificationListenerV1(stage2aQualificationQSocket, install.GID)

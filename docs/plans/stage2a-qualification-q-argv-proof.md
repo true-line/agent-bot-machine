@@ -7,6 +7,7 @@ An A-started, dedicated qualification process Q must be tied to the exact owner-
 ## Target
 
 - The A-local observer loads the installed Q review and live reservation, checks the paired run, and creates one A-owned listener for that start. Production uses the cross-UID argv proof for every installed Q start.
+- Before creating the listener, A checks its exact stored reservation and active-start claim under the per-installation lock and durably spends a Q session name for that start. A failed spawn or handshake leaves it spent; daemon restart cannot replay it. A new start needs a new reservation and Q session claim.
 - Immediately before launch, A reloads the installed Q record, compares the launchd plist with its rendered bytes, requires the job to be loaded, and verifies the installed launcher, Node, and PS signatures. The launcher accepts only its fixed Q command. No extra account, socket, network allowance, or root-run Q path is introduced.
 - Q writes its PID on the launchd trigger stream and closes its write half before waiting on the separate session socket. A requires EOF on that trigger before accepting the PID, even when launchd retains a socket reference.
 - After launchd starts Q, A binds the accepted Unix peer to the kernel PID, real/effective/saved UID, real/primary/saved GID, parent PID, process start, and Node image. It observes the image between two matching kernel snapshots to reject PID reuse. It checks the Q group set and rechecks that identity around every protocol frame.
@@ -17,6 +18,7 @@ An A-started, dedicated qualification process Q must be tied to the exact owner-
 
 - An installed, owner-reviewed Q plan starts with exact kernel identity, loaded command, signed images, challenge-bound Ready argv, and a clean one-use exchange.
 - Wrong UID/GID, parent, image, start, group, installed plist, argv, challenge, or resumed PID is refused. A Q fixture cannot make the protected positive-start gate true or establish T03.
+- A missing active-start claim, substituted reservation bytes, or second Q session for one start is refused before Q is launched.
 - A missing trigger EOF is refused within the bounded launch window; a disposable guest must also demonstrate that the reviewed Q completes the trigger handshake before Ready is assessed.
 - The same run must be repeated on the exact owner-approved physical host with both dedicated R accounts, released H/R/Souls/Contracts pins, protected cutoff, and safe retirement before any physical T credit is claimed.
 
