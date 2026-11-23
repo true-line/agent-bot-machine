@@ -34,7 +34,8 @@ type qualificationCodeInput struct {
 // QualificationRequest is local planner input, not a qualification report or
 // authorization. Paths and digests identify the exact files reviewed.
 type QualificationRequest struct {
-	SchemaVersion int `json:"schema_version"`
+	Candidate     *qualificationCandidatePlan `json:"candidate,omitempty"`
+	SchemaVersion int                         `json:"schema_version"`
 	Adapter       struct {
 		ID          string `json:"id"`
 		Version     string `json:"version"`
@@ -81,6 +82,28 @@ type QualificationRequest struct {
 		ConfigPath string `json:"configuration_path"`
 		ConfigSHA  string `json:"configuration_sha256"`
 	} `json:"test_provider"`
+}
+
+// Schema 2 authorizes only a candidate qualification. These selectors and
+// bytes are included in the exact saved plan covered by paired owner proof.
+type qualificationCandidatePlan struct {
+	HostUUID            string            `json:"host_uuid"`
+	InstallationID      string            `json:"installation_id"`
+	InstalledPlanDigest string            `json:"installed_plan_digest"`
+	RuntimeInventorySHA string            `json:"runtime_inventory_sha256"`
+	ComponentID         string            `json:"component_id"`
+	Manifest            qualificationFile `json:"manifest"`
+	TestPlan            qualificationFile `json:"test_plan"`
+}
+
+var qualificationCandidateComponent = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+var qualificationPhysicalUUID = regexp.MustCompile(`^[0-9A-F]{8}-(?:[0-9A-F]{4}-){3}[0-9A-F]{12}$`)
+
+func qualificationCandidateFiles(r QualificationRequest) []qualificationFile {
+	if r.Candidate == nil {
+		return nil
+	}
+	return []qualificationFile{r.Candidate.Manifest, r.Candidate.TestPlan}
 }
 
 type qualificationGate struct {
@@ -182,8 +205,18 @@ func rejectDuplicateJSONKeys(raw []byte) error {
 func validateQualificationRequest(r QualificationRequest) error {
 	textFields := []string{r.Adapter.ID, r.Adapter.Version, r.Adapter.Harness.Name, r.Adapter.Harness.Version,
 		r.Target.Account, r.Host.ID, r.Host.Model, r.Host.OS, r.Host.OSVersion, r.Host.OSBuild, r.Host.Architecture, r.Runner.ID, r.Runner.Version, r.TestProvider.ID}
-	if r.SchemaVersion != 1 || r.DefinitionRevision == "" || !qualificationRevision.MatchString(r.DefinitionRevision) || !qualificationRevision.MatchString(r.SuiteRevision) || r.Target.UID < 300 || r.Target.UID > 399 || r.Host.OS != "darwin" || r.Host.Architecture != "arm64" || !qualificationDigest.MatchString(r.Host.EnforcementPolicySHA) {
-		return errors.New("qualification request needs schema_version 1 and lowercase 40-character definition and suite revisions")
+	if (r.SchemaVersion != 1 && r.SchemaVersion != 2) ||
+		(r.SchemaVersion == 2) != (r.Candidate != nil) || r.DefinitionRevision == "" || !qualificationRevision.MatchString(r.DefinitionRevision) || !qualificationRevision.MatchString(r.SuiteRevision) || r.Target.UID < 300 || r.Target.UID > 399 || r.Host.OS != "darwin" || r.Host.Architecture != "arm64" || !qualificationDigest.MatchString(r.Host.EnforcementPolicySHA) {
+		return errors.New("qualification request needs schema_version 1 or candidate schema_version 2 and lowercase 40-character definition and suite revisions")
+	}
+	if candidate := r.Candidate; candidate != nil {
+		if !qualificationPhysicalUUID.MatchString(candidate.HostUUID) ||
+			!soulInstallationID.MatchString(candidate.InstallationID) ||
+			!qualificationDigest.MatchString(candidate.InstalledPlanDigest) ||
+			!qualificationDigest.MatchString(candidate.RuntimeInventorySHA) ||
+			!qualificationCandidateComponent.MatchString(candidate.ComponentID) {
+			return errors.New("candidate qualification needs the exact designated host, installed plan and sealed runtime")
+		}
 	}
 	for _, s := range textFields {
 		if strings.TrimSpace(s) == "" || hasASCIIControl(s) || len(s) > 256 {
@@ -197,6 +230,7 @@ func validateQualificationRequest(r QualificationRequest) error {
 		{r.Runner.BinaryPath, r.Runner.BinarySHA},
 		{r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA},
 	}
+	files = append(files, qualificationCandidateFiles(r)...)
 	for label, artifact := range map[string]qualificationFile{"code input manifest": r.Adapter.Launch.CodeInputManifest, "driver": r.Adapter.Launch.Driver} {
 		if (artifact.Path == "") != (artifact.SHA256 == "") {
 			return fmt.Errorf("%s must provide both path and digest", label)
@@ -244,7 +278,9 @@ func qualificationRunPlan(raw []byte, r QualificationRequest, h Host) (Plan, *Qu
 	if err := checkQualificationRole(r.Target.Account, r.Target.UID, h); err != nil {
 		return Plan{}, nil, err
 	}
-	for _, f := range []qualificationFile{{r.Adapter.PackagePath, r.Adapter.PackageSHA}, {r.Runner.BinaryPath, r.Runner.BinarySHA}, {r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA}} {
+	files := []qualificationFile{{r.Adapter.PackagePath, r.Adapter.PackageSHA},
+		{r.Runner.BinaryPath, r.Runner.BinarySHA}, {r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA}}
+	for _, f := range append(files, qualificationCandidateFiles(r)...) {
 		if err := verifyQualificationFile(f); err != nil {
 			return Plan{}, nil, err
 		}

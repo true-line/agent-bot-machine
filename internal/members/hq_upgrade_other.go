@@ -26,3 +26,7 @@ func uninstallDarwinHQ(owner, state, id string, preview bool) (string, error) {
 func listHQUninstallPlans(owner, state string) ([]string, string, error) {
 	return nil, "", errors.New("HQ service uninstall requires macOS")
 }
+
+func reviewHQStage2aService(Input, Host, Account, Account, string) (*hqStage2aLaunch, error) {
+	return nil, errors.New("Stage 2a HQ requires macOS")
+}

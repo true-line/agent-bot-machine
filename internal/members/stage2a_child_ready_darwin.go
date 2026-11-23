@@ -28,12 +28,12 @@ func (s *Stage2aService) ChildReady(hqUID int, epoch string, q Stage2aChildReady
 		r.hello == nil || r.hello.aborted || !r.hello.finalized || len(r.hello.finalizationEnvelope) == 0 {
 		return reply, errStage2aReservationAuthority
 	}
-	p, raw, err := loadStage2aInstalledPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, q.InstallationID)
+	p, raw, err := loadStage2aActiveExecutionPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, r)
 	if err != nil || stage2aReservationSHA256(raw) != r.policyDigest ||
 		checkStage2aGrantedRoleProcess(r.runnerPID, p.Runner.UID, p.Runner.GID, "runner", r.runnerProcess) != nil ||
 		checkStage2aGrantedRoleProcess(r.bridgePID, p.Bridge.UID, p.Bridge.GID, "bridge", r.bridgeProcess) != nil ||
 		checkStage2aGrantedRoleProcess(r.childLauncherPID, p.Runner.UID, p.Runner.GID, "child", r.childLauncherProcess) != nil ||
-		stage2aAdapterChildEnv(p.LaunchInputs, &p.BridgeQualification, p.Binding.Snapshots.LaunchInputs.RootPath) != nil {
+		(r.runModeV3 == "" && stage2aRecheckExecutionCode(r, p) != nil) {
 		return reply, errStage2aReservationAuthority
 	}
 	childProcess, err := observeStage2aChildProcess(q.ChildPID, q.ChildLauncherPID, p.Runner, p.LaunchInputs)
@@ -108,6 +108,7 @@ func (s *Stage2aService) ChildReady(hqUID int, epoch string, q Stage2aChildReady
 	envelope, err := signStage2aEnvelope(payload, 1, Stage2aChildStartPurpose,
 		s.key.Public().(ed25519.PublicKey), s.sign)
 	if err != nil || len(envelope) > 8192 || !time.Now().Before(expires) ||
+		stage2aRecheckExecutionCode(r, p) != nil ||
 		checkStage2aChildProcess(q.ChildPID, q.ChildLauncherPID, p.Runner, p.LaunchInputs, childProcess) != nil {
 		return reply, errStage2aReservationAuthority
 	}

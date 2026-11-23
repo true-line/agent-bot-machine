@@ -17,8 +17,9 @@ func (OSHost) List(string) ([]string, error)         { return nil, errUnsupporte
 
 // OSRoot has no Windows form either.
 type OSRoot struct {
-	upgradeApproval  Approval
-	checkUpgradePair upgradePairGuard
+	upgradeApproval    Approval
+	checkUpgradePair   upgradePairGuard
+	protectedHQUpgrade func(Step) error
 }
 
 func (OSRoot) PasswordField(string) (string, bool, error)     { return "", false, errUnsupported }

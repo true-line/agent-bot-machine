@@ -1,9 +1,7 @@
 package members
 
 import (
-	"bytes"
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -26,59 +24,49 @@ type stage2aSoulsProtectedStart struct {
 }
 
 func verifyStage2aRunnerReservation(run Stage2aRunnerExec, in Stage2aRoleInvocation,
-	pub ed25519.PublicKey, now time.Time) error {
+	pub ed25519.PublicKey, now time.Time) (stage2aDomainInventoryRefV3, error) {
+	var empty stage2aDomainInventoryRefV3
 	invalid := errors.New("Soul runner reservation differs from Machine's signed start")
-	raw, err := decodeStage2aRoleBase64(run.ReservationEnvelopeBase64URL, 32<<10)
-	if err != nil || stage2aReservationSHA256(raw) != run.ReservationSHA256 {
-		return invalid
+	raw, err := decodeStage2aRoleBase64(run.ReservationEnvelopeBase64URL, stage2aV3EnvelopeLimit)
+	if err != nil {
+		return empty, invalid
 	}
-	var envelope stage2aSignedReservation
-	if decodeStage2aRoleJSON(raw, &envelope) != nil ||
-		envelope.SchemaVersion != 2 || envelope.Purpose != stage2aAdminReservationPurpose ||
-		envelope.IssuerPublicKeyBase64URL != base64.RawURLEncoding.EncodeToString(pub) {
-		return invalid
+	guard, err := verifyStage2aReservationModeV3(stage2aReservationRunModeV3(run.ReservationRunModeV3), raw,
+		run.ReservationSHA256, run.ReservationV3, pub, now)
+	if err != nil {
+		return empty, invalid
 	}
-	canonical, err := marshalStage2aReservationJCS(envelope)
-	if err != nil || !bytes.Equal(raw, canonical) {
-		return invalid
+	start := guard.assignment.SoulStartAssignment
+	binding := guard.binding
+	if start.Schema != stage2aAssignmentSchemaV3 || binding.Contract != "machine/v3" || binding.SchemaVersion != 3 {
+		return empty, invalid
 	}
-	payloadRaw, err := decodeStage2aRoleBase64(envelope.PayloadBase64URL, 24<<10)
-	if err != nil || stage2aReservationSHA256(payloadRaw) != envelope.PayloadSHA256 {
-		return invalid
-	}
-	signature, err := decodeStage2aRoleBase64(envelope.SignatureBase64URL, ed25519.SignatureSize)
-	if err != nil || len(signature) != ed25519.SignatureSize ||
-		!ed25519.Verify(pub, append([]byte(stage2aAdminReservationPurpose+"\x00"), payloadRaw...), signature) {
-		return invalid
-	}
-	var payload stage2aReservationPayload
-	if decodeStage2aRoleJSON(payloadRaw, &payload) != nil ||
-		payload.Contract != "machine/v2" || payload.Kind != "stage2a-reservation" || payload.SchemaVersion != 2 ||
-		payload.Assignment.SoulArtifactSHA256 == "" ||
-		!reflect.DeepEqual(payload.Assignment.SoulStartAssignment, in.Start) ||
-		!reflect.DeepEqual(payload.MeasurementBinding, in.Binding) ||
-		payload.Assignment.InstallationID != in.Request.InstallationID ||
-		payload.Assignment.StartID != in.Request.StartID ||
-		payload.Assignment.HQEpoch != in.Request.HQEpoch ||
-		payload.Assignment.PlanDigest != in.Request.PlanDigest ||
-		payload.Assignment.RunnerUID != os.Getuid() || payload.Assignment.RunnerUID != os.Geteuid() ||
-		payload.Assignment.RunnerGID != os.Getegid() ||
-		payload.MeasurementBinding.SoulArtifactSHA256 != string(payload.Assignment.SoulArtifactSHA256) {
-		return invalid
-	}
-	expires, err := time.Parse(time.RFC3339Nano, payload.ExpiresAt)
-	if err != nil || !now.Before(expires) || expires.Sub(now) > 30*time.Second {
-		return invalid
+	start.Schema = in.Start.Schema
+	binding.Contract, binding.SchemaVersion = in.Binding.Contract, in.Binding.SchemaVersion
+	r := guard.r
+	if guard.payload.Contract != "machine/v3" || guard.payload.SchemaVersion != 3 ||
+		!reflect.DeepEqual(start, in.Start) || !reflect.DeepEqual(binding, in.Binding) ||
+		start.InstallationID != in.Request.InstallationID || start.StartID != in.Request.StartID ||
+		start.HQEpoch != in.Request.HQEpoch || start.PlanDigest != in.Request.PlanDigest ||
+		start.RunnerUID != os.Getuid() || start.RunnerUID != os.Geteuid() || start.RunnerGID != os.Getegid() ||
+		guard.assignment.SoulArtifactSHA256 == "" || binding.SoulArtifactSHA256 != string(guard.assignment.SoulArtifactSHA256) ||
+		!stage2aPrefixedDigest.MatchString(guard.assignment.HDescriptorDigest) ||
+		guard.assignment.HDescriptorDigest != guard.hDigest ||
+		guard.assignment.RInventoryDigest != r.InventoryDigest || r.Domain != "R-runtime" ||
+		r.InstallationID != start.InstallationID || r.OwnerPlanDigest != "sha256:"+start.PlanDigest ||
+		r.ReaderUID != uint32(start.RunnerUID) || r.ReaderGID != uint32(start.RunnerGID) || r.MachineUID != uint32(start.MachineUID) ||
+		recheckHQStage2aDomainFiles(r) != nil {
+		return empty, invalid
 	}
 	launchDigest, _, err := Stage2aLaunchInputDigest(in.Launch)
-	if err != nil || launchDigest != payload.MeasurementBinding.LaunchInputMeasurement {
-		return invalid
+	if err != nil || launchDigest != binding.LaunchInputMeasurement {
+		return empty, invalid
 	}
 	endpoints, err := DeriveSoulBridgeEndpoints(in.Runner, in.Bridge, in.Start.HQUID, in.Request.StartID)
-	if err != nil || !reflect.DeepEqual(payload.MemberEndpoint, endpoints.MemberLaunchAssignment()) {
-		return invalid
+	if err != nil || !reflect.DeepEqual(guard.member, endpoints.MemberLaunchAssignment()) {
+		return empty, invalid
 	}
-	return nil
+	return r, nil
 }
 
 func stage2aRunnerStateRoot(runner SoulRunner) (string, error) {

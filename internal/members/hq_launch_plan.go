@@ -2,9 +2,12 @@ package members
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"strings"
 )
 
 const (
@@ -24,6 +27,7 @@ type launchRecord struct {
 	Plist      string           `json:"plist"`
 	OwnerUID   int              `json:"owner_uid"`
 	RuntimeDir *launchDirectory `json:"runtime_directory,omitempty"`
+	Stage2a    *hqStage2aLaunch `json:"stage2a,omitempty"`
 }
 
 type launchDirectory struct {
@@ -100,7 +104,18 @@ func appendLaunchDaemon(p *Plan, in Input, h Host) error {
 	if err != nil {
 		return err
 	}
+	rec := launchRecord{Service: *s, OwnerUID: owner.UID}
+	if s.Stage2a != nil {
+		rec.Stage2a, err = reviewHQStage2aService(in, h, owner, hq, capability)
+		if err != nil {
+			return err
+		}
+	}
 	plist := renderLaunchPlist(*s, owner.UID, in.Invoker, capability)
+	if rec.Stage2a != nil {
+		plist = renderHQStage2aPlist(plist, rec.Stage2a.OuterArgv)
+	}
+	rec.Plist = plist
 	if err := trustedPath(h, filepath.Dir(launchPlist), true); err != nil {
 		return err
 	}
@@ -122,7 +137,6 @@ func appendLaunchDaemon(p *Plan, in Input, h Host) error {
 		}
 		action = ActionWrite
 	}
-	rec := launchRecord{Service: *s, Plist: plist, OwnerUID: owner.UID}
 	detail := "install the approved LaunchDaemon and verify status as its owner"
 	if capability == launchControlV2 {
 		checkACL := checkDarwinACLs
@@ -172,4 +186,44 @@ func renderLaunchPlist(s HQService, uid int, owner, capability string) string {
 <key>SockType</key><string>stream</string></dict></dict>
 </dict></plist>
 `, s.ArtifactSHA256, s.NodeSHA256, uid, launchLabel, DarwinHQAccount, DarwinHQAccount, filepath.Join(s.ReleaseDir, "helpers/darwin-owner.rb"), s.Node, filepath.Join(s.ReleaseDir, "hq/main.mjs"), launchState, owner, socketForCapability(capability))
+}
+
+func matchesReviewedHQPlist(rec launchRecord, owner, capability string) bool {
+	want := renderLaunchPlist(rec.Service, rec.OwnerUID, owner, capability)
+	if rec.Stage2a == nil || rec.Service.Stage2a == nil {
+		return rec.Stage2a == nil && rec.Service.Stage2a == nil && rec.Plist == want
+	}
+	plan := rec.Stage2a
+	if !stage2aPrefixedDigest.MatchString(plan.RubySHA256) || !stage2aPrefixedDigest.MatchString(plan.LauncherSHA256) {
+		return false
+	}
+	derived, err := rec.Service.Stage2a.launch(owner, plan.RubySHA256)
+	if err != nil {
+		return false
+	}
+	derived.LauncherSHA256 = plan.LauncherSHA256
+	return reflect.DeepEqual(plan, derived) && rec.Plist == renderHQStage2aPlist(want, derived.OuterArgv)
+}
+
+func renderHQStage2aPlist(base string, argv []string) string {
+	const start = "<key>ProgramArguments</key><array>\n"
+	const end = "</array>"
+	before, tail, _ := strings.Cut(base, start)
+	_, after, _ := strings.Cut(tail, end)
+	var arguments strings.Builder
+	for _, arg := range argv {
+		arguments.WriteString("<string>")
+		_ = xml.EscapeText(&arguments, []byte(arg))
+		arguments.WriteString("</string>\n")
+	}
+	return before + start + arguments.String() + end + after
+}
+
+// The protected service runs the candidate as H only through the approved
+// launchd argv. Base service capability and peer probes still run as H.
+func probeBaseHQRole(rec launchRecord, probe func() error) error {
+	if rec.Stage2a != nil || rec.Service.Stage2a != nil {
+		return nil
+	}
+	return probe()
 }

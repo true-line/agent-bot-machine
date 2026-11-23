@@ -1236,6 +1236,23 @@ adapter does not remove an account still used by another adapter. The account
 and its home are kept and reported, never deleted by this tool: the home may
 hold work.
 
+The Machine v3 H/R signer first enforces a narrow fixed-purpose envelope
+boundary. It accepts only a producer-created verified A-input token and runs
+under the secure A real/effective UID and GID. It signs exact RFC 8785 JCS
+payload bytes using Ed25519 over ASCII purpose, NUL, payload, verifies its own
+signature against the independently enrolled A public key, and emits the
+purpose-separated H descriptor digest for the Soul plan and reservation. Its
+read-only verifier refuses wrong purpose, key, version, noncanonical bytes and
+malformed base64url. The H descriptor signer additionally reopens the sealed
+H tree and sibling sidecar, compares the final H ref and selected runtime,
+guard and Ruby helper rows with the verified H install plan, checks the exact
+outer and Node argv, and requires the signer key to match the existing
+root-owned `SoulAuthorityPin`. This cryptographic component does not make a launch
+eligible: the A-owned H/R recheck, authenticated owner plan and release map,
+fixed H descriptor publication, HQ preloader, one-use claim and physical run
+must all be composed before a positive start. The old v2 reservation retains
+its old purpose and remains closed for protected starts.
+
 ## Open questions for the owner
 
 | Question                                    | Recommendation                                                                                                            |
@@ -1474,6 +1491,15 @@ atomic challenge claim and physical host evidence.
   aliased snapshot roots, mismatched protected bridge start and reservation,
   and cooperative gate substitution refuse. This is verifier evidence only;
   no fixture counts as physical T01/T02/T03/T21 or a release qualification.
+- The v3 envelope signer runs only with the matching A real/effective identity
+  and a producer-created verified token; wrong A identity, signer, purpose,
+  contract version, duplicate keys and noncanonical bytes refuse. A matching
+  signature is a component result, not an owner-plan or installed-H/R verdict.
+  The H descriptor validator also refuses a substituted host, owner-pinned
+  component source commit, guard file, launch argv, installed Node row or
+  authority key. A separate H/R component release attestation is deferred in
+  Platform #127; the selected adapter's qualification attestation remains a
+  separate required gate.
 - A synthetic v3 qualification and Statement pair agrees on exact references
   and subject digest. Old purpose, missing or reused completed-run reference,
   future qualification date and expiry at verification time refuse. These
@@ -1538,6 +1564,10 @@ completed-run/report producer out of this portable preflight.
    `TestMeasuredV3StatementAndQualificationParsing`; they do not replace the
    separately authenticated completed-run, signing-time or installed-byte
    checks.
+7. For the fixed Machine v3 envelope and H descriptor components, run `go test
+   ./internal/members -run 'TestStage2a(HDescriptor|V3)' -count=1`, then the
+   full Go and vet gates. Do not wire a positive route until the H/R producer
+   and owner-plan consumer can supply verified inputs under the A account.
 
 ### Opt-in Linux HQ service
 
@@ -1654,3 +1684,26 @@ First-install failure rolls back the new registration. Role-account state stays
 in its private home. This service operation does not qualify the protected
 profile. The [HQ service issue](https://github.com/true-line/agent-bot-hq/issues/88)
 tracks the scope and remaining acceptance evidence.
+
+### Stage 2a HQ code review
+
+A dedicated paired macOS HQ upgrade can opt into Stage 2a in its
+`--hq-service` record. The owner reviews the H installation and reader
+identities, fixed A authority pin, inventory and limits, component source
+commits and artifact and manifest hashes, and the full Ruby and Node argv.
+The selected manifest covers the Ruby helper, preloader, guard and entry.
+The base HQ service retains its existing plan and launchd arguments.
+
+`runtime_installation_id` selects a separately approved installed R runtime.
+Before consuming the H approval, the fixed offline A worker checks the
+paired owner plan and the root-applied R receipt. It remeasures R and checks
+the exact release manifest mapping. Root stages the H inputs in fresh private
+storage. A independently seals them, signs the H-only descriptor with the
+existing paired key, and publishes the descriptor exclusively.
+
+Launchd receives the approved guarded argv only after the offline worker
+rechecks H and R. If the candidate fails, Machine verifies its stop before
+withdrawing its descriptor and restoring the reviewed prior job. Recovery
+uses the durable descriptor and H/R witnesses to verify a previously
+started candidate. Changed or uncertain evidence preserves the journal for
+reconciliation.

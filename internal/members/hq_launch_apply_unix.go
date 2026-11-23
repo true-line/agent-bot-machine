@@ -85,6 +85,13 @@ func approvedLaunchPID(out []byte, s HQService, owner string) (string, bool) {
 	}
 	want := []string{"/usr/bin/ruby", "--disable-gems", filepath.Join(s.ReleaseDir, "helpers/darwin-owner.rb"),
 		"launch", s.Node, filepath.Join(s.ReleaseDir, "hq/main.mjs"), "run", "--home", launchState, "--owner-account", owner}
+	if s.Stage2a != nil {
+		protected, err := s.Stage2a.launch(owner, "")
+		if err != nil {
+			return "", false
+		}
+		want = protected.OuterArgv
+	}
 	return pid, source == launchPlist && program == want[0] && slices.Equal(args, want)
 }
 
@@ -145,7 +152,7 @@ func activateLaunchDaemon(step Step) error {
 		if _, err := os.Lstat(filepath.Join(receiptsDir(), upgradeJournalName)); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("an interrupted HQ release transition needs reconciliation")
 		}
-		return activateReviewedLaunch(step, nil, nil)
+		return activateReviewedLaunch(step, nil, nil, nil)
 	})
 }
 
@@ -158,13 +165,22 @@ func submitHQBootstrap(guard func(func() error) error, submit func() error) erro
 	return guard(submit)
 }
 
-func activateReviewedLaunch(step Step, guardBootstrap func(func() error) error, stopStarted func(*os.File, os.FileInfo) error) (err error) {
+func activateReviewedLaunch(step Step, guardBootstrap func(func() error) error, stopStarted func(*os.File, os.FileInfo) error, protectedCheck func() error) (err error) {
 	if step.Target != launchLabel {
 		return errors.New("expected Darwin LaunchDaemon step")
 	}
 	var rec launchRecord
 	if err = json.Unmarshal([]byte(step.Content), &rec); err != nil {
 		return err
+	}
+	if rec.Service.Stage2a != nil || rec.Stage2a != nil {
+		if rec.Service.Stage2a != nil && rec.Stage2a != nil && protectedCheck != nil && guardBootstrap != nil {
+			if err := protectedCheck(); err != nil {
+				return err
+			}
+		} else {
+			return errors.New("protected Stage 2a HQ cannot use the base service activator")
+		}
 	}
 	expected, err := verifyDarwinRelease(rec.Service, OSHost{})
 	if err != nil {
@@ -185,10 +201,17 @@ func activateReviewedLaunch(step Step, guardBootstrap func(func() error) error, 
 		return err
 	}
 	main := filepath.Join(rec.Service.ReleaseDir, "hq/main.mjs")
-	capability, err := hqProgramOutput("/usr/bin/sudo", "-n", "-H", "-u", DarwinHQAccount, "--", rec.Service.Node, main, "check-owner-control")
-	var cap launchRoleCapability
-	if err != nil || json.Unmarshal(capability, &cap) != nil || cap.Capability != expected {
-		return fmt.Errorf("the approved release did not confirm %s as the HQ account", expected)
+	cap := launchRoleCapability{Capability: expected}
+	if err = probeBaseHQRole(rec, func() error {
+		capability, err := hqProgramOutput("/usr/bin/sudo", "-n", "-H", "-u", DarwinHQAccount, "--", rec.Service.Node, main, "check-owner-control")
+		var checked launchRoleCapability
+		if err != nil || json.Unmarshal(capability, &checked) != nil || checked.Capability != expected {
+			return fmt.Errorf("the approved release did not confirm %s as the HQ account", expected)
+		}
+		cap = checked
+		return nil
+	}); err != nil {
+		return err
 	}
 	created := step.Action == ActionCreate
 	if created && loaded {
@@ -295,7 +318,14 @@ func activateReviewedLaunch(step Step, guardBootstrap func(func() error) error, 
 		}
 	}()
 	if !loaded {
-		if err = submitHQBootstrap(guardBootstrap, func() error { return runProgram(launchctl, "bootstrap", "system", launchPlist) }); err != nil {
+		if err = submitHQBootstrap(guardBootstrap, func() error {
+			if protectedCheck != nil {
+				if err := protectedCheck(); err != nil {
+					return err
+				}
+			}
+			return runProgram(launchctl, "bootstrap", "system", launchPlist)
+		}); err != nil {
 			return err
 		}
 		started = true

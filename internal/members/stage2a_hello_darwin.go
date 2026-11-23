@@ -90,7 +90,7 @@ func (s *Stage2aService) PeerRole(hqUID int, epoch string, q Stage2aPeerRequest)
 		r.hello != nil && r.hello.aborted {
 		return reply, errStage2aReservationAuthority
 	}
-	p, raw, err := loadStage2aInstalledPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, q.InstallationID)
+	p, raw, err := loadStage2aActiveExecutionPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, r)
 	if err != nil || stage2aReservationSHA256(raw) != r.policyDigest ||
 		q.PeerUID != p.Runner.UID || p.Binding.ProfileInForce != "managed-protected" ||
 		stage2aHelloCheckLive(r, p, q.Stage2aStopRequest) != nil {
@@ -151,9 +151,15 @@ func observeStage2aHelloRunnerPeer(pid int, r *stage2aLiveReservation,
 	p stage2aInstalledPolicy) (soulKernelProcessSnapshot, error) {
 	if r == nil || pid <= 1 || pid == r.runnerPID || p.Node == "" ||
 		len(p.LaunchInputs.Argv) == 0 || p.LaunchInputs.Argv[0] != p.Node ||
-		p.LaunchInputs.SelectedCommand != p.Node ||
-		!stage2aRuntimeFile(p.Binding.Snapshots.LaunchInputs.RootPath, p.Node,
-			"bin/node", p.LaunchInputs.Files, true) ||
+		p.LaunchInputs.SelectedCommand != p.Node {
+		return soulKernelProcessSnapshot{}, errStage2aReservationAuthority
+	}
+	if r.runModeV3 != "" {
+		if stage2aRecheckExecutionCode(r, p) != nil {
+			return soulKernelProcessSnapshot{}, errStage2aReservationAuthority
+		}
+	} else if !stage2aRuntimeFile(p.Binding.Snapshots.LaunchInputs.RootPath, p.Node,
+		"bin/node", p.LaunchInputs.Files, true) ||
 		!stage2aRuntimeFile(p.Binding.Snapshots.LaunchInputs.RootPath, p.Entry,
 			"bin/agent-bot-souls.mjs", p.LaunchInputs.Files, false) {
 		return soulKernelProcessSnapshot{}, errStage2aReservationAuthority
@@ -354,7 +360,8 @@ func stage2aHelloCheckLive(r *stage2aLiveReservation, p stage2aInstalledPolicy, 
 	definition, err := observeStage2aAdminSnapshot(snapshots, filepath.Base(p.Binding.Snapshots.Definition.RootPath),
 		p.Binding.Snapshots.Definition, p.Definition)
 	if err != nil || definition != p.Binding.DefinitionMeasurement ||
-		observeInstalledStage2aLaunchInputs(snapshots, p.Binding, p.LaunchInputs) != nil {
+		observeInstalledStage2aLaunchInputs(snapshots, p.Binding, p.LaunchInputs) != nil ||
+		(r.runModeV3 != "" && stage2aRecheckExecutionCode(r, p) != nil) {
 		return errStage2aReservationAuthority
 	}
 	name := ".stage2a-b-final-" + soulStartClaimName(q.InstallationID, q.StartID) + ".json"

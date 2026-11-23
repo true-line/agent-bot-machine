@@ -24,9 +24,11 @@ type Stage2aReserveReply struct {
 }
 
 type Stage2aService struct {
-	mu     sync.Mutex
-	key    ed25519.PrivateKey
-	active map[string]*stage2aLiveReservation
+	mu                sync.Mutex
+	key               ed25519.PrivateKey
+	active            map[string]*stage2aLiveReservation
+	candidateGrantsV3 stage2aCandidateGrantRegistryV3
+	reserveV3         func(int, string, Stage2aReserveRequest, *stage2aSignedCandidateGrantV3) (stage2aReservation, stage2aReservationWorkerReplyV3, error)
 }
 
 type stage2aLiveReservation struct {
@@ -34,6 +36,9 @@ type stage2aLiveReservation struct {
 	envelope             []byte
 	request              SoulRunRequest
 	payload              stage2aReservationPayload
+	payloadV3            []byte
+	runModeV3            stage2aReservationRunModeV3
+	runtimeRefV3         stage2aDomainInventoryRefV3
 	proofDigest          string
 	bridgeProof          [32]byte
 	bridgeAssignment     []byte
@@ -54,7 +59,7 @@ type stage2aLiveReservation struct {
 }
 
 func NewStage2aService(key ed25519.PrivateKey) *Stage2aService {
-	return &Stage2aService{key: key, active: make(map[string]*stage2aLiveReservation)}
+	return &Stage2aService{key: key, active: make(map[string]*stage2aLiveReservation), candidateGrantsV3: make(stage2aCandidateGrantRegistryV3)}
 }
 
 func (s *Stage2aService) sign(preimage []byte) ([]byte, error) {
@@ -114,8 +119,9 @@ func (s *Stage2aService) Lookup(hqUID int, epoch string, q Stage2aLookupRequest)
 		if index.Runner.PackageRoot != q.PackagePath {
 			continue
 		}
-		p, validated, err := loadStage2aInstalledPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, index.Binding.InstallationID)
-		if err != nil || !bytes.Equal(raw, validated) || p.Runner.PackageRoot != q.PackagePath || reply.InstallationID != "" {
+		runtime, err := stage2aLoadInstalledRuntimeV3(s.key.Public().(ed25519.PublicKey), hqUID, epoch, index.Binding.InstallationID)
+		p := runtime.Policy
+		if err != nil || !bytes.Equal(raw, runtime.PolicyRaw) || p.Runner.PackageRoot != q.PackagePath || reply.InstallationID != "" {
 			return Stage2aLookupReply{}, errStage2aReservationAuthority
 		}
 		reply = Stage2aLookupReply{
@@ -134,61 +140,34 @@ func (s *Stage2aService) Reserve(hqUID int, epoch string, request Stage2aReserve
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var reply Stage2aReserveReply
-	if len(s.key) != ed25519.PrivateKeySize || epoch != request.HQEpoch {
+	if len(s.key) != ed25519.PrivateKeySize || s.reserveV3 == nil || epoch != request.HQEpoch || len(s.active) >= 128 {
 		return reply, errStage2aReservationAuthority
 	}
-	// A reservation remains active after its short launch lease expires until
-	// an authenticated stop confirms both dedicated role UIDs are idle.
-	if len(s.active) >= 128 {
+	// The only positive route supplies authority from the fixed offline A
+	// worker. Its expected payload comes from installed evidence, not HQ.
+	grant, err := s.candidateGrantsV3.consume(hqUID, request, s.key, time.Now())
+	if err != nil {
+		return reply, err
+	}
+	got, result, err := s.reserveV3(hqUID, epoch, request, grant)
+	if err != nil || (result.Mode == stage2aCandidateRunV3) != (grant != nil) || !stage2aPrefixedDigest.MatchString(result.PolicyDigest) {
 		return reply, errStage2aReservationAuthority
 	}
 	key := s.key.Public().(ed25519.PublicKey)
-	p, raw, err := loadStage2aInstalledPolicy(key, hqUID, epoch, request.InstallationID)
-	if err != nil {
-		return reply, err
-	}
-	store, snapshots := p.stores()
-	req := stage2aReservationRequest{
-		start:    SoulRunRequest{PlanDigest: request.PlanDigest, InstallationID: request.InstallationID, StartID: request.StartID, HQEpoch: request.HQEpoch},
-		launchID: request.LaunchID,
-	}
-	authority := stage2aReservationAuthority{
-		load: func(req stage2aReservationRequest) (stage2aReservationInputs, error) {
-			dir, err := store.open()
-			if err != nil {
-				return stage2aReservationInputs{}, err
-			}
-			defer dir.Close()
-			if err := requireUnspentStage2aReservation(dir, stage2aActiveClaimName(req.start.InstallationID)); err != nil {
-				return stage2aReservationInputs{}, err
-			}
-			// Retirement takes this same installation lock and removes the
-			// authority file before the sudo rule. Reopen it while locked so a
-			// reservation that loaded it just before retirement cannot sign.
-			_, fresh, err := loadStage2aInstalledPolicy(key, hqUID, epoch, req.start.InstallationID)
-			if err != nil || !bytes.Equal(fresh, raw) {
-				return stage2aReservationInputs{}, errStage2aReservationAuthority
-			}
-			return p.inputs(req, snapshots, key)
-		},
-		sign: s.sign,
-		beforeAdminSign: func(dir *os.File) error {
-			return spendStage2aAdminName(dir, stage2aActiveClaimName(req.start.InstallationID), store.uid, store.gid)
-		},
-	}
-	got, err := reserveStage2aAdminStart(store, snapshots, req, authority)
-	if err != nil {
-		return reply, err
-	}
-	var envelope stage2aSignedReservation
-	var payload stage2aReservationPayload
-	if json.Unmarshal(got.envelope, &envelope) != nil {
+	guard, err := verifyStage2aReservationModeV3(result.Mode, got.envelope, got.sha256, result.Expected, key, time.Now())
+	a := guard.assignment
+	if err != nil || a.HQUID != hqUID || a.HQEpoch != epoch || a.InstallationID != request.InstallationID ||
+		a.StartID != request.StartID || a.LaunchID != request.LaunchID || a.PlanDigest != request.PlanDigest {
 		return reply, errStage2aReservationAuthority
 	}
-	decoded, err := base64.RawURLEncoding.Strict().DecodeString(envelope.PayloadBase64URL)
-	if err != nil || json.Unmarshal(decoded, &payload) != nil {
-		return reply, errStage2aReservationAuthority
-	}
+	// Role plumbing still uses a legacy field projection. The guard authenticates
+	// the full v3 reservation and mode before any role can execute.
+	payload := guard.payload
+	payload.Assignment = a.stage2aReservationAssignment
+	payload.Assignment.Schema = "agent-bot-machine/soul-start-assignment/v2"
+	payload.MeasurementBinding = guard.binding
+	payload.MeasurementBinding.Contract, payload.MeasurementBinding.SchemaVersion = "machine/v2", 2
+	req := SoulRunRequest{PlanDigest: request.PlanDigest, InstallationID: request.InstallationID, StartID: request.StartID, HQEpoch: request.HQEpoch}
 	var proof [32]byte
 	defer clear(proof[:])
 	if _, err := rand.Read(proof[:]); err != nil ||
@@ -196,8 +175,8 @@ func (s *Stage2aService) Reserve(hqUID int, epoch string, request Stage2aReserve
 		return reply, errStage2aReservationAuthority
 	}
 	s.active[got.sha256] = &stage2aLiveReservation{
-		digest: got.sha256, policyDigest: stage2aReservationSHA256(raw), envelope: got.envelope,
-		payload: payload, request: req.start, proofDigest: stage2aReservationSHA256(proof[:]), bridgeProof: proof,
+		digest: got.sha256, policyDigest: result.PolicyDigest, envelope: got.envelope,
+		payload: payload, payloadV3: result.Expected, runModeV3: result.Mode, runtimeRefV3: guard.r, request: req, proofDigest: stage2aReservationSHA256(proof[:]), bridgeProof: proof,
 	}
 	return Stage2aReserveReply{EnvelopeBase64URL: stage2aEncodeEnvelope(got.envelope), SHA256: got.sha256}, nil
 }
@@ -275,6 +254,8 @@ func (s *Stage2aService) Exec(hqUID int, epoch, digest, role, nonce string, pid 
 			Definition: p.Definition, Node: p.Node, Entry: p.Entry,
 			ReservationEnvelopeBase64URL: base64.RawURLEncoding.EncodeToString(r.envelope),
 			ReservationSHA256:            r.digest,
+			ReservationV3:                r.payloadV3,
+			ReservationRunModeV3:         string(r.runModeV3),
 		}
 	} else {
 		invocation.BridgeExec = &Stage2aBridgeExec{
@@ -409,9 +390,9 @@ func (s *Stage2aService) current(hqUID int, epoch, digest string) (*stage2aLiveR
 	if err != nil || !time.Now().Before(expires) {
 		return nil, p, zero, errStage2aReservationExpired
 	}
-	p, raw, err := loadStage2aInstalledPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, r.request.InstallationID)
+	loaded, raw, err := loadStage2aActiveExecutionPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, r)
 	if err != nil || stage2aReservationSHA256(raw) != r.policyDigest {
 		return nil, p, zero, errStage2aReservationAuthority
 	}
-	return r, p, expires, nil
+	return r, loaded, expires, nil
 }
