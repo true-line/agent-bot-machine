@@ -441,37 +441,47 @@ func stage2aStageRuntimeV3(parent *os.File, inv stage2aDomainInventoryV3,
 	if err != nil {
 		return empty, err
 	}
-	dirs := map[string]*os.File{".": root}
-	defer func() {
-		for _, dir := range dirs {
-			dir.Close()
-		}
-	}()
+	defer root.Close()
 	for _, row := range inv.Directories {
-		parentDir := dirs[filepath.Dir(row.Path)]
-		if parentDir == nil {
-			return empty, errStage2aReservationAuthority
-		}
-		child, err := stage2aRuntimeNewDirectory(parentDir, filepath.Base(row.Path), uid, gid)
+		parentDir, err := stage2aRuntimeOpenStagedDirectory(root, filepath.Dir(row.Path), uid, gid)
 		if err != nil {
 			return empty, err
 		}
-		dirs[row.Path] = child
-	}
-	for _, row := range inv.Files {
-		parentDir := dirs[filepath.Dir(row.Path)]
-		if parentDir == nil {
+		child, err := stage2aRuntimeNewDirectory(parentDir, filepath.Base(row.Path), uid, gid)
+		closeErr := parentDir.Close()
+		if err != nil {
+			return empty, err
+		}
+		if err := child.Close(); err != nil || closeErr != nil {
 			return empty, errStage2aReservationAuthority
 		}
-		if err := stage2aCopyRuntimeV3File(parentDir, sourceRoots[row.ComponentID], row, uid, gid); err != nil {
+	}
+	for _, row := range inv.Files {
+		parentDir, err := stage2aRuntimeOpenStagedDirectory(root, filepath.Dir(row.Path), uid, gid)
+		if err != nil {
 			return empty, err
+		}
+		copyErr := stage2aCopyRuntimeV3File(parentDir, sourceRoots[row.ComponentID], row, uid, gid)
+		closeErr := parentDir.Close()
+		if copyErr != nil {
+			return empty, copyErr
+		}
+		if closeErr != nil {
+			return empty, closeErr
 		}
 	}
 	for i := len(inv.Directories) - 1; i >= 0; i-- {
 		row := inv.Directories[i]
+		dir, err := stage2aRuntimeOpenStagedDirectory(root, row.Path, uid, gid)
+		if err != nil {
+			return empty, err
+		}
 		mode, _ := strconv.ParseUint(row.Mode, 8, 32)
-		fd := int(dirs[row.Path].Fd())
-		if unix.Fchmod(fd, uint32(mode)) != nil || unix.Fsync(fd) != nil {
+		fd := int(dir.Fd())
+		chmodErr := unix.Fchmod(fd, uint32(mode))
+		syncErr := unix.Fsync(fd)
+		closeErr := dir.Close()
+		if chmodErr != nil || syncErr != nil || closeErr != nil {
 			return empty, errStage2aReservationAuthority
 		}
 	}
@@ -494,6 +504,38 @@ func stage2aStageRuntimeV3(parent *os.File, inv stage2aDomainInventoryV3,
 	complete = true
 	return stage2aPreparedSnapshot{WrapperPath: wrapper.Name(), Wrapper: wrapperIdentity,
 		Stage: stage, Digest: digest}, nil
+}
+
+// Reopen one A-private staging directory from the trusted root descriptor.
+// Never retain a descriptor for each inventory row: the validated inventory
+// permits more directories than macOS's ordinary soft descriptor limit.
+func stage2aRuntimeOpenStagedDirectory(root *os.File, relative string, uid, gid uint32) (*os.File, error) {
+	if root == nil || relative != "." && !stage2aV3InventoryRecordPath(relative) {
+		return nil, errStage2aReservationAuthority
+	}
+	parts := []string{"."}
+	if relative != "." {
+		parts = strings.Split(relative, "/")
+	}
+	parentFD := int(root.Fd())
+	owned := false
+	for _, part := range parts {
+		fd, err := unix.Openat(parentFD, part, stage2aDirectoryOpenFlags, 0)
+		if owned {
+			unix.Close(parentFD)
+		}
+		if err != nil {
+			return nil, errStage2aReservationAuthority
+		}
+		var st unix.Stat_t
+		if unix.Fstat(fd, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFDIR ||
+			st.Mode&07777 != 0700 || st.Uid != uid || st.Gid != gid {
+			unix.Close(fd)
+			return nil, errStage2aReservationAuthority
+		}
+		parentFD, owned = fd, true
+	}
+	return os.NewFile(uintptr(parentFD), filepath.Join(root.Name(), relative)), nil
 }
 
 func stage2aRuntimeNewDirectory(parent *os.File, name string, uid, gid uint32) (*os.File, error) {

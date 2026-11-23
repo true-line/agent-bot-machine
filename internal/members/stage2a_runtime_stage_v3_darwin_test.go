@@ -9,8 +9,11 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestStage2aRuntimeV3TarMustMapEveryReleasedFile(t *testing.T) {
@@ -103,6 +106,74 @@ func TestStage2aRuntimeV3TarMustMapEveryReleasedFile(t *testing.T) {
 		t.Fatal("unreviewed tar member accepted")
 	}
 	bad.Close()
+}
+
+func TestStage2aRuntimeV3StageRespectsDescriptorLimit(t *testing.T) {
+	const childEnv = "STAGE2A_V3_FD_LIMIT_CHILD"
+	if os.Getenv(childEnv) != "1" {
+		binary, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(binary, "-test.run=^TestStage2aRuntimeV3StageRespectsDescriptorLimit$")
+		cmd.Env = append(os.Environ(), childEnv+"=1")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("staging above the soft descriptor limit failed: %v: %s", err, output)
+		}
+		return
+	}
+	var limit unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err != nil {
+		t.Fatal(err)
+	}
+	if limit.Cur > 64 {
+		limit.Cur = 64
+		if err := unix.Setrlimit(unix.RLIMIT_NOFILE, &limit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const source = "/private/etc/hosts"
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	inv := stage2aDomainInventoryV3{Contract: "machine/v3", Kind: "stage2a-domain-inventory",
+		SchemaVersion: 3, Domain: "R-runtime", InstallationID: "fd-bound-test",
+		Limits: stage2aDomainInventoryLimitsV3{MaxFiles: 512,
+			MaxFileBytes: stage2aV3MaxInventoryFileBytes, MaxTotalBytes: stage2aV3MaxInventoryTotalBytes}}
+	sources := make(map[string]string, 300)
+	for i := 0; i < 300; i++ {
+		name := fmt.Sprintf("d%03d", i)
+		component := fmt.Sprintf("component%03d", i)
+		inv.Directories = append(inv.Directories, stage2aDomainDirectoryV3{
+			Path: name, Kind: "directory", Mode: "0550"})
+		inv.Files = append(inv.Files, stage2aDomainFileV3{Path: name + "/hosts",
+			Kind: "regular", Mode: "0440", SizeBytes: uint64(len(data)),
+			SHA256: fmt.Sprintf("sha256:%x", sum), ComponentID: component, ReleasePath: "hosts"})
+		sources[component] = "/private/etc"
+	}
+	inv.TotalBytes = uint64(len(data)) * uint64(len(inv.Files))
+	raw := stage2aV3TestCanonical(t, inv)
+	_, digest, err := stage2aDomainInventoryDigestV3(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentPath, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := os.Open(parentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	staged, err := stage2aStageRuntimeV3(parent, inv, digest, raw, sources,
+		uint32(os.Getuid()), uint32(os.Getgid()))
+	if err != nil {
+		t.Fatalf("valid 300-directory inventory refused with soft fd limit %d: %v", limit.Cur, err)
+	}
+	t.Cleanup(func() { stage2aCleanPrivateStage(staged.WrapperPath) })
 }
 
 func TestStage2aRuntimeV3ZipRequiresExactStockPackageMembers(t *testing.T) {
