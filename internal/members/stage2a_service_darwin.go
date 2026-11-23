@@ -57,6 +57,7 @@ type stage2aLiveReservation struct {
 	twoMemberChildren              *stage2aTwoMemberObservation
 	memberSetAssignmentEnvelope    []byte
 	memberSetAssignmentExpires     time.Time
+	memberBAuthorityEnvelope       []byte
 	provisionalHQMap               []byte
 	provisionalHQMapSHA256         string
 	memberChildGrants              map[string]stage2aMemberChildGrant

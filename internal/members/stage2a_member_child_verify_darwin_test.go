@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func TestMemberChildGrantUsesSameAKeyAndExactAssignedMember(t *testing.T) {
 		SoulID: "agent_0b3f1e2a-7c4d-4e8f-9a1b-2c3d4e5f6a7b", StartID: "st_0123456789abcdef01234567",
 		HQEpoch: strings.Repeat("d", 64), PlanID: "plan-20261122T120000Z-abcd",
 		PlanDigest: strings.Repeat("e", 64), ExpiresAt: now.Add(30 * time.Second).Format(time.RFC3339Nano),
-		RunnerUID: 320, RunnerGID: 320, BridgeAccount: "_abm-bridge", BridgeUID: 321, BridgeGID: 321,
+		HQUID: 501, RunnerUID: 320, RunnerGID: 320, BridgeAccount: "_abm-bridge", BridgeUID: 321, BridgeGID: 321,
 		Broker: SoulStartEndpoint{SocketPath: "/private/var/broker.sock", PeerUIDs: []int{320}},
 		Member: SoulStartEndpoint{SocketPath: "/private/var/member.sock", PeerUIDs: []int{320}},
 		Relay:  SoulStartEndpoint{SocketPath: "/private/var/relay.sock", PeerUIDs: []int{321}}}
@@ -68,10 +69,33 @@ func TestMemberChildGrantUsesSameAKeyAndExactAssignedMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bridgeRaw, err := marshalStage2aReservationJCS(assignment.Bridge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bAuthority := stage2aBMemberAuthorityPayload{Contract: "machine/v3", Kind: "stage2a-b-member-authority",
+		SchemaVersion: 1, ProfileInForce: "managed-protected", HostID: assignment.HostID,
+		InstallationID: start.InstallationID, SoulID: start.SoulID, StartID: start.StartID,
+		HQEpoch: start.HQEpoch, PlanID: start.PlanID, PlanDigest: start.PlanDigest,
+		ReservationSHA256: reservation, MemberSetAssignmentEnvelopeSHA256: stage2aReservationSHA256(envelope),
+		OwnerPlanMemberSetSHA256: ownerDigest, BAuthority: assignment.BAuthority,
+		HQUID: start.HQUID, RunnerUID: start.RunnerUID, Bridge: json.RawMessage(bridgeRaw),
+		IssuedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(15 * time.Second).Format(time.RFC3339Nano)}
+	for i, member := range assignment.Members {
+		bAuthority.Members[i] = stage2aBMemberAuthorityMember{MemberID: member.MemberID,
+			LaunchID: member.LaunchID, MemberSelector: member.MemberSelector,
+			AdjacentCLIPath: member.AdjacentCLIPath, AdjacentCLISHA256: member.AdjacentCLISHA256}
+	}
+	bEnvelope, err := signStage2aEnvelope(bAuthority, 1, stage2aBMemberAuthorityPurpose, key,
+		func(message []byte) ([]byte, error) { return ed25519.Sign(secret, message), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
 	child := &Stage2aChildExec{MemberID: roles[0].MemberID,
 		MemberLaunchID:                       assignment.Members[0].LaunchID,
 		MemberSelector:                       assignment.Members[0].MemberSelector,
 		MemberSetAssignmentEnvelopeBase64URL: base64.RawURLEncoding.EncodeToString(envelope),
+		MemberBAuthorityEnvelopeBase64URL:    base64.RawURLEncoding.EncodeToString(bEnvelope),
 		ProvisionalHQMapSHA256:               "sha256:" + strings.Repeat("2", 64),
 		Executable:                           command, ExecutableSHA256: commandSHA}
 	in := Stage2aRoleInvocation{Start: start, ChildExec: child,

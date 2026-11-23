@@ -191,8 +191,13 @@ func (s *Stage2aService) stage2aBuildBMemberFD3(r *stage2aLiveReservation,
 	if err != nil || !time.Now().Before(until) || stage2aRecheckExecutionCode(r, p) != nil {
 		return nil, errStage2aReservationAuthority
 	}
-	return stage2aMarshalBMemberFD3(assignment, r.memberSetAssignmentEnvelope,
+	fd3, err := stage2aMarshalBMemberFD3(assignment, r.memberSetAssignmentEnvelope,
 		authorityEnvelope, legacy, until)
+	if err != nil || len(r.memberBAuthorityEnvelope) != 0 {
+		return nil, errStage2aReservationAuthority
+	}
+	r.memberBAuthorityEnvelope = bytes.Clone(authorityEnvelope)
+	return fd3, nil
 }
 
 func stage2aMarshalBMemberFD3(assignment stage2aMemberSetAssignmentPayload,

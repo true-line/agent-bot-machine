@@ -18,6 +18,9 @@ type stage2aMemberChildGrant struct {
 	ChildPID       int
 	Child          soulKernelProcessSnapshot
 	Receipt        []byte
+	LiveSequence   uint64
+	LiveExpiresAt  time.Time
+	LastNonce      string
 }
 
 const stage2aMemberChildGrantLife = 20 * time.Second
@@ -44,6 +47,7 @@ func (s *Stage2aService) MemberChildGrant(hqUID int, epoch string,
 	r, p, expires, err := s.current(hqUID, epoch, q.ReservationSHA256)
 	if err != nil || !stage2aMatchesStopSelectors(r, q.Stage2aStopRequest, hqUID) ||
 		len(r.memberSetAssignmentEnvelope) == 0 || len(r.provisionalHQMap) == 0 ||
+		len(r.memberBAuthorityEnvelope) == 0 ||
 		r.provisionalHQMapSHA256 != stage2aReservationSHA256(r.provisionalHQMap) ||
 		len(p.MemberBridgeQualifications) != 2 ||
 		r.hello == nil || r.hello.aborted || r.hello.finalized ||
@@ -165,6 +169,7 @@ func (s *Stage2aService) MemberChildGrant(hqUID int, epoch string,
 		MemberID: member.MemberID, MemberLaunchID: member.LaunchID,
 		MemberSelector:                       member.MemberSelector,
 		MemberSetAssignmentEnvelopeBase64URL: base64.RawURLEncoding.EncodeToString(r.memberSetAssignmentEnvelope),
+		MemberBAuthorityEnvelopeBase64URL:    base64.RawURLEncoding.EncodeToString(r.memberBAuthorityEnvelope),
 		ProvisionalHQMapSHA256:               r.provisionalHQMapSHA256,
 		ReservationSHA256:                    r.digest,
 		FinalizationSHA256:                   stage2aReservationSHA256(r.finalizationEnvelope),

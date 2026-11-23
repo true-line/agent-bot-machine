@@ -32,6 +32,7 @@ const stage2aMemberSetAssignVerb = "stage2a-member-set-assign"
 const stage2aMemberProvisionalMapVerb = "stage2a-member-provisional-map"
 const stage2aMemberChildGrantVerb = "stage2a-member-child-grant"
 const stage2aMemberChildObserveVerb = "stage2a-member-child-observe"
+const stage2aMemberLiveVerb = "stage2a-member-live"
 
 var stage2aExecDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -48,7 +49,7 @@ func isStage2aVerb(verb string) bool {
 		verb == stage2aHelloStartVerb || verb == stage2aHelloFinalizeVerb || verb == stage2aHelloAbortVerb ||
 		verb == stage2aPeerRoleVerb || verb == stage2aMemberSetAssignVerb ||
 		verb == stage2aMemberProvisionalMapVerb || verb == stage2aMemberChildGrantVerb ||
-		verb == stage2aMemberChildObserveVerb
+		verb == stage2aMemberChildObserveVerb || verb == stage2aMemberLiveVerb
 }
 
 func stage2aFields(req *Request, raw []byte) (string, string) {
@@ -203,6 +204,14 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 			return diag.DaemonUndeclared, "invalid Stage 2a member child observation"
 		}
 		req.stage2aMemberChildObserve = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aMemberLiveVerb {
+		parsed, err := members.ParseStage2aMemberLiveRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a member live request"
+		}
+		req.stage2aMemberLive = parsed
 		return "", ""
 	}
 	if req.Verb == stage2aHelloFinalizeVerb {

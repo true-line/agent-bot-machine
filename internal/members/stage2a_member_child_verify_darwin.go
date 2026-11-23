@@ -23,6 +23,7 @@ func stage2aVerifyMemberChildGrant(grant Stage2aRoleGrant, in Stage2aRoleInvocat
 		grant.MemberSetAssignmentEnvelopeSHA256 == "" {
 		return child.MemberID == "" && child.MemberLaunchID == "" &&
 			child.MemberSelector == "" && child.MemberSetAssignmentEnvelopeBase64URL == "" &&
+			child.MemberBAuthorityEnvelopeBase64URL == "" &&
 			child.ProvisionalHQMapSHA256 == ""
 	}
 	if !stage2aBindingID.MatchString(grant.MemberID) ||
@@ -87,6 +88,44 @@ func stage2aVerifyMemberChildGrant(grant Stage2aRoleGrant, in Stage2aRoleInvocat
 		child.ExecutableSHA256 != in.Launch.ComponentDigests["adapter"] ||
 		assignment.SoulArtifactSHA256 != in.Binding.SoulArtifactSHA256 ||
 		!strings.HasPrefix(child.Executable, in.Binding.Snapshots.LaunchInputs.RootPath+"/") {
+		return false
+	}
+	bAuthorityEnvelope, err := decodeStage2aRoleBase64(child.MemberBAuthorityEnvelopeBase64URL, 16<<10)
+	if err != nil {
+		return false
+	}
+	bAuthorityRaw, err := verifyStage2aStoredARecordV3(bAuthorityEnvelope,
+		stage2aBMemberAuthorityPurpose, 1, key)
+	var bAuthority stage2aBMemberAuthorityPayload
+	if err != nil || stage2aDecodeExact(bAuthorityRaw, &bAuthority) != nil ||
+		bAuthority.Contract != "machine/v3" || bAuthority.Kind != "stage2a-b-member-authority" ||
+		bAuthority.SchemaVersion != 1 || bAuthority.ProfileInForce != "managed-protected" ||
+		bAuthority.HostID != assignment.HostID ||
+		bAuthority.InstallationID != assignment.InstallationID || bAuthority.SoulID != assignment.SoulID ||
+		bAuthority.StartID != assignment.StartID || bAuthority.HQEpoch != assignment.HQEpoch ||
+		bAuthority.PlanID != assignment.PlanID || bAuthority.PlanDigest != assignment.PlanDigest ||
+		bAuthority.ReservationSHA256 != grant.ReservationSHA256 ||
+		bAuthority.MemberSetAssignmentEnvelopeSHA256 != grant.MemberSetAssignmentEnvelopeSHA256 ||
+		bAuthority.OwnerPlanMemberSetSHA256 != assignment.OwnerPlanMemberSetSHA256 ||
+		bAuthority.BAuthority != assignment.BAuthority || bAuthority.RunnerUID != in.Runner.UID ||
+		bAuthority.HQUID != in.Start.HQUID {
+		return false
+	}
+	bridgeRaw, bridgeErr := marshalStage2aReservationJCS(assignment.Bridge)
+	if bridgeErr != nil || !reflect.DeepEqual([]byte(bAuthority.Bridge), bridgeRaw) {
+		return false
+	}
+	for i, member := range assignment.Members {
+		if bAuthority.Members[i].MemberID != member.MemberID ||
+			bAuthority.Members[i].LaunchID != member.LaunchID ||
+			bAuthority.Members[i].MemberSelector != member.MemberSelector ||
+			bAuthority.Members[i].AdjacentCLIPath != member.AdjacentCLIPath ||
+			bAuthority.Members[i].AdjacentCLISHA256 != member.AdjacentCLISHA256 {
+			return false
+		}
+	}
+	bExpires, bExpiryErr := time.Parse(time.RFC3339Nano, bAuthority.ExpiresAt)
+	if bExpiryErr != nil || !now.Before(bExpires) || bExpires.After(expires) {
 		return false
 	}
 	roles := []stage2aHelloMember{

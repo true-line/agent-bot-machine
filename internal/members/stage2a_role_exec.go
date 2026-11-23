@@ -66,6 +66,7 @@ type Stage2aChildExec struct {
 	MemberLaunchID                       string                       `json:"member_launch_id,omitempty"`
 	MemberSelector                       string                       `json:"member_selector,omitempty"`
 	MemberSetAssignmentEnvelopeBase64URL string                       `json:"member_set_assignment_envelope_base64url,omitempty"`
+	MemberBAuthorityEnvelopeBase64URL    string                       `json:"member_b_authority_envelope_base64url,omitempty"`
 	ProvisionalHQMapSHA256               string                       `json:"provisional_hq_mapping_sha256,omitempty"`
 	ReservationSHA256                    string                       `json:"reservation_sha256"`
 	FinalizationSHA256                   string                       `json:"finalization_sha256"`

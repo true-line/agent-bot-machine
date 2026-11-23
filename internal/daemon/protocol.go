@@ -55,6 +55,7 @@ type Request struct {
 	stage2aMemberProvisionalMap members.Stage2aMemberProvisionalMapRequest
 	stage2aMemberChildGrant     members.Stage2aMemberChildGrantRequest
 	stage2aMemberChildObserve   members.Stage2aMemberChildObservationRequest
+	stage2aMemberLive           members.Stage2aMemberLiveRequest
 	stage2aEpoch                string
 	peerUID                     int
 	ChallengeNonce              string           `json:"challenge_nonce,omitempty"`
@@ -292,7 +293,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose, deviceVerb, approveMembersVerb, stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aLiveVerb, stage2aFinalizeBVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aCaptureSelectorVerb, stage2aControlProbeVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aMemberSetAssignVerb, stage2aMemberProvisionalMapVerb, stage2aMemberChildGrantVerb, stage2aMemberChildObserveVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose, deviceVerb, approveMembersVerb, stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aLiveVerb, stage2aFinalizeBVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aCaptureSelectorVerb, stage2aControlProbeVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aMemberSetAssignVerb, stage2aMemberProvisionalMapVerb, stage2aMemberChildGrantVerb, stage2aMemberChildObserveVerb, stage2aMemberLiveVerb, "bootstrap":
 		return true
 	default:
 		return false
