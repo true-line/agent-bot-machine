@@ -3,6 +3,7 @@ package qualification
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,6 +134,48 @@ func TestResolveCompletedProtectedSegmentV3(t *testing.T) {
 	got, err := resolveProtectedSegmentV3(f.root, f.gate, f.segment, f.key, f.now.now)
 	if err != nil || !got.resolved || got.QSessionID != "1234567890abcdef1234567890abcdef" {
 		t.Fatalf("signed segment component refused: %+v %v", got, err)
+	}
+	reservation, err := qSignedRecordV3(f.now.reservation, qReservationPurposeV3, 2, f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var signed struct {
+		MeasurementBinding json.RawMessage `json:"measurement_binding"`
+	}
+	if err := json.Unmarshal(reservation, &signed); err != nil {
+		t.Fatal(err)
+	}
+	reportBinding, err := parseMeasurementBindingV2(signed.MeasurementBinding)
+	if err != nil || !sameProtectedInstalledIdentityV3(reportBinding, got.binding) {
+		t.Fatalf("resolved segment lost signed installed identity: %v", err)
+	}
+	for name, change := range map[string]func(*measurementBinding){
+		"other installation": func(b *measurementBinding) { b.InstallationID = "other-install" },
+		"other Soul":         func(b *measurementBinding) { b.SoulID = "agent_aaaaaaaa-1234-1234-1234-1234567890ab" },
+		"other plan":         func(b *measurementBinding) { b.InstalledPlanDigest = strings.Repeat("a", 64) },
+		"other package":      func(b *measurementBinding) { b.PackageSHA256 = strings.Repeat("b", 64) },
+		"other definition":   func(b *measurementBinding) { b.DefinitionMeasurement = digest([]byte("different definition")) },
+		"other launch inputs": func(b *measurementBinding) {
+			b.LaunchInputMeasurement = digest([]byte("different launch inputs"))
+		},
+		"other launch snapshot": func(b *measurementBinding) {
+			b.Snapshots.LaunchInputs.Inode = "999"
+		},
+	} {
+		t.Run("mixed signed cohort "+name, func(t *testing.T) {
+			changed := got.binding
+			change(&changed)
+			if sameProtectedInstalledIdentityV3(reportBinding, changed) {
+				t.Fatal("supplemental segment substituted installed identity")
+			}
+		})
+	}
+	freshStart := got.binding
+	freshStart.StartID = "st_aaaaaaaaaaaaaaaaaaaaaaaa"
+	freshStart.LaunchID = "ln_aaaaaaaaaaaaaaaaaaaaaaaa"
+	freshStart.HQEpoch = strings.Repeat("a", 64)
+	if !sameProtectedInstalledIdentityV3(reportBinding, freshStart) {
+		t.Fatal("fresh start and HQ epoch in same installed cohort refused")
 	}
 	t.Run("signed non-idle stop", func(t *testing.T) {
 		bad := makeProtectedSegmentFixtureV3(t, false, true)

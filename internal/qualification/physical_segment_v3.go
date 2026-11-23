@@ -48,6 +48,7 @@ type physicalSegmentV3 struct {
 // measurement, required negative cases and gate outcome remain unchecked.
 type ResolvedProtectedSegmentChainV3 struct {
 	resolved                                                                         bool
+	binding                                                                          measurementBinding
 	Gate, SegmentID, CohortID, InstallationID, SoulID, StartID, LaunchID, QSessionID string
 	ManifestSHA256, AttestationSHA256, MeasurementBindingSHA256                      string
 	QIndexSHA256, QEOFReceiptSHA256                                                  string
@@ -107,6 +108,7 @@ func segmentRoleMaxV3(role string) int64 {
 }
 
 type protectedAChainV3 struct {
+	binding               measurementBinding
 	reservationSHA256     string
 	finalizationSHA256    string
 	stopSHA256            string
@@ -200,7 +202,22 @@ func verifyProtectedAChainV3(reservation, finalization, stop []byte,
 	if e1 != nil || e2 != nil || stopAt.Before(finalAt) {
 		return zero, ErrUnqualified
 	}
-	return protectedAChainV3{reservationSHA256: digest(reservation), finalizationSHA256: digest(finalization), stopSHA256: digest(stop), launchChallengeSHA256: reserved.AdmissionChallengeSHA256, stopAt: stopAt}, nil
+	return protectedAChainV3{binding: binding, reservationSHA256: digest(reservation), finalizationSHA256: digest(finalization), stopSHA256: digest(stop), launchChallengeSHA256: reserved.AdmissionChallengeSHA256, stopAt: stopAt}, nil
+}
+
+// A supplemental start may have a new launch ID, HQ epoch and Q session, but
+// it cannot substitute another installed Soul or plan under the report's
+// signed cohort and still count as a resolved protected segment.
+func sameProtectedInstalledIdentityV3(want, got measurementBinding) bool {
+	return got.InstallationID == want.InstallationID && got.SoulID == want.SoulID &&
+		got.HostID == want.HostID && got.ProfileInForce == want.ProfileInForce &&
+		got.PlanID == want.PlanID && got.InstalledPlanDigest == want.InstalledPlanDigest &&
+		got.PackageSHA256 == want.PackageSHA256 && got.SoulArtifactSHA256 == want.SoulArtifactSHA256 &&
+		got.ClaimedDefinitionDigest == want.ClaimedDefinitionDigest &&
+		got.DefinitionMeasurement == want.DefinitionMeasurement &&
+		got.LaunchInputMeasurement == want.LaunchInputMeasurement &&
+		got.Snapshots.Definition == want.Snapshots.Definition &&
+		got.Snapshots.LaunchInputs == want.Snapshots.LaunchInputs
 }
 
 type physicalSegmentAttestationV3 struct {
@@ -303,6 +320,10 @@ func ResolveSignedProtectedSegmentsV3(reportEnvelope []byte, policy VerifiedPoli
 	if err != nil {
 		return nil, ErrUnqualified
 	}
+	reportBinding, err := parseMeasurementBindingV2(binding)
+	if err != nil {
+		return nil, ErrUnqualified
+	}
 	result := make(map[string][]ResolvedProtectedSegmentChainV3, 3)
 	seenStarts := map[string]bool{}
 	seenSessions := map[string]bool{}
@@ -315,7 +336,8 @@ func ResolveSignedProtectedSegmentsV3(reportEnvelope []byte, policy VerifiedPoli
 		}
 		for _, segment := range gate.Segments {
 			verified, err := resolveProtectedSegmentV3(root, gate, segment, machineKey, now)
-			if err != nil || seenStarts[verified.InstallationID+"/"+verified.StartID] || seenSessions[verified.QSessionID] {
+			if err != nil || !sameProtectedInstalledIdentityV3(reportBinding, verified.binding) ||
+				seenStarts[verified.InstallationID+"/"+verified.StartID] || seenSessions[verified.QSessionID] {
 				return nil, ErrUnqualified
 			}
 			if segment.ReportAnchor {
@@ -376,5 +398,5 @@ func resolveProtectedSegmentV3(root string, gate gateManifestV3, segment gateSeg
 	if verifyPhysicalAttestationV3(attestation, manifestRaw, manifest, chain, q, manifest.Artifacts, objects["q_eof"], key, now) != nil {
 		return zero, ErrUnqualified
 	}
-	return ResolvedProtectedSegmentChainV3{resolved: true, Gate: manifest.Gate, SegmentID: manifest.SegmentID, CohortID: manifest.CohortID, InstallationID: manifest.InstallationID, SoulID: manifest.SoulID, StartID: manifest.StartID, LaunchID: manifest.LaunchID, QSessionID: manifest.QSessionID, ManifestSHA256: digest(manifestRaw), AttestationSHA256: digest(attestation), MeasurementBindingSHA256: manifest.MeasurementBindingSHA256, QIndexSHA256: q.IndexSHA256, QEOFReceiptSHA256: q.EOFReceiptSHA256, ReservationSHA256: chain.reservationSHA256, FinalizationSHA256: chain.finalizationSHA256, LaunchChallengeSHA256: chain.launchChallengeSHA256}, nil
+	return ResolvedProtectedSegmentChainV3{resolved: true, binding: chain.binding, Gate: manifest.Gate, SegmentID: manifest.SegmentID, CohortID: manifest.CohortID, InstallationID: manifest.InstallationID, SoulID: manifest.SoulID, StartID: manifest.StartID, LaunchID: manifest.LaunchID, QSessionID: manifest.QSessionID, ManifestSHA256: digest(manifestRaw), AttestationSHA256: digest(attestation), MeasurementBindingSHA256: manifest.MeasurementBindingSHA256, QIndexSHA256: q.IndexSHA256, QEOFReceiptSHA256: q.EOFReceiptSHA256, ReservationSHA256: chain.reservationSHA256, FinalizationSHA256: chain.finalizationSHA256, LaunchChallengeSHA256: chain.launchChallengeSHA256}, nil
 }

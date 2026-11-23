@@ -164,7 +164,12 @@ protected report's T01/T02/T03 gate references, verifies each completed and
 stopped segment manifest and A attestation, resolves all ten exact local blob
 references, checks the distinct A reservation/B finalization/idle-stop chain,
 and joins the signed Q wire/index/EOF through `VerifyQPreSignV3`. It refuses
-changed, missing or wrongly signed bytes. It returns no physical gate verdict:
+changed, missing or wrongly signed bytes. Every supplemental protected segment
+must also match the report anchor's installed installation, Soul, plan,
+package, frozen definition and launch inputs, and both snapshot identities;
+a fresh start, launch ID and HQ epoch may differ after restart.
+This prevents one signed cohort from substituting another installed Soul for
+only a negative or recovery case. It returns no physical gate verdict:
 the ACP/OS blobs and installed-input inventory still need fixed capture
 schemas and independent measured-byte checks, and gate attempts and required
 negative cases still need authenticated enumeration. T21 needs its separate
