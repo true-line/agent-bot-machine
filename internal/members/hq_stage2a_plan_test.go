@@ -99,6 +99,18 @@ func TestStage2aHQPlanPinsExactProtectedLaunchArgv(t *testing.T) {
 	}
 }
 
+func TestStage2aHQV010ExcludesOnlyReviewedSyntheticFixtures(t *testing.T) {
+	final := hqStage2aContractsFixturePathsV010[:]
+	if len(final) != 16 || !slices.IsSorted(final) || !hqStage2aValidExclusions(final) {
+		t.Fatal("final Contracts fixture partition is not exact and ordered")
+	}
+	changed := slices.Clone(final)
+	changed[0] = "vendor/soul-contracts/schemas/machine/v3/required.schema.json"
+	if hqStage2aValidExclusions(changed) || hqStage2aValidExclusions(final[:15]) {
+		t.Fatal("unreviewed or missing fixture omission accepted")
+	}
+}
+
 func TestStage2aHQPlanRefusesFirstInstallAndLinux(t *testing.T) {
 	svc, _ := stage2aHQTestService(t)
 	for _, platform := range []string{PlatformDarwin, ""} {

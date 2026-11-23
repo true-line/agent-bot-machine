@@ -73,8 +73,8 @@ type stage2aReleaseComponent struct {
 	ManifestSHA256   string `json:"release_manifest_sha256"`
 }
 
-// Only the eight known v0.9 synthetic fixtures may be omitted from H.
-// Runtime schemas and every other manifest row still have to be selected.
+// Only the reviewed v0.9 and v0.10 synthetic fixture sets may be omitted
+// from H. Runtime schemas and every other manifest row remain selected.
 var hqStage2aContractsFixturePaths = [...]string{
 	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-binding.v3-synthetic.bad.json",
 	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-reservation-payload.v3-synthetic.bad.json",
@@ -86,8 +86,28 @@ var hqStage2aContractsFixturePaths = [...]string{
 	"vendor/soul-contracts/fixtures/reservation/v3/machine-qualification-candidate-synthetic.json",
 }
 
+var hqStage2aContractsFixturePathsV010 = [...]string{
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-reservation-payload.bridge-claim.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-reservation-payload.missing-broker.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-signed-reservation.wrong-purpose.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-binding.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-reservation-payload.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-signed-reservation.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-reservation-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-signed-reservation.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-qualification-candidate-binding.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-qualification-candidate-reservation-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-qualification-candidate-signed-reservation.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/machine-qualification-candidate-invalid-bytes.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/machine-qualification-candidate-synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-launch-inputs.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-r-inventory.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-signed-reservation.synthetic.json",
+}
+
 func hqStage2aValidExclusions(paths []string) bool {
-	return len(paths) == 0 || slices.Equal(paths, hqStage2aContractsFixturePaths[:])
+	return len(paths) == 0 || slices.Equal(paths, hqStage2aContractsFixturePaths[:]) ||
+		slices.Equal(paths, hqStage2aContractsFixturePathsV010[:])
 }
 
 var hqStage2aSourceRepository = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
