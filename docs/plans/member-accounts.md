@@ -350,9 +350,8 @@ the exact request digest, selected candidate and harness files, ordered
 arguments, runner and provider pins, target role and UID, host description,
 definition and suite revisions, and the fixed T01/T02/T03 protected plus T21
 cooperative assignments. The request is structured data; it cannot supply a
-command to execute. Large code closures may be represented by one pinned
-manifest artifact. The eventual runner must verify the installed tree against
-that manifest before executing it. A schema-2 candidate plan checks the
+command to execute. Schema 1 allows a pinned code-input manifest. A schema-2 candidate plan
+requires 1–512 explicit code inputs from the sealed R inventory and checks the
 dedicated Soul runner derived from the installation ID and requires its
 reviewed UID. The planner hashes the reviewed Q source before installation.
 The Q install binds those bytes to its fixed source path. A checks a schema-2

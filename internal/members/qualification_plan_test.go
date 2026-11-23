@@ -224,6 +224,18 @@ func TestCandidateQualificationPlanRequiresExactHostAndInputs(t *testing.T) {
 	if err := validateQualificationRequest(request); err != nil {
 		t.Fatalf("exact candidate inputs refused: %v", err)
 	}
+	manifestOnly := request
+	manifestOnly.Adapter.Launch.CodeInputs = []qualificationCodeInput{}
+	manifestOnly.Adapter.Launch.CodeInputManifest = qualificationFile{
+		Path: "/private/tmp/closure.json", SHA256: strings.Repeat("f", 64),
+	}
+	raw, err := json.Marshal(manifestOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeQualificationRequest(raw); err == nil || !strings.Contains(err.Error(), "requires 1–512 explicit code inputs") {
+		t.Fatalf("manifest-backed candidate request returned %v", err)
+	}
 	run := &QualificationRun{RequestSHA256: strings.Repeat("e", 64), Request: request,
 		MemberState: "disposable", OneUse: true, Gates: fixedQualificationGates()}
 	before, err := qualificationPlan(run)

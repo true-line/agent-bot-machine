@@ -218,6 +218,10 @@ func validateQualificationRequest(r QualificationRequest) error {
 			return errors.New("candidate qualification needs the exact designated host, installed plan and sealed runtime")
 		}
 	}
+	if r.SchemaVersion == 2 && (len(r.Adapter.Launch.CodeInputs) == 0 ||
+		len(r.Adapter.Launch.CodeInputs) > 512 || r.Adapter.Launch.CodeInputManifest != (qualificationFile{})) {
+		return errors.New("schema-2 candidate qualification requires 1–512 explicit code inputs from the sealed R inventory")
+	}
 	for _, s := range textFields {
 		if strings.TrimSpace(s) == "" || hasASCIIControl(s) || len(s) > 256 {
 			return errors.New("qualification identity fields must be nonempty single-line values of at most 256 bytes")
