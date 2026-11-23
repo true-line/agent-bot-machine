@@ -1698,3 +1698,19 @@ withdrawing its descriptor and restoring the reviewed prior job. Recovery
 uses the durable descriptor and H/R witnesses to verify a previously
 started candidate. Changed or uncertain evidence preserves the journal for
 reconciliation.
+
+### Stage 2a one-use candidate reservation
+
+For the first protected qualification candidate, A's paired daemon resolves
+the root-installed Q descriptor and A-owned private copy of the exact saved
+plan. It checks the designated host, installed Q role and launchd job, owner
+approval, and sealed H/R inputs before consuming the one-use approval. A
+persists the spent attempt and live-grant marker before invoking the fixed
+offline reservation worker. That worker opens A's enrolled key only while
+the approved HQ pair remains current; it independently reloads the Q plan,
+spent attempt, H/R inventory, selected candidate archive and code rows.
+The worker requires the short-lived grant bound to its parent A process and
+the exact HQ selector. A failed dispatch does not restore an approval or
+grant. Ordinary qualified starts remain closed until their separate
+installed adapter qualification loader is implemented. A fixture reservation
+does not count as physical Stage 2a evidence.

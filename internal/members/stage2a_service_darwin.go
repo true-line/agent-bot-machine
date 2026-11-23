@@ -29,6 +29,7 @@ type Stage2aService struct {
 	active            map[string]*stage2aLiveReservation
 	cooperativeActive map[string]*soulCooperativeLiveV3
 	candidateGrantsV3 stage2aCandidateGrantRegistryV3
+	candidateBeginV3  func(int, string, Stage2aReserveRequest) error
 	reserveV3         func(int, string, Stage2aReserveRequest, *stage2aSignedCandidateGrantV3) (stage2aReservation, stage2aReservationWorkerReplyV3, error)
 }
 
@@ -60,8 +61,30 @@ type stage2aLiveReservation struct {
 }
 
 func NewStage2aService(key ed25519.PrivateKey) *Stage2aService {
-	return &Stage2aService{key: key, active: make(map[string]*stage2aLiveReservation), candidateGrantsV3: make(stage2aCandidateGrantRegistryV3),
+	s := &Stage2aService{key: key, active: make(map[string]*stage2aLiveReservation), candidateGrantsV3: make(stage2aCandidateGrantRegistryV3),
 		cooperativeActive: make(map[string]*soulCooperativeLiveV3)}
+	if len(key) == ed25519.PrivateKeySize {
+		public := key.Public().(ed25519.PublicKey)
+		s.reserveV3 = func(hqUID int, epoch string, selector Stage2aReserveRequest,
+			grant *stage2aSignedCandidateGrantV3) (stage2aReservation, stage2aReservationWorkerReplyV3, error) {
+			return callStage2aReservationWorkerV3(hqUID, epoch, selector, public, grant)
+		}
+	}
+	return s
+}
+
+// Production qualification uses the current paired owner guard for A's
+// one-use candidate admission. Other service constructors keep this route
+// closed, including fixtures that inject a reservation callback.
+func NewStage2aCandidateService(key ed25519.PrivateKey,
+	checkPair func(string, string, string, func() error) error) *Stage2aService {
+	s := NewStage2aService(key)
+	if checkPair != nil {
+		s.candidateBeginV3 = func(uid int, epoch string, selector Stage2aReserveRequest) error {
+			return s.beginInstalledCandidateV3(uid, epoch, selector, checkPair)
+		}
+	}
+	return s
 }
 
 func (s *Stage2aService) sign(preimage []byte) ([]byte, error) {
@@ -139,6 +162,11 @@ func (s *Stage2aService) Lookup(hqUID int, epoch string, q Stage2aLookupRequest)
 }
 
 func (s *Stage2aService) Reserve(hqUID int, epoch string, request Stage2aReserveRequest) (Stage2aReserveReply, error) {
+	// Candidate begin spends the reviewed approval and registers its one-use
+	// grant before Reserve locks and consumes it for the offline worker.
+	if s.candidateBeginV3 != nil && s.candidateBeginV3(hqUID, epoch, request) != nil {
+		return Stage2aReserveReply{}, errStage2aReservationAuthority
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var reply Stage2aReserveReply

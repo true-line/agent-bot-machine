@@ -12,12 +12,12 @@ import (
 )
 
 func stage2aHandler(key ed25519.PrivateKey, dir, account string) func(Request) Response {
-	return stage2aHandlerWithService(members.NewStage2aService(key), dir, account)
+	return stage2aHandlerWithService(members.NewStage2aCandidateService(key, CheckHQUpgradePair), dir, account)
 }
 
 func stage2aServiceHandlers(key ed25519.PrivateKey, dir, account string) (
 	func(Request) Response, cooperativeRecoveryApply) {
-	service := members.NewStage2aService(key)
+	service := members.NewStage2aCandidateService(key, CheckHQUpgradePair)
 	return stage2aHandlerWithService(service, dir, account),
 		func(recovery Request, paired func(string, func() error) error) Response {
 			body, err := service.ReconcileCooperativeAfterRestart(recovery.peerUID,

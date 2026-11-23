@@ -37,6 +37,25 @@ type stage2aReservationWorkerAuthorityV3 struct {
 	loadCandidate func(stage2aReservationRequest) (stage2aQualificationCandidateAuthorityV3, error)
 }
 
+// The fixed A-only command accepts the live paired key resolver and the
+// owner-pair guard from Machine's daemon package. Its production authority
+// loader is limited to the root-installed one-use candidate plan; ordinary
+// qualified starts remain closed until a separate adapter attestation loader.
+func RunStage2aReservationWorkerV3(
+	keyForPair func(int, string, string) (ed25519.PrivateKey, func() error, error),
+	checkPair func(string, string, string, func() error) error) int {
+	if checkPair == nil {
+		return harnessRefused
+	}
+	load := func(runtime stage2aInstalledRuntimeV3, key ed25519.PublicKey) (stage2aReservationWorkerAuthorityV3, error) {
+		return loadStage2aCandidateWorkerAuthorityV3(runtime, key, checkPair)
+	}
+	if runStage2aReservationWorkerV3(os.Stdin, os.Stdout, keyForPair, load) != nil {
+		return harnessRefused
+	}
+	return 0
+}
+
 func decodeStage2aReservationWorkerRequestV3(raw []byte) (stage2aReservationWorkerRequestV3, Stage2aReserveRequest, error) {
 	var q stage2aReservationWorkerRequestV3
 	if len(raw) > 4096 || stage2aStrictJSON(raw) != nil || stage2aDecodeExact(raw, &q) != nil ||
@@ -47,9 +66,11 @@ func decodeStage2aReservationWorkerRequestV3(raw []byte) (stage2aReservationWork
 	return q, selector, err
 }
 
-// Production callers must provide the independently authenticated installed-R
-// and qualified adapter loader. The key resolver rechecks the current paired
-// HQ role and epoch before opening A's local key. Neither is caller metadata.
+// Production callers provide independently authenticated installed H/R and
+// selected-adapter authority. The current command accepts only the one-use
+// owner-reviewed candidate; an ordinary qualified loader remains unavailable.
+// The key resolver rechecks the paired HQ role and epoch before opening A's
+// local key. None of these inputs come from caller metadata.
 func runStage2aReservationWorkerV3(input io.Reader, output io.Writer,
 	keyForPair func(int, string, string) (ed25519.PrivateKey, func() error, error),
 	load func(stage2aInstalledRuntimeV3, ed25519.PublicKey) (stage2aReservationWorkerAuthorityV3, error)) error {
