@@ -71,7 +71,7 @@ func (j *upgradeJournal) prepareProtectedHQ(rec launchRecord) error {
 	}); err != nil {
 		return err
 	}
-	if published == nil || published.recheck == nil || !validHQStage2aDescriptorWitness(*rec.Service.Stage2a, published.witness) || !hqStage2aRuntimeMatches(rec, published.runtime) {
+	if published == nil || published.recheck == nil || !validHQStage2aDescriptorWitness(*rec.Service.Stage2a, published.witness) || !hqStage2aRuntimeEvidenceMatches(rec, published.runtime) {
 		return errors.New(hqStage2aCutoverRefusal)
 	}
 	verifyRuntime := published.recheck
@@ -87,7 +87,9 @@ func (j *upgradeJournal) prepareProtectedHQ(rec launchRecord) error {
 	}
 	j.protectedPublication = published
 	j.ProtectedDescriptor.Descriptor = &published.witness
-	j.ProtectedDescriptor.Runtime = &published.runtime
+	if !rec.Service.Stage2a.CooperativeOnly {
+		j.ProtectedDescriptor.Runtime = &published.runtime
+	}
 	return j.write(journal, false)
 }
 
@@ -151,13 +153,26 @@ func hqStage2aRuntimeMatches(rec launchRecord, ref stage2aDomainInventoryRefV3) 
 		matchesHQStage2aRuntimeNames(ref)
 }
 
+func hqStage2aRuntimeEvidenceMatches(rec launchRecord, ref stage2aDomainInventoryRefV3) bool {
+	s := rec.Service.Stage2a
+	if s == nil {
+		return false
+	}
+	if s.CooperativeOnly {
+		return ref == (stage2aDomainInventoryRefV3{})
+	}
+	return hqStage2aRuntimeMatches(rec, ref)
+}
+
 func (j *upgradeJournal) checkProtectedHQCandidate(rec launchRecord,
 	checkDurable func(launchRecord, Approval, *hqStage2aJournalDescriptor) error) error {
 	if j.protectedPublication != nil {
 		return j.protectedPublication.recheck()
 	}
 	state := j.ProtectedDescriptor
-	if state == nil || state.Descriptor == nil || state.Runtime == nil || !hqStage2aRuntimeMatches(rec, *state.Runtime) {
+	if state == nil || state.Descriptor == nil || rec.Service.Stage2a == nil ||
+		(rec.Service.Stage2a.CooperativeOnly && state.Runtime != nil) ||
+		(!rec.Service.Stage2a.CooperativeOnly && (state.Runtime == nil || !hqStage2aRuntimeMatches(rec, *state.Runtime))) {
 		return errors.New(hqStage2aCutoverRefusal)
 	}
 	return checkDurable(rec, j.Approval, state)

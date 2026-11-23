@@ -206,8 +206,10 @@ func matchesHQStage2aRuntimeNames(ref stage2aDomainInventoryRefV3) bool {
 // independently signed descriptor must still match the recorded witnesses.
 func recheckDurableHQStage2aCandidate(rec launchRecord, approval Approval, state *hqStage2aJournalDescriptor) error {
 	s := rec.Service.Stage2a
-	if s == nil || state == nil || state.Descriptor == nil || state.Runtime == nil ||
-		!hqStage2aRuntimeMatches(rec, *state.Runtime) || checkHQStage2aDescriptorDirectory(*s, state.Directory) != nil {
+	if s == nil || state == nil || state.Descriptor == nil ||
+		(s.CooperativeOnly && state.Runtime != nil) ||
+		(!s.CooperativeOnly && (state.Runtime == nil || !hqStage2aRuntimeMatches(rec, *state.Runtime))) ||
+		checkHQStage2aDescriptorDirectory(*s, state.Directory) != nil {
 		return errStage2aReservationAuthority
 	}
 	witness, h, _, err := recoverHQStage2aDescriptorWitness(rec, approval)
@@ -216,6 +218,9 @@ func recheckDurableHQStage2aCandidate(rec launchRecord, approval Approval, state
 	}
 	if err := recheckHQStage2aDomainFiles(h); err != nil {
 		return err
+	}
+	if s.CooperativeOnly {
+		return nil
 	}
 	return recheckHQStage2aDomainFiles(*state.Runtime)
 }

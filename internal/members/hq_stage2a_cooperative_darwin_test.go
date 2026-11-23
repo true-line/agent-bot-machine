@@ -64,6 +64,11 @@ func TestRetainedCooperativeHReceiptSurvivesInstallApprovalExpiry(t *testing.T) 
 		func(r *Receipt) { r.StartedAt = approvedAt.Add(ApprovalTTL).Format(approvalTime) },
 		func(r *Receipt) { r.Upgrade = &upgradeReceiptEvidence{Approval: approval} },
 		func(r *Receipt) {
+			withRuntime := stage2aDomainInventoryRefV3{}
+			wrongJournal, _ := json.Marshal(hqStage2aJournalDescriptor{Descriptor: &witness, Runtime: &withRuntime})
+			r.Upgrade = &upgradeReceiptEvidence{Approval: approval, ProtectedDescriptor: wrongJournal}
+		},
+		func(r *Receipt) {
 			changed := approval
 			changed.MachineFingerprint = strings.Repeat("0", 64)
 			r.Upgrade = &upgradeReceiptEvidence{Approval: changed, ProtectedDescriptor: journal}
@@ -74,6 +79,31 @@ func TestRetainedCooperativeHReceiptSurvivesInstallApprovalExpiry(t *testing.T) 
 		if _, _, _, err := retainedCooperativeHReceipt(saved, changed, owner, fingerprint); err == nil {
 			t.Fatal("changed or incomplete applied H receipt was accepted")
 		}
+	}
+}
+
+func TestCooperativeHQJournalRequiresHOnlyWitness(t *testing.T) {
+	service, _ := stage2aHQTestService(t)
+	service.Stage2a.CooperativeOnly = true
+	service.Stage2a.RuntimeInstallationID = ""
+	rec := launchRecord{Service: service}
+	var emptyRuntime stage2aDomainInventoryRefV3
+	if !hqStage2aRuntimeEvidenceMatches(rec, emptyRuntime) {
+		t.Fatal("H-only publication rejected without an R runtime")
+	}
+	witness := stage2aDomainSidecarRefV3{}
+	j := upgradeJournal{ProtectedDescriptor: &hqStage2aJournalDescriptor{Descriptor: &witness}}
+	if err := j.checkProtectedHQCandidate(rec, func(launchRecord, Approval, *hqStage2aJournalDescriptor) error { return nil }); err != nil {
+		t.Fatalf("H-only durable journal was refused: %v", err)
+	}
+	j.ProtectedDescriptor.Runtime = &emptyRuntime
+	if err := j.checkProtectedHQCandidate(rec, func(launchRecord, Approval, *hqStage2aJournalDescriptor) error { return nil }); err == nil {
+		t.Fatal("H-only journal accepted an R runtime field")
+	}
+	service.Stage2a.CooperativeOnly = false
+	rec.Service = service
+	if hqStage2aRuntimeEvidenceMatches(rec, emptyRuntime) {
+		t.Fatal("protected publication accepted a missing R runtime")
 	}
 }
 

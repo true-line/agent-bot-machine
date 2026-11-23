@@ -403,7 +403,10 @@ func (j *upgradeJournal) commitReceipt(path string, r Receipt, applied bool) err
 	}
 	var protected json.RawMessage
 	if applied && j.Upgrade.Next.Stage2a != nil {
-		if j.ProtectedDescriptor == nil || j.ProtectedDescriptor.Descriptor == nil || j.ProtectedDescriptor.Runtime == nil {
+		service := j.Upgrade.Next.Service.Stage2a
+		if service == nil || j.ProtectedDescriptor == nil || j.ProtectedDescriptor.Descriptor == nil ||
+			(service.CooperativeOnly && j.ProtectedDescriptor.Runtime != nil) ||
+			(!service.CooperativeOnly && j.ProtectedDescriptor.Runtime == nil) {
 			return errors.New(hqStage2aCutoverRefusal)
 		}
 		var err error

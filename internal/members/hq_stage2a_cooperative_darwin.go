@@ -47,19 +47,21 @@ func (p stage2aCooperativeHProofV3) matches(d stage2aHServiceDescriptorPayloadV3
 		reflect.DeepEqual(p.components, d.Components)
 }
 
+// H-only publication is an owner-approved installation. It cannot depend on
+// a later per-Soul cooperative plan, which does not exist at HQ cutover time.
 func (service *Stage2aService) signAndPublishCooperativeHQStage2a(rec launchRecord, approved Approval,
-	h stage2aDomainInventoryRefV3, authority hqStage2aSigningAuthority, proof stage2aCooperativeHProofV3) (stage2aCooperativeHDescriptorV3, error) {
+	h stage2aDomainInventoryRefV3, authority hqStage2aSigningAuthority) (stage2aCooperativeHDescriptorV3, error) {
 	s := rec.Service.Stage2a
 	if s == nil || !s.CooperativeOnly || s.RuntimeInstallationID != "" || authority.verifyRuntime != nil ||
-		!proof.valid(time.Now()) || proof.hOwnerPlanDigest != "sha256:"+approved.PlanDigest ||
-		proof.pairCommitment != approved.PairCommitment || authority.pair == nil {
+		authority.pair == nil || h.OwnerPlanDigest != "sha256:"+approved.PlanDigest {
 		return stage2aCooperativeHDescriptorV3{}, errStage2aReservationAuthority
 	}
 	var published stage2aCooperativeHDescriptorV3
 	err := authority.pair(approved, func() error {
 		var err error
 		published, err = service.publishReviewedHQStage2a(rec, approved, h, authority, func(d stage2aHServiceDescriptorPayloadV3) error {
-			if !proof.valid(time.Now()) || !proof.matches(d) {
+			if d.HostID != s.HostID || d.HQInstallationID != s.InstallationID ||
+				d.OwnerPlanDigest != h.OwnerPlanDigest || d.HInventory != h {
 				return errStage2aReservationAuthority
 			}
 			return nil

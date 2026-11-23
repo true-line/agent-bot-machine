@@ -32,6 +32,11 @@ approval's ten-minute TTL authorizes the installation ceremony; expiry or
 pruning of that transient approval file does not invalidate a correctly
 installed H. A fresh one-use reservation is still required for each start.
 Missing, changed, retired, or unpaired installed authority fails closed.
+For an H-only cooperative HQ cutover, the fixed A worker reviews the source
+map, signs and publishes the H descriptor under the live paired install, and
+rechecks that descriptor before root records the applied receipt. The H-only
+journal and receipt omit R runtime evidence. A protected HQ cutover continues
+to require the independently installed R runtime witness.
 
 The owner approved v3 structural ceilings of 512 files, 1,024 child directories,
 384 MiB per file, 1 GiB per domain, and a 2 MiB sidecar on 2026-11-22.
@@ -76,6 +81,9 @@ the root receipt, snapshot and audit claim for review.
 - An expired install approval in a matching applied root receipt remains
   install evidence, while a started receipt, mismatched plan or A key, absent
   H witness, or failed live pair cannot authorize a later reservation.
+- An H-only cooperative cutover cannot fabricate an R witness, and a protected
+  cutover cannot omit one. Both retain the exact descriptor witness for
+  rollback and post-install recheck.
 - The paired v3 R install accepts only exact source and manifest pins, rejects
   added/missing source rows and changed bytes, and records one A-sealed R ref
   in both installed policy and applied root receipt. A failed or partial

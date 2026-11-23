@@ -97,7 +97,8 @@ func retainedCooperativeHReceipt(saved Saved, receipt Receipt, owner, fingerprin
 	if err != nil || rec.Service.Stage2a == nil || !rec.Service.Stage2a.CooperativeOnly ||
 		rec.Service.Stage2a.RuntimeInstallationID != "" ||
 		stage2aDecodeExact(receipt.Upgrade.ProtectedDescriptor, &journal) != nil ||
-		journal.Descriptor == nil || !validHQStage2aDescriptorWitness(*rec.Service.Stage2a, *journal.Descriptor) {
+		journal.Descriptor == nil || journal.Runtime != nil ||
+		!validHQStage2aDescriptorWitness(*rec.Service.Stage2a, *journal.Descriptor) {
 		return empty, approval, journal, errStage2aReservationAuthority
 	}
 	return rec, approval, journal, nil

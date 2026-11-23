@@ -100,16 +100,20 @@ func runStage2aHQEvidence(q hqStage2aWorkerRequest, rec launchRecord, key ed2551
 	pair upgradePairGuard) (hqStage2aWorkerReply, error) {
 	var empty hqStage2aWorkerReply
 	s := rec.Service.Stage2a
-	if s == nil || s.CooperativeOnly {
+	if s == nil || len(key) != ed25519.PrivateKeySize || pair == nil {
 		return empty, errStage2aReservationAuthority
 	}
 	pub := key.Public().(ed25519.PublicKey)
 	if err := checkHQStage2aPairedApproval(q.Saved, rec, q.Approval, pub, dir, q.Owner, pair, q.Action != hqStage2aWorkerReview); err != nil {
 		return empty, err
 	}
-	r, err := loadStage2aHQInstalledRuntime(pub, *s)
-	if err != nil || !hqStage2aRuntimeMatches(rec, r.ref) {
-		return empty, errStage2aReservationAuthority
+	var r stage2aVerifiedDomainRefV3
+	if !s.CooperativeOnly {
+		var err error
+		r, err = loadStage2aHQInstalledRuntime(pub, *s)
+		if err != nil || !hqStage2aRuntimeMatches(rec, r.ref) {
+			return empty, errStage2aReservationAuthority
+		}
 	}
 	reply := hqStage2aWorkerReply{Runtime: r.ref}
 	switch q.Action {
@@ -132,18 +136,26 @@ func runStage2aHQEvidence(q hqStage2aWorkerRequest, rec launchRecord, key ed2551
 		if q.H == nil || q.Publication != nil {
 			return empty, errStage2aReservationAuthority
 		}
-		evidence := hqStage2aSigningAuthority{saved: q.Saved, daemonDir: dir, owner: q.Owner, pair: pair,
-			verifyRuntime: func(_ launchRecord, verified stage2aVerifiedDomainRefV3) error {
+		evidence := hqStage2aSigningAuthority{saved: q.Saved, daemonDir: dir, owner: q.Owner, pair: pair}
+		if s.CooperativeOnly {
+			published, err := NewStage2aService(key).signAndPublishCooperativeHQStage2a(rec, q.Approval, *q.H, evidence)
+			if err != nil {
+				return empty, err
+			}
+			reply.Publication = &hqStage2aSignedPublication{Descriptor: published.witness, DescriptorDigest: published.descriptorDigest}
+		} else {
+			evidence.verifyRuntime = func(_ launchRecord, verified stage2aVerifiedDomainRefV3) error {
 				if !verified.verified || verified.ref != r.ref {
 					return errStage2aReservationAuthority
 				}
 				return stage2aRecheckVerifiedDomainV3(verified)
-			}}
-		publication, err := NewStage2aService(key).signAndPublishHQStage2a(rec, q.Approval, *q.H, r, evidence)
-		if err != nil {
-			return empty, err
+			}
+			publication, err := NewStage2aService(key).signAndPublishHQStage2a(rec, q.Approval, *q.H, r, evidence)
+			if err != nil {
+				return empty, err
+			}
+			reply.Publication = &publication
 		}
-		reply.Publication = &publication
 	case hqStage2aWorkerRecheck:
 		if q.H == nil || q.Publication == nil || q.Publication.Runtime != r.ref || !stage2aPrefixedDigest.MatchString(q.Publication.DescriptorDigest) {
 			return empty, errStage2aReservationAuthority
@@ -179,7 +191,7 @@ func callHQStage2aWorker(q hqStage2aWorkerRequest, rec launchRecord) (hqStage2aW
 		return empty, errors.New("offline A worker refused the paired HQ evidence")
 	}
 	var reply hqStage2aWorkerReply
-	if stage2aDecodeExact(out, &reply) != nil || !hqStage2aRuntimeMatches(rec, reply.Runtime) {
+	if stage2aDecodeExact(out, &reply) != nil || !hqStage2aRuntimeEvidenceMatches(rec, reply.Runtime) {
 		return empty, errStage2aReservationAuthority
 	}
 	return reply, nil
@@ -188,7 +200,7 @@ func callHQStage2aWorker(q hqStage2aWorkerRequest, rec launchRecord) (hqStage2aW
 func prepareHQStage2aApply(saved Saved, a Approval, owner, machineAccount string, pair upgradePairGuard) (func(Step) error, error) {
 	q := hqStage2aWorkerRequest{Saved: saved, Approval: a, Owner: owner, Action: hqStage2aWorkerReview}
 	rec, err := q.record()
-	if err != nil || pair == nil || rec.Service.Stage2a.CooperativeOnly || rec.Service.Stage2a.MachineAccount != machineAccount {
+	if err != nil || pair == nil || rec.Service.Stage2a.MachineAccount != machineAccount {
 		return nil, errors.New(hqStage2aCutoverRefusal)
 	}
 	if err := pair(a, nil); err != nil {
