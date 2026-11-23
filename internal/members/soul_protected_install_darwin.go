@@ -157,6 +157,8 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 		!stage2aRuntimeFile(policy.Binding.Snapshots.LaunchInputs.RootPath, policy.Entry, "bin/agent-bot-souls.mjs", policy.LaunchInputs.Files, false) ||
 		policy.LaunchInputs.SelectedCommand != policy.Node ||
 		policy.LaunchInputs.SandboxPolicyDigest != "sha256:"+harnessSHA(soulRunnerProfile) ||
+		!slices.Equal(policy.LaunchInputs.Argv, stage2aRunnerArgvTemplate(policy.Node,
+			policy.Entry, policy.Binding.Snapshots.Definition.RootPath, policy.Binding.ProfileInForce)) ||
 		!stage2aSystemImageSelected(policy.LaunchInputs, "/usr/bin/sandbox-exec") ||
 		policy.BridgeExecutable.Path != SoulBridgeBinary ||
 		!soulDigest.MatchString(policy.BridgeExecutable.SHA256) ||

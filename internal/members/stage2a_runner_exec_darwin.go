@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -90,7 +89,8 @@ func runStage2aRunner(ctx context.Context, request SoulRunRequest, start SoulSta
 		return harnessRefused
 	}
 
-	endpoints, err := DeriveSoulBridgeEndpoints(runner, bridge, start.HQUID, request.StartID)
+	argv, endpoints, err := stage2aRunnerArgvForStart(launchInputs, node, entry,
+		pkg.RootPath, binding.ProfileInForce, runner, bridge, start.HQUID, request.StartID)
 	if err != nil || ctx.Err() != nil || !time.Now().Before(expires) {
 		return harnessRefused
 	}
@@ -111,20 +111,12 @@ func runStage2aRunner(ctx context.Context, request SoulRunRequest, start SoulSta
 	defer startWrite.Close()
 	// R gets only HQ admission and B relay outbound. Its member socket is a
 	// per-start listener; no direct IP or unrelated Unix destination is open.
-	nodeArgs := []string{entry, "run", "--soul", pkg.RootPath,
-		"--admission-socket", endpoints.Admission.SocketPath,
-		"--broker-socket", endpoints.Relay.SocketPath,
-		"--profile", binding.ProfileInForce,
-		"--protected-start-fd", "3"}
-	if !slices.Equal(launchInputs.Argv, append([]string{node}, nodeArgs...)) {
-		return harnessRefused
-	}
 	cmd := exec.Command("/usr/bin/sandbox-exec",
 		"-D", "ADMISSION_SOCKET="+endpoints.Admission.SocketPath,
 		"-D", "RELAY_SOCKET="+endpoints.Relay.SocketPath,
 		"-D", "MEMBER_SOCKET="+endpoints.Member.SocketPath,
 		"-f", SoulRunnerSandbox, node)
-	cmd.Args = append(cmd.Args, nodeArgs...)
+	cmd.Args = append(cmd.Args, argv[1:]...)
 	cmd.Dir = pkg.RootPath
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + darwinSoulRunnerHome(runner.Account),
 		"AGENT_BOT_SOULS_REQUIRE_HQ_LAUNCH=1"}

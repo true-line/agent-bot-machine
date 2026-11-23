@@ -824,6 +824,13 @@ fixture reveals its reviewed response only once after the stock child has an
 A-signed start receipt, both role wrappers and the child remain live, and a
 durable fixture spend succeeds. It does not establish physical T03.
 
+The approved launch-input argv records fixed placeholders for the admission
+and relay socket arguments. The owner reviews and hashes those placeholders
+with every other argument; R replaces only those two positions with Machine's
+per-start endpoints derived from the signed start ID. A observes the live Node
+peer against that exact resolved argv and its kernel process identity. A
+literal future socket path cannot be predicted or substituted at install.
+
 Each finalized `stage2a-live` response carries an A-signed, at most five
 second lease envelope, bound to the spent reservation, signed B finalization,
 bind receipt, exact R/B kernel PID and start identities, and an increasing

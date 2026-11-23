@@ -158,7 +158,17 @@ func observeStage2aHelloRunnerPeer(pid int, r *stage2aLiveReservation,
 			"bin/agent-bot-souls.mjs", p.LaunchInputs.Files, false) {
 		return soulKernelProcessSnapshot{}, errStage2aReservationAuthority
 	}
-	observed, err := observeSoulProcess(pid, p.Node, p.LaunchInputs.Argv)
+	if r.request.StartID != r.payload.Assignment.StartID ||
+		r.request.InstallationID != p.Binding.InstallationID {
+		return soulKernelProcessSnapshot{}, errStage2aReservationAuthority
+	}
+	argv, _, err := stage2aRunnerArgvForStart(p.LaunchInputs, p.Node, p.Entry,
+		p.Binding.Snapshots.Definition.RootPath, p.Binding.ProfileInForce,
+		p.Runner, p.Bridge, p.HQUID, r.request.StartID)
+	if err != nil {
+		return soulKernelProcessSnapshot{}, errStage2aReservationAuthority
+	}
+	observed, err := observeSoulProcess(pid, p.Node, argv)
 	if err != nil || !stage2aRunnerPeerKernelMatches(observed.Kernel,
 		r.runnerPID, p.Runner.UID, p.Runner.GID) {
 		return soulKernelProcessSnapshot{}, errStage2aReservationAuthority
