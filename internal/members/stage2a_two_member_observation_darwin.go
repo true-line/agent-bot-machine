@@ -2,6 +2,11 @@
 
 package members
 
+import (
+	"encoding/json"
+	"slices"
+)
+
 // These observations are nonauthorizing until the owner-reviewed two-member
 // plan, per-member launcher grants, B bindings and signed wire are installed.
 // In particular, observing two same-UID processes does not prove isolation.
@@ -57,6 +62,10 @@ func (r *stage2aLiveReservation) observeTwoMemberChildren(p stage2aInstalledPoli
 		return errStage2aReservationAuthority
 	}
 	commandPath, _ := command[0].(string)
+	if !stage2aOwnerReviewedTwoMemberSet(p, r.hello.roles, commandPath,
+		p.LaunchInputs.ComponentDigests["adapter"]) {
+		return errStage2aReservationAuthority
+	}
 	observed, err := collectStage2aTwoMemberChildren(r.hello.roles, candidates,
 		r.runnerProcess, r.bridgeProcess, p.Runner.UID, p.Runner.GID,
 		commandPath, p.LaunchInputs.ComponentDigests["adapter"],
@@ -76,6 +85,75 @@ func (r *stage2aLiveReservation) observeTwoMemberChildren(p stage2aInstalledPoli
 	}
 	r.twoMemberChildren = &observed
 	return nil
+}
+
+// A derives the stable member projection from measured SoulInfo and the
+// installed adapter command. Only the exact digest in the owner-approved plan
+// selects this cohort; an R or H claim cannot select it at launch time.
+func stage2aOwnerReviewedTwoMemberSet(p stage2aInstalledPolicy,
+	roles []stage2aHelloMember, commandPath, commandSHA256 string) bool {
+	if len(roles) != 2 || !stage2aHelloMatchesFrozenMembers(p, roles) ||
+		stage2aStrictJSON(p.Plan) != nil {
+		return false
+	}
+	var plan Plan
+	if json.Unmarshal(p.Plan, &plan) != nil || plan.SoulProtectedLaunch == nil ||
+		plan.Purpose != SoulProtectedLaunchInstallPurpose ||
+		plan.SoulProtectedLaunch.OwnerPlanMemberSetSHA256 == "" {
+		return false
+	}
+	digest, err := stage2aOwnerMemberSetDigest(roles, commandPath, commandSHA256)
+	return err == nil && digest == plan.SoulProtectedLaunch.OwnerPlanMemberSetSHA256
+}
+
+func stage2aOwnerMemberSetDigest(roles []stage2aHelloMember,
+	commandPath, commandSHA256 string) (string, error) {
+	if len(roles) != 2 || !stage2aAbsolutePath(commandPath) ||
+		!stage2aPrefixedDigest.MatchString(commandSHA256) {
+		return "", errStage2aReservationAuthority
+	}
+	ordered := slices.Clone(roles)
+	slices.SortFunc(ordered, func(a, b stage2aHelloMember) int {
+		if a.MemberID < b.MemberID {
+			return -1
+		}
+		if a.MemberID > b.MemberID {
+			return 1
+		}
+		return 0
+	})
+	projection := make([]struct {
+		MemberID       string `json:"member_id"`
+		Role           string `json:"role"`
+		AdapterID      string `json:"adapter_id"`
+		AdapterVersion string `json:"adapter_version"`
+		CommandPath    string `json:"command_path"`
+		CommandSHA256  string `json:"command_sha256"`
+	}, 2)
+	leads := 0
+	for i, role := range ordered {
+		if !stage2aBindingID.MatchString(role.MemberID) ||
+			(i > 0 && ordered[i-1].MemberID == role.MemberID) ||
+			!stage2aHelloRole.MatchString(role.Role) ||
+			!stage2aBindingID.MatchString(role.AdapterID) ||
+			!stage2aHelloAdapterVersion.MatchString(role.AdapterVersion) {
+			return "", errStage2aReservationAuthority
+		}
+		if role.Role == "lead" {
+			leads++
+		}
+		projection[i].MemberID, projection[i].Role = role.MemberID, role.Role
+		projection[i].AdapterID, projection[i].AdapterVersion = role.AdapterID, role.AdapterVersion
+		projection[i].CommandPath, projection[i].CommandSHA256 = commandPath, commandSHA256
+	}
+	if leads != 1 {
+		return "", errStage2aReservationAuthority
+	}
+	canonical, err := marshalStage2aReservationJCS(projection)
+	if err != nil {
+		return "", errStage2aReservationAuthority
+	}
+	return stage2aReservationSHA256(canonical), nil
 }
 
 // collectStage2aTwoMemberChildren samples both granted launcher/child pairs

@@ -82,3 +82,38 @@ func TestStage2aTwoMemberObservationRefusesMissingDuplicateAndReplacedChild(t *t
 		t.Fatal("same-account child with changed effective UID accepted")
 	}
 }
+
+func TestStage2aOwnerMemberSetDigestBindsExactMeasuredProjection(t *testing.T) {
+	roles := []stage2aHelloMember{
+		{MemberID: "m_lead", Role: "lead", AdapterID: "claude-code", AdapterVersion: "0.109.0"},
+		{MemberID: "m_spec", Role: "specialist", AdapterID: "claude-code", AdapterVersion: "0.109.0"},
+	}
+	path := "/private/var/db/agent-bot-machine/runtime/bin/claude-agent-acp"
+	sha := "sha256:" + strings.Repeat("a", 64)
+	want, err := stage2aOwnerMemberSetDigest(roles, path, sha)
+	if err != nil || !stage2aPrefixedDigest.MatchString(want) {
+		t.Fatalf("valid exact member set refused: %s %v", want, err)
+	}
+	reversed := []stage2aHelloMember{roles[1], roles[0]}
+	got, err := stage2aOwnerMemberSetDigest(reversed, path, sha)
+	if err != nil || got != want {
+		t.Fatal("member input order changed the sorted owner projection")
+	}
+	changed := append([]stage2aHelloMember(nil), roles...)
+	changed[1].Role = "lead"
+	if _, err := stage2aOwnerMemberSetDigest(changed, path, sha); err == nil {
+		t.Fatal("second lead accepted")
+	}
+	changed[1] = changed[0]
+	if _, err := stage2aOwnerMemberSetDigest(changed, path, sha); err == nil {
+		t.Fatal("duplicate member accepted")
+	}
+	got, err = stage2aOwnerMemberSetDigest(roles, path+"-other", sha)
+	if err != nil || got == want {
+		t.Fatal("changed installed command path kept owner selection")
+	}
+	got, err = stage2aOwnerMemberSetDigest(roles, path, "sha256:"+strings.Repeat("b", 64))
+	if err != nil || got == want {
+		t.Fatal("changed measured command bytes kept owner selection")
+	}
+}

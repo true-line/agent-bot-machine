@@ -40,6 +40,8 @@ func decodeSoulProtectedLaunch(raw []byte) (*SoulProtectedLaunchInstall, error) 
 	legacy := request.Schema == stage2aInstallSchema && request.RuntimeV3 == nil
 	v3 := request.Schema == stage2aRuntimeInstallSchemaV3 && request.RuntimeV3 != nil
 	if (!legacy && !v3) || !stage2aAbsolutePath(request.ArtifactSource) ||
+		(request.OwnerPlanMemberSetSHA256 != "" &&
+			(!v3 || !stage2aPrefixedDigest.MatchString(request.OwnerPlanMemberSetSHA256))) ||
 		!stage2aAbsolutePath(request.BridgeBinarySource) ||
 		!stage2aAbsolutePath(request.DefinitionSource) || !stage2aAbsolutePath(request.LaunchInputsSource) ||
 		len(request.Policy) == 0 || len(request.Policy) > 40<<10 {
