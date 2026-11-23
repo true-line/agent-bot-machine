@@ -38,7 +38,7 @@ var candidateCommonBindingFieldsV3 = []string{
 	"launch_input_measurement", "snapshots", "soul_artifact_sha256",
 }
 
-func candidateReportProjectionV3(fields map[string]json.RawMessage) ([]byte, measurementBinding, error) {
+func commonReportProjectionV3(fields map[string]json.RawMessage) ([]byte, measurementBinding, error) {
 	var zero measurementBinding
 	legacy := make(map[string]json.RawMessage, len(candidateCommonBindingFieldsV3))
 	for _, name := range candidateCommonBindingFieldsV3 {
@@ -75,7 +75,7 @@ func parseCandidateMeasurementBindingV3(raw []byte) (candidateMeasurementBinding
 		string(fields["profile_in_force"]) != `"managed-protected"` {
 		return zero, ErrUnqualified
 	}
-	projection, base, err := candidateReportProjectionV3(fields)
+	projection, base, err := commonReportProjectionV3(fields)
 	if err != nil {
 		return zero, ErrUnqualified
 	}
