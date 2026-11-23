@@ -786,6 +786,9 @@ completed-run record and signed v3 host report are separate later evidence.
 **Intent.** T21 needs the same measured Soul to run through an explicitly
 selected cooperative route while refusing every protected claim. A protected
 reservation refusal is terminal for that request; it never selects this route.
+Base HQ, Machine, Souls and Comms installation needs no harness package or
+credential. This plan is for one explicitly selected Soul installation; it
+neither selects a stock harness nor adds one to the base install.
 
 **Target.** `members plan --soul-cooperative-launch-install <request.json>`
 saves a separate owner-reviewable `soul-cooperative-launch-install` plan. It
@@ -887,8 +890,9 @@ wrapper terminates its stock process group on missing, stale or rejected
 renewal or HQ EOF. An A restart loses the active
 in-memory reservation and cannot resume signing the already spent start.
 
-The owner-approved launch inputs also contain a bounded
-`effective_config.adapter_child_env` object for the stock Claude ACP child.
+The stock Claude ACP child below is an explicit Stage 2a pilot selection,
+not a base installation dependency. Only that selected Soul's approved launch
+inputs contain the bounded `effective_config.adapter_child_env` object.
 The install plan compares its model, HTTP host, exact Messages query and test
 key digest to the reviewed B qualification. The selected adapter route must
 be one `claude-agent-acp` executable inside A's frozen runtime inventory; its
