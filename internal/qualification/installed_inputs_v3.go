@@ -2,6 +2,7 @@ package qualification
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"path"
 	"reflect"
@@ -20,6 +21,16 @@ type VerifiedInstalledInputInventoryV3 struct {
 	InventorySHA256, DefinitionMeasurementSHA256, LaunchMeasurementSHA256 string
 	InstallationID, SoulID, StartID, LaunchID, HostID, Profile            string
 	FileCount                                                             int
+}
+
+// VerifiedSignedInstalledInputInventoryV3 distinguishes the A-signed stop and
+// segment digest join from the unsigned record-and-file inventory component.
+// Neither value represents a physical gate verdict.
+type VerifiedSignedInstalledInputInventoryV3 struct {
+	verified                 bool
+	Inventory                VerifiedInstalledInputInventoryV3
+	StopSHA256               string
+	SegmentAttestationSHA256 string
 }
 
 type installedInputFileV3 struct {
@@ -429,4 +440,108 @@ func ResolveInstalledInputInventoryV3(root string, inventoryRaw, bindingRaw []by
 		InstallationID:              binding.InstallationID, SoulID: binding.SoulID,
 		StartID: binding.StartID, LaunchID: binding.LaunchID, HostID: binding.HostID,
 		Profile: binding.ProfileInForce, FileCount: len(inventory.OpenedFiles)}, nil
+}
+
+// ResolveSignedInstalledInputInventoryV3 authenticates the narrow A custody
+// join for one stopped protected start. The independently enrolled Machine A
+// key must be supplied by the caller; an envelope's embedded key is never a
+// trust anchor. Full reservation/Q/ACP/OS chains, the owner plan, released
+// bytes, case inventory and gate outcomes remain separate requirements.
+func ResolveSignedInstalledInputInventoryV3(root string, inventoryRaw, bindingRaw,
+	stopEnvelope, segmentAttestationEnvelope []byte, machineKey ed25519.PublicKey,
+	now time.Time) (VerifiedSignedInstalledInputInventoryV3, error) {
+	var zero VerifiedSignedInstalledInputInventoryV3
+	if len(machineKey) != ed25519.PublicKeySize || now.IsZero() {
+		return zero, ErrUnqualified
+	}
+	binding, err := parseMeasurementBindingV2(bindingRaw)
+	if err != nil {
+		return zero, ErrUnqualified
+	}
+	stopRaw, err := qSignedRecordV3(stopEnvelope, "agent-bot/stage2a-stop/v1", 1, machineKey)
+	if err != nil {
+		return zero, ErrUnqualified
+	}
+	stopFields, err := strictObject(stopRaw, 48<<10)
+	if err != nil || !hasFields(stopFields, "schema", "reservation_sha256", "installation_id",
+		"start_id", "launch_id", "plan_id", "plan_digest", "hq_epoch", "runner_uid",
+		"bridge_uid", "runner_pid", "bridge_pid", "both_uids_idle", "stopped_at") {
+		return zero, ErrUnqualified
+	}
+	var stop struct {
+		Schema            string `json:"schema"`
+		ReservationSHA256 string `json:"reservation_sha256"`
+		InstallationID    string `json:"installation_id"`
+		StartID           string `json:"start_id"`
+		LaunchID          string `json:"launch_id"`
+		PlanID            string `json:"plan_id"`
+		PlanDigest        string `json:"plan_digest"`
+		HQEpoch           string `json:"hq_epoch"`
+		RunnerUID         int    `json:"runner_uid"`
+		BridgeUID         int    `json:"bridge_uid"`
+		RunnerPID         int    `json:"runner_pid"`
+		BridgePID         int    `json:"bridge_pid"`
+		BothUIDsIdle      bool   `json:"both_uids_idle"`
+		StoppedAt         string `json:"stopped_at"`
+	}
+	if json.Unmarshal(stopRaw, &stop) != nil ||
+		stop.Schema != "agent-bot-machine/stage2a-stop/v1" || !stop.BothUIDsIdle ||
+		!validSHA(stop.ReservationSHA256) || stop.RunnerPID <= 0 || stop.BridgePID <= 0 ||
+		stop.RunnerUID < 300 || stop.RunnerUID > 399 ||
+		stop.BridgeUID < 300 || stop.BridgeUID > 399 || stop.RunnerUID == stop.BridgeUID ||
+		stop.InstallationID != binding.InstallationID || stop.StartID != binding.StartID ||
+		stop.LaunchID != binding.LaunchID || stop.PlanID != binding.PlanID ||
+		stop.PlanDigest != binding.InstalledPlanDigest || stop.HQEpoch != binding.HQEpoch {
+		return zero, ErrUnqualified
+	}
+	stoppedAt, err := parseTime(stop.StoppedAt)
+	if err != nil {
+		return zero, ErrUnqualified
+	}
+	attestationRaw, err := qSignedRecordV3(segmentAttestationEnvelope,
+		physicalSegmentPurposeV3, 1, machineKey)
+	if err != nil {
+		return zero, ErrUnqualified
+	}
+	attestationFields, err := strictObject(attestationRaw, 48<<10)
+	if err != nil || !hasFields(attestationFields, "schema_version", "kind", "gate",
+		"profile", "host_id", "cohort_id", "suite_revision", "owner_plan_sha256",
+		"segment_id", "purpose", "report_anchor", "terminal_state", "installation_id",
+		"soul_id", "start_id", "launch_id", "measurement_binding_sha256",
+		"q_session_status", "q_session_id", "q_challenge_sha256",
+		"segment_manifest_sha256", "reservation_sha256", "b_finalization_sha256",
+		"stop_sha256", "q_wire_sha256", "q_index_sha256", "q_eof_sha256",
+		"owner_acp_to_hq_sha256", "hq_acp_to_owner_sha256", "os_observation_sha256",
+		"installed_inputs_sha256", "signed_at") {
+		return zero, ErrUnqualified
+	}
+	var attestation physicalSegmentAttestationV3
+	if json.Unmarshal(attestationRaw, &attestation) != nil ||
+		attestation.SchemaVersion != 1 ||
+		attestation.Kind != "stage2a-physical-segment-attestation" ||
+		(attestation.Gate != "T01" && attestation.Gate != "T02" && attestation.Gate != "T03") ||
+		attestation.Profile != "managed-protected" ||
+		attestation.TerminalState != "stopped" || attestation.QSessionStatus != "completed" ||
+		attestation.InstallationID != binding.InstallationID ||
+		attestation.SoulID != binding.SoulID || attestation.StartID != binding.StartID ||
+		attestation.LaunchID != binding.LaunchID || attestation.HostID != binding.HostID ||
+		attestation.Profile != binding.ProfileInForce ||
+		attestation.MeasurementBindingSHA256 != digest(bindingRaw) ||
+		attestation.ReservationSHA256 != stop.ReservationSHA256 ||
+		attestation.StopSHA256 != digest(stopEnvelope) ||
+		attestation.InstalledInputsSHA256 != digest(inventoryRaw) {
+		return zero, ErrUnqualified
+	}
+	signedAt, err := parseTime(attestation.SignedAt)
+	if err != nil {
+		return zero, ErrUnqualified
+	}
+	inventory, err := ResolveInstalledInputInventoryV3(root, inventoryRaw, bindingRaw,
+		stoppedAt, signedAt, now)
+	if err != nil || !inventory.verified {
+		return zero, ErrUnqualified
+	}
+	return VerifiedSignedInstalledInputInventoryV3{verified: true,
+		Inventory: inventory, StopSHA256: digest(stopEnvelope),
+		SegmentAttestationSHA256: digest(segmentAttestationEnvelope)}, nil
 }

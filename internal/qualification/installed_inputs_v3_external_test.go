@@ -1,7 +1,10 @@
 package qualification_test
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -14,6 +17,28 @@ import (
 	"github.com/qwts/managed-machine/internal/members"
 	"github.com/qwts/managed-machine/internal/qualification"
 )
+
+func signInstalledFixtureV3(t *testing.T, purpose string, payload map[string]any,
+	key ed25519.PrivateKey) []byte {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(raw)
+	signature := ed25519.Sign(key, append([]byte(purpose+"\x00"), raw...))
+	envelope, err := json.Marshal(map[string]any{
+		"schema_version": 1, "purpose": purpose,
+		"issuer_public_key_base64url": base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey)),
+		"payload_sha256":              "sha256:" + hex.EncodeToString(hash[:]),
+		"payload_base64url":           base64.RawURLEncoding.EncodeToString(raw),
+		"signature_base64url":         base64.RawURLEncoding.EncodeToString(signature),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return envelope
+}
 
 func inventoryBlobV3(t *testing.T, root, role string, data []byte) map[string]any {
 	t.Helper()
@@ -170,6 +195,100 @@ func TestInstalledInventoryOfflineJoinV3(t *testing.T) {
 	inventory["opened_files"] = files[1:]
 	if err := check(inventory); err == nil {
 		t.Error("accepted missing opened file")
+	}
+}
+
+func TestSignedInstalledInventoryStopToSegmentJoinV3(t *testing.T) {
+	root, inventory, bindingRaw := inventoryFixtureV3(t)
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var binding map[string]any
+	if err := json.Unmarshal(bindingRaw, &binding); err != nil {
+		t.Fatal(err)
+	}
+	sha := func(raw []byte) string {
+		hash := sha256.Sum256(raw)
+		return "sha256:" + hex.EncodeToString(hash[:])
+	}
+	stop := map[string]any{
+		"schema":             "agent-bot-machine/stage2a-stop/v1",
+		"reservation_sha256": sha([]byte("reservation")),
+		"installation_id":    binding["installation_id"], "start_id": binding["start_id"],
+		"launch_id": binding["launch_id"], "plan_id": binding["plan_id"],
+		"plan_digest": binding["installed_plan_digest"], "hq_epoch": binding["hq_epoch"],
+		"runner_uid": 310, "bridge_uid": 311, "runner_pid": 812, "bridge_pid": 813,
+		"both_uids_idle": true, "stopped_at": "2026-11-22T12:00:03Z",
+	}
+	stopEnvelope := signInstalledFixtureV3(t, "agent-bot/stage2a-stop/v1", stop, private)
+	inventoryRaw, err := json.Marshal(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	placeholder := sha([]byte("other evidence"))
+	attestation := map[string]any{
+		"schema_version": 1, "kind": "stage2a-physical-segment-attestation",
+		"gate": "T01", "profile": binding["profile_in_force"], "host_id": binding["host_id"],
+		"cohort_id": "fixture-cohort", "suite_revision": strings.Repeat("1", 40),
+		"owner_plan_sha256": placeholder, "segment_id": "fixture-segment", "purpose": "initial",
+		"report_anchor": true, "terminal_state": "stopped",
+		"installation_id": binding["installation_id"], "soul_id": binding["soul_id"],
+		"start_id": binding["start_id"], "launch_id": binding["launch_id"],
+		"measurement_binding_sha256": sha(bindingRaw), "q_session_status": "completed",
+		"q_session_id": strings.Repeat("1", 32), "q_challenge_sha256": placeholder,
+		"segment_manifest_sha256": placeholder, "reservation_sha256": stop["reservation_sha256"],
+		"b_finalization_sha256": placeholder, "stop_sha256": sha(stopEnvelope),
+		"q_wire_sha256": placeholder, "q_index_sha256": placeholder,
+		"q_eof_sha256": placeholder, "owner_acp_to_hq_sha256": placeholder,
+		"hq_acp_to_owner_sha256": placeholder, "os_observation_sha256": placeholder,
+		"installed_inputs_sha256": sha(inventoryRaw), "signed_at": "2026-11-22T12:00:05Z",
+	}
+	attestationEnvelope := signInstalledFixtureV3(t, "agent-bot/stage2a-physical-segment/v1",
+		attestation, private)
+	now := time.Date(2026, 11, 22, 13, 0, 0, 0, time.UTC)
+	verify := func(inventoryRaw, stopEnvelope, attestationEnvelope []byte,
+		key ed25519.PublicKey) error {
+		_, err := qualification.ResolveSignedInstalledInputInventoryV3(root, inventoryRaw,
+			bindingRaw, stopEnvelope, attestationEnvelope, key, now)
+		return err
+	}
+	if err := verify(inventoryRaw, stopEnvelope, attestationEnvelope, public); err != nil {
+		t.Fatalf("signed A inventory join rejected: %v", err)
+	}
+	otherPublic, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verify(inventoryRaw, stopEnvelope, attestationEnvelope, otherPublic); err == nil {
+		t.Error("accepted an unenrolled A key")
+	}
+	changedStop := make(map[string]any, len(stop))
+	for key, value := range stop {
+		changedStop[key] = value
+	}
+	changedStop["both_uids_idle"] = false
+	if err := verify(inventoryRaw,
+		signInstalledFixtureV3(t, "agent-bot/stage2a-stop/v1", changedStop, private),
+		attestationEnvelope, public); err == nil {
+		t.Error("accepted a non-idle signed stop")
+	}
+	changedAttestation := make(map[string]any, len(attestation))
+	for key, value := range attestation {
+		changedAttestation[key] = value
+	}
+	changedAttestation["installed_inputs_sha256"] = placeholder
+	if err := verify(inventoryRaw, stopEnvelope,
+		signInstalledFixtureV3(t, "agent-bot/stage2a-physical-segment/v1",
+			changedAttestation, private), public); err == nil {
+		t.Error("accepted signed inventory digest substitution")
+	}
+	changedAttestation["installed_inputs_sha256"] = sha(inventoryRaw)
+	changedAttestation["signed_at"] = "2026-11-22T12:00:04Z"
+	if err := verify(inventoryRaw, stopEnvelope,
+		signInstalledFixtureV3(t, "agent-bot/stage2a-physical-segment/v1",
+			changedAttestation, private), public); err == nil {
+		t.Error("accepted inventory wrapper observed after A segment signature")
 	}
 }
 

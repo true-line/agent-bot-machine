@@ -197,6 +197,12 @@ must fall from the signed idle stop through the segment signature, inclusive.
 The caller must verify the stop and segment signatures and the segment's exact
 `installed_inputs_sha256` before crediting that join. Passing arbitrary times
 to the component is not A authentication.
+The companion `ResolveSignedInstalledInputInventoryV3` component verifies
+both envelopes against an independently enrolled A Ed25519 key, joins the
+signed idle stop and attestation to the same installation, start, launch,
+host, profile, plan and measurement binding, checks the exact stop and
+inventory digests, then applies the bounded offline inventory check. It does
+not authenticate the reservation/Q chain, attest a release, or prove a gate.
 
 The current wrapper covers the frozen definition and R-readable launch-input
 snapshot. It does not attest a separate H-readable HQ/Comms/contracts code
