@@ -146,8 +146,9 @@ type upgradeSigner struct {
 }
 
 type upgradeReceiptEvidence struct {
-	Approval Approval      `json:"approval"`
-	Signer   upgradeSigner `json:"signer"`
+	Approval            Approval        `json:"approval"`
+	Signer              upgradeSigner   `json:"signer"`
+	ProtectedDescriptor json.RawMessage `json:"protected_descriptor,omitempty"`
 }
 
 type upgradePairGuard func(Approval, func() error) error

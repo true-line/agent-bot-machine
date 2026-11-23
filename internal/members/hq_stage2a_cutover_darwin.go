@@ -1,14 +1,18 @@
 package members
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 )
 
 type hqStage2aJournalDescriptor struct {
-	Directory  stage2aInstalledDirectory  `json:"directory"`
-	Descriptor *stage2aDomainSidecarRefV3 `json:"descriptor,omitempty"`
+	Directory  stage2aInstalledDirectory    `json:"directory"`
+	Descriptor *stage2aDomainSidecarRefV3   `json:"descriptor,omitempty"`
+	H          *stage2aDomainInventoryRefV3 `json:"h_inventory,omitempty"`
+	Runtime    *stage2aDomainInventoryRefV3 `json:"runtime,omitempty"`
 }
 
 type protectedHQUpgradeOperations interface {
@@ -29,6 +33,7 @@ type hqStage2aUpgradeEvidence struct {
 
 type hqStage2aPublication struct {
 	witness stage2aDomainSidecarRefV3
+	runtime stage2aDomainInventoryRefV3
 	// Before launchd submission, recheck the sealed H/R, A signature,
 	// selected bytes, and the exact published descriptor inode.
 	recheck func() error
@@ -66,7 +71,7 @@ func (j *upgradeJournal) prepareProtectedHQ(rec launchRecord) error {
 	if err != nil {
 		return err
 	}
-	if published == nil || published.recheck == nil || published.withdraw == nil || !validHQStage2aDescriptorWitness(*rec.Service.Stage2a, published.witness) {
+	if published == nil || published.recheck == nil || published.withdraw == nil || !validHQStage2aDescriptorWitness(*rec.Service.Stage2a, published.witness) || !hqStage2aRuntimeMatches(rec, published.runtime) {
 		return errors.New(hqStage2aCutoverRefusal)
 	}
 	withdraw := published.withdraw
@@ -81,6 +86,8 @@ func (j *upgradeJournal) prepareProtectedHQ(rec launchRecord) error {
 		return err
 	}
 	j.ProtectedDescriptor.Descriptor = &published.witness
+	j.ProtectedDescriptor.H = &sealed
+	j.ProtectedDescriptor.Runtime = &published.runtime
 	return j.write(journal, false)
 }
 
@@ -128,4 +135,32 @@ func rollbackProtectedHQ(j upgradeOperations, rec launchUpgrade) error {
 		return errors.New(hqStage2aCutoverRefusal)
 	}
 	return protected.rollbackProtectedHQ()
+}
+
+func hqStage2aRuntimeMatches(rec launchRecord, ref stage2aDomainInventoryRefV3) bool {
+	s := rec.Service.Stage2a
+	return s != nil && ref.Domain == "R-runtime" && ref.MachineUID == uint32(s.MachineUID) &&
+		ref.ReaderUID > 0 && ref.ReaderGID > 0 && ref.ReaderUID != uint32(s.ReaderUID) && ref.ReaderGID != uint32(s.ReaderGID) &&
+		matchesHQStage2aRuntimeNames(ref)
+}
+
+func (j *upgradeJournal) checkProtectedHQCandidate(rec launchRecord,
+	checkDurable func(launchRecord, Approval, *hqStage2aJournalDescriptor) error) error {
+	if j.protectedPublication != nil {
+		return j.protectedPublication.recheck()
+	}
+	state := j.ProtectedDescriptor
+	if state == nil || state.Descriptor == nil || state.H == nil || state.Runtime == nil || !hqStage2aRuntimeMatches(rec, *state.Runtime) {
+		return errors.New(hqStage2aCutoverRefusal)
+	}
+	return checkDurable(rec, j.Approval, state)
+}
+
+func matchesHQStage2aReceiptWitness(receipt, journal json.RawMessage) bool {
+	if len(receipt) == 0 || len(journal) == 0 {
+		return len(receipt) == 0 && len(journal) == 0
+	}
+	var fromReceipt, fromJournal *hqStage2aJournalDescriptor
+	return stage2aDecodeExact(receipt, &fromReceipt) == nil && stage2aDecodeExact(journal, &fromJournal) == nil &&
+		fromReceipt != nil && fromJournal != nil && reflect.DeepEqual(fromReceipt, fromJournal)
 }

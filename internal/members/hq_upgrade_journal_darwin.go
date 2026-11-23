@@ -364,10 +364,7 @@ func clearRecordedEndpoint(path string, stop *stoppingHQ, remove func(*os.File, 
 }
 func (j *upgradeJournal) verify(r launchRecord) error {
 	if r.Stage2a != nil {
-		if j.protectedPublication == nil {
-			return errors.New(hqStage2aCutoverRefusal)
-		}
-		if err := j.protectedPublication.recheck(); err != nil {
+		if err := j.checkProtectedHQCandidate(r, recheckDurableHQStage2aCandidate); err != nil {
 			return err
 		}
 	}
@@ -404,14 +401,28 @@ func (j *upgradeJournal) commitReceipt(path string, r Receipt, applied bool) err
 	if r.Result != "started" && r.Result != wanted {
 		return errors.New("conflicting root receipt; preserving HQ journal")
 	}
+	var protected json.RawMessage
+	if applied && j.Upgrade.Next.Stage2a != nil {
+		if j.ProtectedDescriptor == nil || j.ProtectedDescriptor.Descriptor == nil || j.ProtectedDescriptor.H == nil || j.ProtectedDescriptor.Runtime == nil {
+			return errors.New(hqStage2aCutoverRefusal)
+		}
+		var err error
+		protected, err = json.Marshal(j.ProtectedDescriptor)
+		if err != nil {
+			return err
+		}
+	}
 	if r.Result == wanted {
 		if applied {
+			if r.Upgrade == nil || !matchesHQStage2aReceiptWitness(r.Upgrade.ProtectedDescriptor, protected) {
+				return errors.New("completed receipt differs from durable HQ descriptor evidence")
+			}
 			return j.pair(j.Approval, nil)
 		}
 		return nil
 	}
 	r.Result = wanted
-	r.Upgrade = &upgradeReceiptEvidence{Approval: j.Approval, Signer: j.Signer}
+	r.Upgrade = &upgradeReceiptEvidence{Approval: j.Approval, Signer: j.Signer, ProtectedDescriptor: protected}
 	r.FinishedAt = time.Now().UTC().Format(approvalTime)
 	if !applied {
 		r.FailedAt = "service upgrade; previous release restored"
@@ -559,6 +570,9 @@ func completedUpgrade(saved Saved, owner string, pair upgradePairGuard) (bool, e
 		capability, e := verifyDarwinRelease(verify.Service, OSHost{})
 		if e != nil || capability != launchControlV2 || !matchesReviewedHQPlist(verify, owner, capability) {
 			return errors.New("previously verified HQ release changed")
+		}
+		if verify.Stage2a != nil && (len(r.Upgrade.ProtectedDescriptor) == 0 || json.Unmarshal(r.Upgrade.ProtectedDescriptor, &j.ProtectedDescriptor) != nil) {
+			return errors.New(hqStage2aCutoverRefusal)
 		}
 		if e := j.verify(verify); e != nil {
 			return e
