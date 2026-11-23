@@ -435,6 +435,15 @@ with that UID: on macOS 27.0.1, a same-UID process under the network-only
 sidecar fixture read synthetic 0600 token state and unlinked a live 0660 Unix
 listener. [Probe and limits](https://github.com/true-line/agent-bot-machine/pull/638#issuecomment-7069309766).
 
+The [sidecar fixture profile](../../internal/members/darwin/harness-sidecar.sb)
+allows one exact Unix listener and outbound connections only to the assigned
+broker and member sockets. Its native test checks the assigned listener and
+refuses another Unix bind, a sibling Unix connection, and direct IPv4/IPv6
+binds and connections. This network-only fixture is not an installed launch
+grant and does not isolate processes sharing a UID. Production use requires a
+reviewed sidecar policy, pinned command, live HQ authorization, target UID
+checks, process supervision and safe retirement.
+
 The protected mapping requires one deterministic `_abm-br-*` bridge
 account and private UID/GID for **each Soul installation**. Its future 0700
 home is under `/var/agent-bot-soul-bridge-*`. The bridge is separate
