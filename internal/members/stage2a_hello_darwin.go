@@ -227,7 +227,8 @@ func (s *Stage2aService) HelloStart(hqUID int, epoch string, q Stage2aHelloStart
 		q.BrokerBindReceiptSHA256 != r.bindReceiptSHA256 ||
 		hello.SoulID != p.Binding.SoulID || hello.InstallationID != q.InstallationID ||
 		hello.DefinitionDigest != p.Binding.ClaimedDefinitionDigest ||
-		p.Binding.ProfileInForce != "managed-protected" {
+		p.Binding.ProfileInForce != "managed-protected" ||
+		!stage2aHelloMatchesFrozenMembers(p, hello.RequestedRoles) {
 		return reply, errStage2aReservationAuthority
 	}
 	if stage2aHelloCheckLive(r, p, q.Stage2aStopRequest) != nil {
