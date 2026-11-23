@@ -39,6 +39,8 @@ type Request struct {
 	stage2aCooperativeProvider   members.SoulCooperativeProviderRequestV3
 	stage2aCooperativeLookup     members.Stage2aLookupRequest
 	stage2aCooperativeLive       members.SoulCooperativeLiveRequestV3
+	stage2aCooperativeQBegin     members.SoulCooperativeLiveRequestV3
+	stage2aCooperativeQFinish    members.Stage2aDirectQFinishRequestV3
 	stage2aCooperativeAbort      members.Stage2aStopRequest
 	stage2aCooperativeAttach     members.SoulCooperativeAttachRequestV3
 	stage2aCooperativeStop       members.Stage2aStopRequest

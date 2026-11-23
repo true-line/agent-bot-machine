@@ -166,6 +166,7 @@ func (s *Stage2aService) AbortCooperativePreAttach(hqUID int, epoch string,
 	if err != nil || !ran || reply.SHA256 == "" {
 		return Stage2aStopReply{}, errSoulCooperativeAuthority
 	}
+	s.closeDirectQualificationV3(live)
 	delete(s.cooperativeActive, q.ReservationSHA256)
 	return reply, nil
 }

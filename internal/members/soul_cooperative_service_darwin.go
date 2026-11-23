@@ -37,6 +37,7 @@ type soulCooperativeLiveV3 struct {
 	runner            soulKernelProcessSnapshot
 	attached          bool
 	attachSHA256      string
+	directQ           *stage2aDirectQRunV3
 }
 
 // ReserveCooperativeV3 reconstructs the candidate solely from current
