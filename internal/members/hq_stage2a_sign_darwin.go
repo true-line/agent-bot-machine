@@ -27,7 +27,9 @@ func buildHQStage2aDescriptor(rec launchRecord, approved Approval, h stage2aDoma
 	for _, row := range inv.Files {
 		selected[row.Path] = row.SHA256
 	}
-	for _, name := range []string{hqStage2aHelper, hqStage2aNode, hqStage2aEntry, hqStage2aGuard, s.PreloaderPath} {
+	for _, name := range []string{hqStage2aHelper, hqStage2aNode, hqStage2aEntry, hqStage2aGuard,
+		s.PreloaderPath, hqStage2aCooperativeMachine, hqStage2aCooperativeProof,
+		hqStage2aCooperativeStart, hqStage2aCooperativeBridge} {
 		if !stage2aPrefixedDigest.MatchString(selected[name]) {
 			return empty, errStage2aReservationAuthority
 		}

@@ -12,14 +12,18 @@ import (
 const hqStage2aCutoverRefusal = "protected Stage 2a HQ requires owner-approved limits, sealed H and R, the approved release mapping, and a verified runtime guard"
 
 const (
-	hqStage2aMetadataDir = launchRuntimeDir + "/h-v3"
-	hqStage2aPublicKey   = SoulAuthorityPin
-	hqStage2aDescriptor  = hqStage2aMetadataDir + "/descriptor.json"
-	hqStage2aNode        = "bin/node"
-	hqStage2aHelper      = "helpers/darwin-owner.rb"
-	hqStage2aEntry       = "hq/main.mjs"
-	hqStage2aGuard       = "hq/stage2a-selected-code.mjs"
-	hqStage2aPreloader   = "hq/stage2a-h-preloader.mjs"
+	hqStage2aMetadataDir        = launchRuntimeDir + "/h-v3"
+	hqStage2aPublicKey          = SoulAuthorityPin
+	hqStage2aDescriptor         = hqStage2aMetadataDir + "/descriptor.json"
+	hqStage2aNode               = "bin/node"
+	hqStage2aHelper             = "helpers/darwin-owner.rb"
+	hqStage2aEntry              = "hq/main.mjs"
+	hqStage2aGuard              = "hq/stage2a-selected-code.mjs"
+	hqStage2aPreloader          = "hq/stage2a-h-preloader.mjs"
+	hqStage2aCooperativeMachine = "hq/stage2a-cooperative-machine.mjs"
+	hqStage2aCooperativeProof   = "hq/stage2a-cooperative-proof.mjs"
+	hqStage2aCooperativeStart   = "hq/stage2a-cooperative-start.mjs"
+	hqStage2aCooperativeBridge  = "hq/stage2a-cooperative-bridge.mjs"
 )
 
 // hqStage2aService is an explicit request carried by the existing paired
@@ -42,7 +46,20 @@ type hqStage2aService struct {
 	InventoryDigest        string                         `json:"inventory_digest"`
 	InventoryLimits        stage2aDomainInventoryLimitsV3 `json:"inventory_limits"`
 	ExcludedHQReleasePaths []string                       `json:"excluded_hq_release_paths,omitempty"`
+	ContractsSource        hqStage2aContractsSource       `json:"contracts_source"`
 	Components             []stage2aReleaseComponent      `json:"components"`
+}
+
+// These exact Contracts pins come from the reviewed owner plan. The raw HQ
+// artifact must carry the same governance pin and both full and H-selected
+// Contracts digests before root stages any H file.
+type hqStage2aContractsSource struct {
+	Tag           string `json:"tag"`
+	Commit        string `json:"commit"`
+	FullDigest    string `json:"full_digest"`
+	FullFiles     int    `json:"full_files"`
+	RuntimeDigest string `json:"runtime_digest"`
+	RuntimeFiles  int    `json:"runtime_files"`
 }
 
 func (s *hqStage2aService) UnmarshalJSON(raw []byte) error {
@@ -73,7 +90,7 @@ type stage2aReleaseComponent struct {
 	ManifestSHA256   string `json:"release_manifest_sha256"`
 }
 
-// Only the reviewed v0.9 and v0.10 synthetic fixture sets may be omitted
+// Only the reviewed versioned Contracts fixture sets may be omitted
 // from H. Runtime schemas and every other manifest row remain selected.
 var hqStage2aContractsFixturePaths = [...]string{
 	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-binding.v3-synthetic.bad.json",
@@ -105,9 +122,98 @@ var hqStage2aContractsFixturePathsV010 = [...]string{
 	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-signed-reservation.synthetic.json",
 }
 
+// v0.10.1 keeps every runtime schema and excludes only reviewed conformance fixtures.
+var hqStage2aContractsFixturePathsV0101 = [...]string{
+	"vendor/soul-contracts/fixtures/negative/domain-inventory.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/h-service-descriptor-payload.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/h-service-descriptor-signed.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/inventory-ref.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/measurement-binding.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-bridge-assignment-payload.missing-reservation.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-bridge-signed-assignment.wrong-purpose.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-reservation-payload.bridge-claim.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-reservation-payload.missing-broker.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-signed-reservation.wrong-purpose.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-binding.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-reservation-payload.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-signed-reservation.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-reservation-payload.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-bridge-assignment-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-bridge-signed-assignment.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-reservation-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-signed-reservation.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-qualification-candidate-binding.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-qualification-candidate-reservation-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-qualification-candidate-signed-reservation.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/machine-qualification-candidate-invalid-bytes.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/machine-qualification-candidate-synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-launch-inputs.brokered-b.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-launch-inputs.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-r-inventory.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-signed-reservation.brokered-b.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-signed-reservation.synthetic.json",
+}
+
+// v0.10.2 keeps all Q schemas and excludes only explicit conformance fixtures.
+var hqStage2aContractsFixturePathsV0102 = [...]string{
+	"vendor/soul-contracts/fixtures/negative/domain-inventory.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/h-service-descriptor-payload.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/h-service-descriptor-signed.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/inventory-ref.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/measurement-binding.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-bridge-assignment-payload.missing-reservation.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-bridge-signed-assignment.wrong-purpose.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-reservation-payload.bridge-claim.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-reservation-payload.missing-broker.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-signed-reservation.wrong-purpose.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-begin.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-clean-eof.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-framed-wire.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-pre-sign-index.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-ready.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-signed-eof.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-signed-index.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-binding.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-reservation-payload.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-signed-reservation.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-reservation-payload.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-signed-reservation.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/positive/domain-inventory.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/h-service-descriptor-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/h-service-descriptor-signed.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/inventory-ref.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/measurement-binding.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-bridge-assignment-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-bridge-signed-assignment.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-reservation-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-signed-reservation.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-begin.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-clean-eof.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-framed-wire.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-pre-sign-index.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-ready.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-signed-eof.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-signed-index.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-qualification-candidate-binding.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-qualification-candidate-reservation-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-qualification-candidate-signed-reservation.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-reservation-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-signed-reservation.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/qualification/v3/q-presign-argv-synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/machine-qualification-candidate-invalid-bytes.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/machine-qualification-candidate-synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-launch-inputs.brokered-b.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-launch-inputs.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-r-inventory.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-signed-reservation.brokered-b.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-signed-reservation.synthetic.json",
+}
+
 func hqStage2aValidExclusions(paths []string) bool {
 	return len(paths) == 0 || slices.Equal(paths, hqStage2aContractsFixturePaths[:]) ||
-		slices.Equal(paths, hqStage2aContractsFixturePathsV010[:])
+		slices.Equal(paths, hqStage2aContractsFixturePathsV010[:]) ||
+		slices.Equal(paths, hqStage2aContractsFixturePathsV0101[:]) ||
+		slices.Equal(paths, hqStage2aContractsFixturePathsV0102[:])
 }
 
 var hqStage2aSourceRepository = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
@@ -133,10 +239,17 @@ func (s hqStage2aService) validate() error {
 		!stage2aPrefixedDigest.MatchString(s.AuthorityKeySHA256) || !stage2aPrefixedDigest.MatchString(s.GuardModuleSHA256) ||
 		s.PreloaderPath != hqStage2aPreloader ||
 		!stage2aAbsolutePath(s.InventorySource) || !stage2aPrefixedDigest.MatchString(s.InventoryDigest) ||
-		s.InventoryLimits.MaxFiles < 5 || s.InventoryLimits.MaxFiles > 512 ||
+		s.InventoryLimits.MaxFiles < 9 || s.InventoryLimits.MaxFiles > 512 ||
 		s.InventoryLimits.MaxFileBytes == 0 || s.InventoryLimits.MaxFileBytes > 384<<20 ||
 		s.InventoryLimits.MaxTotalBytes < s.InventoryLimits.MaxFileBytes || s.InventoryLimits.MaxTotalBytes > 1<<30 || !hqStage2aValidExclusions(s.ExcludedHQReleasePaths) ||
-		len(s.Components) != 2 || s.Components[0].ComponentID != "hq" || s.Components[1].ComponentID != "node" {
+		len(s.Components) != 2 || s.Components[0].ComponentID != "hq" || s.Components[1].ComponentID != "node" ||
+		!stage2aHSourceTagV3.MatchString(s.ContractsSource.Tag) ||
+		!stage2aHSourceCommitV3.MatchString(s.ContractsSource.Commit) ||
+		!stage2aPrefixedDigest.MatchString(s.ContractsSource.FullDigest) ||
+		!stage2aPrefixedDigest.MatchString(s.ContractsSource.RuntimeDigest) ||
+		s.ContractsSource.FullFiles < 1 || s.ContractsSource.FullFiles > 1024 ||
+		s.ContractsSource.RuntimeFiles < 1 ||
+		s.ContractsSource.RuntimeFiles != s.ContractsSource.FullFiles-len(s.ExcludedHQReleasePaths) {
 		return errors.New("invalid Stage 2a HQ installation, authority, or selected inventory")
 	}
 	if s.CooperativeOnly && s.RuntimeInstallationID != "" ||
