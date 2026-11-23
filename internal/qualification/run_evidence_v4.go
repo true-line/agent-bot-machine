@@ -648,3 +648,60 @@ func IssueReportCommitmentV4(hostEnvelope, completionEnvelope []byte,
 	}
 	return envelope, digest(envelope), nil
 }
+
+// VerifyQEvidenceForSignedReportV4 resolves the three Q references to raw
+// bytes and joins their authenticated session to a designated host report and
+// A-signed pre-sign completion. Cooperative v4 uses brokered-B; the separate
+// direct-Comms T21 Q-only control cannot stand in for that run. This component
+// does not inspect installed bytes or decide a physical gate or release.
+func VerifyQEvidenceForSignedReportV4(hostEnvelope, completionEnvelope, reservationEnvelope,
+	wireRaw, indexEnvelope, eofEnvelope []byte, policy VerifiedPolicy,
+	machineKey ed25519.PublicKey, now time.Time) (VerifiedQPreSignV3, error) {
+	var zero VerifiedQPreSignV3
+	report, err := VerifyHostReportV4(hostEnvelope, policy, now)
+	if err != nil || VerifyExecutionCompletionBeforeSignV4(report, completionEnvelope, machineKey, now) != nil {
+		return zero, ErrUnqualified
+	}
+	var document struct {
+		ProfileInForce     string `json:"profile_in_force"`
+		MeasurementBinding struct {
+			HostID         string `json:"host_id"`
+			InstallationID string `json:"installation_id"`
+			SoulID         string `json:"soul_id"`
+			StartID        string `json:"start_id"`
+		} `json:"measurement_binding"`
+		RunEvidence json.RawMessage `json:"run_evidence"`
+	}
+	if json.Unmarshal(report, &document) != nil {
+		return zero, ErrUnqualified
+	}
+	refs, err := reportRefsV4(document.RunEvidence, document.ProfileInForce)
+	if err != nil || refs.Reservation.SHA256 != digest(reservationEnvelope) ||
+		refs.QSession.FramedWire.SHA256 != digest(wireRaw) ||
+		refs.QSession.FrameIndexEnvelope.SHA256 != digest(indexEnvelope) ||
+		refs.QSession.CleanEOFEnvelope.SHA256 != digest(eofEnvelope) {
+		return zero, ErrUnqualified
+	}
+	q, err := VerifyQPreSignV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope, machineKey, now)
+	if err != nil || !q.verified || q.Profile != document.ProfileInForce ||
+		q.AdapterTransport == "direct-comms" ||
+		q.HostID != document.MeasurementBinding.HostID ||
+		q.InstallationID != document.MeasurementBinding.InstallationID ||
+		q.SoulID != document.MeasurementBinding.SoulID || q.StartID != document.MeasurementBinding.StartID ||
+		q.ReservationSHA256 != refs.Reservation.SHA256 ||
+		q.WireSHA256 != refs.QSession.FramedWire.SHA256 ||
+		q.IndexSHA256 != refs.QSession.FrameIndexEnvelope.SHA256 ||
+		q.EOFReceiptSHA256 != refs.QSession.CleanEOFEnvelope.SHA256 ||
+		q.LaunchChallengeSHA256 != refs.ChallengeSHA256 {
+		return zero, ErrUnqualified
+	}
+	preRaw, err := verifyMachineRecordV4(completionEnvelope, ExecutionCompletionPurposeV4, machineKey)
+	if err != nil {
+		return zero, ErrUnqualified
+	}
+	var pre executionCompletionV4
+	if json.Unmarshal(preRaw, &pre) != nil || q.CohortID != pre.CohortID {
+		return zero, ErrUnqualified
+	}
+	return q, nil
+}

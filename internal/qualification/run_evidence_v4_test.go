@@ -104,6 +104,43 @@ func TestV4PreSignCompletionContractVectors(t *testing.T) {
 			fixturePolicyValue.EvidenceSigners[0].ID = "synthetic-signer"
 			fixturePolicyValue.EvidenceSigners[0].PublicKeySPKIDERBase64 = base64.StdEncoding.EncodeToString(fixtureSPKI)
 			fixturePolicyVerified := VerifiedPolicy{value: fixturePolicyValue, verified: true, at: now, version: 3}
+			qFixture, err := os.ReadFile("testdata/stage2a-q-v3-profile-join-contracts-draft.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var qVectors struct {
+				Profiles map[string]struct {
+					Reservation string `json:"reservation_envelope_jcs"`
+					Wire        string `json:"q_wire_jcs"`
+					Index       string `json:"q_index_envelope_jcs"`
+					EOF         string `json:"q_eof_envelope_jcs"`
+				} `json:"profiles"`
+			}
+			if json.Unmarshal(qFixture, &qVectors) != nil {
+				t.Fatal("invalid pinned Q vectors")
+			}
+			qVector := qVectors.Profiles[profile]
+			qVerified, err := VerifyQEvidenceForSignedReportV4([]byte(vector.HostEnvelope), envelope,
+				[]byte(qVector.Reservation), []byte(qVector.Wire), []byte(qVector.Index), []byte(qVector.EOF),
+				fixturePolicyVerified, key, now)
+			if err != nil || !qVerified.verified || qVerified.Profile != "managed-"+profile {
+				t.Fatal("signed v4 report refused its raw Q chain:", err)
+			}
+			if _, err := VerifyQEvidenceForSignedReportV4([]byte(vector.HostEnvelope), envelope,
+				[]byte(qVector.Reservation), []byte(qVector.Wire), []byte(qVector.Index), nil,
+				fixturePolicyVerified, key, now); err == nil {
+				t.Fatal("missing clean Q EOF accepted")
+			}
+			otherProfile := "protected"
+			if profile == "protected" {
+				otherProfile = "cooperative"
+			}
+			otherQ := qVectors.Profiles[otherProfile]
+			if _, err := VerifyQEvidenceForSignedReportV4([]byte(vector.HostEnvelope), envelope,
+				[]byte(otherQ.Reservation), []byte(otherQ.Wire), []byte(otherQ.Index), []byte(otherQ.EOF),
+				fixturePolicyVerified, key, now); err == nil {
+				t.Fatal("other profile's Q chain accepted")
+			}
 			if err := VerifyCompletedRunV4([]byte(vector.HostEnvelope), envelope, []byte(vector.Commitment),
 				key, digest([]byte(vector.Commitment)), fixturePolicyVerified, now); err != nil {
 				t.Fatal("valid Contracts v4 completed chain refused:", err)
