@@ -159,6 +159,10 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 }
 
 func stage2aCreateChildState(runner SoulRunner, start SoulStartAssignment) error {
+	return stage2aCreateMemberChildState(runner, start, "")
+}
+
+func stage2aCreateMemberChildState(runner SoulRunner, start SoulStartAssignment, memberSelector string) error {
 	state, err := stage2aRunnerStateRoot(runner)
 	if err != nil {
 		return err
@@ -168,7 +172,10 @@ func stage2aCreateChildState(runner SoulRunner, start SoulStartAssignment) error
 		return err
 	}
 	defer parent.Close()
-	name := "child-" + soulEndpointStartSlot(runner.InstallationID, start.StartID)
+	name, err := stage2aChildStateName(runner.InstallationID, start.StartID, memberSelector)
+	if err != nil {
+		return err
+	}
 	base, err := stage2aOpenRunnerStateDir(int(parent.Fd()), name, state+"/"+name, runner)
 	if err != nil {
 		return err
