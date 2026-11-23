@@ -9,13 +9,14 @@ const SoulProtectedLaunchInstallPurpose = "soul-protected-launch-install"
 const SoulProtectedLaunchRetirePurpose = "soul-protected-launch-retire"
 
 type SoulProtectedLaunchInstall struct {
-	Schema             string          `json:"schema"`
-	MachinePublicKey   string          `json:"machine_public_key"`
-	ArtifactSource     string          `json:"artifact_source"`
-	BridgeBinarySource string          `json:"bridge_binary_source"`
-	DefinitionSource   string          `json:"definition_source"`
-	LaunchInputsSource string          `json:"launch_inputs_source"`
-	Policy             json.RawMessage `json:"policy"`
+	Schema             string                   `json:"schema"`
+	MachinePublicKey   string                   `json:"machine_public_key"`
+	ArtifactSource     string                   `json:"artifact_source"`
+	BridgeBinarySource string                   `json:"bridge_binary_source"`
+	DefinitionSource   string                   `json:"definition_source"`
+	LaunchInputsSource string                   `json:"launch_inputs_source"`
+	RuntimeV3          *stage2aRuntimeV3Install `json:"runtime_v3,omitempty"`
+	Policy             json.RawMessage          `json:"policy"`
 }
 
 // Retirement reviews the original install and disables only its per-Soul

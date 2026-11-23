@@ -25,12 +25,31 @@ plan, selected release manifests, A key and signed H/R binding. The new v3
 component does not change the v1/v2 parser limits or lift
 `stage2aProtectedStartContractReady=false`.
 
-The proposed v3 structural ceilings are 512 files, 1,024 child directories,
-384 MiB per file, 1 GiB per domain, and a 2 MiB sidecar. They are draft
-parsing limits; an owner-approved installed policy must choose exact allowed
-limits before any positive protected path. H and R snapshots use distinct
+The owner approved v3 structural ceilings of 512 files, 1,024 child directories,
+384 MiB per file, 1 GiB per domain, and a 2 MiB sidecar on 2026-11-22.
+This did not approve any selected source, installation plan or protected
+launch. The exact installed policy must choose limits within those ceilings.
+H and R snapshots use distinct
 domain-separated names under A:reader `0750` namespaces. The static H
 descriptor and HQ preloader metadata are separate from these inventory trees.
+
+The R producer is an additive v3 path in the paired Soul install. Its exact
+owner plan pins canonical inventory bytes and digest, limits, sorted component
+source repository/commit/tag, artifact format (`tar` or `raw`), artifact and
+manifest paths and hashes, and one
+distinct root-owned materialized source root per component. Each manifest is
+exact JCS with all and only its inventory `release_path`/SHA-256 rows. Root
+remeasures artifact bytes, checks every tar member or exact raw binary against
+its manifest, checks each complete source-root closure, copies
+only approved files into fresh private A:R nodes, and invokes the fixed A
+seal. The applied root receipt and A-owned policy carry the same typed R
+reference; the loader checks that match and reopens the sealed nodes before
+any future positive start. This R-only install requires the per-Soul sudo
+rule to be absent and does not publish one; a later reviewed activation must
+bind the actual runner executable and entry to this sealed R tree. Legacy v2
+start remains closed. Retirement removes the per-Soul authority and any rule
+after the idle-role check, retaining
+the root receipt, snapshot and audit claim for review.
 
 ## Acceptance
 
@@ -45,6 +64,10 @@ descriptor and HQ preloader metadata are separate from these inventory trees.
   protected preloader/guard and v3 one-use reservation must be reviewed
   together before the protected-start gate can open. T01/T02/T03/T21 require
   separate physical evidence on the designated host.
+- The paired v3 R install accepts only exact source and manifest pins, rejects
+  added/missing source rows and changed bytes, and records one A-sealed R ref
+  in both installed policy and applied root receipt. A failed or partial
+  install leaves no successful receipt or usable protected start.
 
 ## Replay
 
@@ -56,3 +79,10 @@ disposable Tart clone with three dedicated local A/H/R accounts, build the
 its fixed path, then run `TestStage2aV3GuestSealHAndR` with the test's explicit
 account and launcher-hash environment. Record exact source and binary hashes,
 guest exit, H/R results and clone cleanup. Do not count that fixture as T03.
+For the R producer successor, run `TestStage2aV3GuestInstallRuntime` in a
+fresh disposable clone with the same exact installed launcher and dedicated
+A/R accounts. It must reject an added source file, then copy the one-file
+reviewed R tree into fresh A-private staging, publish through the fixed A
+helper, and reopen the installed root and sidecar. Record its signed source
+head, binary hashes, guest output and clone cleanup. This test proves only
+the producer seam; it does not exercise an owner proof or a Soul start.
