@@ -90,30 +90,49 @@ func TestStage2aOwnerMemberSetDigestBindsExactMeasuredProjection(t *testing.T) {
 	}
 	path := "/private/var/db/agent-bot-machine/runtime/bin/claude-agent-acp"
 	sha := "sha256:" + strings.Repeat("a", 64)
-	want, err := stage2aOwnerMemberSetDigest(roles, path, sha)
+	cliPath := "/private/var/db/agent-bot-machine/runtime/bin/claude"
+	cliSHA := "sha256:" + strings.Repeat("c", 64)
+	want, err := stage2aOwnerMemberSetDigest(roles, path, sha, cliPath, cliSHA)
 	if err != nil || !stage2aPrefixedDigest.MatchString(want) {
 		t.Fatalf("valid exact member set refused: %s %v", want, err)
 	}
 	reversed := []stage2aHelloMember{roles[1], roles[0]}
-	got, err := stage2aOwnerMemberSetDigest(reversed, path, sha)
+	got, err := stage2aOwnerMemberSetDigest(reversed, path, sha, cliPath, cliSHA)
 	if err != nil || got != want {
 		t.Fatal("member input order changed the sorted owner projection")
 	}
 	changed := append([]stage2aHelloMember(nil), roles...)
 	changed[1].Role = "lead"
-	if _, err := stage2aOwnerMemberSetDigest(changed, path, sha); err == nil {
+	if _, err := stage2aOwnerMemberSetDigest(changed, path, sha, cliPath, cliSHA); err == nil {
 		t.Fatal("second lead accepted")
 	}
 	changed[1] = changed[0]
-	if _, err := stage2aOwnerMemberSetDigest(changed, path, sha); err == nil {
+	if _, err := stage2aOwnerMemberSetDigest(changed, path, sha, cliPath, cliSHA); err == nil {
 		t.Fatal("duplicate member accepted")
 	}
-	got, err = stage2aOwnerMemberSetDigest(roles, path+"-other", sha)
+	got, err = stage2aOwnerMemberSetDigest(roles, path+"-other", sha, cliPath, cliSHA)
 	if err != nil || got == want {
 		t.Fatal("changed installed command path kept owner selection")
 	}
-	got, err = stage2aOwnerMemberSetDigest(roles, path, "sha256:"+strings.Repeat("b", 64))
+	got, err = stage2aOwnerMemberSetDigest(roles, path, "sha256:"+strings.Repeat("b", 64), cliPath, cliSHA)
 	if err != nil || got == want {
 		t.Fatal("changed measured command bytes kept owner selection")
+	}
+	got, err = stage2aOwnerMemberSetDigest(roles, path, sha, cliPath, "sha256:"+strings.Repeat("d", 64))
+	if err != nil || got == want {
+		t.Fatal("changed adjacent CLI bytes kept owner selection")
+	}
+}
+
+func TestStage2aOwnerMemberSetMatchesContractsSyntheticVector(t *testing.T) {
+	roles := []stage2aHelloMember{
+		{MemberID: "m_lead", Role: "lead", AdapterID: "fixture-stock", AdapterVersion: "1.0.0"},
+		{MemberID: "m_spec", Role: "specialist", AdapterID: "fixture-stock", AdapterVersion: "1.0.0"},
+	}
+	got, err := stage2aOwnerMemberSetDigest(roles,
+		"/fixture/r/adapter/fixture-acp", "sha256:d904480689034c73d063d9a60e1a03c53df3c26bfcfb19a58f49c41b9b549242",
+		"/fixture/r/adapter/fixture-cli", "sha256:4575517e516023fd0698342aec5e470a7533a94b5cf003b172af874cf773817f")
+	if err != nil || got != "sha256:40758695d8a20df897316151f464059180d45739b2a018ef8d6ea097f5d2baf3" {
+		t.Fatalf("owner projection differs from Contracts #85: %s %v", got, err)
 	}
 }

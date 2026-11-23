@@ -3,8 +3,12 @@
 package members
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"path/filepath"
 	"slices"
+	"strings"
 )
 
 // These observations are nonauthorizing until the owner-reviewed two-member
@@ -102,14 +106,20 @@ func stage2aOwnerReviewedTwoMemberSet(p stage2aInstalledPolicy,
 		plan.SoulProtectedLaunch.OwnerPlanMemberSetSHA256 == "" {
 		return false
 	}
-	digest, err := stage2aOwnerMemberSetDigest(roles, commandPath, commandSHA256)
+	cliPath, cliSHA256, ok := stage2aFrozenStockAdapterCLI(p, roles, commandPath, commandSHA256)
+	if !ok {
+		return false
+	}
+	digest, err := stage2aOwnerMemberSetDigest(roles, commandPath, commandSHA256, cliPath, cliSHA256)
 	return err == nil && digest == plan.SoulProtectedLaunch.OwnerPlanMemberSetSHA256
 }
 
 func stage2aOwnerMemberSetDigest(roles []stage2aHelloMember,
-	commandPath, commandSHA256 string) (string, error) {
+	commandPath, commandSHA256, adjacentCLIPath, adjacentCLISHA256 string) (string, error) {
 	if len(roles) != 2 || !stage2aAbsolutePath(commandPath) ||
-		!stage2aPrefixedDigest.MatchString(commandSHA256) {
+		!stage2aPrefixedDigest.MatchString(commandSHA256) ||
+		!stage2aAbsolutePath(adjacentCLIPath) ||
+		!stage2aPrefixedDigest.MatchString(adjacentCLISHA256) {
 		return "", errStage2aReservationAuthority
 	}
 	ordered := slices.Clone(roles)
@@ -123,12 +133,14 @@ func stage2aOwnerMemberSetDigest(roles []stage2aHelloMember,
 		return 0
 	})
 	projection := make([]struct {
-		MemberID       string `json:"member_id"`
-		Role           string `json:"role"`
-		AdapterID      string `json:"adapter_id"`
-		AdapterVersion string `json:"adapter_version"`
-		CommandPath    string `json:"command_path"`
-		CommandSHA256  string `json:"command_sha256"`
+		MemberID          string `json:"member_id"`
+		Role              string `json:"role"`
+		AdapterID         string `json:"adapter_id"`
+		AdapterVersion    string `json:"adapter_version"`
+		CommandPath       string `json:"command_path"`
+		CommandSHA256     string `json:"command_sha256"`
+		AdjacentCLIPath   string `json:"adjacent_cli_path"`
+		AdjacentCLISHA256 string `json:"adjacent_cli_sha256"`
 	}, 2)
 	leads := 0
 	for i, role := range ordered {
@@ -145,6 +157,7 @@ func stage2aOwnerMemberSetDigest(roles []stage2aHelloMember,
 		projection[i].MemberID, projection[i].Role = role.MemberID, role.Role
 		projection[i].AdapterID, projection[i].AdapterVersion = role.AdapterID, role.AdapterVersion
 		projection[i].CommandPath, projection[i].CommandSHA256 = commandPath, commandSHA256
+		projection[i].AdjacentCLIPath, projection[i].AdjacentCLISHA256 = adjacentCLIPath, adjacentCLISHA256
 	}
 	if leads != 1 {
 		return "", errStage2aReservationAuthority
@@ -154,6 +167,64 @@ func stage2aOwnerMemberSetDigest(roles []stage2aHelloMember,
 		return "", errStage2aReservationAuthority
 	}
 	return stage2aReservationSHA256(canonical), nil
+}
+
+// The stock declaration is measured definition data, not release attestation.
+// It names the adjacent CLI by basename; A joins that name to the measured
+// installed ACP path and cross-checks the external file record. The normal
+// execution-code recheck separately compares that record with A's sealed R.
+func stage2aFrozenStockAdapterCLI(p stage2aInstalledPolicy, roles []stage2aHelloMember,
+	commandPath, commandSHA256 string) (string, string, bool) {
+	const manifestPath = "Contents/opt/stock-claude.json"
+	raw, err := stage2aReadFrozenClaimFile(p.Binding.Snapshots.Definition, p.Definition, manifestPath)
+	if err != nil || stage2aStrictJSON(raw) != nil {
+		return "", "", false
+	}
+	var manifest struct {
+		AdapterID          string `json:"adapter_id"`
+		AdapterVersion     string `json:"adapter_version"`
+		SourceRepository   string `json:"source_repository"`
+		SourceTag          string `json:"source_tag"`
+		SourceCommit       string `json:"source_commit"`
+		SourceTree         string `json:"source_tree"`
+		ReleaseAsset       string `json:"release_asset"`
+		ReleaseAssetSHA256 string `json:"release_asset_sha256"`
+		Executable         string `json:"executable"`
+		ExecutableSHA256   string `json:"executable_sha256"`
+		AdjacentCLI        string `json:"adjacent_cli"`
+		AdjacentCLISHA256  string `json:"adjacent_cli_sha256"`
+		Model              string `json:"model"`
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(&manifest) != nil || d.Decode(new(any)) != io.EOF ||
+		len(roles) != 2 || roles[0].AdapterID != manifest.AdapterID ||
+		roles[1].AdapterID != manifest.AdapterID ||
+		roles[0].AdapterVersion != manifest.AdapterVersion ||
+		roles[1].AdapterVersion != manifest.AdapterVersion ||
+		filepath.Base(commandPath) != manifest.Executable ||
+		manifest.ExecutableSHA256 != commandSHA256 ||
+		manifest.AdjacentCLI != "claude" ||
+		!stage2aPrefixedDigest.MatchString(manifest.AdjacentCLISHA256) {
+		return "", "", false
+	}
+	cliPath := filepath.Join(filepath.Dir(commandPath), manifest.AdjacentCLI)
+	if !stage2aAbsolutePath(cliPath) || cliPath == commandPath {
+		return "", "", false
+	}
+	matched := 0
+	for _, file := range p.LaunchInputs.Files {
+		if file.Path == "runtime/bin/claude" {
+			if file.Kind != "regular" || file.SHA256 != strings.TrimPrefix(manifest.AdjacentCLISHA256, "sha256:") {
+				return "", "", false
+			}
+			matched++
+		}
+	}
+	if matched != 1 {
+		return "", "", false
+	}
+	return cliPath, manifest.AdjacentCLISHA256, true
 }
 
 // collectStage2aTwoMemberChildren samples both granted launcher/child pairs
