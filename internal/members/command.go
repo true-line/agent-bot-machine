@@ -47,6 +47,7 @@ const usage = `Usage: managed-machine members plan [--hq-account <account>] (--h
        managed-machine members plan --soul-runner-provision <installations.json>
        managed-machine members plan --soul-bridge-provision <installations.json>
        managed-machine members plan --soul-protected-launch-install <request.json>
+       managed-machine members plan --soul-cooperative-launch-install <request.json>
        managed-machine members plan --soul-protected-launch-retire <installed-plan-id>
        managed-machine members plan --harness-launch-install <adapters.json>
        managed-machine members plan --harness-launch-retire <installed-plan-id>
@@ -111,6 +112,7 @@ Options
 --soul-runner-provision <file>  Review one separate account per Soul installation
 --soul-bridge-provision <file>  Review one credential bridge per Soul installation
 --soul-protected-launch-install <file>  Review one pinned Soul launch installation
+--soul-cooperative-launch-install <file>  Review one separate cooperative Soul launch installation
 --soul-protected-launch-retire <plan-id>  Review retirement of that exact installation
 --harness-qualification <file>  Review fixed, pinned, one-use qualification inputs (read-only)
 --harness-launch-install <file>  Review a dedicated Darwin adapter mapping and launch rule
@@ -143,18 +145,19 @@ func failure(id, format string, args ...any) cli.Result {
 // Saved is the plan file apply reads: the request, so the plan can be built
 // again from the host, and the digest the owner is asked to approve.
 type Saved struct {
-	UpgradeFrom         *priorServicePlan           `json:"upgrade_from,omitempty"`
-	HarnessLaunch       *HarnessPolicyRecord        `json:"harness_launch,omitempty"`
-	SoulRunnerAccounts  []SoulRunnerAccount         `json:"soul_runner_accounts,omitempty"`
-	SoulBridgeAccounts  []SoulBridgeAccount         `json:"soul_bridge_accounts,omitempty"`
-	SoulProtectedLaunch *SoulProtectedLaunchInstall `json:"soul_protected_launch,omitempty"`
-	SoulProtectedRetire *SoulProtectedLaunchRetire  `json:"soul_protected_retire,omitempty"`
-	QualificationRun    *QualificationRun           `json:"qualification_run,omitempty"`
-	HQService           *HQService                  `json:"hq_service,omitempty"`
-	PlanID              string                      `json:"plan_id"`
-	PlanDigest          string                      `json:"plan_digest"`
-	CreatedAt           string                      `json:"created_at"`
-	Plan                Plan                        `json:"plan"`
+	UpgradeFrom           *priorServicePlan            `json:"upgrade_from,omitempty"`
+	HarnessLaunch         *HarnessPolicyRecord         `json:"harness_launch,omitempty"`
+	SoulRunnerAccounts    []SoulRunnerAccount          `json:"soul_runner_accounts,omitempty"`
+	SoulBridgeAccounts    []SoulBridgeAccount          `json:"soul_bridge_accounts,omitempty"`
+	SoulProtectedLaunch   *SoulProtectedLaunchInstall  `json:"soul_protected_launch,omitempty"`
+	SoulCooperativeLaunch *SoulCooperativeLaunchPolicy `json:"soul_cooperative_launch,omitempty"`
+	SoulProtectedRetire   *SoulProtectedLaunchRetire   `json:"soul_protected_retire,omitempty"`
+	QualificationRun      *QualificationRun            `json:"qualification_run,omitempty"`
+	HQService             *HQService                   `json:"hq_service,omitempty"`
+	PlanID                string                       `json:"plan_id"`
+	PlanDigest            string                       `json:"plan_digest"`
+	CreatedAt             string                       `json:"created_at"`
+	Plan                  Plan                         `json:"plan"`
 }
 
 // HQ adapter IDs identify harness credentials (PDR-0053). Several adapters
@@ -224,26 +227,27 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return cli.Result{Diagnostic: command.UsageErr("members takes one action: plan, apply or uninstall-hq")}
 	}
 	var hqAccount, hqConfigPath, list, dir, serviceRecord, priorID, qualificationPath string
-	var installFile, retireID, soulRunnerFile, soulBridgeFile, soulProtectedFile, soulProtectedRetireID string
-	var launchFlags, qualificationFlags, soulRunnerFlags, soulBridgeFlags, soulProtectedFlags int
+	var installFile, retireID, soulRunnerFile, soulBridgeFile, soulProtectedFile, soulProtectedRetireID, soulCooperativeFile string
+	var launchFlags, qualificationFlags, soulRunnerFlags, soulBridgeFlags, soulProtectedFlags, soulCooperativeFlags int
 	var harnessAccounts bool
 	var hasList, hasDir, hasUpgrade, hasQualification, hasHQConfig, hasService bool
 	if d := command.Parse(args[1:], command.Spec{
 		Bools: map[string]*bool{"--harness-account-provision": &harnessAccounts},
 		Values: map[string]command.Flag{
-			"--soul-runner-provision":         {Value: &soulRunnerFile, Count: &soulRunnerFlags},
-			"--soul-bridge-provision":         {Value: &soulBridgeFile, Count: &soulBridgeFlags},
-			"--soul-protected-launch-install": {Value: &soulProtectedFile, Count: &soulProtectedFlags},
-			"--soul-protected-launch-retire":  {Value: &soulProtectedRetireID, Count: &soulProtectedFlags},
-			"--harness-qualification":         {Value: &qualificationPath, Set: &hasQualification, Count: &qualificationFlags},
-			"--harness-launch-install":        {Value: &installFile, Count: &launchFlags},
-			"--harness-launch-retire":         {Value: &retireID, Count: &launchFlags},
-			"--upgrade-from":                  {Value: &priorID, Set: &hasUpgrade},
-			"--hq-service":                    {Value: &serviceRecord, Set: &hasService},
-			"--hq-account":                    {Value: &hqAccount},
-			"--hq-config":                     {Value: &hqConfigPath, Set: &hasHQConfig},
-			"--members":                       {Value: &list, Set: &hasList, Optional: true},
-			"--dir":                           {Value: &dir, Set: &hasDir},
+			"--soul-runner-provision":           {Value: &soulRunnerFile, Count: &soulRunnerFlags},
+			"--soul-bridge-provision":           {Value: &soulBridgeFile, Count: &soulBridgeFlags},
+			"--soul-protected-launch-install":   {Value: &soulProtectedFile, Count: &soulProtectedFlags},
+			"--soul-cooperative-launch-install": {Value: &soulCooperativeFile, Count: &soulCooperativeFlags},
+			"--soul-protected-launch-retire":    {Value: &soulProtectedRetireID, Count: &soulProtectedFlags},
+			"--harness-qualification":           {Value: &qualificationPath, Set: &hasQualification, Count: &qualificationFlags},
+			"--harness-launch-install":          {Value: &installFile, Count: &launchFlags},
+			"--harness-launch-retire":           {Value: &retireID, Count: &launchFlags},
+			"--upgrade-from":                    {Value: &priorID, Set: &hasUpgrade},
+			"--hq-service":                      {Value: &serviceRecord, Set: &hasService},
+			"--hq-account":                      {Value: &hqAccount},
+			"--hq-config":                       {Value: &hqConfigPath, Set: &hasHQConfig},
+			"--members":                         {Value: &list, Set: &hasList, Optional: true},
+			"--dir":                             {Value: &dir, Set: &hasDir},
 		},
 	}); d != nil {
 		return cli.Result{Diagnostic: d}
@@ -258,6 +262,15 @@ func run(deps Deps, ctx cli.Context, args []string) cli.Result {
 	}
 	if hqAccount == "" {
 		hqAccount = DefaultHQAccountFor(platform)
+	}
+	if soulCooperativeFlags != 0 {
+		if soulCooperativeFlags != 1 || soulCooperativeFile == "" || platform != PlatformDarwin ||
+			hqAccount != DarwinHQAccount || hasQualification || hasHQConfig || hasList || hasDir ||
+			hasService || hasUpgrade || launchFlags != 0 || soulRunnerFlags != 0 ||
+			soulBridgeFlags != 0 || soulProtectedFlags != 0 || harnessAccounts {
+			return failure(diag.MembersListInvalid, "cooperative Soul launch review requires one dedicated Darwin request and no other plan purpose")
+		}
+		return planSoulCooperativeLaunch(deps, soulCooperativeFile)
 	}
 	if soulProtectedFlags != 0 {
 		if soulProtectedFlags != 1 || (soulProtectedFile == "") == (soulProtectedRetireID == "") || platform != PlatformDarwin ||

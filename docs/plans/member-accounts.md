@@ -781,6 +781,52 @@ Machine finalization must independently bind kernel PID/start/UID and process
 chain, endpoint inodes, one-use admission and live B bind. The immutable
 completed-run record and signed v3 host report are separate later evidence.
 
+### Cooperative HQ-started Soul authority candidate
+
+**Intent.** T21 needs the same measured Soul to run through an explicitly
+selected cooperative route while refusing every protected claim. A protected
+reservation refusal is terminal for that request; it never selects this route.
+Base HQ, Machine, Souls and Comms installation needs no harness package or
+credential. This plan is for one explicitly selected Soul installation; it
+neither selects a stock harness nor adds one to the base install.
+
+**Target.** `members plan --soul-cooperative-launch-install <request.json>`
+saves a separate owner-reviewable `soul-cooperative-launch-install` plan. It
+pins the host, paired HQ epoch,
+dedicated runner identity, owner source path, frozen runner package and
+definition digests, Node, entry, launcher and approval end. A request carries
+only the installation, start, owner package path, plan digest, host, epoch and
+the literal `managed-cooperative` profile. A derives the per-start socket path
+and its H/R peer ownership from those reviewed identities.
+This v1 reservation covers R's frozen package only. It is not proof of the
+selected HQ/Comms/contracts code loaded by H. A versioned successor must
+carry A's exact H code descriptor and bind it to HQ's startup-loaded digest;
+A must remeasure those H bytes at launch. The inventory is content-addressed
+outside the bounded plan and handoff, with separate H/R access. No truncated
+inventory or R-only digest can qualify that closure.
+`PrepareSoulCooperativeReservation` signs a purpose-separated, canonical
+30-second reservation only from an installed authority, after its caller has
+rechecked the root applied receipt, live pairing and frozen bytes. It requires
+a durable installation/start spend before returning the signature. The A-owned
+claim store creates a permanent spent-start marker and one active-installation
+marker under an installation lock. A different start cannot enter while that
+marker exists, and only the matching start may release it after an independent
+containment check. Lost responses and retries cannot recover a spent start.
+The installed loader,
+owner-approved apply, paired daemon verbs, fixed launcher, signed completion
+and HQ production wiring remain implementation gates; this plan and proof code
+alone does not enable a host launch or qualify T21.
+
+**Acceptance.** A positive synthetic test verifies the signed reviewed
+identity, package and profile and proves one-use refusal. Separate negatives
+refuse an altered package, wrong host or principal, expired approval, protected
+profile, wrong signing key and ambiguous JSON. A physical T21 run must then
+use the installed route and HQ-hosted comms; these unit tests do not claim it.
+
+**Replay.** Run `go test ./internal/members -run '^TestSoulCooperative'` and
+retain the exact Machine and HQ source heads, approved plan, applied receipt,
+signed reservation and signed containment completion for the later host run.
+
 ### Stage 2a installed authority candidate
 
 `members plan --soul-protected-launch-install <request.json>` records one
@@ -853,8 +899,9 @@ wrapper terminates its stock process group on missing, stale or rejected
 renewal or HQ EOF. An A restart loses the active
 in-memory reservation and cannot resume signing the already spent start.
 
-The owner-approved launch inputs also contain a bounded
-`effective_config.adapter_child_env` object for the stock Claude ACP child.
+The stock Claude ACP child below is an explicit Stage 2a pilot selection,
+not a base installation dependency. Only that selected Soul's approved launch
+inputs contain the bounded `effective_config.adapter_child_env` object.
 The install plan compares its model, HTTP host, exact Messages query and test
 key digest to the reviewed B qualification. The selected adapter route must
 be one `claude-agent-acp` executable inside A's frozen runtime inventory; its
