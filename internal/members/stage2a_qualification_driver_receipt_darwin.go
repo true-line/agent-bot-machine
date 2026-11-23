@@ -137,7 +137,7 @@ func joinStage2aDriverFrames(session stage2aQualificationSessionResultV1, phase 
 		capture, err := parseStage2aDriverResponse(response, raw)
 		corroboration := stage2aDriverCorroboration{artifact: pair.artifact, osWitness: pair.osWitness}
 		if err != nil || artifacts[capture.ArtifactSHA] || !corroboration.matches(capture.ArtifactSHA) {
-			return nil, err
+			return nil, errStage2aReservationAuthority
 		}
 		artifacts[capture.ArtifactSHA] = true
 		probe, err := readStage2aDriverPhaseProbe(requests, phase)

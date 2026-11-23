@@ -28,7 +28,8 @@ func RunStage2aQualificationOwnerDriver() error {
 	account, err := user.LookupId(strconv.Itoa(install.AdminUID))
 	self, selfErr := os.Executable()
 	if err != nil || selfErr != nil || self != review.Executable.Path || review.Socket != stage2aQualificationDriverPath(account.HomeDir) ||
-		len(review.AuthorityArgv) == 0 || review.AuthorityArgv[0] != review.Executable.Path ||
+		len(review.AuthorityArgv) == 0 || review.AuthorityArgv[0] != review.Authority.Path ||
+		verifyStage2aDriverAuthorityImage(review.Authority, install.AdminUID) != nil ||
 		!slices.Equal(os.Args, review.Argv) || verifyQualificationExecutable(review.Executable.Path, review.Executable.SHA256) != nil {
 		return errStage2aReservationAuthority
 	}
@@ -43,12 +44,12 @@ func RunStage2aQualificationOwnerDriver() error {
 	if err != nil || peer.UID != install.AdminUID || peer.PID == os.Getpid() {
 		return errStage2aReservationAuthority
 	}
-	observed, err := observeSoulProcess(peer.PID, review.Executable.Path, review.AuthorityArgv)
+	observed, err := observeSoulProcess(peer.PID, review.Authority.Path, review.AuthorityArgv)
 	if err != nil || !stage2aQualificationKernelMatches(observed.Kernel, peer.PID, install.AdminUID, install.AdminGID) {
 		return errStage2aReservationAuthority
 	}
 	return serveStage2aDriverBaseline(ctx, conn, review, install.Review.Provider, install.AdminUID, func() error {
-		current, err := observeSoulProcess(peer.PID, review.Executable.Path, review.AuthorityArgv)
+		current, err := observeSoulProcess(peer.PID, review.Authority.Path, review.AuthorityArgv)
 		if err != nil || !sameSoulKernelProcess(current.Kernel, observed.Kernel) {
 			return errStage2aReservationAuthority
 		}

@@ -2,10 +2,13 @@ package members
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/sys/unix"
 )
@@ -19,6 +22,7 @@ type stage2aDriverReview struct {
 	Executable     qualificationFile `json:"owner_driver_executable"`
 	Argv           []string          `json:"owner_driver_argv"`
 	Policy         qualificationFile `json:"owner_driver_policy"`
+	Authority      qualificationFile `json:"owner_driver_authority"`
 	AuthorityArgv  []string          `json:"owner_driver_authority_argv"`
 }
 
@@ -63,4 +67,38 @@ func acceptStage2aReviewedQualificationDriver(ctx context.Context, listener *sta
 		return nil, stage2aQualificationDriverPeer{}, errStage2aReservationAuthority
 	}
 	return conn, peer, nil
+}
+
+func verifyStage2aDriverAuthorityImage(file qualificationFile, adminUID int) error {
+	const maximum = 512 << 20
+	if adminUID <= 0 || !stage2aAbsolutePath(file.Path) || !qualificationDigest.MatchString(file.SHA256) {
+		return errStage2aReservationAuthority
+	}
+	dir, err := openStage2aAdminDirectory(filepath.Dir(file.Path), uint32(adminUID))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	fd, err := unix.Openat(int(dir.Fd()), filepath.Base(file.Path), stage2aFileOpenFlags, 0)
+	if err != nil {
+		return err
+	}
+	f := os.NewFile(uintptr(fd), file.Path)
+	defer f.Close()
+	var before, after, path unix.Stat_t
+	if unix.Fstat(fd, &before) != nil || before.Mode&unix.S_IFMT != unix.S_IFREG ||
+		(before.Uid != uint32(adminUID) && before.Uid != 0) || before.Mode&07022 != 0 ||
+		before.Mode&0100 == 0 || before.Size <= 0 || before.Size > maximum ||
+		checkDarwinACLs([]string{file.Path}) != nil {
+		return errStage2aReservationAuthority
+	}
+	hash := sha256.New()
+	n, err := io.Copy(hash, io.LimitReader(f, maximum+1))
+	if err != nil || n != before.Size || hex.EncodeToString(hash.Sum(nil)) != file.SHA256 ||
+		checkDarwinNode(f) != nil ||
+		unix.Fstat(fd, &after) != nil || unix.Lstat(file.Path, &path) != nil ||
+		!sameStage2aDriverBaselineFile(before, after) || !sameStage2aDriverBaselineFile(path, after) {
+		return errStage2aReservationAuthority
+	}
+	return nil
 }

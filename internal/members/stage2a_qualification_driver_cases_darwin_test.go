@@ -220,6 +220,12 @@ func TestStage2aQualificationDriverSignsExactQJoin(t *testing.T) {
 	if verifyStage2aDriverReceipt(signed, result, stage2aDriverRestart, review, peer, trace, key) == nil {
 		t.Fatal("baseline receipt accepted for restart")
 	}
+	tampered := append([]stage2aDriverEvidence(nil), trace...)
+	tampered[0].artifact = []byte("substituted capture")
+	if _, err := issueStage2aDriverReceipt(result, phase, review, peer, tampered, now, key,
+		func(raw []byte) ([]byte, error) { return ed25519.Sign(private, raw), nil }); err == nil {
+		t.Fatal("receipt issued over substituted capture bytes")
+	}
 	peer.kernel.StartSeconds++
 	if verifyStage2aDriverReceipt(signed, result, phase, review, peer, trace, key) == nil {
 		t.Fatal("another driver generation inherited the capture")
