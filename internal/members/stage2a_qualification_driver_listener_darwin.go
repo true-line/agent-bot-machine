@@ -74,7 +74,8 @@ func newStage2aQualificationDriverListener(adminHome string, adminUID, adminGID 
 		parentStat.Gid != uint32(adminGID) {
 		return nil, errStage2aReservationAuthority
 	}
-	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+	var prior unix.Stat_t
+	if err := unix.Fstatat(int(dir.Fd()), stage2aQualificationDriverSocketName, &prior, unix.AT_SYMLINK_NOFOLLOW); err != unix.ENOENT {
 		return nil, errStage2aReservationAuthority
 	}
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
@@ -88,7 +89,11 @@ func newStage2aQualificationDriverListener(adminHome string, adminUID, adminGID 
 		// by name here could delete a socket swapped in after bind.
 		return nil, errStage2aReservationAuthority
 	}
-	if os.Chmod(path, 0600) != nil {
+	// Bind creates the socket in A's private directory. Change only that
+	// no-follow leaf relative to the held directory, never a substituted
+	// symlink target outside it. The subsequent identity/probe checks still
+	// require the pathname to reach this listener.
+	if unix.Fchmodat(int(dir.Fd()), stage2aQualificationDriverSocketName, 0600, unix.AT_SYMLINK_NOFOLLOW) != nil {
 		return closeOnFailure()
 	}
 	var socket unix.Stat_t
@@ -193,11 +198,10 @@ func (l *stage2aQualificationDriverListener) close() {
 		return
 	}
 	l.listener.Close()
-	var socket unix.Stat_t
-	if l.parentMatches() && unix.Lstat(l.path, &socket) == nil && socket.Dev == l.dev &&
-		socket.Ino == l.inode && socket.Btim == l.birth {
-		_ = os.Remove(l.path)
-	}
+	// There is no conditional unlink-by-inode on Darwin. An lstat followed
+	// by unlinkat can remove a swapped occupant, even with a held parent FD.
+	// Leave this one-use pathname occupied; an explicit reviewed recovery
+	// must retire it after proving the prior listener and peer are gone.
 	l.listener = nil
 }
 
