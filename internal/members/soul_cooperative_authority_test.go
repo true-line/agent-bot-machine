@@ -70,7 +70,7 @@ func installedCooperativeFixture(t *testing.T, p SoulCooperativeLaunchPolicy, q 
 		FinishedAt: "2026-11-22T12:00:01Z", Result: "applied"}
 	receiptRaw := encodeReceipt(receipt)
 	return SoulCooperativeInstalledAuthority{
-		Policy: p, PlanID: receipt.PlanID, PlanDigest: q.PlanDigest,
+		Policy: p, InstallationOwner: "owner", PlanID: receipt.PlanID, PlanDigest: q.PlanDigest,
 		ReceiptSHA256: fmt.Sprintf("%x", sha256.Sum256(receiptRaw)),
 		CanonicalPlan: canonical, RootReceipt: receiptRaw,
 		ObservedPackageSHA256:  p.Runner.PackageSHA256,
@@ -105,9 +105,12 @@ func TestSoulCooperativeInstalledRecordCannotBeReplacedByDigestClaims(t *testing
 			if err := json.Unmarshal(in.RootReceipt, &receipt); err != nil {
 				t.Fatal(err)
 			}
-			receipt.Owner = ""
+			receipt.Owner = "other-owner"
 			in.RootReceipt = encodeReceipt(receipt)
 			in.ReceiptSHA256 = fmt.Sprintf("%x", sha256.Sum256(in.RootReceipt))
+		},
+		"missing expected owner": func(in *SoulCooperativeInstalledAuthority) {
+			in.InstallationOwner = ""
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

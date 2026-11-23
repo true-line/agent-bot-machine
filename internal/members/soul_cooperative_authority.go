@@ -251,6 +251,7 @@ type SoulCooperativeSignedReservation struct {
 // It is deliberately a different type from the owner-reviewable request.
 type SoulCooperativeInstalledAuthority struct {
 	Policy                   SoulCooperativeLaunchPolicy
+	InstallationOwner        string
 	PlanID                   string
 	PlanDigest               string
 	ReceiptSHA256            string
@@ -300,7 +301,8 @@ func (in SoulCooperativeInstalledAuthority) matchesInstalledRecord() bool {
 	if decoder.Decode(&receipt) != nil || decoder.Decode(new(any)) != io.EOF ||
 		receipt.HarnessApproval != nil || receipt.Upgrade != nil ||
 		receipt.PlanID != in.PlanID || receipt.PlanDigest != in.PlanDigest ||
-		receipt.Owner == "" || receipt.HQAccount != DarwinHQAccount || receipt.Dir != DarwinDir ||
+		!accountName.MatchString(in.InstallationOwner) || receipt.Owner != in.InstallationOwner ||
+		receipt.HQAccount != DarwinHQAccount || receipt.Dir != DarwinDir ||
 		len(receipt.Members) != 1 || receipt.Members[0] != in.Policy.Runner.Account ||
 		receipt.Changes != plan.Changes() || receipt.StartedAt == "" || receipt.FinishedAt == "" ||
 		receipt.Result != "applied" || receipt.FailedAt != "" ||
