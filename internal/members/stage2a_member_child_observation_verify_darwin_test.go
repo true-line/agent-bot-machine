@@ -117,7 +117,19 @@ func TestMemberChildObservationRequiresSameAKeyMemberGrantAndWithheldMap(t *test
 		InstallationID: start.InstallationID, SoulID: start.SoulID, StartID: start.StartID,
 		HQEpoch: start.HQEpoch, ReservationSHA256: reservation,
 		MemberSetAssignmentEnvelopeSHA256: stage2aReservationSHA256(assignmentEnvelope),
-		BAuthority:                        assignment.BAuthority, ExpiresAt: now.Add(20 * time.Second).Format(time.RFC3339Nano)}
+		BAuthority:                        assignment.BAuthority, RunnerUID: 320,
+		ExpiresAt: now.Add(20 * time.Second).Format(time.RFC3339Nano)}
+	b.Bridge, err = marshalStage2aReservationJCS(assignment.Bridge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range b.Members {
+		b.Members[i].MemberID = assignment.Members[i].MemberID
+		b.Members[i].LaunchID = assignment.Members[i].LaunchID
+		b.Members[i].MemberSelector = assignment.Members[i].MemberSelector
+		b.Members[i].AdjacentCLIPath = assignment.Members[i].AdjacentCLIPath
+		b.Members[i].AdjacentCLISHA256 = assignment.Members[i].AdjacentCLISHA256
+	}
 	bEnvelope := sign(b, stage2aBMemberAuthorityPurpose)
 	in.ChildExec.MemberBAuthorityEnvelopeBase64URL = base64.RawURLEncoding.EncodeToString(bEnvelope)
 	ready := stage2aMemberReadyPayload{Contract: "machine/v3", Kind: "stage2a-member-set-ready",
@@ -144,6 +156,7 @@ func TestMemberChildObservationRequiresSameAKeyMemberGrantAndWithheldMap(t *test
 			AdapterPID: observed.ChildProcess.PID, AdapterUID: 320, AdapterGID: 320,
 			AdapterStartSeconds: observed.ChildProcess.StartSeconds,
 			AdapterStartMicros:  observed.ChildProcess.StartMicros, State: "armed",
+			RelayPeerRule:  "a-attested-live-direct-child-of-adapter-v1",
 			RelayPeerState: "unobserved", ProviderIngress: "withheld-pending-per-peer-attestation"}
 		armRaw, err := marshalStage2aReservationJCS(member.BridgeArm)
 		if err != nil {

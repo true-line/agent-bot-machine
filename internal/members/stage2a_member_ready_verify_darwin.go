@@ -82,7 +82,14 @@ func verifyStage2aProtectedMemberReady(readyReply, observationReply Stage2aHello
 		b.SoulID != ready.SoulID || b.StartID != ready.StartID || b.HQEpoch != ready.HQEpoch ||
 		b.ReservationSHA256 != ready.ReservationSHA256 ||
 		b.MemberSetAssignmentEnvelopeSHA256 != ready.AssignmentEnvelopeSHA256 ||
-		b.BAuthority.EnvelopeSHA256 != ready.BAuthoritySHA256 {
+		b.BAuthority.EnvelopeSHA256 != ready.BAuthoritySHA256 ||
+		b.PlanID != assignment.PlanID || b.PlanDigest != assignment.PlanDigest ||
+		b.OwnerPlanMemberSetSHA256 != assignment.OwnerPlanMemberSetSHA256 ||
+		b.HQUID != in.Start.HQUID || b.RunnerUID != in.Runner.UID {
+		return ready, invalid
+	}
+	bridgeRaw, bridgeErr := marshalStage2aReservationJCS(assignment.Bridge)
+	if bridgeErr != nil || !bytes.Equal(b.Bridge, bridgeRaw) {
 		return ready, invalid
 	}
 	issued, issueErr := time.Parse(time.RFC3339Nano, ready.IssuedAt)
@@ -104,10 +111,15 @@ func verifyStage2aProtectedMemberReady(readyReply, observationReply Stage2aHello
 	for i, member := range ready.Members {
 		observedMember := observation.Members[i]
 		assigned := assignment.Members[i]
+		bMember := b.Members[i]
 		arm := member.BridgeArm
 		armRaw, armErr := marshalStage2aReservationJCS(arm)
 		if armErr != nil || member.MemberID != assigned.MemberID ||
 			member.MemberID != observedMember.MemberID || member.LaunchID != assigned.LaunchID ||
+			bMember.MemberID != assigned.MemberID || bMember.LaunchID != assigned.LaunchID ||
+			bMember.MemberSelector != assigned.MemberSelector ||
+			bMember.AdjacentCLIPath != assigned.AdjacentCLIPath ||
+			bMember.AdjacentCLISHA256 != assigned.AdjacentCLISHA256 ||
 			member.MemberSelector != assigned.MemberSelector || member.RuntimeID != observedMember.RuntimeID ||
 			member.BridgeArmReceiptSHA256 != stage2aReservationSHA256(armRaw) ||
 			arm.MemberID != member.MemberID || arm.MemberSelector != member.MemberSelector ||
@@ -119,6 +131,7 @@ func verifyStage2aProtectedMemberReady(readyReply, observationReply Stage2aHello
 			arm.AdapterStartSeconds != observedMember.ChildProcess.StartSeconds ||
 			arm.AdapterStartMicros != observedMember.ChildProcess.StartMicros ||
 			arm.BridgeUID != int(exec.Bridge.UID) || arm.State != "armed" ||
+			arm.RelayPeerRule != "a-attested-live-direct-child-of-adapter-v1" ||
 			arm.RelayPeerState != "unobserved" ||
 			arm.ProviderIngress != "withheld-pending-per-peer-attestation" {
 			return ready, invalid
