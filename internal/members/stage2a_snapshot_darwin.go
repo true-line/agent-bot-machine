@@ -273,6 +273,9 @@ func observeStage2aSourceAt(rootPath string, ownerUID, ownerGID uint32,
 	if err != nil || len(entries) != len(approved) {
 		return empty, "", errors.New("Stage 2a frozen inventory differs from approved closure")
 	}
+	slices.SortFunc(entries, func(a, b stage2aObservedEntry) int {
+		return strings.Compare(a.record.Path, b.record.Path)
+	})
 	metadata := make(map[string]unix.Stat_t, len(entries))
 	for i := range entries {
 		got, want := entries[i].record, approved[i]

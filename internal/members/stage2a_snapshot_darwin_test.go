@@ -165,6 +165,54 @@ func TestStage2aFrozenDescriptorObservation(t *testing.T) {
 	}
 }
 
+func TestStage2aFrozenObservationSortsSiblingFileAndDirectory(t *testing.T) {
+	root, approved := stage2aObservedFixture(t)
+	opt := filepath.Join(root, "Contents/opt")
+	if err := os.Chmod(opt, 0700); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(opt, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(bin, 0700) })
+	for _, file := range []struct{ path, data string }{
+		{filepath.Join(opt, "bin.js"), "sibling"},
+		{filepath.Join(bin, "node"), "node"},
+	} {
+		if err := os.WriteFile(file.path, []byte(file.data), 0555); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(file.path, 0555); err != nil {
+			t.Fatal(err)
+		}
+		size := uint64(len(file.data))
+		sum := sha256.Sum256([]byte(file.data))
+		relative, err := filepath.Rel(root, file.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		approved = append(approved, Stage2aDefinitionRecord{
+			Path: relative, Kind: "regular", Mode: "0555", Size: &size, SHA256: fmt.Sprintf("%x", sum),
+		})
+	}
+	if err := os.Chmod(bin, 0555); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(opt, 0555); err != nil {
+		t.Fatal(err)
+	}
+	approved = append(approved, Stage2aDefinitionRecord{Path: "Contents/opt/bin", Kind: "directory", Mode: "0555"})
+	sort.Slice(approved, func(i, j int) bool { return approved[i].Path < approved[j].Path })
+	want, _, err := Stage2aDefinitionDigest(approved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, got, err := observeStage2aFrozenAt(root, uint32(os.Getuid()), uint32(os.Getgid()), approved); err != nil || got != want {
+		t.Fatalf("lexically adjacent file and directory were rejected: %s, %v", got, err)
+	}
+}
+
 func TestStage2aFrozenObservationRefusesChangedSource(t *testing.T) {
 	for name, change := range map[string]func(string) error{
 		"extra root entry": func(root string) error {
