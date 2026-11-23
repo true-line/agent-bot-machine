@@ -132,6 +132,24 @@ func TestStage2aHQPlanRequiresReviewedContractsSourcePins(t *testing.T) {
 	if err := withQWire.validate(); err != nil {
 		t.Fatalf("candidate v0.10.2 H subset refused: %v", err)
 	}
+	for _, mismatch := range []struct {
+		tag   string
+		paths []string
+		full  int
+	}{
+		{"v0.10.2", hqStage2aContractsFixturePathsV0101[:], 469},
+		{"v0.10.1", hqStage2aContractsFixturePathsV0102[:], 446},
+		{"v0.10.3", hqStage2aContractsFixturePathsV0102[:], 469},
+	} {
+		candidate := withQWire
+		candidate.ContractsSource.Tag = mismatch.tag
+		candidate.ExcludedHQReleasePaths = mismatch.paths
+		candidate.ContractsSource.FullFiles = mismatch.full
+		candidate.ContractsSource.RuntimeFiles = mismatch.full - len(mismatch.paths)
+		if err := candidate.validate(); err == nil {
+			t.Fatalf("accepted unreviewed Contracts tag and fixture partition: %s", candidate.ContractsSource.Tag)
+		}
+	}
 	for _, change := range []func(*hqStage2aContractsSource){
 		func(p *hqStage2aContractsSource) { p.Tag = "" },
 		func(p *hqStage2aContractsSource) { p.Commit = "" },

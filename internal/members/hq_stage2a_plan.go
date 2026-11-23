@@ -218,6 +218,19 @@ func hqStage2aValidExclusions(paths []string) bool {
 		slices.Equal(paths, hqStage2aContractsFixturePathsV0102[:])
 }
 
+func hqStage2aValidExclusionsForTag(tag string, paths []string) bool {
+	switch tag {
+	case "v0.10.0":
+		return len(paths) == 0 || slices.Equal(paths, hqStage2aContractsFixturePathsV010[:])
+	case "v0.10.1":
+		return slices.Equal(paths, hqStage2aContractsFixturePathsV0101[:])
+	case "v0.10.2":
+		return slices.Equal(paths, hqStage2aContractsFixturePathsV0102[:])
+	default:
+		return false
+	}
+}
+
 var hqStage2aSourceRepository = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 var hqStage2aSourceTag = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+/-]{0,127}$`)
 
@@ -243,7 +256,8 @@ func (s hqStage2aService) validate() error {
 		!stage2aAbsolutePath(s.InventorySource) || !stage2aPrefixedDigest.MatchString(s.InventoryDigest) ||
 		s.InventoryLimits.MaxFiles < 10 || s.InventoryLimits.MaxFiles > 512 ||
 		s.InventoryLimits.MaxFileBytes == 0 || s.InventoryLimits.MaxFileBytes > 384<<20 ||
-		s.InventoryLimits.MaxTotalBytes < s.InventoryLimits.MaxFileBytes || s.InventoryLimits.MaxTotalBytes > 1<<30 || !hqStage2aValidExclusions(s.ExcludedHQReleasePaths) ||
+		s.InventoryLimits.MaxTotalBytes < s.InventoryLimits.MaxFileBytes || s.InventoryLimits.MaxTotalBytes > 1<<30 ||
+		!hqStage2aValidExclusionsForTag(s.ContractsSource.Tag, s.ExcludedHQReleasePaths) ||
 		len(s.Components) != 2 || s.Components[0].ComponentID != "hq" || s.Components[1].ComponentID != "node" ||
 		!stage2aHSourceTagV3.MatchString(s.ContractsSource.Tag) ||
 		!stage2aHSourceCommitV3.MatchString(s.ContractsSource.Commit) ||
