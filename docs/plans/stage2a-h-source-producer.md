@@ -20,6 +20,11 @@ reviewed synthetic Contracts fixtures. The Node component has exactly one
 installed `bin/node` row. The raw HQ archive is partitioned across installed H rows, exact reviewed
 synthetic Contracts fixture omissions, and an explicit reviewed list of
 noninstalled release files. A new raw file fails closed until reviewed.
+HQ #271 adds `tests/t02-machine-capture.test.mjs` to the raw archive. It is a
+source test, not installed H code or a synthetic Contracts fixture, so the
+explicit noninstalled list includes that one path. It must still be present
+in the authenticated raw archive; the allowlist does not permit arbitrary
+additional test files.
 
 Root reads the pinned raw artifacts from private, checked source locations,
 verifies the HQ archive and Node bytes, and stages only the selected rows.
@@ -64,3 +69,18 @@ the full raw archive and source manifest, and rehearse the selected H map
 privately. Finally, exercise the root-to-A installer in a disposable macOS
 guest with the exact owner-reviewed plan and record the seal, descriptor,
 refusals, and guest cleanup. Physical T01/T02/T03/T21 is a separate run.
+
+The private HQ #271 source preflight used protected-main commit
+`e8912e0621b608b0d665f3e1e19cd8f74e9b9661`, Darwin tar SHA-256
+`fc2df63745668a32950a6d10f1d3bb2143f0d48b0a875429bbe4c0a0490708b1`,
+563-row source manifest SHA-256
+`4e1c8702a3322477b87e63058a821ddc38788bfab3fd9795a6380572f201304e`,
+and a 512-file, 55-directory candidate inventory with domain digest
+`532ad3c75c19cad3be8cc676d786a453338504655a484654bbedcf7b8b5a7ebd`.
+Only release metadata and the two HQ T02 runtime modules changed among the
+selected source rows from HQ #268. The Machine raw tar, source manifest,
+inventory, and Node verifier replay passed with the added noninstalled test
+path. The temporary local integration test was removed after replay; the
+private preflight receipt SHA-256 is
+`58e4a0d91675738f74e5fdf0c6f508ae30f6122c7663a59cedec7b710d9f7e71`.
+This preflight has no owner-approved install plan or A seal.
