@@ -781,6 +781,38 @@ Machine finalization must independently bind kernel PID/start/UID and process
 chain, endpoint inodes, one-use admission and live B bind. The immutable
 completed-run record and signed v3 host report are separate later evidence.
 
+### Cooperative HQ-started Soul authority candidate
+
+**Intent.** T21 needs the same measured Soul to run through an explicitly
+selected cooperative route while refusing every protected claim. A protected
+reservation refusal is terminal for that request; it never selects this route.
+
+**Target.** `SoulCooperativeLaunchPolicy` is a separate owner-reviewable
+`soul-cooperative-launch-install` shape. It pins the host, paired HQ epoch,
+dedicated runner identity, owner source path, frozen runner package and
+definition digests, Node, entry, launcher and approval end. A request carries
+only the installation, start, owner package path, plan digest, host, epoch and
+the literal `managed-cooperative` profile. A derives the per-start socket path
+and its H/R peer ownership from those reviewed identities.
+`PrepareSoulCooperativeReservation` signs a purpose-separated, canonical
+30-second reservation only from an installed authority, after its caller has
+rechecked the root applied receipt, live pairing and frozen bytes. It requires
+a durable installation/start spend before returning the signature. Lost
+responses and retries cannot recover a spent start. The installed loader,
+owner-approved apply, paired daemon verbs, fixed launcher, signed completion
+and HQ independent verifier remain implementation gates; this contract code
+alone does not enable a host launch or qualify T21.
+
+**Acceptance.** A positive synthetic test verifies the signed reviewed
+identity, package and profile and proves one-use refusal. Separate negatives
+refuse an altered package, wrong host or principal, expired approval, protected
+profile, wrong signing key and ambiguous JSON. A physical T21 run must then
+use the installed route and HQ-hosted comms; these unit tests do not claim it.
+
+**Replay.** Run `go test ./internal/members -run '^TestSoulCooperative'` and
+retain the exact Machine and HQ source heads, approved plan, applied receipt,
+signed reservation and signed containment completion for the later host run.
+
 ### Stage 2a installed authority candidate
 
 `members plan --soul-protected-launch-install <request.json>` records one
