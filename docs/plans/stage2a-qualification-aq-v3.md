@@ -209,6 +209,13 @@ snapshot. It does not attest a separate H-readable HQ/Comms/contracts code
 domain or join that domain to a signed release. The two-domain binding,
 access and measurement limits still need a reviewed contract. H and R must
 not gain a shared writable or readable group through this draft.
+The current `Stage2aLaunchInputRecords` v1 source contract and this offline
+consumer require eight component digests backed by R-snapshot files, including
+`harness` and `test_provider`. The owner has clarified that the base
+HQ/Machine/Souls install is harness-free and ACP/Claude is an explicit optional
+selection. A reviewed successor must specify which component digests belong
+to that base and how optional test components and separate H code are measured;
+this draft must not be read as approval to install a harness in the base.
 
 This component currently prepares an unsigned wrapper and nested bytes.
 There is no production A archive publisher or A-signed segment issuer for
