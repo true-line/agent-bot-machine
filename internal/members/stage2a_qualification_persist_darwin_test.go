@@ -370,6 +370,21 @@ func TestPersistStage2aQualificationBundleV3VerifiedChain(t *testing.T) {
 		"sha256:"+strings.Repeat("1", 64), now, machinePub, sign); err == nil {
 		t.Fatal("Q pre-sign index accepted a different well-formed launch challenge")
 	}
+	if _, err := persistStage2aQualificationPreSignV1(store, session, reservation,
+		launchChallengeSHA, now, machinePub, sign); err == nil {
+		t.Fatal("Q pre-sign evidence published without a spent one-use Q session")
+	}
+	dir, err = store.open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := spendStage2aAdminName(dir, ".stage2a-q-session-"+slot, store.uid, store.gid); err != nil {
+		dir.Close()
+		t.Fatal(err)
+	}
+	if err := dir.Close(); err != nil {
+		t.Fatal(err)
+	}
 	preSign, err := persistStage2aQualificationPreSignV1(store, session, reservation,
 		launchChallengeSHA, now, machinePub, sign)
 	if err != nil {
