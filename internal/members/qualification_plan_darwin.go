@@ -37,7 +37,7 @@ func CheckDarwinHarnessQualification(saved Saved, owner string, uid int) error {
 	if err != nil || !found || !home.Dir || home.Owner != DarwinHQAccount || home.Group != DarwinHQAccount || home.Mode&0o7777 != 0o700 {
 		return errors.New("qualification owner challenge requires the private HQ home")
 	}
-	if err := checkQualificationRole(run.Request.Target.Account, run.Request.Target.UID, h); err != nil {
+	if err := checkQualificationTarget(run.Request, h); err != nil {
 		return err
 	}
 	canonical, err := saved.CanonicalForReview()

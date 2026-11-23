@@ -352,7 +352,9 @@ definition and suite revisions, and the fixed T01/T02/T03 protected plus T21
 cooperative assignments. The request is structured data; it cannot supply a
 command to execute. Large code closures may be represented by one pinned
 manifest artifact. The eventual runner must verify the installed tree against
-that manifest before executing it.
+that manifest before executing it. A schema-2 candidate plan checks the
+dedicated Soul runner derived from the installation ID and requires its
+reviewed UID. Schema 1 checks the dedicated harness account.
 
 This command only reviews and saves inputs. It does not run tests, issue a
 qualification, authorize installation, or open a persistent launch grant.

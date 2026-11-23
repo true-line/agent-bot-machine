@@ -248,3 +248,41 @@ func TestCandidateQualificationPlanRequiresExactHostAndInputs(t *testing.T) {
 		t.Fatal("schema-1 request accepted candidate authority")
 	}
 }
+
+func TestCandidateQualificationRequiresInstalledSoulRunner(t *testing.T) {
+	const installation = "inst_0123456789abcdef"
+	const uid = 325
+	name := soulRunnerName(installation)
+	h := emptyHost()
+	account := Account{Name: name, Group: name, UID: uid, GID: uid, Home: darwinSoulRunnerHome(name),
+		Shell: DarwinNoLoginShell, DarwinRole: darwinSoulRunnerRoleName}
+	h.accounts[name] = account
+	h.entries[account.Home] = Entry{Dir: true, Owner: name, Group: name, Mode: 0700}
+	r := validQualificationRequest()
+	r.SchemaVersion = 2
+	r.Candidate = &qualificationCandidatePlan{InstallationID: installation}
+	r.Target.Account, r.Target.UID = name, uid
+	if err := checkQualificationTarget(r, h); err != nil {
+		t.Fatal(err)
+	}
+	wrong := r
+	wrong.Target.UID++
+	if err := checkQualificationTarget(wrong, h); err == nil {
+		t.Fatal("accepted different runner UID")
+	}
+	wrong = r
+	wrong.Candidate = &qualificationCandidatePlan{InstallationID: "inst_fedcba9876543210"}
+	if err := checkQualificationTarget(wrong, h); err == nil {
+		t.Fatal("accepted runner for another installation")
+	}
+	account.DarwinRole, account.Home = darwinHarnessRoleName, darwinHarnessHome(name)
+	h.accounts[name] = account
+	h.entries[account.Home] = Entry{Dir: true, Owner: name, Group: name, Mode: 0700}
+	if err := checkQualificationTarget(r, h); err == nil {
+		t.Fatal("accepted harness in place of dedicated Soul runner")
+	}
+	r.SchemaVersion, r.Candidate = 1, nil
+	if err := checkQualificationTarget(r, h); err != nil {
+		t.Fatalf("legacy harness role failed: %v", err)
+	}
+}

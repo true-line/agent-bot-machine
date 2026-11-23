@@ -275,7 +275,7 @@ func validateQualificationRequest(r QualificationRequest) error {
 }
 
 func qualificationRunPlan(raw []byte, r QualificationRequest, h Host) (Plan, *QualificationRun, error) {
-	if err := checkQualificationRole(r.Target.Account, r.Target.UID, h); err != nil {
+	if err := checkQualificationTarget(r, h); err != nil {
 		return Plan{}, nil, err
 	}
 	files := []qualificationFile{{r.Adapter.PackagePath, r.Adapter.PackageSHA},
@@ -316,6 +316,24 @@ func qualificationRunPlan(raw []byte, r QualificationRequest, h Host) (Plan, *Qu
 		return Plan{}, nil, errors.New("qualification plan exceeds the bounded review size")
 	}
 	return p, run, nil
+}
+
+func checkQualificationTarget(request QualificationRequest, h Host) error {
+	if request.SchemaVersion == 1 {
+		return checkQualificationRole(request.Target.Account, request.Target.UID, h)
+	}
+	const invalid = "candidate qualification target must be the existing Soul runner for this installation with its exact UID"
+	if request.SchemaVersion != 2 || request.Candidate == nil ||
+		!soulInstallationID.MatchString(request.Candidate.InstallationID) ||
+		request.Target.Account != soulRunnerName(request.Candidate.InstallationID) {
+		return errors.New(invalid)
+	}
+	uids := make(map[int]string)
+	step, err := soulRunnerAccountStep(request.Target.Account, h, uids)
+	if err != nil || step.Action != ActionNone || uids[request.Target.UID] != request.Target.Account {
+		return errors.New(invalid)
+	}
+	return nil
 }
 
 // Qualification cannot repair a changed role. Require the ordinary account
