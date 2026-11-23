@@ -795,6 +795,12 @@ definition digests, Node, entry, launcher and approval end. A request carries
 only the installation, start, owner package path, plan digest, host, epoch and
 the literal `managed-cooperative` profile. A derives the per-start socket path
 and its H/R peer ownership from those reviewed identities.
+This v1 reservation covers R's frozen package only. It is not proof of the
+selected HQ/Comms/contracts code loaded by H. A versioned successor must
+carry A's exact H code descriptor and bind it to HQ's startup-loaded digest;
+A must remeasure those H bytes at launch. The inventory is content-addressed
+outside the bounded plan and handoff, with separate H/R access. No truncated
+inventory or R-only digest can qualify that closure.
 `PrepareSoulCooperativeReservation` signs a purpose-separated, canonical
 30-second reservation only from an installed authority, after its caller has
 rechecked the root applied receipt, live pairing and frozen bytes. It requires

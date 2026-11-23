@@ -186,6 +186,10 @@ func ParseSoulCooperativeReserveRequest(raw []byte) (SoulCooperativeReserveReque
 	return q, nil
 }
 
+// v1 binds the frozen R package only. It does not attest to H's selected
+// HQ/Comms/contracts code. Production needs a new purpose/version carrying
+// A's exact H descriptor, checked against HQ startup and remeasured by A at
+// launch; the R package digest must never stand in for that descriptor.
 type SoulCooperativeReservation struct {
 	Purpose                string                  `json:"purpose"`
 	Profile                string                  `json:"profile_in_force"`
