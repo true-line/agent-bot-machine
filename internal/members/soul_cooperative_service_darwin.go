@@ -116,6 +116,7 @@ func (s *Stage2aService) ReserveCooperativeV3(hqUID int, epoch string,
 			if err != nil {
 				return err
 			}
+			proof.qualificationCodeInputs = request.Adapter.Launch.CodeInputs
 		}
 		issued = time.Now().UTC()
 		reply, err = publishSoulCooperativeStartV3(proof, q, challenge, issued, key, s.sign)

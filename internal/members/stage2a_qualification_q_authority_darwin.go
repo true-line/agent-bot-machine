@@ -64,7 +64,7 @@ func decodeStage2aQualificationQPlan(raw []byte, install stage2aQualificationQIn
 		candidate.InstallationID != review.InstallationID || candidate.InstalledPlanDigest != review.InstalledPlanDigest ||
 		candidate.TestPlan != review.TestPlan || request.TestProvider.ConfigPath != review.Provider.Path ||
 		request.TestProvider.ConfigSHA != review.Provider.SHA256 ||
-		request.Runner.BinaryPath != install.Source.Path || request.Runner.BinarySHA != install.Source.SHA256 {
+		request.Runner.BinarySHA != install.Source.SHA256 {
 		return empty, errQualificationAdmissionUnavailable
 	}
 	canonical, err := saved.CanonicalForReview()

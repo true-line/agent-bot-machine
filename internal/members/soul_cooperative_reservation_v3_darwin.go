@@ -109,6 +109,7 @@ type soulCooperativeVerifiedStartV3 struct {
 	hEntryPath                 string
 	hEntrySHA256               string
 	qualificationHarnessSHA256 string
+	qualificationCodeInputs    []qualificationCodeInput
 }
 
 func cooperativeV3RComponents(spec stage2aRuntimeV3Install) []soulCooperativeComponentV3 {
@@ -276,7 +277,8 @@ func prepareSoulCooperativeReservationV3(a soulCooperativeVerifiedStartV3,
 		return empty, errSoulCooperativeAuthority
 	}
 	if harness, qualification := p.LaunchInputs.ComponentDigests["harness"]; qualification &&
-		a.qualificationHarnessSHA256 != harness {
+		(a.qualificationHarnessSHA256 != harness ||
+			!cooperativeQualificationCodeInputsMatch(p, inventory, a.qualificationCodeInputs)) {
 		return empty, errSoulCooperativeAuthority
 	}
 	admission, err := cooperativeReviewedAdmission(p)

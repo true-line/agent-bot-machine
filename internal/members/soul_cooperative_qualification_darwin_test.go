@@ -102,3 +102,28 @@ func TestDirectCooperativeProviderUsesMeasuredMachineCode(t *testing.T) {
 		})
 	}
 }
+
+func TestDirectCooperativeQualificationCodeInputsMatchSealedInventory(t *testing.T) {
+	digest := strings.Repeat("1", 64)
+	p := SoulCooperativeLaunchPolicy{
+		RuntimeRoot:       "/private/r",
+		AdapterRelease:    &soulCooperativeAdapterV3{ComponentID: "codex"},
+		AdapterCodeInputs: []string{"/private/r/lib/adapter.mjs"},
+	}
+	inventory := stage2aDomainInventoryV3{
+		Files: []stage2aDomainFileV3{
+			{Path: "lib/adapter.mjs", ComponentID: "codex", SHA256: "sha256:" + digest},
+		},
+	}
+	inputs := []qualificationCodeInput{{Path: p.AdapterCodeInputs[0], SHA256: digest}}
+	if !cooperativeQualificationCodeInputsMatch(p, inventory, inputs) {
+		t.Fatal("exact code inputs refused")
+	}
+	inputs[0].SHA256 = strings.Repeat("2", 64)
+	if cooperativeQualificationCodeInputsMatch(p, inventory, inputs) {
+		t.Fatal("substituted code input digest accepted")
+	}
+	if cooperativeQualificationCodeInputsMatch(p, inventory, nil) {
+		t.Fatal("absent code input inventory accepted")
+	}
+}

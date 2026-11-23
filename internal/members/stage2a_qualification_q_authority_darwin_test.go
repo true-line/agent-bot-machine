@@ -36,7 +36,7 @@ func TestRetainedQualificationQPlanRequiresExactOwnerReview(t *testing.T) {
 	}
 	raw, saved := savePlan(t, run)
 	install := stage2aQualificationQInstall{
-		Source: qualificationFile{request.Runner.BinaryPath, request.Runner.BinarySHA},
+		Source: qualificationFile{stage2aQualificationQHome + "/qualification-runner.mjs", request.Runner.BinarySHA},
 		Review: stage2aQualificationQReview{
 			Owner: "local-owner", PlanID: saved.PlanID, PlanDigest: saved.PlanDigest,
 			HostUUID: request.Candidate.HostUUID, HostID: request.Host.ID,

@@ -45,28 +45,5 @@ func CheckDarwinHarnessQualification(saved Saved, owner string, uid int) error {
 	if err != nil || hex.EncodeToString(sum[:]) != saved.PlanDigest {
 		return errors.New("saved qualification plan no longer matches its review digest")
 	}
-	r := run.Request
-	files := []qualificationFile{{r.Adapter.PackagePath, r.Adapter.PackageSHA},
-		{r.Runner.BinaryPath, r.Runner.BinarySHA}, {r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA}}
-	for _, input := range r.Adapter.Launch.CodeInputs {
-		files = append(files, qualificationFile{input.Path, input.SHA256})
-	}
-	if r.Adapter.Launch.CodeInputManifest.Path != "" {
-		files = append(files, r.Adapter.Launch.CodeInputManifest)
-	}
-	if r.Adapter.Launch.Driver.Path != "" {
-		files = append(files, r.Adapter.Launch.Driver)
-	}
-	for _, file := range append(files, qualificationCandidateFiles(r)...) {
-		if err := verifyQualificationFile(file); err != nil {
-			return err
-		}
-	}
-	for _, file := range []qualificationFile{{r.Adapter.Launch.Executable, r.Adapter.Launch.ExecutableSHA},
-		{r.Adapter.Harness.BinaryPath, r.Adapter.Harness.BinarySHA}} {
-		if err := verifyQualificationExecutable(file.Path, file.SHA256); err != nil {
-			return err
-		}
-	}
-	return nil
+	return verifyQualificationReviewFiles(run.Request)
 }
