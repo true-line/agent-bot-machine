@@ -32,37 +32,39 @@ type Stage2aService struct {
 }
 
 type stage2aLiveReservation struct {
-	digest, policyDigest        string
-	envelope                    []byte
-	request                     SoulRunRequest
-	payload                     stage2aReservationPayload
-	payloadV3                   []byte
-	runModeV3                   stage2aReservationRunModeV3
-	runtimeRefV3                stage2aDomainInventoryRefV3
-	proofDigest                 string
-	bridgeProof                 [32]byte
-	bridgeAssignment            []byte
-	finalizationEnvelope        []byte
-	bindReceiptSHA256           string
-	runnerPID, bridgePID        int
-	childLauncherPID            int
-	runnerProcess               soulKernelProcessSnapshot
-	bridgeProcess               soulKernelProcessSnapshot
-	childLauncherProcess        soulKernelProcessSnapshot
-	childGrantSHA256            string
-	childGrantExpiresAt         time.Time
-	childPID                    int
-	childProcess                soulKernelProcessSnapshot
-	childReceiptEnvelope        []byte
-	twoMemberChildren           *stage2aTwoMemberObservation
-	memberSetAssignmentEnvelope []byte
-	memberSetAssignmentExpires  time.Time
-	provisionalHQMap            []byte
-	provisionalHQMapSHA256      string
-	memberChildGrants           map[string]stage2aMemberChildGrant
-	protectedQ                  *stage2aProtectedQRun
-	liveSequence                uint64
-	hello                       *stage2aHelloState
+	digest, policyDigest           string
+	envelope                       []byte
+	request                        SoulRunRequest
+	payload                        stage2aReservationPayload
+	payloadV3                      []byte
+	runModeV3                      stage2aReservationRunModeV3
+	runtimeRefV3                   stage2aDomainInventoryRefV3
+	proofDigest                    string
+	bridgeProof                    [32]byte
+	bridgeAssignment               []byte
+	finalizationEnvelope           []byte
+	bindReceiptSHA256              string
+	runnerPID, bridgePID           int
+	childLauncherPID               int
+	runnerProcess                  soulKernelProcessSnapshot
+	bridgeProcess                  soulKernelProcessSnapshot
+	childLauncherProcess           soulKernelProcessSnapshot
+	childGrantSHA256               string
+	childGrantExpiresAt            time.Time
+	childPID                       int
+	childProcess                   soulKernelProcessSnapshot
+	childReceiptEnvelope           []byte
+	twoMemberChildren              *stage2aTwoMemberObservation
+	memberSetAssignmentEnvelope    []byte
+	memberSetAssignmentExpires     time.Time
+	provisionalHQMap               []byte
+	provisionalHQMapSHA256         string
+	memberChildGrants              map[string]stage2aMemberChildGrant
+	memberChildObservationEnvelope []byte
+	memberChildObservationExpires  time.Time
+	protectedQ                     *stage2aProtectedQRun
+	liveSequence                   uint64
+	hello                          *stage2aHelloState
 }
 
 func NewStage2aService(key ed25519.PrivateKey) *Stage2aService {

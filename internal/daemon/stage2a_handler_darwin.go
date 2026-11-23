@@ -81,6 +81,9 @@ func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
 		case stage2aMemberChildGrantVerb:
 			state = "member-child-granted"
 			body, err = service.MemberChildGrant(req.peerUID, req.stage2aEpoch, req.stage2aMemberChildGrant)
+		case stage2aMemberChildObserveVerb:
+			state = "member-children-observed"
+			body, err = service.MemberChildObserve(req.peerUID, req.stage2aEpoch, req.stage2aMemberChildObserve)
 		default:
 			return refused(diag.DaemonUnimplemented, "unsupported Stage 2a verb")
 		}
