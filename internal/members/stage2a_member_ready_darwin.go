@@ -121,7 +121,9 @@ func (s *Stage2aService) MemberReady(hqUID int, epoch string,
 	if err != nil || stage2aDecodeExact(assignmentRaw, &assignment) != nil ||
 		assignment.ReservationSHA256 != r.digest ||
 		assignment.InstallationID != q.InstallationID || assignment.StartID != q.StartID ||
-		assignment.HQEpoch != epoch || assignment.ProfileInForce != "managed-protected" {
+		assignment.HQEpoch != epoch || assignment.ProfileInForce != "managed-protected" ||
+		p.Binding.ProfileInForce != assignment.ProfileInForce ||
+		assignment.HostID != p.Binding.HostID || assignment.SoulID != p.Binding.SoulID {
 		return reply, errStage2aReservationAuthority
 	}
 	observationRaw, err := verifyStage2aStoredARecordV3(r.memberChildObservationEnvelope,
@@ -130,6 +132,8 @@ func (s *Stage2aService) MemberReady(hqUID int, epoch string,
 	if err != nil || stage2aDecodeExact(observationRaw, &observation) != nil ||
 		observation.AssignmentEnvelopeSHA256 != stage2aReservationSHA256(r.memberSetAssignmentEnvelope) ||
 		observation.ProvisionalHQMappingSHA256 != r.provisionalHQMapSHA256 ||
+		observation.ReservationSHA256 != r.digest || observation.ProfileInForce != assignment.ProfileInForce ||
+		observation.HostID != assignment.HostID || observation.SoulID != assignment.SoulID ||
 		!reflect.DeepEqual([]byte(observation.ProvisionalHQMapping), r.provisionalHQMap) {
 		return reply, errStage2aReservationAuthority
 	}
@@ -140,7 +144,17 @@ func (s *Stage2aService) MemberReady(hqUID int, epoch string,
 		bAuthority.ReservationSHA256 != r.digest ||
 		bAuthority.MemberSetAssignmentEnvelopeSHA256 != observation.AssignmentEnvelopeSHA256 ||
 		bAuthority.ProfileInForce != "managed-protected" ||
+		bAuthority.HostID != assignment.HostID || bAuthority.SoulID != assignment.SoulID ||
+		bAuthority.InstallationID != assignment.InstallationID ||
+		bAuthority.StartID != assignment.StartID || bAuthority.HQEpoch != assignment.HQEpoch ||
+		bAuthority.PlanID != assignment.PlanID || bAuthority.PlanDigest != assignment.PlanDigest ||
+		bAuthority.OwnerPlanMemberSetSHA256 != assignment.OwnerPlanMemberSetSHA256 ||
+		bAuthority.BAuthority != assignment.BAuthority ||
 		bAuthority.HQUID != hqUID || bAuthority.RunnerUID != p.Runner.UID {
+		return reply, errStage2aReservationAuthority
+	}
+	bridgeRaw, err := marshalStage2aReservationJCS(assignment.Bridge)
+	if err != nil || !reflect.DeepEqual([]byte(bAuthority.Bridge), bridgeRaw) {
 		return reply, errStage2aReservationAuthority
 	}
 	selectorBytes, err := marshalStage2aReservationJCS([]string{
@@ -214,6 +228,14 @@ func (s *Stage2aService) MemberReady(hqUID int, epoch string,
 		seenObserve[request.ObserveNonce], seenArm[request.ArmNonce] = true, true
 		arm := request.BridgeArm
 		child := r.twoMemberChildren.Members[i].Child
+		if observation.Members[i].LaunchID != assignment.Members[i].LaunchID ||
+			observation.Members[i].MemberSelector != assignment.Members[i].MemberSelector ||
+			observation.Members[i].LauncherProcess != stage2aMemberLauncherIdentity(r.twoMemberChildren.Members[i].Launcher) ||
+			observation.Members[i].ChildProcess != stage2aMemberProcessIdentity(child,
+				r.twoMemberChildren.Members[i].CommandSHA256) ||
+			observation.Members[i].GrantSHA256 != r.memberChildGrants[request.MemberID].GrantSHA256 {
+			return reply, errStage2aReservationAuthority
+		}
 		if arm.MemberID != request.MemberID || arm.MemberSelector != request.MemberSelector ||
 			arm.RuntimeID != observation.Members[i].RuntimeID ||
 			arm.ChildObservationEnvelopeSHA256 != q.ChildObservationEnvelopeSHA256 ||
