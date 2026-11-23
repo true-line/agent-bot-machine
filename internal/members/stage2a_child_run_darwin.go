@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"time"
@@ -73,7 +74,13 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 	if stage2aCreateChildState(in.Runner, in.Start) != nil {
 		return harnessRefused
 	}
-	cmd := exec.Command("/usr/bin/sandbox-exec", "-D", "RELAY_SOCKET="+child.RelaySocket,
+	cli := filepath.Join(filepath.Dir(child.Executable), "claude")
+	cmd := exec.Command("/usr/bin/sandbox-exec",
+		"-D", "RELAY_SOCKET="+child.RelaySocket,
+		"-D", "R_CODE="+child.RuntimeV3.Snapshot.Path,
+		"-D", "STATE="+filepath.Dir(workdir),
+		"-D", "ADAPTER="+child.Executable,
+		"-D", "CLI="+cli,
 		"-f", child.SandboxPath, child.Executable)
 	cmd.Dir = child.Workdir
 	cmd.Env = make([]string, 0, len(environment))
