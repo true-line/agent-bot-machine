@@ -32,8 +32,7 @@ func spendSoulCooperativeStart(store stage2aAdminClaimStore, q SoulCooperativeRe
 }
 
 func spendSoulCooperativeStartIn(store stage2aAdminClaimStore, dir *os.File, q SoulCooperativeReserveRequest) error {
-	if q.Profile != "managed-cooperative" || !soulInstallationID.MatchString(q.InstallationID) ||
-		!soulStartID.MatchString(q.StartID) || store.legacyUnspent == nil || store.checkDirectory(dir) != nil {
+	if !q.valid() || store.legacyUnspent == nil || store.checkDirectory(dir) != nil {
 		return errSoulCooperativeAuthority
 	}
 	lock, err := lockStage2aReservation(dir, store.uid, store.gid, q.InstallationID)
@@ -92,8 +91,7 @@ func releaseSoulCooperativeStart(store stage2aAdminClaimStore, q SoulCooperative
 
 func releaseSoulCooperativeStartIn(store stage2aAdminClaimStore, dir *os.File, q SoulCooperativeReserveRequest,
 	contained func() (bool, error)) error {
-	if q.Profile != "managed-cooperative" || !soulInstallationID.MatchString(q.InstallationID) ||
-		!soulStartID.MatchString(q.StartID) || contained == nil || store.checkDirectory(dir) != nil {
+	if !q.valid() || contained == nil || store.checkDirectory(dir) != nil {
 		return errSoulCooperativeAuthority
 	}
 	lock, err := lockStage2aReservation(dir, store.uid, store.gid, q.InstallationID)

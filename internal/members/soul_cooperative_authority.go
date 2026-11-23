@@ -166,6 +166,13 @@ type SoulCooperativeReserveRequest struct {
 	PackagePath    string `json:"package_path"`
 }
 
+func (q SoulCooperativeReserveRequest) valid() bool {
+	return q.Profile == "managed-cooperative" && soulInstallationID.MatchString(q.HostID) &&
+		cooperativeAbsolute(q.PackagePath) &&
+		(SoulRunRequest{PlanDigest: q.PlanDigest, InstallationID: q.InstallationID,
+			StartID: q.StartID, HQEpoch: q.HQEpoch}).valid()
+}
+
 func ParseSoulCooperativeReserveRequest(raw []byte) (SoulCooperativeReserveRequest, error) {
 	var q SoulCooperativeReserveRequest
 	if len(raw) == 0 || len(raw) > 2048 || strictCooperativeObject(raw) != nil {
@@ -173,11 +180,7 @@ func ParseSoulCooperativeReserveRequest(raw []byte) (SoulCooperativeReserveReque
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&q) != nil || decoder.Decode(new(any)) != io.EOF ||
-		q.Profile != "managed-cooperative" || !soulInstallationID.MatchString(q.HostID) ||
-		!cooperativeAbsolute(q.PackagePath) ||
-		!(SoulRunRequest{PlanDigest: q.PlanDigest, InstallationID: q.InstallationID,
-			StartID: q.StartID, HQEpoch: q.HQEpoch}).valid() {
+	if decoder.Decode(&q) != nil || decoder.Decode(new(any)) != io.EOF || !q.valid() {
 		return SoulCooperativeReserveRequest{}, errSoulCooperativeAuthority
 	}
 	return q, nil
@@ -263,7 +266,7 @@ func PrepareSoulCooperativeReservation(in SoulCooperativeInstalledAuthority, q S
 ) (SoulCooperativeSignedReservation, error) {
 	var empty SoulCooperativeSignedReservation
 	p := in.Policy
-	if p.validate() != nil || q.Profile != "managed-cooperative" || q.HostID != p.HostID ||
+	if p.validate() != nil || !q.valid() || q.HostID != p.HostID ||
 		q.PlanDigest != in.PlanDigest || !ValidApproval(in.PlanID, in.PlanDigest) ||
 		q.InstallationID != p.Runner.InstallationID || q.HQEpoch != p.HQEpoch ||
 		q.PackagePath != p.SourcePackagePath ||
