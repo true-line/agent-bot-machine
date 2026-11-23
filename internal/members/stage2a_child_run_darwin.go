@@ -46,7 +46,11 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 		return harnessRefused
 	}
 	expires, err := time.Parse(time.RFC3339Nano, child.GrantExpiresAt)
-	if err != nil || !time.Now().Before(expires) || time.Until(expires) > stage2aChildGrantLife ||
+	maxGrantLife := stage2aChildGrantLife
+	if child.MemberID != "" {
+		maxGrantLife = stage2aMemberChildGrantLife
+	}
+	if err != nil || !time.Now().Before(expires) || time.Until(expires) > maxGrantLife ||
 		stage2aCheckRuntimeSnapshot(in.Binding.Snapshots.LaunchInputs, in.Launch.Files) != nil ||
 		trustedPath(OSHost{}, SoulChildSandbox, false) != nil ||
 		checkDarwinACLs(pathAncestry(SoulChildSandbox)) != nil {
@@ -62,7 +66,8 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 	if len(command) != 1 || child.Executable != command[0] {
 		return harnessRefused
 	}
-	workdir, environment, err := stage2aChildEnvironment(in.Runner, in.Start, in.Launch)
+	workdir, environment, err := stage2aMemberChildEnvironment(in.Runner, in.Start,
+		in.Launch, child.MemberSelector)
 	if err != nil || workdir != child.Workdir || len(environment) != len(child.Environment) {
 		return harnessRefused
 	}
@@ -71,7 +76,7 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 			return harnessRefused
 		}
 	}
-	if stage2aCreateChildState(in.Runner, in.Start) != nil {
+	if stage2aCreateMemberChildState(in.Runner, in.Start, child.MemberSelector) != nil {
 		return harnessRefused
 	}
 	cmd := exec.Command("/usr/bin/sandbox-exec", "-D", "RELAY_SOCKET="+child.RelaySocket,

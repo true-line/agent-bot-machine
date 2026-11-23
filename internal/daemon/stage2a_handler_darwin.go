@@ -78,6 +78,9 @@ func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
 		case stage2aMemberProvisionalMapVerb:
 			state = "member-map-withheld"
 			body, err = service.MemberProvisionalMap(req.peerUID, req.stage2aEpoch, req.stage2aMemberProvisionalMap)
+		case stage2aMemberChildGrantVerb:
+			state = "member-child-granted"
+			body, err = service.MemberChildGrant(req.peerUID, req.stage2aEpoch, req.stage2aMemberChildGrant)
 		default:
 			return refused(diag.DaemonUnimplemented, "unsupported Stage 2a verb")
 		}

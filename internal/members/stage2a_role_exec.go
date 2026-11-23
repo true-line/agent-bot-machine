@@ -8,16 +8,20 @@ const (
 )
 
 type Stage2aRoleGrant struct {
-	ReservationSHA256 string `json:"reservation_sha256"`
-	Role              string `json:"role"`
-	Nonce             string `json:"nonce"`
-	PID               int    `json:"pid"`
-	LaunchID          string `json:"launch_id"`
-	InstallationID    string `json:"installation_id"`
-	StartID           string `json:"start_id"`
-	HQEpoch           string `json:"hq_epoch"`
-	ExpiresAt         string `json:"expires_at"`
-	InvocationSHA256  string `json:"invocation_sha256"`
+	ReservationSHA256                 string `json:"reservation_sha256"`
+	Role                              string `json:"role"`
+	Nonce                             string `json:"nonce"`
+	PID                               int    `json:"pid"`
+	LaunchID                          string `json:"launch_id"`
+	InstallationID                    string `json:"installation_id"`
+	StartID                           string `json:"start_id"`
+	HQEpoch                           string `json:"hq_epoch"`
+	ExpiresAt                         string `json:"expires_at"`
+	InvocationSHA256                  string `json:"invocation_sha256"`
+	MemberID                          string `json:"member_id,omitempty"`
+	MemberLaunchID                    string `json:"member_launch_id,omitempty"`
+	MemberSelector                    string `json:"member_selector,omitempty"`
+	MemberSetAssignmentEnvelopeSHA256 string `json:"member_set_assignment_envelope_sha256,omitempty"`
 }
 
 type Stage2aExecReply struct {
@@ -58,19 +62,24 @@ type Stage2aBridgeExec struct {
 // The child command is selected from the installed, owner-reviewed launch
 // inputs. HQ supplies no executable, argument, environment or socket value.
 type Stage2aChildExec struct {
-	ReservationSHA256       string                       `json:"reservation_sha256"`
-	FinalizationSHA256      string                       `json:"finalization_sha256"`
-	HelloFinalizationSHA256 string                       `json:"hello_finalization_sha256"`
-	BindReceiptSHA256       string                       `json:"bind_receipt_sha256"`
-	Runner                  Stage2aLiveRoleIdentity      `json:"runner"`
-	Bridge                  Stage2aLiveRoleIdentity      `json:"bridge"`
-	Executable              string                       `json:"executable"`
-	ExecutableSHA256        string                       `json:"executable_sha256"`
-	RuntimeV3               *stage2aDomainInventoryRefV3 `json:"runtime_v3,omitempty"`
-	RelaySocket             string                       `json:"relay_socket"`
-	SandboxPath             string                       `json:"sandbox_path"`
-	SandboxSHA256           string                       `json:"sandbox_sha256"`
-	GrantExpiresAt          string                       `json:"grant_expires_at"`
-	Workdir                 string                       `json:"workdir"`
-	Environment             map[string]string            `json:"environment"`
+	MemberID                             string                       `json:"member_id,omitempty"`
+	MemberLaunchID                       string                       `json:"member_launch_id,omitempty"`
+	MemberSelector                       string                       `json:"member_selector,omitempty"`
+	MemberSetAssignmentEnvelopeBase64URL string                       `json:"member_set_assignment_envelope_base64url,omitempty"`
+	ProvisionalHQMapSHA256               string                       `json:"provisional_hq_mapping_sha256,omitempty"`
+	ReservationSHA256                    string                       `json:"reservation_sha256"`
+	FinalizationSHA256                   string                       `json:"finalization_sha256"`
+	HelloFinalizationSHA256              string                       `json:"hello_finalization_sha256"`
+	BindReceiptSHA256                    string                       `json:"bind_receipt_sha256"`
+	Runner                               Stage2aLiveRoleIdentity      `json:"runner"`
+	Bridge                               Stage2aLiveRoleIdentity      `json:"bridge"`
+	Executable                           string                       `json:"executable"`
+	ExecutableSHA256                     string                       `json:"executable_sha256"`
+	RuntimeV3                            *stage2aDomainInventoryRefV3 `json:"runtime_v3,omitempty"`
+	RelaySocket                          string                       `json:"relay_socket"`
+	SandboxPath                          string                       `json:"sandbox_path"`
+	SandboxSHA256                        string                       `json:"sandbox_sha256"`
+	GrantExpiresAt                       string                       `json:"grant_expires_at"`
+	Workdir                              string                       `json:"workdir"`
+	Environment                          map[string]string            `json:"environment"`
 }

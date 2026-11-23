@@ -228,7 +228,11 @@ func verifyStage2aRoleGrant(frame []byte, challenge stage2aExecChallenge,
 		(grant.Role == "bridge") != (in.BridgeExec != nil) ||
 		(grant.Role == "child") != (in.ChildExec != nil) ||
 		(grant.Role == "child" && (in.ChildExec.GrantExpiresAt != grant.ExpiresAt ||
-			in.ChildExec.ReservationSHA256 != grant.ReservationSHA256)) {
+			in.ChildExec.ReservationSHA256 != grant.ReservationSHA256 ||
+			in.ChildExec.MemberID != grant.MemberID ||
+			in.ChildExec.MemberLaunchID != grant.MemberLaunchID ||
+			in.ChildExec.MemberSelector != grant.MemberSelector)) ||
+		(grant.Role == "child" && !stage2aVerifyMemberChildGrant(grant, in, pub, now)) {
 		return Stage2aRoleInvocation{}, invalid
 	}
 	return in, nil

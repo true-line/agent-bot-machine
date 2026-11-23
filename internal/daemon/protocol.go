@@ -53,6 +53,7 @@ type Request struct {
 	stage2aPeerRole             members.Stage2aPeerRequest
 	stage2aMemberSetAssign      members.Stage2aMemberSetAssignmentRequest
 	stage2aMemberProvisionalMap members.Stage2aMemberProvisionalMapRequest
+	stage2aMemberChildGrant     members.Stage2aMemberChildGrantRequest
 	stage2aEpoch                string
 	peerUID                     int
 	ChallengeNonce              string           `json:"challenge_nonce,omitempty"`
@@ -290,7 +291,7 @@ func terminalVerb(verb string) bool {
 
 func knownVerb(verb string) bool {
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose, deviceVerb, approveMembersVerb, stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aLiveVerb, stage2aFinalizeBVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aCaptureSelectorVerb, stage2aControlProbeVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aMemberSetAssignVerb, stage2aMemberProvisionalMapVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose, deviceVerb, approveMembersVerb, stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aLiveVerb, stage2aFinalizeBVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aCaptureSelectorVerb, stage2aControlProbeVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aMemberSetAssignVerb, stage2aMemberProvisionalMapVerb, stage2aMemberChildGrantVerb, "bootstrap":
 		return true
 	default:
 		return false
