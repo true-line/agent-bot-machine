@@ -145,6 +145,9 @@ func (s *Stage2aService) MemberChildObserve(hqUID int, epoch string,
 	until = minStage2aTime(until, reservationExpires)
 	until = minStage2aTime(until, mapExpires)
 	until = minStage2aTime(until, r.memberSetAssignmentExpires)
+	for _, member := range q.Members {
+		until = minStage2aTime(until, r.memberChildGrants[member.MemberID].ExpiresAt)
+	}
 	if approvalErr != nil || !until.After(now) ||
 		r.twoMemberChildren.recheck(func(pid int) (soulKernelProcessSnapshot, error) {
 			return observeStage2aRoleProcess(pid, p.Runner.UID, p.Runner.GID, "child")
