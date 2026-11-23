@@ -159,6 +159,46 @@ A signature by itself grants no gate credit. The producer, capture formats,
 T21 segment form, and gate-specific inventory remain open; public v3
 acceptance stays closed.
 
+### Compact installed-input object under review
+
+The proposed `installed_inputs` blob is a canonical RFC 8785 JSON object,
+at most 1 MiB, with exact top-level fields `schema_version` (1), `kind`
+(`stage2a-installed-inputs`), `installation_id`, `soul_id`, `start_id`,
+`launch_id`, `host_id`, `profile`, `plan_id`, `installed_plan_digest`,
+`measurement_binding_sha256`, `definition_records`,
+`launch_input_records`, `host_adapters_json`, `host_installation_json`,
+`definition_snapshot`, `launch_inputs_snapshot`, `opened_files`, and
+`observed_at`. The four nested references use the segment's exact
+`{role,uri,sha256,size_bytes,issuer}` tuple, issuer `machine-a`, and
+content-addressed `qualification://stage2a/blob/<lowercase-sha256>` URIs.
+Their roles match their field names. They address the exact canonical
+definition record array (up to 4 MiB), launch-input object (up to 1 MiB),
+and the two separately opened host JSON files (up to 64 KiB each). The
+measurement binding digest is the ordinary SHA-256 of its exact canonical
+bytes; the definition and launch record hashes retain their separate
+owner-approved purpose plus NUL preimages.
+
+`opened_files` lists every regular file in the two approved snapshots,
+sorted by `scope/path`, where `scope` is `definition` or `launch`. Each row
+has exactly `scope`, `path`, `size_bytes`, `mode`, `sha256`, `owner_uid`,
+`owner_gid`, `device`, `inode`, `generation`, `birthtime_ns`, `link_count`,
+`acl_allow_count`, and `observed_at`. A must produce each row from a
+no-follow descriptor read under its pinned namespace, comparing metadata
+before and after hashing and rejecting allow ACLs, changed bytes, extra
+entries, and changed snapshot identity. The offline consumer joins every
+row to the exact record bytes, both snapshot identities, the selected
+command under either approved snapshot, all eight named component and
+sandbox-policy digest references to launch files, the effective profile,
+and the separately hashed host projection files. It does not archive large
+executable bytes.
+
+This component currently prepares an unsigned wrapper and nested bytes.
+There is no production A archive publisher or A-signed segment issuer for
+it yet. The physical segment attestation must bind the exact wrapper digest
+before an offline verifier can credit the observation. Raw ACP/OS custody,
+case inventory, native results, and T21's distinct form remain separate
+requirements. No public acceptance gate uses this component yet.
+
 The portable `ResolveSignedProtectedSegmentsV3` component follows the signed
 protected report's T01/T02/T03 gate references, verifies each completed and
 stopped segment manifest and A attestation, resolves all ten exact local blob
