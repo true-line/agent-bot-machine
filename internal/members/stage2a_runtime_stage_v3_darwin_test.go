@@ -17,7 +17,7 @@ func TestStage2aRuntimeV3TarMustMapEveryReleasedFile(t *testing.T) {
 	data := []byte("selected runtime bytes")
 	sum := sha256.Sum256(data)
 	inv := stage2aDomainInventoryV3{Files: []stage2aDomainFileV3{{
-		ComponentID: "souls", ReleasePath: "runtime/bin/agent-bot-souls.mjs",
+		ComponentID: "souls", ReleasePath: "runtime/bin/agent-bot-souls.mjs", Path: "runtime/bin/agent-bot-souls.mjs",
 		SizeBytes: uint64(len(data)), SHA256: fmt.Sprintf("sha256:%x", sum), Mode: "0550"}},
 		Directories: []stage2aDomainDirectoryV3{{Path: "runtime", Mode: "0550"},
 			{Path: "runtime/bin", Mode: "0550"}}}
@@ -63,6 +63,21 @@ func TestStage2aRuntimeV3TarMustMapEveryReleasedFile(t *testing.T) {
 		t.Fatalf("exact tar refused: %v", err)
 	}
 	good.Close()
+	relocated := inv
+	relocated.Files = append([]stage2aDomainFileV3(nil), inv.Files...)
+	relocated.Files[0].Path = "sealed/runtime/bin/agent-bot-souls.mjs"
+	relocated.Directories = []stage2aDomainDirectoryV3{
+		{Path: "sealed", Mode: "0550"}, {Path: "sealed/runtime", Mode: "0550"},
+		{Path: "sealed/runtime/bin", Mode: "0550"},
+	}
+	shifted, err := os.Open(makeArchive(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stage2aVerifyRuntimeV3Tar(shifted, "souls", relocated); err != nil {
+		t.Fatalf("exact relocated tar refused: %v", err)
+	}
+	shifted.Close()
 	bad, err := os.Open(makeArchive(true))
 	if err != nil {
 		t.Fatal(err)

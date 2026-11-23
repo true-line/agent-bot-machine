@@ -185,8 +185,12 @@ func stage2aVerifyRuntimeV3Tar(file *os.File, componentID string, inv stage2aDom
 			continue
 		}
 		wantFiles[row.ReleasePath] = row
-		for parent := filepath.Dir(row.ReleasePath); parent != "."; parent = filepath.Dir(parent) {
-			wantDirs[parent] = dirModes[parent]
+		for released, installed := filepath.Dir(row.ReleasePath), filepath.Dir(row.Path); released != "."; released, installed = filepath.Dir(released), filepath.Dir(installed) {
+			mode := dirModes[installed]
+			if installed == "." || mode == "" || wantDirs[released] != "" && wantDirs[released] != mode {
+				return errStage2aReservationAuthority
+			}
+			wantDirs[released] = mode
 		}
 	}
 	if len(wantFiles) == 0 {
