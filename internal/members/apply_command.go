@@ -201,6 +201,12 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		}
 		return runSoulProtectedLaunchApply(saved, approval, owner, h, deps, pairCheck)
 	}
+	if saved.Plan.Purpose == SoulCooperativeLaunchInstallPurpose || approval.Purpose == SoulCooperativeLaunchInstallPurpose {
+		if platform != PlatformDarwin {
+			return failure(diag.MembersNotApproved, "cooperative Soul launch installation requires macOS")
+		}
+		return runSoulCooperativeLaunchApply(saved, approval, owner, h, deps, pairCheck)
+	}
 	if saved.Plan.Purpose == SoulProtectedLaunchRetirePurpose || approval.Purpose == SoulProtectedLaunchRetirePurpose {
 		if platform != PlatformDarwin {
 			return failure(diag.MembersNotApproved, "protected Soul retirement requires macOS")

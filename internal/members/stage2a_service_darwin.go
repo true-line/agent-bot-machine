@@ -27,6 +27,7 @@ type Stage2aService struct {
 	mu                sync.Mutex
 	key               ed25519.PrivateKey
 	active            map[string]*stage2aLiveReservation
+	cooperativeActive map[string]*soulCooperativeLiveV3
 	candidateGrantsV3 stage2aCandidateGrantRegistryV3
 	reserveV3         func(int, string, Stage2aReserveRequest, *stage2aSignedCandidateGrantV3) (stage2aReservation, stage2aReservationWorkerReplyV3, error)
 }
@@ -59,7 +60,8 @@ type stage2aLiveReservation struct {
 }
 
 func NewStage2aService(key ed25519.PrivateKey) *Stage2aService {
-	return &Stage2aService{key: key, active: make(map[string]*stage2aLiveReservation), candidateGrantsV3: make(stage2aCandidateGrantRegistryV3)}
+	return &Stage2aService{key: key, active: make(map[string]*stage2aLiveReservation), candidateGrantsV3: make(stage2aCandidateGrantRegistryV3),
+		cooperativeActive: make(map[string]*soulCooperativeLiveV3)}
 }
 
 func (s *Stage2aService) sign(preimage []byte) ([]byte, error) {

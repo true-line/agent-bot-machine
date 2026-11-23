@@ -618,7 +618,15 @@ func save(dir string, s Saved) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(s, "", "  ")
+	var raw []byte
+	var err error
+	if s.Plan.Purpose == SoulCooperativeLaunchInstallPurpose {
+		// The review frame already bounds the canonical plan. The saved
+		// record carries two copies and must also fit the daemon's file read.
+		raw, err = json.Marshal(s)
+	} else {
+		raw, err = json.MarshalIndent(s, "", "  ")
+	}
 	if err != nil {
 		return err
 	}

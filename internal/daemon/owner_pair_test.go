@@ -273,7 +273,9 @@ func TestMacHQOwnerEnrollment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.Recovery = &recoveryChallenge{recoveryVerb, st.Machine, st.HQ, st.Owner, approvePlanID, approveDigest, strings.Repeat("d", 64), time.Now().Unix() + ownerChallengeTTL, st.UID}
+	st.Recovery = &recoveryChallenge{Action: recoveryVerb, Machine: st.Machine, HQ: st.HQ,
+		Owner: st.Owner, ID: approvePlanID, Digest: approveDigest,
+		Nonce: strings.Repeat("d", 64), Expires: time.Now().Unix() + ownerChallengeTTL, UID: st.UID}
 	if err := st.save(dir); err != nil {
 		t.Fatal(err)
 	}

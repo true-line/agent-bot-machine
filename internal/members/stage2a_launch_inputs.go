@@ -18,6 +18,8 @@ import (
 )
 
 const stage2aLaunchPurpose = "agent-bot/stage2a-launch-inputs/v1"
+const stage2aCooperativeLaunchPurposeV3 = "agent-bot/stage2a-cooperative-launch-inputs/v3"
+const stage2aDirectComms = "direct-comms"
 
 var stage2aEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var stage2aCDHash = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -35,6 +37,7 @@ type Stage2aLaunchInputRecords struct {
 	SystemImages        Stage2aSystemImages       `json:"system_images"`
 	SandboxPolicyDigest string                    `json:"sandbox_policy_digest"`
 	ComponentDigests    map[string]string         `json:"component_digests"`
+	AdapterTransport    string                    `json:"adapter_transport,omitempty"`
 }
 
 type Stage2aHostProjection struct {
@@ -388,13 +391,30 @@ func Stage2aLaunchInputDigest(input Stage2aLaunchInputRecords) (string, []byte, 
 		imageAliases[strings.ToLower(image.Path)] = true
 		previous = image.Path
 	}
-	for _, arg := range []string{"machine", "hq", "souls", "bridge", "comms_broker", "adapter", "harness", "test_provider"} {
+	components := []string{"machine", "hq", "souls", "comms_broker", "adapter"}
+	if input.EffectiveConfig["profile"] == "managed-protected" {
+		if input.AdapterTransport != "" {
+			return "", nil, invalid
+		}
+		components = append(components, "bridge", "harness", "test_provider")
+	} else if _, hasBridge := input.ComponentDigests["bridge"]; hasBridge || input.AdapterTransport != stage2aDirectComms {
+		return "", nil, invalid
+	} else if _, harness := input.ComponentDigests["harness"]; harness {
+		if _, provider := input.ComponentDigests["test_provider"]; !provider {
+			return "", nil, invalid
+		}
+		components = append(components, "harness", "test_provider")
+	} else if _, provider := input.ComponentDigests["test_provider"]; provider {
+		return "", nil, invalid
+	}
+	for _, arg := range components {
 		value := input.ComponentDigests[arg]
-		if !digests[value] {
+		if !stage2aPrefixedDigest.MatchString(value) ||
+			(input.EffectiveConfig["profile"] == "managed-protected" && !digests[value]) {
 			return "", nil, invalid
 		}
 	}
-	if len(input.ComponentDigests) != 8 || !digests[input.SandboxPolicyDigest] {
+	if len(input.ComponentDigests) != len(components) || !digests[input.SandboxPolicyDigest] {
 		return "", nil, invalid
 	}
 	raw, err := json.Marshal(input)
@@ -405,7 +425,11 @@ func Stage2aLaunchInputDigest(input Stage2aLaunchInputRecords) (string, []byte, 
 	if err != nil || len(canonical) > 1<<20 {
 		return "", nil, invalid
 	}
-	sum := sha256.Sum256(append([]byte(stage2aLaunchPurpose+"\x00"), canonical...))
+	purpose := stage2aLaunchPurpose
+	if input.EffectiveConfig["profile"] == "managed-cooperative" {
+		purpose = stage2aCooperativeLaunchPurposeV3
+	}
+	sum := sha256.Sum256(append([]byte(purpose+"\x00"), canonical...))
 	return fmt.Sprintf("sha256:%x", sum), canonical, nil
 }
 

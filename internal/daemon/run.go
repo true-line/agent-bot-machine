@@ -284,6 +284,7 @@ func runService(ctx context.Context, root, requiredIdentity string) error {
 			return applyWithProvider(ctx, item, option, target, dir, impl)
 		},
 	}
+	stage2a, cooperativeRecovery := stage2aServiceHandlers(priv, dir, account)
 	return Serve(ctx, ln, gate, priv, peerCred, Hooks{
 		Status:       func() (string, []byte, error) { return statusBody(dir) },
 		Receipts:     func() ([]byte, error) { return receiptsBody(dir) },
@@ -292,12 +293,12 @@ func runService(ctx context.Context, root, requiredIdentity string) error {
 		Update:       planner.Update,
 		Catalog:      func(req Request) (string, string, string) { return session.accept(dir, req) },
 		HQDevice:     func(req Request) Response { return requestHQDevice(ctx, root, priv, req, time.Now, runDeviceKeyd) },
-		Stage2a:      stage2aHandler(priv),
+		Stage2a:      stage2a,
 		MembersPlans: func(option, id string) ([]byte, error) { return readMembersPlans(root, option, id) },
 		ServiceRecovery: func(req Request) Response {
 			return recoverHQService(dir, priv.Public().(ed25519.PublicKey), req, time.Now, func(id, digest string, uid int) (string, error) {
 				return currentPairedServicePlan(req.Verb, root, account, id, digest, uid)
-			})
+			}, cooperativeRecovery)
 		},
 		ApproveMembers: func(planID, digest string) ([]byte, string, string) {
 			return approveMembers(runtime.GOOS, dir, planID, digest, time.Now())

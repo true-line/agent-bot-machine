@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,35 @@ func cooperativeFixture(t *testing.T) (SoulCooperativeLaunchPolicy, SoulCooperat
 		t.Fatal(err)
 	}
 	return p, q, private, now
+}
+
+func TestCooperativeProviderConfigMustMatchMeasuredLaunchInputs(t *testing.T) {
+	provider := &Stage2aBridgeQualification{Model: "qualification-model",
+		RequestSHA256: "sha256:" + strings.Repeat("a", 64), ResponseText: "fixed response"}
+	_, digest, err := stage2aProviderConfig(*provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs := &Stage2aLaunchInputRecords{EffectiveConfig: map[string]any{
+		"qualification_provider_config_sha256": "sha256:" + digest}}
+	if err := cooperativeProviderConfigMatchesLaunchInputs(provider, inputs); err != nil {
+		t.Fatalf("exact measured provider config refused: %v", err)
+	}
+	inputs.EffectiveConfig["qualification_provider_config_sha256"] = "sha256:" + strings.Repeat("b", 64)
+	if err := cooperativeProviderConfigMatchesLaunchInputs(provider, inputs); err == nil {
+		t.Fatal("unmeasured provider response configuration accepted")
+	}
+	delete(inputs.EffectiveConfig, "qualification_provider_config_sha256")
+	if err := cooperativeProviderConfigMatchesLaunchInputs(provider, inputs); err == nil {
+		t.Fatal("provider configuration absent from launch inputs accepted")
+	}
+	if err := cooperativeProviderConfigMatchesLaunchInputs(nil, inputs); err != nil {
+		t.Fatalf("ordinary cooperative launch refused: %v", err)
+	}
+	inputs.EffectiveConfig["qualification_provider_config_sha256"] = "sha256:" + digest
+	if err := cooperativeProviderConfigMatchesLaunchInputs(nil, inputs); err == nil {
+		t.Fatal("unrequested qualification provider field accepted")
+	}
 }
 
 func installedCooperativeFixture(t *testing.T, p SoulCooperativeLaunchPolicy, q SoulCooperativeReserveRequest) SoulCooperativeInstalledAuthority {
@@ -129,7 +159,7 @@ func TestSoulCooperativeReservationOneUseAndSignature(t *testing.T) {
 	p, q, private, now := cooperativeFixture(t)
 	policyRaw, _ := json.Marshal(p)
 	parsedPolicy, err := ParseSoulCooperativeLaunchPolicy(policyRaw)
-	if err != nil || parsedPolicy != p {
+	if err != nil || !reflect.DeepEqual(parsedPolicy, p) {
 		t.Fatalf("parse reviewed policy: %v", err)
 	}
 	requestRaw, _ := json.Marshal(q)

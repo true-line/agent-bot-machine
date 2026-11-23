@@ -13,8 +13,8 @@ import (
 	"github.com/qwts/managed-machine/internal/output"
 )
 
-// This plan is reviewable but not yet applyable. An applied root receipt and
-// A-owned installed authority must exist before any cooperative reservation.
+// The paired owner reviews the complete cooperative R/H assignment, including
+// its fixed per-Soul launchd trigger and request/completion directory access.
 func buildSoulCooperativeLaunch(in Input, h Host) (Plan, error) {
 	invalid := errors.New("invalid separate cooperative Soul launch plan")
 	if in.Platform != PlatformDarwin || in.HQAccount != DarwinHQAccount || in.Dir != DarwinDir ||
@@ -25,7 +25,7 @@ func buildSoulCooperativeLaunch(in Input, h Host) (Plan, error) {
 		return Plan{}, invalid
 	}
 	p := *in.SoulCooperativeLaunch
-	if p.validate() != nil || p.Runner.PackageRoot != cooperativeArtifactPath(p.Runner.InstallationID) ||
+	if p.validate() != nil || !cooperativePackageRoot(p) ||
 		p.SourcePackagePath == p.Runner.PackageRoot || p.Runner.Account == in.Invoker {
 		return Plan{}, invalid
 	}
@@ -45,10 +45,10 @@ func buildSoulCooperativeLaunch(in Input, h Host) (Plan, error) {
 		Members: []string{p.Runner.Account}, Purpose: SoulCooperativeLaunchInstallPurpose,
 		SoulCooperativeLaunch: &p,
 		Steps: []Step{{Kind: "soul-cooperative-launch", Target: p.Runner.InstallationID,
-			Action: ActionWrite, Detail: "install exact A-sealed frozen Soul and fixed H-to-R cooperative launcher; publish applied root receipt"}},
+			Action: ActionWrite, Detail: "seal R runtime and frozen Soul inputs; install fixed per-R launchd WatchPaths job; A:runner-group 2700 staging dir, 2750 request dir, and 2770 completion dir; write A-only signed pending journal before one-use claim; publish applied root receipt"}},
 	}
 	canonical, err := plan.Canonical()
-	if err != nil || len(canonical) > 48<<10 {
+	if err != nil || len(canonical) > PairedPlanFrameBytes {
 		return Plan{}, invalid
 	}
 	return plan, nil
@@ -95,13 +95,20 @@ func planSoulCooperativeLaunch(deps Deps, file string) cli.Result {
 	}
 	saved := Saved{SoulCooperativeLaunch: &request, PlanID: id, PlanDigest: digest,
 		CreatedAt: now.UTC().Format(approvalTime), Plan: plan}
+	canonical, err := saved.CanonicalForReview()
+	if err != nil {
+		return failure(diag.MembersPlanFailed, "cannot render cooperative Soul launch plan: %v", err)
+	}
+	if _, err := EncodePairedPlanReview(id, digest, canonical); err != nil {
+		return failure(diag.MembersPlanFailed, "cannot serve cooperative Soul launch plan: %v", err)
+	}
 	if err := save(filepath.Join(state, "members", "plans"), saved); err != nil {
 		return failure(diag.MembersPlanFailed, "cannot save cooperative Soul launch plan: %v", err)
 	}
 	row := output.New().Set("plan_id", id).Set("plan_digest", digest).
 		Set("purpose", SoulCooperativeLaunchInstallPurpose).Set("members", plan.Members).
 		Set("changes", plan.Changes()).Set("applied", false).
-		Set("advice", "Review this separate cooperative plan. Apply and launch remain unavailable until Machine's A-owned installer is reviewed.")
+		Set("advice", "Review this separate cooperative plan and its exact host changes before paired apply. A protected launch is not authorized by this plan.")
 	return cli.Result{Records: []*output.Record{row}}
 }
 

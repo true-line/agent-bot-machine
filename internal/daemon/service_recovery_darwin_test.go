@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ type recoveryFixture struct {
 	gate    Gate
 	now     time.Time
 	check   recoveryPlanCheck
+	recover cooperativeRecoveryApply
 	count   int
 }
 
@@ -77,7 +79,68 @@ func (f *recoveryFixture) request(option string, c recoveryChallenge, signature 
 }
 
 func (f *recoveryFixture) hook(req Request) Response {
+	if f.recover != nil {
+		return recoverHQService(f.dir, f.machine, req, func() time.Time { return f.now }, f.check, f.recover)
+	}
 	return recoverHQService(f.dir, f.machine, req, func() time.Time { return f.now }, f.check)
+}
+
+func TestCooperativeOwnerRecoveryBindsExactStartAndConsumesProof(t *testing.T) {
+	f := newRecoveryFixture(t)
+	q := members.Stage2aStopRequest{ReservationSHA256: "sha256:" + strings.Repeat("a", 64),
+		InstallationID: "installation-1", StartID: "st_1234567890abcdef12345678",
+		LaunchID: "ln_1234567890abcdef12345678", PlanID: approvePlanID,
+		PlanDigest: approveDigest, HQEpoch: strings.Repeat("b", 64)}
+	raw, err := json.Marshal(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selector := base64.RawURLEncoding.EncodeToString(raw)
+	called := 0
+	f.recover = func(req Request, paired func(string, func() error) error) Response {
+		if req.stage2aCooperativeRecovery != q || req.Stage2aRequest != selector {
+			t.Fatal("recovery received a different start")
+		}
+		state, err := readOwnerPairState(f.dir)
+		if err != nil || state == nil {
+			t.Fatal("owner pair unavailable during recovery", err)
+		}
+		if paired(strings.Repeat("f", 64), func() error { called++; return nil }) == nil || called != 0 {
+			t.Fatal("recovery accepted a different pair commitment")
+		}
+		if err := paired(pairCommitment(state), func() error { called++; return nil }); err != nil {
+			t.Fatal("exact live pair refused", err)
+		}
+		return Response{OK: true, State: "cooperative-recovered"}
+	}
+	challenge := f.request("challenge", recoveryChallenge{}, "")
+	challenge.Verb, challenge.Stage2aRequest = stage2aCooperativeRecoveryVerb, selector
+	issued := f.run(t, 331, challenge, f.client)
+	if !issued.OK || issued.State != "challenged" {
+		t.Fatalf("challenge refused: %+v", issued)
+	}
+	var c recoveryChallenge
+	if json.Unmarshal(issued.Body, &c) != nil || c.Request != selector || c.Action != stage2aCooperativeRecoveryVerb {
+		t.Fatalf("challenge did not bind exact recovery selectors: %+v", c)
+	}
+	approve := f.request("approve", c, f.proof(t, c))
+	approve.Verb, approve.Stage2aRequest = stage2aCooperativeRecoveryVerb, selector
+	altered := approve
+	alteredQ := q
+	alteredQ.LaunchID = "ln_ffffffffffffffffffffffff"
+	other, _ := json.Marshal(alteredQ)
+	altered.Stage2aRequest = base64.RawURLEncoding.EncodeToString(other)
+	altered.Nonce = "altered-recovery"
+	if r := f.run(t, 331, altered, f.client); r.OK || called != 0 {
+		t.Fatal("changed start accepted by owner proof")
+	}
+	if r := f.run(t, 331, approve, f.client); !r.OK || r.State != "cooperative-recovered" || called != 1 {
+		t.Fatalf("exact recovery refused: %+v called=%d", r, called)
+	}
+	approve.Nonce = "replayed-recovery"
+	if r := f.run(t, 331, approve, f.client); r.OK || called != 1 {
+		t.Fatal("consumed owner proof replayed")
+	}
 }
 
 // Use the production signed line protocol, gate and response verification.
@@ -152,6 +215,35 @@ func TestQualificationOwnerProofRecordsPurposeWithoutLaunching(t *testing.T) {
 	}
 	if again := f.run(t, 331, request, f.client); again.OK {
 		t.Fatal("replayed owner proof accepted")
+	}
+}
+
+func TestCooperativeInstallOwnerProofRecordsPairedPurpose(t *testing.T) {
+	f := newRecoveryFixture(t)
+	challenge := f.request("challenge", recoveryChallenge{}, "")
+	challenge.Verb = members.SoulCooperativeLaunchInstallPurpose
+	r := f.run(t, 331, challenge, f.client)
+	if !r.OK || r.State != "challenged" {
+		t.Fatalf("cooperative install challenge refused: %+v", r)
+	}
+	var c recoveryChallenge
+	if json.Unmarshal(r.Body, &c) != nil || c.Action != members.SoulCooperativeLaunchInstallPurpose {
+		t.Fatal("wrong cooperative install challenge")
+	}
+	approve := f.request("approve", c, f.proof(t, c))
+	approve.Verb = members.SoulCooperativeLaunchInstallPurpose
+	if r := f.run(t, 331, approve, f.client); !r.OK || r.State != "approved" {
+		t.Fatalf("cooperative install owner proof refused: %+v", r)
+	}
+	raw, err := os.ReadFile(members.ApprovalPath(f.dir, approvePlanID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored members.Approval
+	if json.Unmarshal(raw, &stored) != nil ||
+		stored.Purpose != members.SoulCooperativeLaunchInstallPurpose ||
+		stored.PairCommitment == "" || stored.MachineFingerprint == "" {
+		t.Fatalf("cooperative install lost paired owner evidence: %+v", stored)
 	}
 }
 

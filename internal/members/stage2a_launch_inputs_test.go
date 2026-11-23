@@ -59,9 +59,13 @@ func TestStage2aLaunchInputDigestBindsEveryNonFileInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, edit := range map[string]func(*Stage2aLaunchInputRecords){
-		"argv":            func(v *Stage2aLaunchInputRecords) { v.Argv[2] = "--changed" },
-		"environment":     func(v *Stage2aLaunchInputRecords) { v.Environment["TMPDIR"] += "-changed" },
-		"profile":         func(v *Stage2aLaunchInputRecords) { v.EffectiveConfig["profile"] = "managed-cooperative" },
+		"argv":        func(v *Stage2aLaunchInputRecords) { v.Argv[2] = "--changed" },
+		"environment": func(v *Stage2aLaunchInputRecords) { v.Environment["TMPDIR"] += "-changed" },
+		"profile": func(v *Stage2aLaunchInputRecords) {
+			v.EffectiveConfig["profile"] = "managed-cooperative"
+			v.AdapterTransport = stage2aDirectComms
+			delete(v.ComponentDigests, "bridge")
+		},
 		"OS build":        func(v *Stage2aLaunchInputRecords) { v.SystemImages.BuildVersion += "x" },
 		"image CDHash":    func(v *Stage2aLaunchInputRecords) { v.SystemImages.Selected[0].CDHash = strings.Repeat("3", 40) },
 		"host projection": func(v *Stage2aLaunchInputRecords) { v.HostProjection.Installation["id"] = "other-installation" },
@@ -77,6 +81,41 @@ func TestStage2aLaunchInputDigestBindsEveryNonFileInput(t *testing.T) {
 				t.Fatal("changed object matched approved object")
 			}
 		})
+	}
+}
+
+func TestCooperativeLaunchComponentRefsDoNotDuplicateRuntimeFiles(t *testing.T) {
+	input := cloneStage2aLaunch(t, stage2aLaunchFixture(t))
+	input.EffectiveConfig["profile"] = "managed-cooperative"
+	input.AdapterTransport = stage2aDirectComms
+	delete(input.ComponentDigests, "bridge")
+	input.ComponentDigests["souls"] = "sha256:" + strings.Repeat("a", 64)
+	if _, _, err := Stage2aLaunchInputDigest(input); err != nil {
+		t.Fatalf("cooperative H/R component reference refused: %v", err)
+	}
+	delete(input.ComponentDigests, "harness")
+	delete(input.ComponentDigests, "test_provider")
+	if _, _, err := Stage2aLaunchInputDigest(input); err != nil {
+		t.Fatalf("ordinary cooperative launch without Q components refused: %v", err)
+	}
+	for _, transport := range []string{"", "brokered-b"} {
+		input.AdapterTransport = transport
+		if _, _, err := Stage2aLaunchInputDigest(input); err == nil {
+			t.Fatalf("direct launch accepted transport %q", transport)
+		}
+	}
+	input.AdapterTransport = stage2aDirectComms
+	input.ComponentDigests["test_provider"] = "sha256:" + strings.Repeat("b", 64)
+	if _, _, err := Stage2aLaunchInputDigest(input); err == nil {
+		t.Fatal("test provider without qualification harness accepted")
+	}
+	input.EffectiveConfig["profile"] = "managed-protected"
+	input.AdapterTransport = ""
+	input.ComponentDigests["harness"] = stage2aLaunchFixture(t).ComponentDigests["harness"]
+	input.ComponentDigests["test_provider"] = stage2aLaunchFixture(t).ComponentDigests["test_provider"]
+	input.ComponentDigests["bridge"] = input.ComponentDigests["machine"]
+	if _, _, err := Stage2aLaunchInputDigest(input); err == nil {
+		t.Fatal("protected profile accepted an unmeasured component")
 	}
 }
 
@@ -311,5 +350,28 @@ func TestStage2aHostProjectionBindsRawFilesAndParsedValues(t *testing.T) {
 	changed.HostProjection.Adapters["selected"] = "different"
 	if err := CheckStage2aHostProjectionBytes(changed, adapters, installation); err == nil {
 		t.Fatal("parsed host projection changed without raw bytes")
+	}
+}
+
+// This synthetic launch-input vector is from soul-contracts v0.10.2.
+func TestCooperativeLaunchInputDigestMatchesReleasedDirectCommsVector(t *testing.T) {
+	raw, err := os.ReadFile("testdata/stage2a-cooperative-launch-inputs.v3.synthetic.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Records string `json:"records_jcs"`
+		Digest  string `json:"sha256"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	var input Stage2aLaunchInputRecords
+	if err := json.Unmarshal([]byte(fixture.Records), &input); err != nil {
+		t.Fatal(err)
+	}
+	got, canonical, err := Stage2aLaunchInputDigest(input)
+	if err != nil || got != fixture.Digest || string(canonical) != fixture.Records {
+		t.Fatalf("released direct-comms vector differs: %q, %v", got, err)
 	}
 }

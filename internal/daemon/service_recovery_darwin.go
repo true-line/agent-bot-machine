@@ -38,6 +38,10 @@ func currentPairedServicePlan(verb, home, owner, id, digest string, uid int) (st
 		err = members.CheckDarwinHQUpgrade(saved, owner, uid)
 	case recoveryVerb:
 		err = members.CheckDarwinHQRecovery(saved, owner, uid)
+	case stage2aCooperativeRecoveryVerb:
+		err = members.CheckDarwinSoulCooperativeLaunch(saved, owner, uid)
+	case members.SoulCooperativeLaunchInstallPurpose:
+		err = members.CheckDarwinSoulCooperativeLaunch(saved, owner, uid)
 	default:
 		return "", errRecoveryPlan
 	}

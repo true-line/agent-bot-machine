@@ -29,7 +29,7 @@ const harnessRetireVerb = members.HarnessRetire
 const harnessQualificationVerb = members.HarnessQualificationPurpose
 
 func pairedServiceVerb(verb string) bool {
-	return verb == harnessAccountsVerb || verb == soulRunnerAccountsVerb || verb == soulBridgeAccountsVerb || verb == recoveryVerb || verb == upgradeVerb || verb == members.HarnessInstall || verb == members.HarnessRetire || verb == harnessQualificationVerb || verb == members.SoulProtectedLaunchInstallPurpose || verb == members.SoulProtectedLaunchRetirePurpose
+	return verb == harnessAccountsVerb || verb == soulRunnerAccountsVerb || verb == soulBridgeAccountsVerb || verb == recoveryVerb || verb == upgradeVerb || verb == members.HarnessInstall || verb == members.HarnessRetire || verb == harnessQualificationVerb || verb == members.SoulProtectedLaunchInstallPurpose || verb == members.SoulProtectedLaunchRetirePurpose || verb == members.SoulCooperativeLaunchInstallPurpose || verb == stage2aCooperativeRecoveryVerb
 }
 
 // This record never contains plan contents. UID is a local pairing property.
@@ -43,14 +43,20 @@ type recoveryChallenge struct {
 	Nonce   string `json:"nonce"`
 	Expires int64  `json:"expires_at"`
 	UID     int    `json:"uid"`
+	Request string `json:"stage2a_request,omitempty"`
 }
 
 func (c recoveryChallenge) valid() bool {
 	_, err := ownerKey(c.Owner)
-	return err == nil && pairedServiceVerb(c.Action) && exactKey(c.Machine) && exactKey(c.HQ) && members.ValidApproval(c.ID, c.Digest) && exactKey(c.Nonce) && c.Expires > 0 && c.UID > 0
+	return err == nil && pairedServiceVerb(c.Action) && exactKey(c.Machine) && exactKey(c.HQ) && members.ValidApproval(c.ID, c.Digest) && exactKey(c.Nonce) && c.Expires > 0 && c.UID > 0 && (c.Action == stage2aCooperativeRecoveryVerb) == (c.Request != "")
 }
 
 func (c recoveryChallenge) message() []byte {
+	if c.Action == stage2aCooperativeRecoveryVerb {
+		return []byte(strings.Join([]string{"agent-bot-machine-owner/cooperative-recovery/v3", c.Action,
+			c.Machine, c.HQ, c.Owner, c.ID, c.Digest, c.Request, c.Nonce,
+			strconv.FormatInt(c.Expires, 10), ""}, "\n"))
+	}
 	return []byte(strings.Join([]string{"agent-bot-machine-owner/v1", c.Action, c.Machine, c.HQ, c.Owner, c.ID, c.Digest, c.Nonce, strconv.FormatInt(c.Expires, 10), ""}, "\n"))
 }
 
@@ -73,6 +79,10 @@ func validRecoveryRequest(req Request, raw []byte) bool {
 			if req.Option != "approve" {
 				return false
 			}
+		case "stage2a_request":
+			if req.Verb != stage2aCooperativeRecoveryVerb {
+				return false
+			}
 		default:
 			return false
 		}
@@ -93,8 +103,10 @@ func validRecoveryRequest(req Request, raw []byte) bool {
 }
 
 type recoveryPlanCheck func(id, digest string, uid int) (string, error)
+type cooperativeRecoveryApply func(Request, func(string, func() error) error) Response
 
-func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now func() time.Time, check recoveryPlanCheck) Response {
+func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now func() time.Time,
+	check recoveryPlanCheck, recovery ...cooperativeRecoveryApply) Response {
 	deny := func() Response {
 		return refused(diag.DaemonPeerRefused, "service challenge, pairing, plan or owner proof is invalid")
 	}
@@ -113,7 +125,7 @@ func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now fu
 		return deny()
 	}
 	c := p.Recovery
-	if !pairedServiceVerb(req.Verb) || (req.Option != "challenge" && (c == nil || c.Action != req.Verb || c.ID != req.PlanID || c.Digest != req.PlanDigest || c.Nonce != req.ChallengeNonce)) {
+	if !pairedServiceVerb(req.Verb) || (req.Option != "challenge" && (c == nil || c.Action != req.Verb || c.ID != req.PlanID || c.Digest != req.PlanDigest || c.Nonce != req.ChallengeNonce || c.Request != req.Stage2aRequest)) {
 		return deny()
 	}
 	if req.Option == "cancel" {
@@ -161,8 +173,16 @@ func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now fu
 		if _, err := rand.Read(nonce[:]); err != nil {
 			return deny()
 		}
-		c = &recoveryChallenge{req.Verb, p.Machine, p.HQ, p.Owner, req.PlanID, req.PlanDigest, hex.EncodeToString(nonce[:]), t.Unix() + ownerChallengeTTL, p.UID}
+		c = &recoveryChallenge{Action: req.Verb, Machine: p.Machine, HQ: p.HQ, Owner: p.Owner,
+			ID: req.PlanID, Digest: req.PlanDigest, Nonce: hex.EncodeToString(nonce[:]),
+			Expires: t.Unix() + ownerChallengeTTL, UID: p.UID, Request: req.Stage2aRequest}
 		body, err := json.Marshal(map[string]any{"action": c.Action, "machine_key": c.Machine, "hq_key": c.HQ, "owner_key": c.Owner, "plan_id": c.ID, "plan_digest": c.Digest, "nonce": c.Nonce, "expires_at": c.Expires, "plan_canonical": canonical})
+		if req.Verb == stage2aCooperativeRecoveryVerb {
+			body, err = json.Marshal(map[string]any{"action": c.Action, "machine_key": c.Machine,
+				"hq_key": c.HQ, "owner_key": c.Owner, "plan_id": c.ID, "plan_digest": c.Digest,
+				"nonce": c.Nonce, "expires_at": c.Expires, "plan_canonical": canonical,
+				"stage2a_request": c.Request})
+		}
 		if err != nil || len(body) > maxMessage-1024 {
 			return deny()
 		}
@@ -182,6 +202,22 @@ func recoverHQService(dir string, machine ed25519.PublicKey, req Request, now fu
 	p.Recovery = nil
 	if err := p.save(dir); err != nil {
 		return deny()
+	}
+	if req.Verb == stage2aCooperativeRecoveryVerb {
+		if len(recovery) != 1 || recovery[0] == nil {
+			return deny()
+		}
+		req.stage2aEpoch = p.HQEpoch
+		guard := func(commitment string, run func() error) error {
+			if commitment != pairCommitment(p) || !stillPaired() || run == nil {
+				return errRecoveryPlan
+			}
+			if err := run(); err != nil || !stillPaired() {
+				return errRecoveryPlan
+			}
+			return nil
+		}
+		return recovery[0](req, guard)
 	}
 	var a members.Approval
 	if req.Verb != recoveryVerb {

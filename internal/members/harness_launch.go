@@ -294,6 +294,23 @@ func savedHarnessPlan(s Saved, purpose, owner string, uid int, h Host) (Plan, er
 	return p, nil
 }
 
+// PairedPlanFrameBytes is the maximum size of a signed paired daemon frame.
+const PairedPlanFrameBytes = 64 << 10
+
+// EncodePairedPlanReview checks the escaped wire body, leaving room for the
+// fixed signed response fields and the bounded request nonce.
+func EncodePairedPlanReview(id, digest string, canonical []byte) ([]byte, error) {
+	body, err := json.Marshal(struct {
+		ID        string `json:"plan_id"`
+		Digest    string `json:"plan_digest"`
+		Canonical string `json:"plan_canonical"`
+	}{id, digest, string(canonical)})
+	if err != nil || len(body) > PairedPlanFrameBytes-1024 {
+		return nil, errors.New("paired plan review exceeds the signed response limit")
+	}
+	return body, nil
+}
+
 // CanonicalForReview returns the bytes served by the paired read-only route.
 // A saved launch request and its rendered file steps must describe one grant.
 // Reading a review does not authorize installation or retirement.
