@@ -66,7 +66,7 @@ func (r stage2aDomainSealRequestV3) validate() error {
 		!accountName.MatchString(r.MachineAccount) || !accountName.MatchString(r.ReaderAccount) ||
 		r.MachineAccount == r.ReaderAccount ||
 		!stage2aPrefixedDigest.MatchString(r.OwnerPlanDigest) ||
-		r.ReviewedDigest != digest || !stage2aPrefixedDigest.MatchString(r.LauncherSHA256) ||
+		r.ReviewedDigest != digest || !soulDigest.MatchString(r.LauncherSHA256) ||
 		r.Prepared.Digest != digest ||
 		filepath.Dir(r.Prepared.WrapperPath) != namespace ||
 		!strings.HasPrefix(filepath.Base(r.Prepared.WrapperPath), ".stage2a-") ||

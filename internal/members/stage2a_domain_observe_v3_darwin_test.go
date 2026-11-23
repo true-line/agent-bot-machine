@@ -160,3 +160,38 @@ func TestStage2aPreparedV3SidecarExactBytes(t *testing.T) {
 		t.Fatal("accepted staged sidecar with final mode")
 	}
 }
+
+func TestStage2aDomainSealRequestV3UsesInstalledLauncherDigest(t *testing.T) {
+	inv := stage2aV3TestInventory()
+	raw := stage2aV3TestCanonical(t, inv)
+	_, digest, err := stage2aDomainInventoryDigestV3(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, _, _, err := stage2aDomainNamesV3(inv.Domain, inv.InstallationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := filepath.Join(namespace, ".stage2a-aaaaaaaaaaaaaaaaaaaaaaaa")
+	r := stage2aDomainSealRequestV3{
+		Schema: stage2aDomainSealSchemaV3, Domain: inv.Domain, InstallationID: inv.InstallationID,
+		MachineAccount: "_machine_a", MachineUID: 620, MachineGID: 620,
+		ReaderAccount: "_hq_h", ReaderUID: 621, ReaderGID: 621,
+		OwnerPlanDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		ReviewedDigest:  digest,
+		Namespace:       stage2aInstalledDirectory{Path: namespace, Device: 1, Inode: "1", BirthSeconds: 1},
+		LauncherSHA256:  "2222222222222222222222222222222222222222222222222222222222222222",
+		Prepared: stage2aPreparedSnapshot{WrapperPath: wrapper,
+			Wrapper: Stage2aSnapshotIdentity{RootPath: wrapper, OwnerUID: 620, OwnerGID: 621, Mode: "0700"},
+			Stage:   Stage2aSnapshotIdentity{RootPath: filepath.Join(wrapper, "snapshot"), OwnerUID: 620, OwnerGID: 621, Mode: "0700"},
+			Digest:  digest},
+		Inventory: raw,
+	}
+	if err := r.validate(); err != nil {
+		t.Fatalf("unprefixed installed launcher digest refused: %v", err)
+	}
+	r.LauncherSHA256 = "sha256:" + r.LauncherSHA256
+	if err := r.validate(); err == nil {
+		t.Fatal("accepted incompatible prefixed launcher digest")
+	}
+}
