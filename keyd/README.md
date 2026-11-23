@@ -10,6 +10,29 @@ cannot select this purpose. Until Machine independently observes the physical
 run, binds a completed-run receipt and verifies owner-signed designation,
 there is no public route to this operation and protected launch stays closed.
 
+The local `qualification-policy sign-v3` command is a separate, owner-present
+policy ceremony under the secure admin account. The pilot checks the exact
+Soul/artifact/definition mapping and artifact revocation. Frozen `.soul`
+workflow, receipt and additional revocations are a default-off future
+provenance mode. It also checks shared
+revision state and 3,600-second snapshot freshness before signing the fixed
+v3 policy purpose. It does not make the host-report signing route available:
+Machine must first authenticate the immutable completed run, the designated
+host signer in owner policy, the measured candidate and installed inputs, and
+the physical results. The separate qualification release attestation is issued
+only after the signed host report is verified.
+
+The reserved `qualification-host-report-v3` paired-Machine request has the
+distinct `agent-bot/qualification-host-report/v3` purpose and a bounded,
+canonical report shape parser. Its production signing branch refuses before
+Secure Enclave access. A valid report shape and paired request cannot prove
+the referenced Machine completed run, owner policy, measured inputs, or
+physical results. Machine A must first consume a one-use completed-run
+authorization bound to the exact report and corroborated physical objects;
+keyd must verify that authorization before this purpose can be enabled. The
+future signed report will be input to a separate release attestation. Protected
+launch remains closed until that attestation and installed inputs verify.
+
 A native MCP server that holds souls' GitHub App keys
 ([agent-bot-identity #397](https://github.com/qwts/agent-bot-identity/issues/397)).
 agent-bot-machine builds it and signs it with the agent-machine Developer ID.

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/diag"
+	"github.com/qwts/managed-machine/internal/members"
 )
 
 // Serve accepts one JSON line per connection, checks the peer and the
@@ -56,6 +57,14 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 			res = refused(id, msg)
 		} else if req.Verb == "bootstrap" {
 			res = bootstrapReply(priv)
+		} else if isStage2aVerb(req.Verb) && hooks.Stage2a != nil {
+			unlock, err := lockStage2aPairing(g.Dir, req)
+			if err != nil {
+				res = refused(diag.DaemonPeerRefused, "Stage 2a requires the current protected HQ pairing")
+			} else {
+				defer unlock()
+				res = hooks.reply(req)
+			}
 		} else {
 			res = hooks.reply(req)
 			if req.Verb == deviceVerb && res.OK {
@@ -97,6 +106,7 @@ type Hooks struct {
 	MembersPlans    func(option, id string) ([]byte, error)
 	ServiceRecovery func(Request) Response
 	HQDevice        func(Request) Response
+	Stage2a         func(Request) Response
 	// ApproveMembers records the approval of a member accounts plan and
 	// returns the approval as the response body. It runs nothing.
 	ApproveMembers func(planID, digest string) ([]byte, string, string)
@@ -169,7 +179,12 @@ func (h Hooks) reply(req Request) Response {
 			return deviceUnavailable()
 		}
 		return h.HQDevice(req)
-	case recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb:
+	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb:
+		if h.Stage2a == nil {
+			return refused(diag.DaemonUnimplemented, "Stage 2a reserve authority is unavailable")
+		}
+		return h.Stage2a(req)
+	case recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose:
 		if h.ServiceRecovery == nil {
 			return refused(diag.DaemonUnimplemented, "service recovery is unavailable")
 		}

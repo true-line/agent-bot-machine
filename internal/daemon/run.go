@@ -292,6 +292,7 @@ func runService(ctx context.Context, root, requiredIdentity string) error {
 		Update:       planner.Update,
 		Catalog:      func(req Request) (string, string, string) { return session.accept(dir, req) },
 		HQDevice:     func(req Request) Response { return requestHQDevice(ctx, root, priv, req, time.Now, runDeviceKeyd) },
+		Stage2a:      stage2aHandler(priv),
 		MembersPlans: func(option, id string) ([]byte, error) { return readMembersPlans(root, option, id) },
 		ServiceRecovery: func(req Request) Response {
 			return recoverHQService(dir, priv.Public().(ed25519.PublicKey), req, time.Now, func(id, digest string, uid int) (string, error) {

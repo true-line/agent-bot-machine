@@ -206,7 +206,7 @@ func checkUninstallLaunchFiles(lstat func(string) (os.FileInfo, error), readDir 
 		files []string
 	}{
 		{launchRuntimeDir, []string{filepath.Base(HarnessLauncher), filepath.Base(HarnessSandbox), filepath.Base(HarnessPolicy),
-			filepath.Base(SoulLauncher), filepath.Base(SoulRunnerSandbox), filepath.Base(SoulBridgeSandbox), "soul-launch-policy.json"}},
+			filepath.Base(SoulLauncher), filepath.Base(SoulRunnerSandbox), filepath.Base(SoulBridgeSandbox), filepath.Base(SoulChildSandbox), "soul-launch-policy.json"}},
 		{sudoers, []string{filepath.Base(HarnessRule), filepath.Base(SoulLaunchRule)}},
 	} {
 		// The prefix owner may be unable to inspect sudoers.d. By the time

@@ -10,6 +10,8 @@ const (
 	SoulLauncher      = launchRuntimeDir + "/soul-launch"
 	SoulRunnerSandbox = launchRuntimeDir + "/soul-runner-egress.sb"
 	SoulBridgeSandbox = launchRuntimeDir + "/soul-bridge-egress.sb"
+	SoulChildSandbox  = launchRuntimeDir + "/soul-child-egress.sb"
+	SoulBridgeBinary  = launchRuntimeDir + "/soul-bridge"
 	SoulLaunchRule    = "/private/etc/sudoers.d/agent-bot-hq-soul-launch"
 )
 
@@ -32,6 +34,8 @@ func RenderSoulProtectedRule(runners []SoulRunner, bridges []SoulBridge, hqUID i
 	launcher := strings.ReplaceAll(SoulLauncher, " ", "\\ ")
 	for i := range runners {
 		fmt.Fprintf(&rule, "%s ALL = (%s) NOPASSWD: NOSETENV: sha256:%s %s soul-run\n",
+			DarwinHQAccount, runners[i].Account, launcherSHA256, launcher)
+		fmt.Fprintf(&rule, "%s ALL = (%s) NOPASSWD: NOSETENV: sha256:%s %s soul-child\n",
 			DarwinHQAccount, runners[i].Account, launcherSHA256, launcher)
 		fmt.Fprintf(&rule, "%s ALL = (%s) NOPASSWD: NOSETENV: sha256:%s %s soul-bridge\n",
 			DarwinHQAccount, bridges[i].Account, launcherSHA256, launcher)

@@ -1,0 +1,6 @@
+(version 1)
+; A separate Machine-granted R-UID wrapper starts the stock ACP child with
+; only B's per-start relay. HQ admission belongs to the Souls R process.
+(allow default)
+(deny network*)
+(allow network-outbound (remote unix-socket (path-literal (param "RELAY_SOCKET"))))

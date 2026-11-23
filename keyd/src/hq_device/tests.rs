@@ -18,6 +18,9 @@ struct Fake {
     create_error: Option<&'static str>,
 }
 impl Enclave for Fake {
+    fn custody_uid(&self) -> Result<u32, &'static str> {
+        Ok(500)
+    }
     fn proof_time(&self) -> Result<u64, &'static str> {
         Ok(self.clock.get())
     }
@@ -293,6 +296,234 @@ fn bridge_v2_host_report_has_distinct_purpose_and_custody_shape() {
         seconds(100)
     )
     .is_err());
+}
+
+#[test]
+fn measured_v3_host_report_shape_is_valid_but_signing_requires_a_completed_run() {
+    let (items, native, mut p) = (Memory::default(), Fake::default(), pair());
+    p.hq_epoch = "e".repeat(64);
+    initialize(&items, &native, p.clone()).unwrap();
+    for raw in [
+        include_bytes!(
+            "../../../internal/qualification/testdata/stage2a-report-v3-protected-synthetic.json"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../internal/qualification/testdata/stage2a-report-v3-cooperative-synthetic.json"
+        )
+        .as_slice(),
+    ] {
+        let req = host_report_request_for(
+            &p,
+            raw,
+            "qualification-host-report-v3",
+            "fixture-physical-mac",
+        );
+        assert_eq!(fixed_host_report_version(&req, 3, 500).unwrap(), raw);
+        assert!(run(&items, &native, &p, req, seconds(100)).is_err());
+        assert!(native.signed.borrow().is_empty());
+        assert!(run(
+            &items,
+            &native,
+            &p,
+            host_report_request_for(
+                &p,
+                raw,
+                "qualification-host-report-v2",
+                "fixture-physical-mac"
+            ),
+            seconds(100)
+        )
+        .is_err());
+        let mut changed: Value = serde_json::from_slice(raw).unwrap();
+        changed["measurement_binding"]["host_id"] = json!("other-host");
+        let bytes = serde_json::to_vec(&changed).unwrap();
+        assert!(run(
+            &items,
+            &native,
+            &p,
+            host_report_request_for(
+                &p,
+                &bytes,
+                "qualification-host-report-v3",
+                "fixture-physical-mac"
+            ),
+            seconds(100)
+        )
+        .is_err());
+        changed["measurement_binding"]["host_id"] = json!("fixture-physical-mac");
+        changed["run_evidence"]["finalization"]["sha256"] =
+            changed["run_evidence"]["reservation"]["sha256"].clone();
+        let bytes = serde_json::to_vec(&changed).unwrap();
+        assert!(run(
+            &items,
+            &native,
+            &p,
+            host_report_request_for(
+                &p,
+                &bytes,
+                "qualification-host-report-v3",
+                "fixture-physical-mac"
+            ),
+            seconds(100)
+        )
+        .is_err());
+        changed["run_evidence"] =
+            serde_json::from_slice::<Value>(raw).unwrap()["run_evidence"].clone();
+        changed["measurement_binding"]
+            .as_object_mut()
+            .unwrap()
+            .remove("soul_artifact_sha256");
+        let bytes = serde_json::to_vec(&changed).unwrap();
+        assert!(run(
+            &items,
+            &native,
+            &p,
+            host_report_request_for(
+                &p,
+                &bytes,
+                "qualification-host-report-v3",
+                "fixture-physical-mac"
+            ),
+            seconds(100)
+        )
+        .is_err());
+    }
+    let raw = include_bytes!(
+        "../../../internal/qualification/testdata/stage2a-report-v3-protected-synthetic.json"
+    );
+    let mut changed: Value = serde_json::from_slice(raw).unwrap();
+    changed["run_evidence"]["reservation"]["sha256"] = json!(format!("sha256:{}", "0".repeat(64)));
+    let bytes = serde_json::to_vec(&changed).unwrap();
+    assert!(run(
+        &items,
+        &native,
+        &p,
+        host_report_request_for(
+            &p,
+            &bytes,
+            "qualification-host-report-v3",
+            "fixture-physical-mac"
+        ),
+        seconds(100)
+    )
+    .is_err());
+    changed = serde_json::from_slice(raw).unwrap();
+    changed["host"]["id"] = json!("invalid/host");
+    changed["measurement_binding"]["host_id"] = json!("invalid/host");
+    let bytes = serde_json::to_vec(&changed).unwrap();
+    assert!(run(
+        &items,
+        &native,
+        &p,
+        host_report_request_for(&p, &bytes, "qualification-host-report-v3", "invalid/host"),
+        seconds(100)
+    )
+    .is_err());
+}
+
+#[test]
+fn measured_v3_host_report_refuses_noncanonical_and_unsafe_snapshot() {
+    let (items, native, mut p) = (Memory::default(), Fake::default(), pair());
+    p.hq_epoch = "e".repeat(64);
+    initialize(&items, &native, p.clone()).unwrap();
+    let raw = include_bytes!(
+        "../../../internal/qualification/testdata/stage2a-report-v3-protected-synthetic.json"
+    );
+    let mut newline = raw.to_vec();
+    newline.push(b'\n');
+    let check = |bytes: &[u8]| {
+        assert!(run(
+            &items,
+            &native,
+            &p,
+            host_report_request_for(
+                &p,
+                bytes,
+                "qualification-host-report-v3",
+                "fixture-physical-mac"
+            ),
+            seconds(100)
+        )
+        .is_err());
+    };
+    check(&newline);
+    let original: Value = serde_json::from_slice(raw).unwrap();
+    assert!(!integer_only_json(&json!([1.0])));
+    assert!(!integer_only_json(&json!([9_007_199_254_740_992_u64])));
+    let mut changed = original.clone();
+    changed["renders"] = json!([1.0]);
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed["renders"] = json!([9_007_199_254_740_992_u64]);
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed["renders"] = json!([7]);
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed["renders"] = json!(["instructions", "instructions"]);
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed["renders"] = json!(["bad/render"]);
+    check(&serde_json::to_vec(&changed).unwrap());
+    let negative_zero = std::str::from_utf8(raw).unwrap().replacen(
+        "\"renders\":[\"instructions\",\"tools\"]",
+        "\"renders\":[-0]",
+        1,
+    );
+    check(negative_zero.as_bytes());
+    let exponent = std::str::from_utf8(raw).unwrap().replacen(
+        "\"renders\":[\"instructions\",\"tools\"]",
+        "\"renders\":[1e0]",
+        1,
+    );
+    check(exponent.as_bytes());
+    let mut changed = original.clone();
+    changed["measurement_binding"]["snapshots"]["definition"]["device"] = json!("01");
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed["measurement_binding"]["snapshots"]["definition"]["root_path"] =
+        json!("/private/stage2a\\snapshot-definition");
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed["measurement_binding"]["snapshots"]["definition"]["mode"] = json!("0777");
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed["measurement_binding"]["snapshots"]["definition"]["mode"] = json!("0750");
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed["measurement_binding"]["snapshots"]["definition"]["mode"] = json!("0444");
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed["measurement_binding"]["snapshots"]["definition"]["device"] =
+        json!("18446744073709551616");
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed["measurement_binding"]["snapshots"]["definition"]["owner_uid"] = json!(501);
+    changed["measurement_binding"]["snapshots"]["launch_inputs"]["owner_uid"] = json!(501);
+    changed["bridge"]["principals"]["machine_uid"] = json!(501);
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed["measurement_binding"]["hq_epoch"] = json!("f".repeat(64));
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed["measurement_binding"]["contract"] = json!("machine/v1");
+    changed["measurement_binding"]["schema_version"] = json!(1);
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed["measurement_binding"]["snapshots"]["definition"]["owner_uid"] = json!(0);
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed["measurement_binding"]["snapshots"]["launch_inputs"]["owner_gid"] = json!(705);
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed["measurement_binding"]["snapshots"]["definition"]["owner_gid"] = json!(704);
+    changed["measurement_binding"]["snapshots"]["launch_inputs"]["owner_gid"] = json!(704);
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed["bridge"]["principals"]["machine_uid"] = json!(0);
+    check(&serde_json::to_vec(&changed).unwrap());
+    changed = original.clone();
+    changed.as_object_mut().unwrap().remove("bridge");
+    check(&serde_json::to_vec(&changed).unwrap());
+    let old = include_bytes!("../../../internal/qualification/testdata/bridge-v2-synthetic.json");
+    check(old);
 }
 #[test]
 fn initialization_preserves_creation_failure_and_leaves_custody_absent() {

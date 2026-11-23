@@ -70,6 +70,15 @@ impl Native<'_> {
     }
 }
 impl Enclave for Native<'_> {
+    fn custody_uid(&self) -> Result<u32, &'static str> {
+        self.check_live()?;
+        let real = unsafe { libc::getuid() };
+        let effective = unsafe { libc::geteuid() };
+        if real == 0 || real != effective {
+            return Err(UNAVAILABLE);
+        }
+        Ok(real)
+    }
     fn check_live(&self) -> Result<(), &'static str> {
         if &read_pair(self.dir, unsafe { libc::getuid() })? != self.pair {
             return Err(UNAVAILABLE);
@@ -281,7 +290,9 @@ pub(crate) fn cli_result(
 
 fn device_request_size_allowed(option: &str, size: usize) -> bool {
     let limit = match option {
-        "qualification-host-report" | "qualification-host-report-v2" => 2 * 1024 * 1024,
+        "qualification-host-report"
+        | "qualification-host-report-v2"
+        | "qualification-host-report-v3" => 2 * 1024 * 1024,
         _ => 16384,
     };
     size <= limit
@@ -332,8 +343,12 @@ mod tests {
     };
 
     #[test]
-    fn both_host_report_versions_use_the_bounded_large_request_limit() {
-        for option in ["qualification-host-report", "qualification-host-report-v2"] {
+    fn all_host_report_versions_use_the_bounded_large_request_limit() {
+        for option in [
+            "qualification-host-report",
+            "qualification-host-report-v2",
+            "qualification-host-report-v3",
+        ] {
             assert!(device_request_size_allowed(option, 16385));
             assert!(device_request_size_allowed(option, 2 * 1024 * 1024));
             assert!(!device_request_size_allowed(option, 2 * 1024 * 1024 + 1));

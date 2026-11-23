@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -66,5 +67,47 @@ func TestHarnessSupervisorOwnGroupAndEOF(t *testing.T) {
 	}
 	if err := other.Process.Signal(syscall.Signal(0)); err != nil {
 		t.Fatal("unrelated process was disturbed", err)
+	}
+}
+
+type rejectedACPReader struct{ read chan struct{} }
+
+func (r rejectedACPReader) Read([]byte) (int, error) {
+	select {
+	case r.read <- struct{}{}:
+	default:
+	}
+	return 0, io.EOF
+}
+
+func TestHarnessSupervisorDoesNotReadACPAfterChildStartRefusal(t *testing.T) {
+	control, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+	output, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	stdout, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdout.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	acp := rejectedACPReader{read: make(chan struct{}, 1)}
+	status := superviseHarnessStarted(ctx, exec.Command("/bin/sleep", "20"), acp,
+		control, stdout, &harnessReporter{output: output}, 100*time.Millisecond,
+		func(int) error { return errors.New("child acceptance refused") })
+	if status != harnessUncontained {
+		t.Fatalf("refused child returned %d", status)
+	}
+	select {
+	case <-acp.read:
+		t.Fatal("ACP input read after child acceptance refused")
+	case <-time.After(50 * time.Millisecond):
 	}
 }

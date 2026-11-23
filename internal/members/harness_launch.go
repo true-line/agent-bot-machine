@@ -302,6 +302,34 @@ func (s Saved) CanonicalForReview() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.SoulProtectedRetire != nil || s.Plan.Purpose == SoulProtectedLaunchRetirePurpose || s.Plan.SoulProtectedRetire != nil {
+		if s.SoulProtectedRetire == nil || s.Plan.SoulProtectedRetire == nil ||
+			s.Plan.Purpose != SoulProtectedLaunchRetirePurpose || s.SoulProtectedLaunch != nil ||
+			s.SoulRunnerAccounts != nil || s.SoulBridgeAccounts != nil || s.HarnessLaunch != nil ||
+			s.QualificationRun != nil || s.HQService != nil || s.UpgradeFrom != nil {
+			return nil, errors.New("invalid saved protected Soul retirement")
+		}
+		a, errA := json.Marshal(s.SoulProtectedRetire)
+		b, errB := json.Marshal(s.Plan.SoulProtectedRetire)
+		if errA != nil || errB != nil || !bytes.Equal(a, b) {
+			return nil, errors.New("protected Soul retirement differs from canonical plan")
+		}
+		return raw, nil
+	}
+	if s.SoulProtectedLaunch != nil || s.Plan.Purpose == SoulProtectedLaunchInstallPurpose || s.Plan.SoulProtectedLaunch != nil {
+		if s.SoulProtectedLaunch == nil || s.Plan.SoulProtectedLaunch == nil ||
+			s.Plan.Purpose != SoulProtectedLaunchInstallPurpose || s.SoulRunnerAccounts != nil ||
+			s.SoulBridgeAccounts != nil || s.HarnessLaunch != nil || s.QualificationRun != nil ||
+			s.HQService != nil || s.UpgradeFrom != nil {
+			return nil, errors.New("invalid saved protected Soul launch request")
+		}
+		a, errA := json.Marshal(s.SoulProtectedLaunch)
+		b, errB := json.Marshal(s.Plan.SoulProtectedLaunch)
+		if errA != nil || errB != nil || !bytes.Equal(a, b) {
+			return nil, errors.New("protected Soul launch request differs from canonical plan")
+		}
+		return raw, nil
+	}
 	if s.SoulBridgeAccounts != nil || s.Plan.Purpose == SoulBridgeAccountsPurpose || s.Plan.SoulBridges != nil {
 		if s.SoulBridgeAccounts == nil || s.SoulRunnerAccounts != nil || s.HarnessLaunch != nil ||
 			s.HQService != nil || s.UpgradeFrom != nil || s.QualificationRun != nil ||

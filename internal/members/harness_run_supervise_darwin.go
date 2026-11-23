@@ -127,6 +127,14 @@ func stopHarnessGroup(pid int, grace time.Duration, signal func(int, unix.Signal
 // its group cannot coincide with sudo, HQ or another launch. The caller must
 // retain the shared grant lock until this function finishes.
 func superviseHarness(ctx context.Context, cmd *exec.Cmd, acp io.Reader, control *os.File, stdout *os.File, reporter *harnessReporter, grace time.Duration) int {
+	return superviseHarnessStarted(ctx, cmd, acp, control, stdout, reporter, grace, nil)
+}
+
+// onStart runs while the direct child remains unreaped and before any ACP
+// bytes are copied to it. A protected child waits here for A's signed
+// child-start receipt; refusal closes the entire process group.
+func superviseHarnessStarted(ctx context.Context, cmd *exec.Cmd, acp io.Reader, control *os.File,
+	stdout *os.File, reporter *harnessReporter, grace time.Duration, onStart func(int) error) int {
 	read, write, err := os.Pipe()
 	if err != nil {
 		return harnessRefused
@@ -149,13 +157,24 @@ func superviseHarness(ctx context.Context, cmd *exec.Cmd, acp io.Reader, control
 	logWrite.Close()
 	// The group leader is our live or unreaped direct child from here. Never
 	// start Wait in parallel with a possible signal to this process group.
-	ready := reporter.write(struct {
+	ready := onStart == nil
+	if onStart != nil {
+		ready = onStart(pid) == nil
+	}
+	ready = ready && reporter.write(struct {
 		Kind string `json:"kind"`
 	}{"started"}) == nil
 	logDone := make(chan struct{})
 	go func() { reporter.relay(logRead); close(logDone) }()
 	inputDone := make(chan struct{})
-	go func() { _, _ = io.Copy(write, acp); write.Close(); close(inputDone) }()
+	if ready {
+		go func() { _, _ = io.Copy(write, acp); write.Close(); close(inputDone) }()
+	} else {
+		// A rejected child receipt or Live lease must not consume or forward
+		// buffered ACP bytes while the process group is being closed.
+		write.Close()
+		close(inputDone)
+	}
 	tick := time.NewTicker(30 * time.Millisecond)
 	defer tick.Stop()
 monitor:

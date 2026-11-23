@@ -24,8 +24,10 @@ import (
 const (
 	HostPurpose      = "agent-bot/qualification-host-report/v1"
 	HostPurposeV2    = "agent-bot/qualification-host-report/v2"
+	HostPurposeV3    = "agent-bot/qualification-host-report/v3"
 	PolicyPurpose    = "agent-bot/qualification-policy/v1"
 	PolicyPurposeV2  = "agent-bot/qualification-policy/v2"
+	PolicyPurposeV3  = "agent-bot/qualification-policy/v3"
 	MaxRevocationAge = 3600 * time.Second
 	MaxReportBytes   = 1 << 20
 )
@@ -76,21 +78,63 @@ type Policy struct {
 		BundleMediaType      string `json:"bundle_media_type"`
 		DSSEPayloadType      string `json:"dsse_payload_type"`
 	} `json:"souls_build_workflow,omitempty"`
-	EvidenceSigners []struct {
+	FrozenSoulBuildWorkflow            *FrozenSoulBuildWorkflow `json:"frozen_soul_build_workflow,omitempty"`
+	FrozenSoulMapping                  *FrozenSoulMapping       `json:"frozen_soul_mapping,omitempty"`
+	FrozenSoulReleaseProvenanceEnabled *bool                    `json:"frozen_soul_release_provenance_enabled,omitempty"`
+	EvidenceSigners                    []struct {
 		ID                     string `json:"id"`
 		HostID                 string `json:"host_id"`
 		Algorithm              string `json:"algorithm"`
 		PublicKeySPKIDERBase64 string `json:"public_key_spki_der_base64"`
 	} `json:"evidence_signers"`
 	RevocationSnapshot struct {
-		UpdatedAt                      string   `json:"updated_at"`
-		RevokedAttestationSHA256       []string `json:"revoked_attestation_sha256"`
-		RevokedEvidenceSignerIDs       []string `json:"revoked_evidence_signer_ids"`
-		RevokedReleaseWorkflowIDs      []string `json:"revoked_release_workflow_ids"`
-		RevokedSoulsBuildWorkflowIDs   []string `json:"revoked_souls_build_workflow_ids,omitempty"`
-		RevokedSoulsBuildReceiptSHA256 []string `json:"revoked_souls_build_receipt_sha256,omitempty"`
+		UpdatedAt                         string   `json:"updated_at"`
+		RevokedAttestationSHA256          []string `json:"revoked_attestation_sha256"`
+		RevokedEvidenceSignerIDs          []string `json:"revoked_evidence_signer_ids"`
+		RevokedReleaseWorkflowIDs         []string `json:"revoked_release_workflow_ids"`
+		RevokedSoulsBuildWorkflowIDs      []string `json:"revoked_souls_build_workflow_ids,omitempty"`
+		RevokedSoulsBuildReceiptSHA256    []string `json:"revoked_souls_build_receipt_sha256,omitempty"`
+		RevokedFrozenSoulBuildWorkflowIDs []string `json:"revoked_frozen_soul_build_workflow_ids,omitempty"`
+		RevokedFrozenSoulReceiptSHA256    []string `json:"revoked_frozen_soul_receipt_sha256,omitempty"`
+		RevokedFrozenSoulArtifactSHA256   []string `json:"revoked_frozen_soul_artifact_sha256,omitempty"`
 	} `json:"revocation_snapshot"`
 	MaxRevocationAgeSeconds int `json:"max_revocation_age_seconds"`
+}
+
+type FrozenSoulBuildWorkflow struct {
+	ID                   string `json:"id"`
+	Repository           string `json:"repository"`
+	WorkflowPath         string `json:"workflow_path"`
+	SourceCommit         string `json:"source_commit"`
+	SourceTree           string `json:"source_tree"`
+	OIDCIssuer           string `json:"oidc_issuer"`
+	CertificateIdentity  string `json:"certificate_identity"`
+	TrustRootSHA256      string `json:"trust_root_sha256"`
+	BuilderSHA256        string `json:"builder_sha256"`
+	ToolchainSHA256      string `json:"toolchain_sha256"`
+	ReceiptPredicateType string `json:"receipt_predicate_type"`
+	BundleMediaType      string `json:"bundle_media_type"`
+	DSSEPayloadType      string `json:"dsse_payload_type"`
+	ArtifactFormat       string `json:"artifact_format"`
+	SubjectNameTemplate  string `json:"subject_name_template"`
+	RekorEntryKind       string `json:"rekor_entry_kind"`
+	RekorEntryVersion    string `json:"rekor_entry_version"`
+	TransparencyLogID    string `json:"transparency_log_id"`
+	Template             struct {
+		Repository   string `json:"repository"`
+		SourceCommit string `json:"source_commit"`
+		SourceTree   string `json:"source_tree"`
+		Path         string `json:"path"`
+		TemplateTree string `json:"template_tree"`
+	} `json:"template"`
+}
+
+type FrozenSoulMapping struct {
+	SoulID                  string `json:"soul_id"`
+	ArtifactSHA256          string `json:"artifact_sha256"`
+	ReceiptSHA256           string `json:"receipt_sha256,omitempty"`
+	ClaimedDefinitionDigest string `json:"claimed_definition_digest"`
+	DefinitionMeasurement   string `json:"definition_measurement"`
 }
 
 // VerifiedPolicy can only be obtained by verifying an owner signature against
@@ -113,7 +157,7 @@ func (p VerifiedPolicy) RevisionDigest() (uint64, string, error) {
 }
 
 func (p VerifiedPolicy) SoulsSourceTree() string {
-	if !p.verified || p.version != 2 || p.value.SoulsBuildWorkflow == nil {
+	if !p.verified || p.version < 2 || p.value.SoulsBuildWorkflow == nil {
 		return ""
 	}
 	return p.value.SoulsBuildWorkflow.SourceTree
@@ -250,7 +294,7 @@ func parseEnvelope(raw []byte, expected string) (Envelope, error) {
 		return Envelope{}, err
 	}
 	keys := []string{"schema_version", "purpose", "signature_base64url"}
-	if expected == PolicyPurpose || expected == PolicyPurposeV2 {
+	if expected == PolicyPurpose || expected == PolicyPurposeV2 || expected == PolicyPurposeV3 {
 		keys = append(keys, "owner_key_id", "policy_sha256", "policy_base64url")
 	} else {
 		keys = append(keys, "host_id", "signer_id", "report_sha256", "report_base64url")
@@ -267,6 +311,8 @@ func parseEnvelope(raw []byte, expected string) (Envelope, error) {
 	version := 1
 	if expected == HostPurposeV2 || expected == PolicyPurposeV2 {
 		version = 2
+	} else if expected == HostPurposeV3 || expected == PolicyPurposeV3 {
+		version = 3
 	}
 	if json.Unmarshal(raw, &e) != nil || e.SchemaVersion != version || e.Purpose != expected {
 		return Envelope{}, ErrUnqualified
@@ -301,6 +347,13 @@ func VerifyOwnerPolicyV2(envelope []byte, ownerKeyID string, root ed25519.Public
 	return verifyOwnerPolicyVersion(envelope, ownerKeyID, root, highest, acceptedDigest, now, 2)
 }
 
+// VerifyOwnerPolicyV3 authenticates the separate frozen .soul workflow and
+// owner-approved exact artifact/definition mapping. It does not authenticate
+// a build receipt or grant launch authority by itself.
+func VerifyOwnerPolicyV3(envelope []byte, ownerKeyID string, root ed25519.PublicKey, highest uint64, acceptedDigest string, now time.Time) (VerifiedPolicy, error) {
+	return verifyOwnerPolicyVersion(envelope, ownerKeyID, root, highest, acceptedDigest, now, 3)
+}
+
 func verifyOwnerPolicyVersion(envelope []byte, ownerKeyID string, root ed25519.PublicKey, highest uint64, acceptedDigest string, now time.Time, version int) (VerifiedPolicy, error) {
 	var zero Policy
 	if len(root) != ed25519.PublicKeySize || now.IsZero() ||
@@ -310,6 +363,8 @@ func verifyOwnerPolicyVersion(envelope []byte, ownerKeyID string, root ed25519.P
 	purpose := PolicyPurpose
 	if version == 2 {
 		purpose = PolicyPurposeV2
+	} else if version == 3 {
+		purpose = PolicyPurposeV3
 	}
 	e, err := parseEnvelope(envelope, purpose)
 	if err != nil || e.OwnerKeyID != ownerKeyID {
@@ -324,16 +379,45 @@ func verifyOwnerPolicyVersion(envelope []byte, ownerKeyID string, root ed25519.P
 		return VerifiedPolicy{}, err
 	}
 	policyFields := []string{"contract", "kind", "policy_revision", "owner_key_id", "issued_at", "expires_at", "release_workflow", "evidence_signers", "revocation_snapshot", "max_revocation_age_seconds"}
-	if version == 2 {
+	if version >= 2 {
 		policyFields = append(policyFields, "souls_build_workflow")
+	}
+	var frozenProvenanceEnabled bool
+	if version == 3 {
+		flag := fields["frozen_soul_release_provenance_enabled"]
+		if !bytes.Equal(flag, []byte("true")) && !bytes.Equal(flag, []byte("false")) {
+			return VerifiedPolicy{}, ErrUnqualified
+		}
+		frozenProvenanceEnabled = bytes.Equal(flag, []byte("true"))
+		policyFields = append(policyFields, "frozen_soul_release_provenance_enabled", "frozen_soul_mapping")
+		if frozenProvenanceEnabled {
+			policyFields = append(policyFields, "frozen_soul_build_workflow")
+		}
 	}
 	if !hasFields(fields, policyFields...) {
 		return VerifiedPolicy{}, ErrUnqualified
 	}
 	var snapshotFields map[string]json.RawMessage
 	snapshotNames := []string{"updated_at", "revoked_attestation_sha256", "revoked_evidence_signer_ids", "revoked_release_workflow_ids"}
-	if version == 2 {
+	if version >= 2 {
 		snapshotNames = append(snapshotNames, "revoked_souls_build_workflow_ids", "revoked_souls_build_receipt_sha256")
+	}
+	if version == 3 {
+		snapshotNames = append(snapshotNames, "revoked_frozen_soul_artifact_sha256")
+		if frozenProvenanceEnabled {
+			snapshotNames = append(snapshotNames, "revoked_frozen_soul_build_workflow_ids", "revoked_frozen_soul_receipt_sha256")
+		}
+		mapping, err := strictObject(fields["frozen_soul_mapping"], MaxReportBytes)
+		if err != nil {
+			return VerifiedPolicy{}, ErrUnqualified
+		}
+		mappingNames := []string{"soul_id", "artifact_sha256", "claimed_definition_digest", "definition_measurement"}
+		if frozenProvenanceEnabled {
+			mappingNames = append(mappingNames, "receipt_sha256")
+		}
+		if !hasFields(mapping, mappingNames...) {
+			return VerifiedPolicy{}, ErrUnqualified
+		}
 	}
 	if json.Unmarshal(fields["revocation_snapshot"], &snapshotFields) != nil || !hasFields(snapshotFields, snapshotNames...) {
 		return VerifiedPolicy{}, ErrUnqualified
@@ -381,7 +465,7 @@ func verifyOwnerPolicyVersion(envelope []byte, ownerKeyID string, root ed25519.P
 			return VerifiedPolicy{}, ErrUnqualified
 		}
 	}
-	if version == 2 {
+	if version >= 2 {
 		build := zero.SoulsBuildWorkflow
 		if build == nil || build.ID == "" || build.Repository != "true-line/agent-bot-souls" ||
 			!validWorkflowPath(build.WorkflowPath) || !validHex(build.SourceCommit, 40) || !validHex(build.SourceTree, 40) ||
@@ -399,6 +483,9 @@ func verifyOwnerPolicyVersion(envelope []byte, ownerKeyID string, root ed25519.P
 		if !validRevocationLists(zero) {
 			return VerifiedPolicy{}, ErrUnqualified
 		}
+	}
+	if version == 3 && (zero.FrozenSoulReleaseProvenanceEnabled == nil || *zero.FrozenSoulReleaseProvenanceEnabled != frozenProvenanceEnabled || !validFrozenSoulPolicy(zero)) {
+		return VerifiedPolicy{}, ErrUnqualified
 	}
 	return VerifiedPolicy{value: zero, verified: true, at: now, version: version, payloadSHA256: digest(raw)}, nil
 }
@@ -429,8 +516,8 @@ func validWorkflowPath(value string) bool {
 }
 
 func validRevocationLists(policy Policy) bool {
-	digests := [][]string{policy.RevocationSnapshot.RevokedAttestationSHA256, policy.RevocationSnapshot.RevokedSoulsBuildReceiptSHA256}
-	ids := [][]string{policy.RevocationSnapshot.RevokedEvidenceSignerIDs, policy.RevocationSnapshot.RevokedReleaseWorkflowIDs, policy.RevocationSnapshot.RevokedSoulsBuildWorkflowIDs}
+	digests := [][]string{policy.RevocationSnapshot.RevokedAttestationSHA256, policy.RevocationSnapshot.RevokedSoulsBuildReceiptSHA256, policy.RevocationSnapshot.RevokedFrozenSoulReceiptSHA256}
+	ids := [][]string{policy.RevocationSnapshot.RevokedEvidenceSignerIDs, policy.RevocationSnapshot.RevokedReleaseWorkflowIDs, policy.RevocationSnapshot.RevokedSoulsBuildWorkflowIDs, policy.RevocationSnapshot.RevokedFrozenSoulBuildWorkflowIDs}
 	for _, list := range digests {
 		seen := map[string]bool{}
 		for _, item := range list {
@@ -485,6 +572,16 @@ func VerifyHostReportV2(envelope []byte, verified VerifiedPolicy, now time.Time)
 	return verifyHostReport(envelope, verified, now, HostPurposeV2, 2, reportShapeV2)
 }
 
+// VerifyHostReportV3 authenticates a measured protected or cooperative host
+// report. It does not resolve one-use records, installed inputs, or the
+// release attestation and therefore cannot authorize launch by itself.
+func VerifyHostReportV3(envelope []byte, verified VerifiedPolicy, now time.Time) ([]byte, error) {
+	if verified.version != 3 {
+		return nil, ErrUnqualified
+	}
+	return verifyHostReport(envelope, verified, now, HostPurposeV3, 3, reportShapeV3)
+}
+
 func verifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time, purpose string, version int, shape func([]byte) error) ([]byte, error) {
 	if !verified.verified || !verified.at.Equal(now) || now.IsZero() {
 		return nil, ErrUnqualified
@@ -508,6 +605,11 @@ func verifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time, p
 	required := []string{"adapter", "checks", "cost_bound", "evaluation_cells", "gates", "harness", "host", "launch", "outcome", "profile_in_force", "recorded_at", "renders", "run_id", "runner", "schema_version", "soul_start", "suite_revision"}
 	if version == 2 {
 		required = append(required, "bridge")
+	} else if version == 3 {
+		required = append(required, "measurement_binding", "run_evidence")
+		if _, protected := fields["bridge"]; protected {
+			required = append(required, "bridge")
+		}
 	}
 	if len(fields) != len(required) {
 		return nil, ErrUnqualified
@@ -584,14 +686,41 @@ func verifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time, p
 	if json.Unmarshal(fields["host"], &host) != nil || host.ID != e.HostID || host.OS != "darwin" {
 		return nil, ErrUnqualified
 	}
+	key, err := designatedHostSigner(policy, e.HostID, e.SignerID)
+	if err != nil {
+		return nil, ErrUnqualified
+	}
+	sig, err := decode(e.SignatureBase64URL, 64)
+	if err != nil || len(sig) != 64 {
+		return nil, ErrUnqualified
+	}
+	message := sha256.Sum256(preimage(purpose, raw))
+	if !ecdsa.Verify(key, message[:], new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:])) {
+		return nil, ErrUnqualified
+	}
+	return raw, nil
+}
+
+// CheckDesignatedHostSignerV3 is the signing-side owner-policy gate. The
+// caller must verify the owner policy for the same instant and still prove a
+// completed physical run before asking keyd to sign.
+func CheckDesignatedHostSignerV3(verified VerifiedPolicy, hostID, signerID string, at time.Time) error {
+	if !verified.verified || verified.version != 3 || at.IsZero() || !verified.at.Equal(at) {
+		return ErrUnqualified
+	}
+	_, err := designatedHostSigner(verified.value, hostID, signerID)
+	return err
+}
+
+func designatedHostSigner(policy Policy, hostID, signerID string) (*ecdsa.PublicKey, error) {
 	for _, revoked := range policy.RevocationSnapshot.RevokedEvidenceSignerIDs {
-		if revoked == e.SignerID {
+		if revoked == signerID {
 			return nil, ErrUnqualified
 		}
 	}
 	var key *ecdsa.PublicKey
 	for _, signer := range policy.EvidenceSigners {
-		if signer.ID != e.SignerID || signer.HostID != e.HostID || signer.Algorithm != "ES256" {
+		if signer.ID != signerID || signer.HostID != hostID || signer.Algorithm != "ES256" {
 			continue
 		}
 		der, err := base64.StdEncoding.Strict().DecodeString(signer.PublicKeySPKIDERBase64)
@@ -611,15 +740,7 @@ func verifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time, p
 	if key == nil {
 		return nil, ErrUnqualified
 	}
-	sig, err := decode(e.SignatureBase64URL, 64)
-	if err != nil || len(sig) != 64 {
-		return nil, ErrUnqualified
-	}
-	message := sha256.Sum256(preimage(purpose, raw))
-	if !ecdsa.Verify(key, message[:], new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:])) {
-		return nil, ErrUnqualified
-	}
-	return raw, nil
+	return key, nil
 }
 
 func validSHA(s string) bool {

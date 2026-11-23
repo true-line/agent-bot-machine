@@ -34,12 +34,26 @@ func fixtureDeviceKey(t *testing.T) (*ecdsa.PrivateKey, keydIdentity) {
 	return key, keydIdentity{JWK: j, Thumbprint: j.thumbprint(), Storage: "hardware", Generation: 1}
 }
 
-func TestBridgeV2DelegationBindsReportFields(t *testing.T) {
-	d := deviceDelegation{Option: "qualification-host-report-v2", Epoch: "epoch", ReportBase64URL: "cmVwb3J0", HostID: "host", SignerID: "signer"}
-	transcript := string(d.transcript())
-	if !strings.Contains(transcript, "qualification-host-report-v2") ||
-		!strings.HasSuffix(transcript, "report_base64url\ncmVwb3J0\nhost_id\nhost\nsigner_id\nsigner") {
-		t.Fatal("v2 report bytes or host identity are not signed into delegation")
+func TestReportDelegationBindsReportFields(t *testing.T) {
+	for _, option := range []string{"qualification-host-report-v2", "qualification-host-report-v3"} {
+		d := deviceDelegation{Option: option, Epoch: "epoch", ReportBase64URL: "cmVwb3J0", HostID: "host", SignerID: "signer"}
+		transcript := string(d.transcript())
+		if !strings.Contains(transcript, option) ||
+			!strings.HasSuffix(transcript, "report_base64url\ncmVwb3J0\nhost_id\nhost\nsigner_id\nsigner") {
+			t.Fatalf("%s report bytes or host identity are not signed into delegation", option)
+		}
+	}
+}
+
+func TestHQDevicePublicParserRejectsHostReportOptions(t *testing.T) {
+	for _, option := range []string{"qualification-host-report", "qualification-host-report-v2", "qualification-host-report-v3"} {
+		t.Run(option, func(t *testing.T) {
+			req := Request{Verb: deviceVerb, Option: option, Nonce: "abcdefghijklmnop", HQEpoch: "legacy"}
+			wire := []byte(`{"verb":"hq-device","option":"` + option + `","nonce":"abcdefghijklmnop","timestamp":1,"public_key":"x","signature":"x","hq_epoch":"legacy"}`)
+			if code, _ := deviceFields(req, wire); code == "" {
+				t.Fatal("HQ request admitted a host-report signing purpose")
+			}
+		})
 	}
 }
 

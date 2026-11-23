@@ -195,6 +195,18 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		}
 		return runSoulBridgeAccountApply(saved, approval, owner, h, deps, pairCheck)
 	}
+	if saved.Plan.Purpose == SoulProtectedLaunchInstallPurpose || approval.Purpose == SoulProtectedLaunchInstallPurpose {
+		if platform != PlatformDarwin {
+			return failure(diag.MembersNotApproved, "protected Soul launch installation requires macOS")
+		}
+		return runSoulProtectedLaunchApply(saved, approval, owner, h, deps, pairCheck)
+	}
+	if saved.Plan.Purpose == SoulProtectedLaunchRetirePurpose || approval.Purpose == SoulProtectedLaunchRetirePurpose {
+		if platform != PlatformDarwin {
+			return failure(diag.MembersNotApproved, "protected Soul retirement requires macOS")
+		}
+		return runSoulProtectedRetireApply(saved, approval, owner, h, deps, pairCheck)
+	}
 	if saved.Plan.Purpose != "" || approval.Purpose == HarnessAccountsPurpose {
 		return runHarnessAccountApply(saved, approval, platform, owner, h, deps, pairCheck)
 	}
