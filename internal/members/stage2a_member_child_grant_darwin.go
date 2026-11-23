@@ -9,18 +9,22 @@ import (
 )
 
 type stage2aMemberChildGrant struct {
-	MemberID       string
-	MemberSelector string
-	MemberLaunchID string
-	Launcher       soulKernelProcessSnapshot
-	GrantSHA256    string
-	ExpiresAt      time.Time
-	ChildPID       int
-	Child          soulKernelProcessSnapshot
-	Receipt        []byte
-	LiveSequence   uint64
-	LiveExpiresAt  time.Time
-	LastNonce      string
+	MemberID              string
+	MemberSelector        string
+	MemberLaunchID        string
+	Launcher              soulKernelProcessSnapshot
+	GrantSHA256           string
+	ExpiresAt             time.Time
+	ChildPID              int
+	Child                 soulKernelProcessSnapshot
+	Receipt               []byte
+	LiveSequence          uint64
+	LiveExpiresAt         time.Time
+	LastNonce             string
+	RuntimeSequence       uint64
+	RuntimeExpiresAt      time.Time
+	RuntimeLastNonce      string
+	RuntimeEnvelopeSHA256 string
 }
 
 const stage2aMemberChildGrantLife = 20 * time.Second

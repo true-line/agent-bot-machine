@@ -87,6 +87,9 @@ func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
 		case stage2aMemberLiveVerb:
 			state = "member-live"
 			body, err = service.MemberLive(req.peerUID, req.stage2aEpoch, req.stage2aMemberLive)
+		case stage2aMemberRuntimeVerb:
+			state = "member-runtime"
+			body, err = service.MemberRuntime(req.peerUID, req.stage2aEpoch, req.stage2aMemberRuntime)
 		case stage2aMemberReadyVerb:
 			state = "member-ready"
 			body, err = service.MemberReady(req.peerUID, req.stage2aEpoch, req.stage2aMemberReady)

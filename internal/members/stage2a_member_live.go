@@ -29,7 +29,14 @@ type Stage2aMemberLiveRequest struct {
 func ParseStage2aMemberLiveRequest(raw []byte) (Stage2aMemberLiveRequest, error) {
 	var q Stage2aMemberLiveRequest
 	if len(raw) == 0 || len(raw) > 4096 || stage2aStrictJSON(raw) != nil ||
-		stage2aDecodeExact(raw, &q) != nil || !validStage2aStopRequest(q.Stage2aStopRequest) ||
+		stage2aDecodeExact(raw, &q) != nil || validateStage2aMemberLiveRequest(q) != nil {
+		return Stage2aMemberLiveRequest{}, errors.New("invalid Stage 2a member live request")
+	}
+	return q, nil
+}
+
+func validateStage2aMemberLiveRequest(q Stage2aMemberLiveRequest) error {
+	if !validStage2aStopRequest(q.Stage2aStopRequest) ||
 		!stage2aBindingID.MatchString(q.MemberID) ||
 		!stage2aMemberSelectorPattern.MatchString(q.MemberSelector) ||
 		!soulLaunchID.MatchString(q.MemberLaunchID) ||
@@ -38,16 +45,16 @@ func ParseStage2aMemberLiveRequest(raw []byte) (Stage2aMemberLiveRequest, error)
 		q.LauncherPID <= 1 || q.ChildPID <= 1 || q.LauncherPID == q.ChildPID ||
 		q.PeerUID <= 0 || q.PeerPID != q.LauncherPID ||
 		q.AfterSequence >= (1<<53)-1 {
-		return Stage2aMemberLiveRequest{}, errors.New("invalid Stage 2a member live request")
+		return errors.New("invalid Stage 2a member live request")
 	}
 	nonce, err := base64.RawURLEncoding.Strict().DecodeString(q.ChallengeNonceBase64URL)
 	if err != nil || len(nonce) != 32 ||
 		base64.RawURLEncoding.EncodeToString(nonce) != q.ChallengeNonceBase64URL {
-		return Stage2aMemberLiveRequest{}, errors.New("invalid Stage 2a member live nonce")
+		return errors.New("invalid Stage 2a member live nonce")
 	}
 	prior, err := time.Parse(time.RFC3339Nano, q.PriorExpiresAt)
 	if err != nil || prior.IsZero() {
-		return Stage2aMemberLiveRequest{}, errors.New("invalid Stage 2a member live expiry")
+		return errors.New("invalid Stage 2a member live expiry")
 	}
-	return q, nil
+	return nil
 }
