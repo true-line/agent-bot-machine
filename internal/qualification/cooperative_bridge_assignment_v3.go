@@ -259,6 +259,7 @@ func VerifyCooperativeBridgeAssignmentV3(reservationEnvelope, bridgeEnvelope []b
 		primary.Assignment.RunnerAccount != "_abm-sr-"+cooperativeBridgeSlotV3("", primary.Assignment.InstallationID) ||
 		primary.Assignment.RunnerUID < 300 || primary.Assignment.RunnerUID > 399 ||
 		primary.Assignment.RunnerGID != primary.Assignment.RunnerUID ||
+		primary.Assignment.HQUID == 0 ||
 		private.Bridge.UID < 300 || private.Bridge.UID > 399 ||
 		private.Bridge.GID != private.Bridge.UID ||
 		private.Bridge.UID == primary.Assignment.RunnerUID ||

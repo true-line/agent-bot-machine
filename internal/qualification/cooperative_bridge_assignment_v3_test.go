@@ -109,6 +109,10 @@ func TestCooperativeBridgeAssignmentV3CoherentlySignedRefusals(t *testing.T) {
 			bridge := assignment["bridge"].(map[string]any)
 			bridge["uid"], bridge["gid"] = float64(602), float64(602)
 		},
+		"root HQ UID": func(primary, _ map[string]any) {
+			primary["assignment"].(map[string]any)["hq_uid"] = float64(0)
+			primary["endpoints"].(map[string]any)["admission"].(map[string]any)["owner_uid"] = float64(0)
+		},
 		"chosen B account": func(_, assignment map[string]any) {
 			assignment["bridge"].(map[string]any)["account"] = "_abm-br-chosen"
 		},
