@@ -113,6 +113,19 @@ func TestCooperativeBridgeAssignmentV3CoherentlySignedRefusals(t *testing.T) {
 			primary["assignment"].(map[string]any)["hq_uid"] = float64(0)
 			primary["endpoints"].(map[string]any)["admission"].(map[string]any)["owner_uid"] = float64(0)
 		},
+		"out-of-range HQ UID": func(primary, assignment map[string]any) {
+			primary["assignment"].(map[string]any)["hq_uid"] = float64(501)
+			primary["endpoints"].(map[string]any)["admission"].(map[string]any)["owner_uid"] = float64(501)
+			assignment["endpoints"].(map[string]any)["broker"].(map[string]any)["owner_uid"] = float64(501)
+		},
+		"duplicate endpoint parent identity": func(primary, assignment map[string]any) {
+			member := primary["endpoints"].(map[string]any)["member"].(map[string]any)
+			relay := primary["endpoints"].(map[string]any)["relay"].(map[string]any)
+			for _, field := range []string{"parent_device", "parent_inode", "parent_birthtime_ns"} {
+				relay[field] = member[field]
+				assignment["endpoints"].(map[string]any)["relay"].(map[string]any)[field] = member[field]
+			}
+		},
 		"chosen B account": func(_, assignment map[string]any) {
 			assignment["bridge"].(map[string]any)["account"] = "_abm-br-chosen"
 		},

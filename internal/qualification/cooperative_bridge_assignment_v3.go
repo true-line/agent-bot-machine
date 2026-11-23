@@ -259,7 +259,7 @@ func VerifyCooperativeBridgeAssignmentV3(reservationEnvelope, bridgeEnvelope []b
 		primary.Assignment.RunnerAccount != "_abm-sr-"+cooperativeBridgeSlotV3("", primary.Assignment.InstallationID) ||
 		primary.Assignment.RunnerUID < 300 || primary.Assignment.RunnerUID > 399 ||
 		primary.Assignment.RunnerGID != primary.Assignment.RunnerUID ||
-		primary.Assignment.HQUID == 0 ||
+		primary.Assignment.HQUID < 300 || primary.Assignment.HQUID > 399 ||
 		private.Bridge.UID < 300 || private.Bridge.UID > 399 ||
 		private.Bridge.GID != private.Bridge.UID ||
 		private.Bridge.UID == primary.Assignment.RunnerUID ||
@@ -296,6 +296,15 @@ func VerifyCooperativeBridgeAssignmentV3(reservationEnvelope, bridgeEnvelope []b
 			private.Bridge.UID, primary.Assignment.RunnerGID, primary.Assignment.RunnerUID, true) != nil ||
 		cooperativeBridgeEndpointShapeV3(private.Endpoints.Broker, bDir, bSocket,
 			primary.Assignment.HQUID, private.Bridge.GID, private.Bridge.UID, true) != nil {
+		return zero, ErrUnqualified
+	}
+	var member, relay, broker cooperativeBridgeEndpointV3
+	if json.Unmarshal(primary.Endpoints.Member, &member) != nil ||
+		json.Unmarshal(primary.Endpoints.Relay, &relay) != nil ||
+		json.Unmarshal(private.Endpoints.Broker, &broker) != nil ||
+		(member.ParentDevice == relay.ParentDevice && member.ParentInode == relay.ParentInode) ||
+		(member.ParentDevice == broker.ParentDevice && member.ParentInode == broker.ParentInode) ||
+		(relay.ParentDevice == broker.ParentDevice && relay.ParentInode == broker.ParentInode) {
 		return zero, ErrUnqualified
 	}
 	wantArgv := []string{"/usr/bin/sandbox-exec", "-D", "BROKER_SOCKET=" + bSocket,
