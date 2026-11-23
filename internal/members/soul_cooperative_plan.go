@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 
 	"github.com/qwts/managed-machine/internal/cli"
@@ -54,7 +55,7 @@ func buildSoulCooperativeLaunch(in Input, h Host) (Plan, error) {
 }
 
 func cooperativeArtifactPath(installationID string) string {
-	return filepath.Join(launchRuntimeDir, "cooperative-artifacts", soulEndpointInstallationSlot(installationID)+".soul")
+	return path.Join(launchRuntimeDir, "cooperative-artifacts", soulEndpointInstallationSlot(installationID)+".soul")
 }
 
 func planSoulCooperativeLaunch(deps Deps, file string) cli.Result {
