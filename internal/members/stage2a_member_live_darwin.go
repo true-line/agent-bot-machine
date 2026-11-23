@@ -50,9 +50,7 @@ func (s *Stage2aService) MemberLive(hqUID int, epoch string,
 	if err != nil || !stage2aMatchesStopSelectors(r, q.Stage2aStopRequest, hqUID) ||
 		len(r.memberChildObservationEnvelope) == 0 || r.twoMemberChildren == nil ||
 		len(r.memberChildGrants) != 2 || len(r.provisionalHQMap) == 0 ||
-		r.protectedQ == nil || !r.protectedQ.install.Review.DriverLive ||
-		r.protectedQ.ctx.Err() != nil || r.protectedQ.checkLive == nil ||
-		r.protectedQ.checkLive() != nil ||
+		r.protectedQ.recheckMemberQ() != nil ||
 		r.hello == nil || r.hello.aborted || r.hello.finalized ||
 		q.PeerUID != p.Runner.UID ||
 		q.ChildObservationEnvelopeSHA256 != stage2aReservationSHA256(r.memberChildObservationEnvelope) ||
@@ -132,7 +130,7 @@ func (s *Stage2aService) MemberLive(hqUID int, epoch string,
 	envelope, err := signStage2aEnvelope(payload, 1, Stage2aMemberLiveLeasePurpose,
 		s.key.Public().(ed25519.PublicKey), s.sign)
 	if err != nil || len(envelope) == 0 || len(envelope) > 8192 || !time.Now().Before(until) ||
-		r.protectedQ.ctx.Err() != nil || r.protectedQ.checkLive() != nil ||
+		r.protectedQ.recheckMemberQ() != nil ||
 		stage2aHelloCheckLive(r, p, q.Stage2aStopRequest) != nil ||
 		r.twoMemberChildren.recheck(func(pid int) (soulKernelProcessSnapshot, error) {
 			return observeStage2aRoleProcess(pid, p.Runner.UID, p.Runner.GID, "child")
