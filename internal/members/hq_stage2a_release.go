@@ -18,7 +18,12 @@ func verifyHQStage2aReleaseRows(service HQService, raw []byte) (stage2aDomainInv
 		inventory.Limits != s.InventoryLimits || digest != s.InventoryDigest {
 		return empty, refuse(RefusedPath, "Stage 2a HQ requires the exact canonical H inventory under the reviewed limits")
 	}
-	required := map[string]string{hqStage2aNode: "node", hqStage2aHelper: "hq", hqStage2aEntry: "hq", s.PreloaderPath: "hq", hqStage2aGuard: "hq"}
+	required := map[string]string{
+		hqStage2aNode: "node", hqStage2aHelper: "hq", hqStage2aEntry: "hq",
+		s.PreloaderPath: "hq", hqStage2aGuard: "hq",
+		hqStage2aCooperativeMachine: "hq", hqStage2aCooperativeProof: "hq",
+		hqStage2aCooperativeStart: "hq", hqStage2aCooperativeBridge: "hq", hqStage2aCooperativeInstall: "hq",
+	}
 	for _, row := range inventory.Files {
 		component := required[row.Path]
 		if component != "" && (row.ComponentID != component || row.ReleasePath != row.Path || row.SizeBytes == 0) {
@@ -48,7 +53,7 @@ func verifyHQStage2aReleaseRows(service HQService, raw []byte) (stage2aDomainInv
 		delete(required, row.Path)
 	}
 	if len(required) != 0 {
-		return empty, refuse(RefusedPath, "Stage 2a HQ inventory must include Node, preloader, entry, runtime guard and the Darwin owner helper")
+		return empty, refuse(RefusedPath, "Stage 2a HQ inventory omits a required launch or cooperative module")
 	}
 	return inventory, nil
 }
