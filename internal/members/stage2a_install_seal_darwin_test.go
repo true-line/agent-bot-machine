@@ -110,7 +110,9 @@ func TestStage2aRootToAdminSealHandoff(t *testing.T) {
 			uint32(os.Getuid()) != handoff.AdminUID || uint32(os.Geteuid()) != handoff.AdminUID ||
 			uint32(os.Getgid()) != handoff.AdminGID || uint32(os.Getegid()) != handoff.AdminGID ||
 			groupsErr != nil || len(groups) != 0 {
-			t.Fatal("A child kernel credentials differ")
+			t.Fatalf("A child kernel credentials differ: got uid=%d euid=%d gid=%d egid=%d groups=%v groups_err=%v; want uid=%d gid=%d and no supplementary groups",
+				os.Getuid(), os.Geteuid(), os.Getgid(), os.Getegid(), groups, groupsErr,
+				handoff.AdminUID, handoff.AdminGID)
 		}
 		var st unix.Stat_t
 		if err := unix.Stat(handoff.Namespace, &st); err != nil {
