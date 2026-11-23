@@ -108,3 +108,24 @@ func TestStage2aHSourceV3SelectedExcludedClosure(t *testing.T) {
 		t.Fatal("accepted noncanonical manifest")
 	}
 }
+
+func TestStage2aHSourceV3OmissionBound(t *testing.T) {
+	inv, baseRows, _, nodeDigest := stage2aHSourceTestSelection(t)
+	for _, count := range []int{192, 193} {
+		rows := append([]stage2aHSourceManifestRowV3(nil), baseRows[:3]...)
+		excluded := make([]string, 0, count)
+		for i := range count {
+			path := fmt.Sprintf("vendor/soul-contracts/fixtures/negative/synthetic-%03d.bad.json", i)
+			rows = append(rows, stage2aHSourceManifestRowV3{Path: path, SHA256: "sha256:" + strings.Repeat("5", 64)})
+			excluded = append(excluded, path)
+		}
+		raw, digest := stage2aHSourceTestManifest(t, rows)
+		err := stage2aValidateHSourceSelectionV3(inv, raw, digest, excluded, nodeDigest)
+		if count == 192 && err != nil {
+			t.Fatalf("rejected 192 reviewed omissions: %v", err)
+		}
+		if count == 193 && err == nil {
+			t.Fatal("accepted 193 omissions")
+		}
+	}
+}
