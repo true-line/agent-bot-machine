@@ -320,9 +320,12 @@ func timeMustParse(value string) time.Time {
 
 func runStage2aCooperativeChild(ctx context.Context, frame []byte,
 	challenge stage2aExecChallenge, pub ed25519.PublicKey,
-	acp *bufio.Reader, control, stdout, status *os.File,
-	gate stage2aCooperativeChildGate) int {
+	acp *bufio.Reader, control, stdout, status *os.File) int {
 	in, grant, grantSHA, err := verifyStage2aCooperativeChildGrant(frame, challenge, pub, time.Now())
+	if err != nil {
+		return harnessRefused
+	}
+	gate, err := stage2aCooperativeAdmissionGate(in, grant, grantSHA, pub)
 	if err != nil {
 		return harnessRefused
 	}
