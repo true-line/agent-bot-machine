@@ -3,6 +3,7 @@
 package members
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
@@ -42,6 +43,32 @@ func TestStage2aInstalledPolicyMustMatchReviewedTemplate(t *testing.T) {
 	plan.SoulProtectedLaunch.MachinePublicKey = hex.EncodeToString(ed25519.PublicKey(strings.Repeat("z", ed25519.PublicKeySize)))
 	if stage2aInstalledPolicyMatchesPlan(p, plan, key) {
 		t.Fatal("wrong Machine key accepted")
+	}
+}
+
+func TestStage2aInstalledReceiptReloadMatchesProtectedRootBytes(t *testing.T) {
+	root := encodeReceipt(Receipt{
+		PlanID: "plan-20261122T120000Z-abcd", PlanDigest: strings.Repeat("c", 64),
+		Owner: "owner", HQAccount: DarwinHQAccount, Dir: DarwinDir,
+		StartedAt: "2026-11-22T12:00:00Z", FinishedAt: "2026-11-22T12:00:01Z", Result: "applied",
+	})
+	if !bytes.Contains(root, []byte{'\n'}) {
+		t.Fatal("fixture lacks the root receipt's formatted JSON")
+	}
+	policy := stage2aInstalledPolicy{Receipt: root}
+	serialized, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reloaded stage2aInstalledPolicy
+	if err := json.Unmarshal(serialized, &reloaded); err != nil ||
+		bytes.Equal(reloaded.Receipt, root) || !stage2aInstalledReceiptMatchesRoot(reloaded.Receipt, root) {
+		t.Fatalf("root applied receipt could not be reloaded: %v", err)
+	}
+	changed := bytes.Replace(root, []byte(`"applied"`), []byte(`"failed"`), 1)
+	if stage2aInstalledReceiptMatchesRoot(reloaded.Receipt, changed) ||
+		stage2aInstalledReceiptMatchesRoot(reloaded.Receipt, []byte(`{"result":"applied","result":"applied"}`)) {
+		t.Fatal("different or ambiguous root receipt matched installed copy")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -193,6 +194,36 @@ func publishStage2aFrozenAt(sourceRoot, destinationParent, name string,
 func publishStage2aSourceAt(sourceRoot, destinationParent, name string,
 	sourceUID, sourceGID, snapshotUID, snapshotGID uint32,
 	approved []Stage2aDefinitionRecord, mutable bool) (Stage2aSnapshotIdentity, string, error) {
+	return publishStage2aSnapshotAt(sourceRoot, destinationParent, name, sourceUID,
+		sourceGID, snapshotUID, snapshotGID, approved, mutable, false)
+}
+
+func publishStage2aRuntimeAt(sourceRoot, destinationParent, name string,
+	sourceUID, sourceGID, snapshotUID, snapshotGID uint32,
+	files []Stage2aDefinitionRecord, mutable bool) (Stage2aSnapshotIdentity, string, error) {
+	var empty Stage2aSnapshotIdentity
+	if _, err := stage2aLaunchFiles(files); err != nil {
+		return empty, "", err
+	}
+	dirs := map[string]bool{}
+	for _, file := range files {
+		for parent := filepath.Dir(file.Path); parent != "."; parent = filepath.Dir(parent) {
+			dirs[parent] = true
+		}
+	}
+	records := make([]Stage2aDefinitionRecord, 0, len(files)+len(dirs))
+	for dir := range dirs {
+		records = append(records, Stage2aDefinitionRecord{Path: dir, Kind: "directory", Mode: "0555"})
+	}
+	records = append(records, files...)
+	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
+	return publishStage2aSnapshotAt(sourceRoot, destinationParent, name, sourceUID,
+		sourceGID, snapshotUID, snapshotGID, records, mutable, true)
+}
+
+func publishStage2aSnapshotAt(sourceRoot, destinationParent, name string,
+	sourceUID, sourceGID, snapshotUID, snapshotGID uint32,
+	approved []Stage2aDefinitionRecord, mutable, runtime bool) (Stage2aSnapshotIdentity, string, error) {
 	var empty Stage2aSnapshotIdentity
 	if !stage2aSnapshotName.MatchString(name) || !stage2aAbsolutePath(sourceRoot) ||
 		!stage2aAbsolutePath(destinationParent) {
@@ -201,7 +232,11 @@ func publishStage2aSourceAt(sourceRoot, destinationParent, name string,
 	if err := stage2aRunnerReadableInventory(approved); err != nil {
 		return empty, "", err
 	}
-	sourceIdentity, approvedDigest, err := observeStage2aSourceAt(sourceRoot, sourceUID, sourceGID, approved, mutable)
+	observe := observeStage2aSourceAt
+	if runtime {
+		observe = observeStage2aRuntimeAt
+	}
+	sourceIdentity, approvedDigest, err := observe(sourceRoot, sourceUID, sourceGID, approved, mutable)
 	if err != nil {
 		return empty, "", err
 	}
@@ -331,7 +366,7 @@ func publishStage2aSourceAt(sourceRoot, destinationParent, name string,
 		!stage2aSameNode(sourceRootStat, afterSourceRoot) {
 		return empty, "", errors.New("Stage 2a source root changed while copying")
 	}
-	afterIdentity, afterDigest, err := observeStage2aSourceAt(sourceRoot, sourceUID, sourceGID, approved, mutable)
+	afterIdentity, afterDigest, err := observe(sourceRoot, sourceUID, sourceGID, approved, mutable)
 	if err != nil || afterIdentity != sourceIdentity || afterDigest != approvedDigest {
 		return empty, "", errors.New("Stage 2a source changed during snapshot publication")
 	}
@@ -358,7 +393,7 @@ func publishStage2aSourceAt(sourceRoot, destinationParent, name string,
 	if err != nil {
 		return empty, "", err
 	}
-	identity, digest, err := observeStage2aFrozenAt(filepath.Join(destinationParent, name), snapshotUID, snapshotGID, approved)
+	identity, digest, err := observe(filepath.Join(destinationParent, name), snapshotUID, snapshotGID, approved, false)
 	if err != nil || identity != pinned || digest != approvedDigest {
 		return empty, "", errors.New("Stage 2a published snapshot does not match approved bytes")
 	}

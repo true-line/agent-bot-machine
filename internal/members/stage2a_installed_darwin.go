@@ -204,7 +204,7 @@ func loadStage2aInstalledPolicyWithLease(key ed25519.PublicKey, hqUID int, epoch
 	// applied receipt and compare its exact bytes on every use.
 	receiptPath := filepath.Join("/private"+DarwinReceiptsDir, p.Binding.PlanID+".json")
 	installedReceipt, err := stage2aReadRootFile(receiptPath, 256<<10, 0644)
-	if err != nil || !bytes.Equal(installedReceipt, p.Receipt) {
+	if err != nil || !stage2aInstalledReceiptMatchesRoot(p.Receipt, installedReceipt) {
 		return p, nil, errStage2aReservationAuthority
 	}
 	if p.Runner.Account != soulRunnerName(p.Binding.InstallationID) || p.Bridge.Account != SoulBridgeName(p.Binding.InstallationID) ||
@@ -228,6 +228,17 @@ func loadStage2aInstalledPolicyWithLease(key ed25519.PublicKey, hqUID int, epoch
 		return p, nil, errStage2aReservationAuthority
 	}
 	return p, raw, nil
+}
+
+// RawMessage is compacted when the installed policy is marshaled. Compare
+// that exact JSON representation to the protected root receipt while keeping
+// the root receipt itself as the independent authority.
+func stage2aInstalledReceiptMatchesRoot(installed, root []byte) bool {
+	if stage2aStrictJSON(root) != nil {
+		return false
+	}
+	encoded, err := json.Marshal(json.RawMessage(root))
+	return err == nil && bytes.Equal(encoded, installed)
 }
 
 func (p stage2aInstalledPolicy) verifyRunnerGroup() error {

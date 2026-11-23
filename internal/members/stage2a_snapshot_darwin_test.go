@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 )
 
@@ -71,6 +72,79 @@ func stage2aObservedFixture(t *testing.T) (string, []Stage2aDefinitionRecord) {
 		}
 	}
 	return root, records
+}
+
+func TestStage2aRuntimeSnapshotPublishesImplicitDirectories(t *testing.T) {
+	source := t.TempDir()
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0750); err != nil {
+		t.Fatal(err)
+	}
+	contents := map[string]string{
+		"host/adapters.json":              `{}`,
+		"host/installation.json":          `{}`,
+		"runtime/bin/node":                "node",
+		"runtime/bin/agent-bot-souls.mjs": "souls",
+	}
+	paths := make([]string, 0, len(contents))
+	for path := range contents {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	records := make([]Stage2aDefinitionRecord, 0, len(paths))
+	for _, path := range paths {
+		full := filepath.Join(source, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatal(err)
+		}
+		mode := fs.FileMode(0444)
+		if filepath.Base(path) == "node" || filepath.Base(path) == "agent-bot-souls.mjs" {
+			mode = 0555
+		}
+		body := []byte(contents[path])
+		if err := os.WriteFile(full, body, mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(full, mode); err != nil {
+			t.Fatal(err)
+		}
+		size := uint64(len(body))
+		records = append(records, Stage2aDefinitionRecord{
+			Path: path, Kind: "regular", Mode: fmt.Sprintf("%04o", mode),
+			Size: &size, SHA256: fmt.Sprintf("%x", sha256.Sum256(body)),
+		})
+	}
+	for _, dir := range []string{"host", "runtime/bin", "runtime", ""} {
+		if err := os.Chmod(filepath.Join(source, dir), 0555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, dir := range []string{"", "host", "runtime", "runtime/bin"} {
+			_ = os.Chmod(filepath.Join(source, dir), 0700)
+		}
+	})
+	uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
+	identity, _, err := publishStage2aRuntimeAt(source, parent,
+		"snap_0123456789abcdef01234567", uid, gid, uid, gid, records, false)
+	if err != nil {
+		t.Fatalf("runtime snapshot could not be published: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(identity.RootPath, func(path string, entry os.DirEntry, err error) error {
+			if err == nil && entry.IsDir() {
+				_ = os.Chmod(path, 0700)
+			}
+			return nil
+		})
+	})
+	if identity.Mode != "0555" || stage2aCheckRuntimeSnapshot(identity, records) != nil {
+		t.Fatal("published runtime snapshot failed installed-byte observation")
+	}
+	if _, _, err := publishStage2aSourceAt(source, parent,
+		"snap_0123456789abcdef01234568", uid, gid, uid, gid, records, false); err == nil {
+		t.Fatal("definition-only publisher accepted a runtime inventory")
+	}
 }
 
 func TestStage2aFrozenDescriptorObservation(t *testing.T) {

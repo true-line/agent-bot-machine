@@ -5,6 +5,7 @@ package members
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -319,6 +320,77 @@ func observeStage2aSourceAt(rootPath string, ownerUID, ownerGID uint32,
 		return empty, "", err
 	}
 	return identity, digest, nil
+}
+
+// Runtime inventories list regular files; their parent directories are
+// implied by the paths and must still be closed, read-only and no-follow.
+// This observer is used before and after root's copy and on the published
+// tree. It never treats the runtime inventory as a Soul definition.
+func observeStage2aRuntimeAt(rootPath string, ownerUID, ownerGID uint32,
+	approved []Stage2aDefinitionRecord, mutable bool) (Stage2aSnapshotIdentity, string, error) {
+	var empty Stage2aSnapshotIdentity
+	rootFD, err := unix.Open(rootPath, stage2aDirectoryOpenFlags, 0)
+	if err != nil {
+		return empty, "", err
+	}
+	defer unix.Close(rootFD)
+	identity, rootStat, err := stage2aSnapshotIdentityForSource(rootFD, ownerUID, ownerGID, mutable)
+	if err != nil {
+		return empty, "", err
+	}
+	listingFD, err := unix.Dup(rootFD)
+	if err != nil {
+		return empty, "", err
+	}
+	root := os.NewFile(uintptr(listingFD), rootPath)
+	entries := make([]stage2aObservedEntry, 0, len(approved))
+	var total uint64
+	err = stage2aCollectFrozen(root, "", ownerUID, ownerGID, false, &entries, &total, mutable)
+	root.Close()
+	if err != nil || len(entries) != len(approved) {
+		return empty, "", errors.New("Stage 2a runtime tree differs from approved closure")
+	}
+	metadata := make(map[string]unix.Stat_t, len(entries))
+	for i, entry := range entries {
+		got, want := entry.record, approved[i]
+		if got.Path != want.Path || got.Kind != want.Kind || got.Mode != want.Mode ||
+			(got.Size == nil) != (want.Size == nil) ||
+			(got.Size != nil && *got.Size != *want.Size) ||
+			(got.Kind == "directory" && (want.Size != nil || want.SHA256 != "")) {
+			return empty, "", errors.New("Stage 2a runtime metadata differs from approved closure")
+		}
+		metadata[got.Path] = entry.stat
+	}
+	for i, entry := range entries {
+		if entry.record.Kind != "regular" {
+			continue
+		}
+		file, err := stage2aReopenSource(rootFD, entry.record.Path, ownerUID, ownerGID, metadata, mutable)
+		if err != nil {
+			return empty, "", err
+		}
+		hash := sha256.New()
+		_, err = io.CopyN(hash, file, int64(*entry.record.Size))
+		var extra [1]byte
+		n, extraErr := file.Read(extra[:])
+		var after unix.Stat_t
+		statErr := unix.Fstat(int(file.Fd()), &after)
+		file.Close()
+		if err != nil || n != 0 || extraErr != io.EOF || statErr != nil ||
+			!stage2aSameNode(entry.stat, after) ||
+			fmt.Sprintf("%x", hash.Sum(nil)) != approved[i].SHA256 {
+			return empty, "", errors.New("Stage 2a runtime bytes changed during measurement")
+		}
+	}
+	var afterRoot unix.Stat_t
+	if unix.Fstat(rootFD, &afterRoot) != nil || !stage2aSameNode(rootStat, afterRoot) {
+		return empty, "", errors.New("Stage 2a runtime root changed during measurement")
+	}
+	canonical, err := json.Marshal(approved)
+	if err != nil {
+		return empty, "", err
+	}
+	return identity, fmt.Sprintf("sha256:%x", sha256.Sum256(canonical)), nil
 }
 
 // ObserveStage2aFrozenSnapshot is an independent read-only observation of an
