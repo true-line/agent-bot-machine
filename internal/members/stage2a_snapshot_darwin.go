@@ -57,6 +57,11 @@ func stage2aCheckedNode(fd int, ownerUID, ownerGID uint32) (unix.Stat_t, error) 
 }
 
 func stage2aCheckedSourceNode(fd int, ownerUID, ownerGID uint32, mutable bool) (unix.Stat_t, error) {
+	return stage2aCheckedSourceNodeWithLimit(fd, ownerUID, ownerGID, mutable, stage2aMaxFileBytes)
+}
+
+func stage2aCheckedSourceNodeWithLimit(fd int, ownerUID, ownerGID uint32, mutable bool,
+	maxFileBytes uint64) (unix.Stat_t, error) {
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
 		return st, err
@@ -70,7 +75,8 @@ func stage2aCheckedSourceNode(fd int, ownerUID, ownerGID uint32, mutable bool) (
 	}
 	if st.Uid != ownerUID || st.Gid != ownerGID || !stage2aReadOnlyMode(fmt.Sprintf("%04o", mode)) ||
 		(st.Mode&unix.S_IFMT != unix.S_IFDIR && st.Mode&unix.S_IFMT != unix.S_IFREG) ||
-		(st.Mode&unix.S_IFMT == unix.S_IFREG && (st.Nlink != 1 || st.Size < 0 || st.Size > stage2aMaxFileBytes)) {
+		(st.Mode&unix.S_IFMT == unix.S_IFREG &&
+			(st.Nlink != 1 || st.Size < 0 || uint64(st.Size) > maxFileBytes)) {
 		return st, errors.New("unsafe Stage 2a frozen node custody")
 	}
 	return st, nil
@@ -128,7 +134,7 @@ func stage2aSnapshotIdentityForSource(fd int, ownerUID, ownerGID uint32, mutable
 // hashing any byte. Every child is opened relative to its held parent with
 // O_NOFOLLOW; a path-based WalkDir cannot provide this guarantee.
 func stage2aCollectFrozen(dir *os.File, relative string, ownerUID, ownerGID uint32, definition bool,
-	entries *[]stage2aObservedEntry, total *uint64, mutable bool) error {
+	entries *[]stage2aObservedEntry, total *uint64, mutable, qualifiedStockCLI bool) error {
 	st, err := stage2aCheckedSourceNode(int(dir.Fd()), ownerUID, ownerGID, mutable)
 	if err != nil || st.Mode&unix.S_IFMT != unix.S_IFDIR || len(*entries) >= stage2aMaxEntries {
 		return errors.New("invalid Stage 2a frozen directory")
@@ -163,13 +169,17 @@ func stage2aCollectFrozen(dir *os.File, relative string, ownerUID, ownerGID uint
 		}
 		absolute := filepath.Join(dir.Name(), name)
 		opened := os.NewFile(uintptr(fd), absolute)
-		st, err := stage2aCheckedSourceNode(fd, ownerUID, ownerGID, mutable)
+		maxFileBytes := uint64(stage2aMaxFileBytes)
+		if qualifiedStockCLI && path == stage2aStockCLIPath {
+			maxFileBytes = stage2aStockCLIMaxBytes
+		}
+		st, err := stage2aCheckedSourceNodeWithLimit(fd, ownerUID, ownerGID, mutable, maxFileBytes)
 		if err != nil {
 			opened.Close()
 			return err
 		}
 		if st.Mode&unix.S_IFMT == unix.S_IFDIR {
-			err = stage2aCollectFrozen(opened, path, ownerUID, ownerGID, definition, entries, total, mutable)
+			err = stage2aCollectFrozen(opened, path, ownerUID, ownerGID, definition, entries, total, mutable, qualifiedStockCLI)
 			opened.Close()
 			if err != nil {
 				return err
@@ -195,11 +205,13 @@ func stage2aCollectFrozen(dir *os.File, relative string, ownerUID, ownerGID uint
 	return nil
 }
 
-func stage2aReopenFrozen(rootFD int, relative string, ownerUID, ownerGID uint32, metadata map[string]unix.Stat_t) (*os.File, error) {
-	return stage2aReopenSource(rootFD, relative, ownerUID, ownerGID, metadata, false)
+func stage2aReopenFrozen(rootFD int, relative string, ownerUID, ownerGID uint32,
+	metadata map[string]unix.Stat_t, qualifiedStockCLI bool) (*os.File, error) {
+	return stage2aReopenSource(rootFD, relative, ownerUID, ownerGID, metadata, false, qualifiedStockCLI)
 }
 
-func stage2aReopenSource(rootFD int, relative string, ownerUID, ownerGID uint32, metadata map[string]unix.Stat_t, mutable bool) (*os.File, error) {
+func stage2aReopenSource(rootFD int, relative string, ownerUID, ownerGID uint32,
+	metadata map[string]unix.Stat_t, mutable, qualifiedStockCLI bool) (*os.File, error) {
 	parts := strings.Split(relative, "/")
 	parent, err := unix.Dup(rootFD)
 	if err != nil {
@@ -221,7 +233,11 @@ func stage2aReopenSource(rootFD int, relative string, ownerUID, ownerGID uint32,
 		} else {
 			current += "/" + part
 		}
-		st, checkErr := stage2aCheckedSourceNode(fd, ownerUID, ownerGID, mutable)
+		maxFileBytes := uint64(stage2aMaxFileBytes)
+		if qualifiedStockCLI && current == stage2aStockCLIPath {
+			maxFileBytes = stage2aStockCLIMaxBytes
+		}
+		st, checkErr := stage2aCheckedSourceNodeWithLimit(fd, ownerUID, ownerGID, mutable, maxFileBytes)
 		if checkErr != nil || !stage2aSameNode(st, metadata[current]) {
 			unix.Close(fd)
 			return nil, errors.New("Stage 2a frozen path changed between observations")
@@ -268,7 +284,7 @@ func observeStage2aSourceAt(rootPath string, ownerUID, ownerGID uint32,
 	contents := os.NewFile(uintptr(contentsFD), filepath.Join(rootPath, "Contents"))
 	entries := make([]stage2aObservedEntry, 0, len(approved))
 	var total uint64
-	err = stage2aCollectFrozen(contents, "Contents", ownerUID, ownerGID, true, &entries, &total, mutable)
+	err = stage2aCollectFrozen(contents, "Contents", ownerUID, ownerGID, true, &entries, &total, mutable, false)
 	contents.Close()
 	if err != nil || len(entries) != len(approved) {
 		return empty, "", errors.New("Stage 2a frozen inventory differs from approved closure")
@@ -290,7 +306,7 @@ func observeStage2aSourceAt(rootPath string, ownerUID, ownerGID uint32,
 		if entries[i].record.Kind != "regular" {
 			continue
 		}
-		file, err := stage2aReopenSource(rootFD, entries[i].record.Path, ownerUID, ownerGID, metadata, mutable)
+		file, err := stage2aReopenSource(rootFD, entries[i].record.Path, ownerUID, ownerGID, metadata, mutable, false)
 		if err != nil {
 			return empty, "", err
 		}
@@ -332,6 +348,7 @@ func observeStage2aSourceAt(rootPath string, ownerUID, ownerGID uint32,
 func observeStage2aRuntimeAt(rootPath string, ownerUID, ownerGID uint32,
 	approved []Stage2aDefinitionRecord, mutable bool) (Stage2aSnapshotIdentity, string, error) {
 	var empty Stage2aSnapshotIdentity
+	qualifiedStockCLI := stage2aHasQualifiedStockCLIRecord(approved)
 	rootFD, err := unix.Open(rootPath, stage2aDirectoryOpenFlags, 0)
 	if err != nil {
 		return empty, "", err
@@ -348,7 +365,7 @@ func observeStage2aRuntimeAt(rootPath string, ownerUID, ownerGID uint32,
 	root := os.NewFile(uintptr(listingFD), rootPath)
 	entries := make([]stage2aObservedEntry, 0, len(approved))
 	var total uint64
-	err = stage2aCollectFrozen(root, "", ownerUID, ownerGID, false, &entries, &total, mutable)
+	err = stage2aCollectFrozen(root, "", ownerUID, ownerGID, false, &entries, &total, mutable, qualifiedStockCLI)
 	root.Close()
 	if err != nil || len(entries) != len(approved) {
 		return empty, "", errors.New("Stage 2a runtime tree differs from approved closure")
@@ -371,7 +388,7 @@ func observeStage2aRuntimeAt(rootPath string, ownerUID, ownerGID uint32,
 		if entry.record.Kind != "regular" {
 			continue
 		}
-		file, err := stage2aReopenSource(rootFD, entry.record.Path, ownerUID, ownerGID, metadata, mutable)
+		file, err := stage2aReopenSource(rootFD, entry.record.Path, ownerUID, ownerGID, metadata, mutable, qualifiedStockCLI)
 		if err != nil {
 			return empty, "", err
 		}

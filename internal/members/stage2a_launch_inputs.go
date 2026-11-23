@@ -287,6 +287,15 @@ func stage2aQualifiedStockCLIRecord(file Stage2aDefinitionRecord) bool {
 		*file.Size <= stage2aStockCLIMaxBytes && file.SHA256 == stage2aStockCLISHA256
 }
 
+func stage2aHasQualifiedStockCLIRecord(files []Stage2aDefinitionRecord) bool {
+	for _, file := range files {
+		if stage2aQualifiedStockCLIRecord(file) {
+			return true
+		}
+	}
+	return false
+}
+
 func stage2aLaunchFiles(files []Stage2aDefinitionRecord) (map[string]bool, error) {
 	invalid := errors.New("invalid Stage 2a launch-input file records")
 	if len(files) == 0 || len(files) > 64 {

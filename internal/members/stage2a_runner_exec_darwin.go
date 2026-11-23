@@ -201,7 +201,8 @@ func stage2aCheckRuntimeSnapshot(expected Stage2aSnapshotIdentity, files []Stage
 	}
 	var entries []stage2aObservedEntry
 	var total uint64
-	if stage2aCollectFrozen(dir, "", expected.OwnerUID, expected.OwnerGID, false, &entries, &total, false) != nil ||
+	qualifiedStockCLI := stage2aHasQualifiedStockCLIRecord(files)
+	if stage2aCollectFrozen(dir, "", expected.OwnerUID, expected.OwnerGID, false, &entries, &total, false, qualifiedStockCLI) != nil ||
 		len(entries) != len(want)+len(dirs) {
 		return invalid
 	}
@@ -220,7 +221,7 @@ func stage2aCheckRuntimeSnapshot(expected Stage2aSnapshotIdentity, files []Stage
 		}
 	}
 	for _, record := range files {
-		file, err := stage2aReopenFrozen(fd, record.Path, expected.OwnerUID, expected.OwnerGID, metadata)
+		file, err := stage2aReopenFrozen(fd, record.Path, expected.OwnerUID, expected.OwnerGID, metadata, qualifiedStockCLI)
 		if err != nil {
 			return invalid
 		}

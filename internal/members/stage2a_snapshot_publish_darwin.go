@@ -110,6 +110,9 @@ func stage2aChownNew(fd int, uid, gid uint32) error {
 func stage2aOpenSourceFile(rootFD int, relative string, uid, gid uint32,
 	approved Stage2aDefinitionRecord, mutable bool) (*os.File, unix.Stat_t, error) {
 	var zero unix.Stat_t
+	if relative != approved.Path {
+		return nil, zero, errors.New("Stage 2a source path differs from approved record")
+	}
 	fd, err := unix.Dup(rootFD)
 	if err != nil {
 		return nil, zero, err
@@ -126,7 +129,11 @@ func stage2aOpenSourceFile(rootFD int, relative string, uid, gid uint32,
 			return nil, zero, openErr
 		}
 		fd = child
-		st, checkErr := stage2aCheckedSourceNode(fd, uid, gid, mutable)
+		maxFileBytes := uint64(stage2aMaxFileBytes)
+		if i == len(parts)-1 && stage2aQualifiedStockCLIRecord(approved) {
+			maxFileBytes = stage2aStockCLIMaxBytes
+		}
+		st, checkErr := stage2aCheckedSourceNodeWithLimit(fd, uid, gid, mutable, maxFileBytes)
 		if checkErr != nil {
 			unix.Close(fd)
 			return nil, zero, checkErr
@@ -136,7 +143,11 @@ func stage2aOpenSourceFile(rootFD int, relative string, uid, gid uint32,
 			return nil, zero, errors.New("Stage 2a source parent is not a directory")
 		}
 	}
-	st, err := stage2aCheckedSourceNode(fd, uid, gid, mutable)
+	maxFileBytes := uint64(stage2aMaxFileBytes)
+	if stage2aQualifiedStockCLIRecord(approved) {
+		maxFileBytes = stage2aStockCLIMaxBytes
+	}
+	st, err := stage2aCheckedSourceNodeWithLimit(fd, uid, gid, mutable, maxFileBytes)
 	if err != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || approved.Size == nil ||
 		uint64(st.Size) != *approved.Size || stage2aRecordMode(st.Mode, mutable) != approved.Mode {
 		unix.Close(fd)
