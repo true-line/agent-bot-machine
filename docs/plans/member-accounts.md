@@ -787,15 +787,24 @@ completed-run record and signed v3 host report are separate later evidence.
 owner-reviewed installation, its A/H/R/B identities, frozen `.soul` artifact
 hash, complete definition and launch-input inventories, bridge executable,
 provider fixture and fixed rule. Paired owner proof is required before root
-copies the exact bytes, publishes A-owned read-only snapshots and policy,
-installs the per-Soul sudo rule, and writes the final applied root receipt.
+copies the exact bytes into fresh private A-owned staging nodes. A fixed
+one-shot Machine child runs under A's real and effective UID/GID with an
+IPv4/IPv6-denying sandbox. It reopens the staged descriptors without following
+links, remeasures the complete approved inventory, exclusively renames each
+tree into its installation name, seals it read-only, syncs it, and rechecks
+the final identity and bytes. Root then independently observes the published
+snapshots, installs the per-Soul sudo rule and policy, and writes the final
+applied root receipt. Any failed or uncertain A seal aborts installation;
+there is no root publication fallback.
 A reopens that root receipt and compares the policy to the exact approved plan
 on each use. Owner-writable source files may be copied only when no source
 component is writable by group or others and all inventory hashes match.
 Root apply changes ownership only on newly created private staging descriptors
 from root to the reviewed nonroot A UID and runner GID, then rechecks their
-identity before publishing the sealed snapshots. An existing or foreign-owned
-descriptor cannot be repaired into this authority.
+identity before handing the private staging nodes to A. An existing or
+foreign-owned descriptor cannot be repaired into this authority. The staging
+wrapper is A-only `0700`; the published root is A:runner-group `0555`, giving
+R read/traverse without publication or mutation rights.
 The installed artifact is checked again at each reservation. One runner OS
 account and one bridge OS account belong to each Soul installation.
 

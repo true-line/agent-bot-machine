@@ -237,13 +237,13 @@ func stage2aInstallFiles(s Saved, request *SoulProtectedLaunchInstall, p *stage2
 		}
 	}
 	for _, source := range []struct {
-		path, name string
+		path, kind string
 		records    []Stage2aDefinitionRecord
 		identity   *Stage2aSnapshotIdentity
 		runtime    bool
 	}{
-		{request.DefinitionSource, stage2aInstallSnapshotName(p.Binding.InstallationID, "definition"), p.Definition, &p.Binding.Snapshots.Definition, false},
-		{request.LaunchInputsSource, stage2aInstallSnapshotName(p.Binding.InstallationID, "inputs"), p.LaunchInputs.Files, &p.Binding.Snapshots.LaunchInputs, true},
+		{request.DefinitionSource, "definition", p.Definition, &p.Binding.Snapshots.Definition, false},
+		{request.LaunchInputsSource, "inputs", p.LaunchInputs.Files, &p.Binding.Snapshots.LaunchInputs, true},
 	} {
 		st, err := os.Lstat(source.path)
 		if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
@@ -262,12 +262,14 @@ func stage2aInstallFiles(s Saved, request *SoulProtectedLaunchInstall, p *stage2
 			return errStage2aReservationAuthority
 		}
 		sourceDir.Close()
-		publish := publishStage2aSourceAt
-		if source.runtime {
-			publish = publishStage2aRuntimeAt
+		prepared, err := prepareStage2aInstallSnapshotAt(source.path, namespace,
+			stage2aInstallSnapshotName(p.Binding.InstallationID, source.kind),
+			sys.Uid, sys.Gid, uint32(p.MachineUID), uint32(p.Runner.GID), source.records, source.runtime)
+		if err != nil {
+			return err
 		}
-		identity, digest, err := publish(source.path, namespace, source.name,
-			sys.Uid, sys.Gid, uint32(p.MachineUID), uint32(p.Runner.GID), source.records, true)
+		identity, digest, err := stage2aSealAsAdmin(*p, prepared, source.kind)
+		stage2aCleanPrivateStage(prepared.WrapperPath)
 		if err != nil {
 			return err
 		}

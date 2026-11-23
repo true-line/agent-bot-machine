@@ -23,6 +23,15 @@ const stage2aFrozenSnapshotParent = "/private/var/db/managed-machine/soul-snapsh
 
 var stage2aSnapshotName = regexp.MustCompile(`^snap_[0-9a-f]{24}$`)
 
+// A root install may prepare only fresh private A-owned nodes. The final
+// no-follow remeasurement, rename and seal must run under A's effective UID.
+type stage2aPreparedSnapshot struct {
+	WrapperPath string
+	Wrapper     Stage2aSnapshotIdentity
+	Stage       Stage2aSnapshotIdentity
+	Digest      string
+}
+
 // The published tree preserves approved modes. Every node the runner must
 // traverse or read therefore needs access through its dedicated primary group.
 func stage2aRunnerReadableInventory(approved []Stage2aDefinitionRecord) error {
@@ -195,15 +204,12 @@ func publishStage2aSourceAt(sourceRoot, destinationParent, name string,
 	sourceUID, sourceGID, snapshotUID, snapshotGID uint32,
 	approved []Stage2aDefinitionRecord, mutable bool) (Stage2aSnapshotIdentity, string, error) {
 	return publishStage2aSnapshotAt(sourceRoot, destinationParent, name, sourceUID,
-		sourceGID, snapshotUID, snapshotGID, approved, mutable, false)
+		sourceGID, snapshotUID, snapshotGID, approved, mutable, false, nil)
 }
 
-func publishStage2aRuntimeAt(sourceRoot, destinationParent, name string,
-	sourceUID, sourceGID, snapshotUID, snapshotGID uint32,
-	files []Stage2aDefinitionRecord, mutable bool) (Stage2aSnapshotIdentity, string, error) {
-	var empty Stage2aSnapshotIdentity
+func stage2aExpandedRuntimeRecords(files []Stage2aDefinitionRecord) ([]Stage2aDefinitionRecord, error) {
 	if _, err := stage2aLaunchFiles(files); err != nil {
-		return empty, "", err
+		return nil, err
 	}
 	dirs := map[string]bool{}
 	for _, file := range files {
@@ -217,13 +223,41 @@ func publishStage2aRuntimeAt(sourceRoot, destinationParent, name string,
 	}
 	records = append(records, files...)
 	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
+	return records, nil
+}
+
+func publishStage2aRuntimeAt(sourceRoot, destinationParent, name string,
+	sourceUID, sourceGID, snapshotUID, snapshotGID uint32,
+	files []Stage2aDefinitionRecord, mutable bool) (Stage2aSnapshotIdentity, string, error) {
+	var empty Stage2aSnapshotIdentity
+	records, err := stage2aExpandedRuntimeRecords(files)
+	if err != nil {
+		return empty, "", err
+	}
 	return publishStage2aSnapshotAt(sourceRoot, destinationParent, name, sourceUID,
-		sourceGID, snapshotUID, snapshotGID, records, mutable, true)
+		sourceGID, snapshotUID, snapshotGID, records, mutable, true, nil)
+}
+
+func prepareStage2aInstallSnapshotAt(sourceRoot, destinationParent, name string,
+	sourceUID, sourceGID, snapshotUID, snapshotGID uint32,
+	approved []Stage2aDefinitionRecord, runtime bool) (stage2aPreparedSnapshot, error) {
+	var prepared stage2aPreparedSnapshot
+	if runtime {
+		var err error
+		approved, err = stage2aExpandedRuntimeRecords(approved)
+		if err != nil {
+			return prepared, err
+		}
+	}
+	_, _, err := publishStage2aSnapshotAt(sourceRoot, destinationParent, name,
+		sourceUID, sourceGID, snapshotUID, snapshotGID, approved, true, runtime, &prepared)
+	return prepared, err
 }
 
 func publishStage2aSnapshotAt(sourceRoot, destinationParent, name string,
 	sourceUID, sourceGID, snapshotUID, snapshotGID uint32,
-	approved []Stage2aDefinitionRecord, mutable, runtime bool) (Stage2aSnapshotIdentity, string, error) {
+	approved []Stage2aDefinitionRecord, mutable, runtime bool,
+	prepare *stage2aPreparedSnapshot) (Stage2aSnapshotIdentity, string, error) {
 	var empty Stage2aSnapshotIdentity
 	if !stage2aSnapshotName.MatchString(name) || !stage2aAbsolutePath(sourceRoot) ||
 		!stage2aAbsolutePath(destinationParent) {
@@ -266,7 +300,12 @@ func publishStage2aSnapshotAt(sourceRoot, destinationParent, name string,
 		return empty, "", err
 	}
 	wrapperPath := filepath.Join(destinationParent, tempName)
-	defer stage2aCleanPrivateStage(wrapperPath)
+	retainPrepared := false
+	defer func() {
+		if !retainPrepared {
+			stage2aCleanPrivateStage(wrapperPath)
+		}
+	}()
 	wrapperFD, err := unix.Openat(parentFD, tempName, stage2aDirectoryOpenFlags, 0)
 	if err != nil {
 		return empty, "", err
@@ -372,6 +411,20 @@ func publishStage2aSnapshotAt(sourceRoot, destinationParent, name string,
 	}
 	if err := unix.Fsync(wrapperFD); err != nil {
 		return empty, "", err
+	}
+	if prepare != nil {
+		stage, digest, err := observe(tempPath, snapshotUID, snapshotGID, approved, true)
+		if err != nil || digest != approvedDigest {
+			return empty, "", errors.New("Stage 2a prepared bytes differ from approved source")
+		}
+		wrapper, _, err := stage2aSnapshotIdentityForSource(wrapperFD, snapshotUID, snapshotGID, true)
+		if err != nil {
+			return empty, "", err
+		}
+		*prepare = stage2aPreparedSnapshot{WrapperPath: wrapperPath,
+			Wrapper: wrapper, Stage: stage, Digest: digest}
+		retainPrepared = true
+		return stage, digest, nil
 	}
 	if err := unix.RenameatxNp(wrapperFD, contentName, parentFD, name, unix.RENAME_EXCL); err != nil {
 		return empty, "", err

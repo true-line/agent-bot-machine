@@ -65,6 +65,8 @@ func main() {
 		switch os.Args[1] {
 		case "harness-run":
 			os.Exit(members.RunHarness())
+		case "stage2a-seal":
+			os.Exit(members.RunStage2aInstallSeal())
 		}
 	}
 	if role, ok := stage2aRoleCommand(runtime.GOOS, os.Args); ok {
