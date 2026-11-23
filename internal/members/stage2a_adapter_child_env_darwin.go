@@ -134,7 +134,7 @@ func stage2aAdapterChildEnvWithRows(input Stage2aLaunchInputRecords,
 // the full selected Node/HQ/Comms import closure and child read boundary still
 // need separate enforcement before protected qualification.
 func stage2aSelectedStockCLI(external []Stage2aDefinitionRecord, sealed []stage2aDomainFileV3) error {
-	const path = "runtime/bin/claude"
+	const path = stage2aStockCLIPath
 	var selected *stage2aDomainFileV3
 	for i := range sealed {
 		if sealed[i].Path == path {
@@ -145,7 +145,10 @@ func stage2aSelectedStockCLI(external []Stage2aDefinitionRecord, sealed []stage2
 		}
 	}
 	if selected == nil || selected.ComponentID != "adapter" || selected.Kind != "regular" ||
-		selected.Mode != "0550" || selected.SizeBytes == 0 || selected.SizeBytes > stage2aMaxFileBytes ||
+		selected.Mode != "0550" || selected.SizeBytes == 0 ||
+		(selected.SizeBytes > stage2aMaxFileBytes &&
+			(selected.SizeBytes != stage2aStockCLISizeBytes || selected.SizeBytes > stage2aStockCLIMaxBytes ||
+				selected.SHA256 != "sha256:"+stage2aStockCLISHA256)) ||
 		!stage2aPrefixedDigest.MatchString(selected.SHA256) {
 		return errStage2aReservationAuthority
 	}

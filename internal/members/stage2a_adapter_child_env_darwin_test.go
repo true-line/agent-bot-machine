@@ -157,6 +157,24 @@ func TestStage2aV3AdapterChildEnvRequiresSealedRRow(t *testing.T) {
 	if err := stage2aAdapterChildEnvV3(input, &q, ref, inv); err != nil {
 		t.Fatalf("sealed R adapter refused: %v", err)
 	}
+	qualified := cloneStage2aLaunch(t, input)
+	qualifiedInventory := inv
+	qualifiedInventory.Files = append([]stage2aDomainFileV3(nil), inv.Files...)
+	for i := range qualified.Files {
+		if qualified.Files[i].Path == stage2aStockCLIPath {
+			n := stage2aStockCLISizeBytes
+			qualified.Files[i].Size = &n
+			qualified.Files[i].SHA256 = stage2aStockCLISHA256
+		}
+	}
+	qualifiedInventory.Files[1].SizeBytes = stage2aStockCLISizeBytes
+	qualifiedInventory.Files[1].SHA256 = "sha256:" + stage2aStockCLISHA256
+	if _, _, err := Stage2aLaunchInputDigest(qualified); err != nil {
+		t.Fatalf("exact stock CLI external row refused: %v", err)
+	}
+	if err := stage2aAdapterChildEnvV3(qualified, &q, ref, qualifiedInventory); err != nil {
+		t.Fatalf("exact stock CLI sealed R join refused: %v", err)
+	}
 	withoutCLI := cloneStage2aLaunch(t, input)
 	for i := range withoutCLI.Files {
 		if withoutCLI.Files[i].Path == "runtime/bin/claude" {
