@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -73,6 +74,24 @@ type stage2aVerifiedHInstallPlanV3 struct {
 	descriptor         stage2aHServiceDescriptorPayloadV3
 	authorityKeySHA256 string
 	machineGID         uint32
+}
+
+// stage2aHDescriptorTagsV3 preserves the contract distinction between an
+// omitted optional source tag and an explicit JSON null. Go pointer decoding
+// otherwise maps both forms to nil.
+func stage2aHDescriptorTagsV3(raw []byte) error {
+	var value struct {
+		Components []map[string]json.RawMessage `json:"components"`
+	}
+	if json.Unmarshal(raw, &value) != nil || len(value.Components) == 0 {
+		return errStage2aReservationAuthority
+	}
+	for _, component := range value.Components {
+		if tag, present := component["source_tag"]; present && bytes.Equal(tag, []byte("null")) {
+			return errStage2aReservationAuthority
+		}
+	}
+	return nil
 }
 
 func stage2aValidateHDescriptorV3(p stage2aHServiceDescriptorPayloadV3,
@@ -172,7 +191,7 @@ func signStage2aHServiceDescriptorV3(payload []byte, h stage2aVerifiedDomainRefV
 		return nil, "", errStage2aReservationAuthority
 	}
 	var p stage2aHServiceDescriptorPayloadV3
-	if stage2aDecodeExact(payload, &p) != nil {
+	if stage2aDecodeExact(payload, &p) != nil || stage2aHDescriptorTagsV3(payload) != nil {
 		return nil, "", errStage2aReservationAuthority
 	}
 	_, raw, err := stage2aV3SidecarAt(h.ref.Sidecar.Path, h.ref.MachineUID, h.ref.ReaderGID)
@@ -199,7 +218,7 @@ func signStage2aHServiceDescriptorV3(payload []byte, h stage2aVerifiedDomainRefV
 func stage2aDecodeHDescriptorV3(raw []byte, enrolledKey ed25519.PublicKey) (stage2aHServiceDescriptorPayloadV3, string, error) {
 	var p stage2aHServiceDescriptorPayloadV3
 	payload, digest, err := verifyStage2aV3Envelope(raw, stage2aHDescriptorPurposeV3, enrolledKey)
-	if err != nil || stage2aDecodeExact(payload, &p) != nil {
+	if err != nil || stage2aDecodeExact(payload, &p) != nil || stage2aHDescriptorTagsV3(payload) != nil {
 		return p, "", errStage2aReservationAuthority
 	}
 	return p, digest, nil

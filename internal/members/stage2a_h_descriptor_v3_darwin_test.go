@@ -108,3 +108,35 @@ func TestStage2aHDescriptorBindsReviewedPlanAndInstalledRowsV3(t *testing.T) {
 		t.Fatal("accepted substituted Machine signing key")
 	}
 }
+
+func TestStage2aHDescriptorRejectsExplicitNullSourceTagV3(t *testing.T) {
+	vector, _ := stage2aLoadContractVectorV3(t)
+	good := []byte(vector.HPayloadJCS)
+	if stage2aHDescriptorTagsV3(good) != nil {
+		t.Fatal("rejected valid Contracts H source tags")
+	}
+	var payload map[string]any
+	if json.Unmarshal(good, &payload) != nil {
+		t.Fatal("invalid Contracts H payload")
+	}
+	components, ok := payload["components"].([]any)
+	if !ok || len(components) == 0 {
+		t.Fatal("missing Contracts H components")
+	}
+	component, ok := components[0].(map[string]any)
+	if !ok {
+		t.Fatal("invalid Contracts H component")
+	}
+	component["source_tag"] = nil
+	bad, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded stage2aHServiceDescriptorPayloadV3
+	if stage2aDecodeExact(bad, &decoded) != nil {
+		t.Fatal("fixture no longer exercises Go optional-pointer null decoding")
+	}
+	if stage2aHDescriptorTagsV3(bad) == nil {
+		t.Fatal("accepted explicit null where Contracts requires an optional string")
+	}
+}
