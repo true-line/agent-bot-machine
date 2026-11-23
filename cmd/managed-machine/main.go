@@ -90,6 +90,8 @@ func main() {
 			os.Exit(members.RunStage2aHQWithdraw())
 		case "stage2a-h-evidence":
 			os.Exit(members.RunStage2aHQEvidence(daemon.ReadStage2aHQWorkerKey, daemon.CheckHQUpgradePair))
+		case "stage2a-reservation-v3":
+			os.Exit(members.RunStage2aReservationWorkerV3(daemon.ReadStage2aReservationWorkerKey, daemon.CheckHQUpgradePair))
 		}
 	}
 	if role, ok := stage2aRoleCommand(runtime.GOOS, os.Args); ok {

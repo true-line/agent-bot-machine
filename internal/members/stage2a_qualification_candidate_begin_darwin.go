@@ -31,45 +31,10 @@ func beginStage2aApprovedCandidateV3(saved Saved, approval Approval, owner, stat
 	var sealedR stage2aVerifiedDomainRefV3
 	_, err := AdmitDarwinQualificationRun(saved, approval, owner, hqUID, state, guard, time.Now,
 		func(run QualificationRun) error {
-			r := run.Request
-			q := r.Candidate
-			if validateQualificationRequest(r) != nil || q == nil ||
-				r.Host.ID != base.base.hostID || "sha256:"+r.TestProvider.ConfigSHA != base.broker.ProviderConfigSHA256 ||
-				q.InstallationID != base.base.binding.InstallationID ||
-				q.InstalledPlanDigest != base.base.binding.InstalledPlanDigest ||
-				"sha256:"+q.RuntimeInventorySHA != base.r.ref.InventoryDigest {
-				return errQualificationAdmissionUnavailable
-			}
-			if err := checkDesignatedHost(r); err != nil {
-				return err
-			}
-			if err := checkInstalledQ(r); err != nil {
-				return err
-			}
-			runtime, err := stage2aLoadInstalledRuntimeV3(key, hqUID, base.base.binding.HQEpoch, q.InstallationID)
-			if err != nil || runtime.VerifiedR.ref != base.r.ref ||
-				runtime.Policy.Binding.InstalledPlanDigest != q.InstalledPlanDigest {
-				return errQualificationAdmissionUnavailable
-			}
-			component, err := stage2aOwnerCandidateComponentV3(runtime.Plan, r)
-			if err != nil {
-				return err
-			}
-			archive, err := verifyStage2aCandidateAdapterArchiveV3(component, runtime.Inventory)
-			if err != nil {
-				return err
-			}
-			authority = stage2aQualificationCandidateAuthorityV3{
-				base: base, approval: approval, saved: saved, owner: owner,
-				testPlanSHA: "sha256:" + q.TestPlan.SHA256, archive: archive,
-				candidateComponent: q.ComponentID, approvedInstallationID: q.InstallationID,
-				approvedInstalledPlanDigest: q.InstalledPlanDigest, stateDirectory: state,
-			}
-			if _, err := stage2aCandidateAdapterV3(authority); err != nil {
-				return err
-			}
-			sealedR = runtime.VerifiedR
-			return stage2aRecheckVerifiedDomainV3(sealedR)
+			var err error
+			authority, sealedR, err = stage2aPrepareCandidateAuthorityV3(saved, approval, owner, state,
+				hqUID, base, checkDesignatedHost, checkInstalledQ)
+			return err
 		})
 	if err != nil {
 		return empty, nil, err
@@ -82,6 +47,56 @@ func beginStage2aApprovedCandidateV3(saved Saved, approval Approval, owner, stat
 		return empty, nil, err
 	}
 	return authority, spent, nil
+}
+
+// Both the one-use admission and the offline worker rebuild these inputs
+// from the installed Q plan and A's sealed H/R authority. This preparation
+// never creates or restores an approval or live grant.
+func stage2aPrepareCandidateAuthorityV3(saved Saved, approval Approval, owner, state string,
+	hqUID int, base stage2aReservationEvidenceV3,
+	checkDesignatedHost, checkInstalledQ func(QualificationRequest) error) (stage2aQualificationCandidateAuthorityV3, stage2aVerifiedDomainRefV3, error) {
+	var empty stage2aQualificationCandidateAuthorityV3
+	var noR stage2aVerifiedDomainRefV3
+	if saved.QualificationRun == nil || checkDesignatedHost == nil || checkInstalledQ == nil ||
+		len(base.base.enrolledAdminKey) != ed25519.PublicKeySize ||
+		!base.h.verified || !base.r.verified ||
+		CheckDarwinHarnessQualification(saved, owner, hqUID) != nil {
+		return empty, noR, errQualificationAdmissionUnavailable
+	}
+	r := saved.QualificationRun.Request
+	q := r.Candidate
+	if validateQualificationRequest(r) != nil || q == nil ||
+		r.Host.ID != base.base.hostID || "sha256:"+r.TestProvider.ConfigSHA != base.broker.ProviderConfigSHA256 ||
+		q.InstallationID != base.base.binding.InstallationID ||
+		q.InstalledPlanDigest != base.base.binding.InstalledPlanDigest ||
+		"sha256:"+q.RuntimeInventorySHA != base.r.ref.InventoryDigest ||
+		checkDesignatedHost(r) != nil || checkInstalledQ(r) != nil {
+		return empty, noR, errQualificationAdmissionUnavailable
+	}
+	runtime, err := stage2aLoadInstalledRuntimeV3(base.base.enrolledAdminKey, hqUID, base.base.binding.HQEpoch, q.InstallationID)
+	if err != nil || runtime.VerifiedR.ref != base.r.ref ||
+		runtime.Policy.Binding.InstalledPlanDigest != q.InstalledPlanDigest {
+		return empty, noR, errQualificationAdmissionUnavailable
+	}
+	component, err := stage2aOwnerCandidateComponentV3(runtime.Plan, r)
+	if err != nil {
+		return empty, noR, err
+	}
+	archive, err := verifyStage2aCandidateAdapterArchiveV3(component, runtime.Inventory)
+	if err != nil {
+		return empty, noR, err
+	}
+	authority := stage2aQualificationCandidateAuthorityV3{
+		base: base, approval: approval, saved: saved, owner: owner,
+		testPlanSHA: "sha256:" + q.TestPlan.SHA256, archive: archive,
+		candidateComponent: q.ComponentID, approvedInstallationID: q.InstallationID,
+		approvedInstalledPlanDigest: q.InstalledPlanDigest, stateDirectory: state,
+	}
+	if _, err := stage2aCandidateAdapterV3(authority); err != nil ||
+		stage2aRecheckVerifiedDomainV3(runtime.VerifiedR) != nil {
+		return empty, noR, errQualificationAdmissionUnavailable
+	}
+	return authority, runtime.VerifiedR, nil
 }
 
 func stage2aOwnerCandidateComponentV3(installed stage2aRuntimeV3Install, request QualificationRequest) (stage2aReleaseComponent, error) {
