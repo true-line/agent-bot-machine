@@ -4,8 +4,6 @@ package members
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,22 +16,6 @@ import (
 )
 
 const stage2aDomainSealSchemaV3 = "agent-bot-machine/stage2a-domain-install-seal/v3"
-
-func stage2aDomainNamesV3(domain, installationID string) (namespace, snapshot, sidecar string, err error) {
-	if !stage2aBindingID.MatchString(installationID) ||
-		(domain != "H-code" && domain != "R-runtime") {
-		return "", "", "", errors.New("invalid Stage 2a v3 domain slot")
-	}
-	slotSum := sha256.Sum256([]byte("agent-bot/stage2a-domain-slot/v3\x00" + domain + "\x00" + installationID))
-	snapshotSum := sha256.Sum256([]byte("agent-bot/stage2a-domain-snapshot/v3\x00" + domain + "\x00" + installationID))
-	prefix := "hq_"
-	if domain == "R-runtime" {
-		prefix = "r_"
-	}
-	stem := hex.EncodeToString(snapshotSum[:12])
-	return filepath.Join(stage2aFrozenSnapshotParent, prefix+hex.EncodeToString(slotSum[:10])),
-		"snap_" + stem, "inventory_" + stem + ".jcs", nil
-}
 
 type stage2aDomainSealRequestV3 struct {
 	Schema          string                    `json:"schema"`

@@ -19,7 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const stage2aFrozenSnapshotParent = "/private/var/db/managed-machine/soul-snapshots"
+const stage2aFrozenSnapshotParent = stage2aDomainSnapshotParentV3
 
 var stage2aSnapshotName = regexp.MustCompile(`^snap_[0-9a-f]{24}$`)
 

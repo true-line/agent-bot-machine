@@ -3,6 +3,7 @@ package members
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,11 +16,30 @@ import (
 )
 
 const (
+	stage2aDomainSnapshotParentV3     = "/private/var/db/managed-machine/soul-snapshots"
 	stage2aHCodeInventoryPurposeV3    = "agent-bot/stage2a-h-code-inventory/v3"
 	stage2aRRuntimeInventoryPurposeV3 = "agent-bot/stage2a-r-runtime-inventory/v3"
 	stage2aV3MaxInventoryFileBytes    = 402653184
 	stage2aV3MaxInventoryTotalBytes   = 1 << 30
 )
+
+// These POSIX paths are Machine's macOS targets even when a plan is rendered
+// on another build OS. Distinct purposes keep H and R installation slots apart.
+func stage2aDomainNamesV3(domain, installationID string) (namespace, snapshot, sidecar string, err error) {
+	if !stage2aBindingID.MatchString(installationID) ||
+		(domain != "H-code" && domain != "R-runtime") {
+		return "", "", "", errors.New("invalid Stage 2a v3 domain slot")
+	}
+	slotSum := sha256.Sum256([]byte("agent-bot/stage2a-domain-slot/v3\x00" + domain + "\x00" + installationID))
+	snapshotSum := sha256.Sum256([]byte("agent-bot/stage2a-domain-snapshot/v3\x00" + domain + "\x00" + installationID))
+	prefix := "hq_"
+	if domain == "R-runtime" {
+		prefix = "r_"
+	}
+	stem := hex.EncodeToString(snapshotSum[:12])
+	return path.Join(stage2aDomainSnapshotParentV3, prefix+hex.EncodeToString(slotSum[:10])),
+		"snap_" + stem, "inventory_" + stem + ".jcs", nil
+}
 
 var stage2aV3InventoryPath = regexp.MustCompile(`^[A-Za-z0-9._+@/-]+$`)
 
