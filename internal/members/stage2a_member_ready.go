@@ -12,12 +12,14 @@ const Stage2aMemberReadyPurpose = "agent-bot/stage2a-member-set-ready/v1"
 // cached B policy and live kernel processes before signing aggregate Ready.
 type Stage2aMemberReadyRequest struct {
 	Stage2aStopRequest
-	ChildObservationEnvelopeSHA256 string `json:"child_observation_envelope_sha256"`
-	MemberBAuthorityEnvelopeSHA256 string `json:"member_b_authority_envelope_sha256"`
-	Arms                           []struct {
-		ArmRequest json.RawMessage `json:"arm_request"`
-		ArmResult  json.RawMessage `json:"arm_result"`
-	} `json:"arms"`
+	ChildObservationEnvelopeSHA256 string                     `json:"child_observation_envelope_sha256"`
+	MemberBAuthorityEnvelopeSHA256 string                     `json:"member_b_authority_envelope_sha256"`
+	Arms                           []Stage2aMemberArmExchange `json:"arms"`
+}
+
+type Stage2aMemberArmExchange struct {
+	ArmRequest json.RawMessage `json:"arm_request"`
+	ArmResult  json.RawMessage `json:"arm_result"`
 }
 
 func ParseStage2aMemberReadyRequest(raw []byte) (Stage2aMemberReadyRequest, error) {

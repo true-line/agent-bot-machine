@@ -86,6 +86,51 @@ type stage2aMemberReadyPayload struct {
 	ExpiresAt  string `json:"expires_at"`
 }
 
+func stage2aVerifyMemberArmExchange(pair Stage2aMemberArmExchange,
+	selectors stage2aNativeMemberSelectors, memberID, memberSelector, runtimeID,
+	observationSHA256 string, child soulKernelProcessSnapshot, bridgeUID, runnerUID,
+	runnerGID int, observedAt, now time.Time) (stage2aMemberArmWireRequest, time.Time, error) {
+	var request stage2aMemberArmWireRequest
+	var result stage2aMemberArmWireResult
+	if stage2aDecodeExact(pair.ArmRequest, &request) != nil ||
+		stage2aDecodeExact(pair.ArmResult, &result) != nil ||
+		request.Kind != "bridge.member.arm.v3.request" ||
+		result.Kind != "bridge.member.arm.v3.result" ||
+		request.Selectors != selectors || request.MemberID != memberID ||
+		request.MemberSelector != memberSelector ||
+		request.ChildObservationEnvelopeSHA256 != observationSHA256 ||
+		!stage2aLowerHex64(request.ObserveNonce) || !stage2aLowerHex64(request.ArmNonce) ||
+		result.MemberID != request.MemberID || result.MemberSelector != request.MemberSelector ||
+		result.ArmNonce != request.ArmNonce ||
+		result.BridgeArmReceiptSHA256 != request.BridgeArmReceiptSHA256 ||
+		result.State != "recorded-pending-aggregate-ready" {
+		return stage2aMemberArmWireRequest{}, time.Time{}, errStage2aReservationAuthority
+	}
+	arm := request.BridgeArm
+	if arm.MemberID != memberID || arm.MemberSelector != memberSelector ||
+		arm.RuntimeID != runtimeID ||
+		arm.ChildObservationEnvelopeSHA256 != observationSHA256 ||
+		arm.BridgeUID != bridgeUID || arm.AdapterPID != child.PID ||
+		arm.AdapterUID != runnerUID || arm.AdapterGID != runnerGID ||
+		arm.AdapterStartSeconds != child.StartSeconds ||
+		arm.AdapterStartMicros != child.StartMicros ||
+		arm.RelayPeerRule != "a-attested-live-direct-child-of-adapter-v1" ||
+		arm.RelayPeerState != "unobserved" ||
+		arm.ProviderIngress != "withheld-pending-per-peer-attestation" ||
+		arm.State != "armed" {
+		return stage2aMemberArmWireRequest{}, time.Time{}, errStage2aReservationAuthority
+	}
+	armRaw, err := marshalStage2aReservationJCS(arm)
+	armed, armErr := time.Parse(time.RFC3339Nano, arm.ArmedAt)
+	ackExpires, ackErr := time.Parse(time.RFC3339Nano, result.ExpiresAt)
+	if err != nil || stage2aReservationSHA256(armRaw) != request.BridgeArmReceiptSHA256 ||
+		armErr != nil || ackErr != nil || armed.After(now) || armed.Before(observedAt) ||
+		armed.Before(time.Unix(0, 0)) || !now.Before(ackExpires) {
+		return stage2aMemberArmWireRequest{}, time.Time{}, errStage2aReservationAuthority
+	}
+	return request, ackExpires, nil
+}
+
 // MemberReady only records H's two B-origin arm requests, paired with H's
 // pending acknowledgments on the existing authenticated broker stream. A
 // verifies every arm against its own observed children and signed B policy;
@@ -205,60 +250,26 @@ func (s *Stage2aService) MemberReady(hqUID int, epoch string,
 	until = minStage2aTime(until, bExpires)
 	seenObserve, seenArm := map[string]bool{}, map[string]bool{}
 	for i, pair := range q.Arms {
-		var request stage2aMemberArmWireRequest
-		var result stage2aMemberArmWireResult
-		if stage2aDecodeExact(pair.ArmRequest, &request) != nil ||
-			stage2aDecodeExact(pair.ArmResult, &result) != nil ||
-			request.Kind != "bridge.member.arm.v3.request" ||
-			result.Kind != "bridge.member.arm.v3.result" ||
-			request.Selectors != expectedSelectors ||
-			request.MemberID != assignment.Members[i].MemberID ||
-			request.MemberID != observation.Members[i].MemberID ||
-			request.MemberSelector != assignment.Members[i].MemberSelector ||
-			request.MemberSelector != observation.Members[i].MemberSelector ||
-			request.ChildObservationEnvelopeSHA256 != q.ChildObservationEnvelopeSHA256 ||
-			!stage2aLowerHex64(request.ObserveNonce) || !stage2aLowerHex64(request.ArmNonce) ||
-			seenObserve[request.ObserveNonce] || seenArm[request.ArmNonce] ||
-			result.MemberID != request.MemberID || result.MemberSelector != request.MemberSelector ||
-			result.ArmNonce != request.ArmNonce ||
-			result.BridgeArmReceiptSHA256 != request.BridgeArmReceiptSHA256 ||
-			result.State != "recorded-pending-aggregate-ready" {
+		if observation.Members[i].MemberID != assignment.Members[i].MemberID ||
+			observation.Members[i].MemberSelector != assignment.Members[i].MemberSelector ||
+			observation.Members[i].LaunchID != assignment.Members[i].LaunchID ||
+			observation.Members[i].LauncherProcess != stage2aMemberLauncherIdentity(r.twoMemberChildren.Members[i].Launcher) ||
+			observation.Members[i].ChildProcess != stage2aMemberProcessIdentity(r.twoMemberChildren.Members[i].Child,
+				r.twoMemberChildren.Members[i].CommandSHA256) ||
+			observation.Members[i].GrantSHA256 != r.memberChildGrants[assignment.Members[i].MemberID].GrantSHA256 {
+			return reply, errStage2aReservationAuthority
+		}
+		request, ackExpires, err := stage2aVerifyMemberArmExchange(pair, expectedSelectors,
+			assignment.Members[i].MemberID, assignment.Members[i].MemberSelector,
+			observation.Members[i].RuntimeID, q.ChildObservationEnvelopeSHA256,
+			r.twoMemberChildren.Members[i].Child, p.Bridge.UID, p.Runner.UID, p.Runner.GID,
+			observedAt, now)
+		if err != nil || seenObserve[request.ObserveNonce] || seenArm[request.ArmNonce] ||
+			!now.Before(r.memberChildGrants[assignment.Members[i].MemberID].ExpiresAt) {
 			return reply, errStage2aReservationAuthority
 		}
 		seenObserve[request.ObserveNonce], seenArm[request.ArmNonce] = true, true
 		arm := request.BridgeArm
-		child := r.twoMemberChildren.Members[i].Child
-		if observation.Members[i].LaunchID != assignment.Members[i].LaunchID ||
-			observation.Members[i].MemberSelector != assignment.Members[i].MemberSelector ||
-			observation.Members[i].LauncherProcess != stage2aMemberLauncherIdentity(r.twoMemberChildren.Members[i].Launcher) ||
-			observation.Members[i].ChildProcess != stage2aMemberProcessIdentity(child,
-				r.twoMemberChildren.Members[i].CommandSHA256) ||
-			observation.Members[i].GrantSHA256 != r.memberChildGrants[request.MemberID].GrantSHA256 {
-			return reply, errStage2aReservationAuthority
-		}
-		if arm.MemberID != request.MemberID || arm.MemberSelector != request.MemberSelector ||
-			arm.RuntimeID != observation.Members[i].RuntimeID ||
-			arm.ChildObservationEnvelopeSHA256 != q.ChildObservationEnvelopeSHA256 ||
-			arm.BridgeUID != p.Bridge.UID || arm.AdapterPID != child.PID ||
-			arm.AdapterUID != p.Runner.UID || arm.AdapterGID != p.Runner.GID ||
-			arm.AdapterStartSeconds != child.StartSeconds ||
-			arm.AdapterStartMicros != child.StartMicros ||
-			arm.RelayPeerRule != "a-attested-live-direct-child-of-adapter-v1" ||
-			arm.RelayPeerState != "unobserved" ||
-			arm.ProviderIngress != "withheld-pending-per-peer-attestation" ||
-			arm.State != "armed" {
-			return reply, errStage2aReservationAuthority
-		}
-		armRaw, err := marshalStage2aReservationJCS(arm)
-		armed, armErr := time.Parse(time.RFC3339Nano, arm.ArmedAt)
-		ackExpires, ackErr := time.Parse(time.RFC3339Nano, result.ExpiresAt)
-		if err != nil || stage2aReservationSHA256(armRaw) != request.BridgeArmReceiptSHA256 ||
-			armErr != nil || ackErr != nil || armed.After(now) || armed.Before(observedAt) ||
-			!now.Before(ackExpires) ||
-			armed.Before(time.Unix(0, 0)) ||
-			!now.Before(r.memberChildGrants[request.MemberID].ExpiresAt) {
-			return reply, errStage2aReservationAuthority
-		}
 		until = minStage2aTime(until, ackExpires)
 		until = minStage2aTime(until, r.memberChildGrants[request.MemberID].ExpiresAt)
 		ready.Members[i].MemberID = request.MemberID

@@ -10,10 +10,7 @@ func TestMemberReadyRequestRequiresTwoExactArmExchanges(t *testing.T) {
 	q := Stage2aMemberReadyRequest{Stage2aStopRequest: stage2aHelloTestSelectors(),
 		ChildObservationEnvelopeSHA256: "sha256:" + strings.Repeat("a", 64),
 		MemberBAuthorityEnvelopeSHA256: "sha256:" + strings.Repeat("b", 64)}
-	q.Arms = make([]struct {
-		ArmRequest json.RawMessage `json:"arm_request"`
-		ArmResult  json.RawMessage `json:"arm_result"`
-	}, 2)
+	q.Arms = make([]Stage2aMemberArmExchange, 2)
 	for i := range q.Arms {
 		q.Arms[i].ArmRequest = json.RawMessage(`{"kind":"bridge.member.arm.v3.request"}`)
 		q.Arms[i].ArmResult = json.RawMessage(`{"kind":"bridge.member.arm.v3.result"}`)
