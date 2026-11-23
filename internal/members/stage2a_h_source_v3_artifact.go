@@ -199,6 +199,7 @@ var stage2aHSourceNonInstalledV3 = map[string]bool{
 	"tests/stage2a-h-preloader.test.mjs":                               true,
 	"tests/stage2a-capture-machine-channel.test.mjs":                   true,
 	"tests/stage2a-qualification-provider.test.mjs":                    true,
+	"tests/stage2a-relay-peer.test.mjs":                                true,
 	"tests/t02-machine-capture.test.mjs":                               true,
 	"tests/stage2a-protected-admission.test.mjs":                       true,
 	"tests/stage2a-protected-start.test.mjs":                           true,
