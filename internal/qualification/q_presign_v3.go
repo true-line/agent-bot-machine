@@ -37,6 +37,7 @@ var (
 type VerifiedQPreSignV3 struct {
 	verified                                                              bool
 	SessionID, CohortID, InstallationID, SoulID, StartID, HostID, Profile string
+	AdapterTransport                                                      string
 	ReservationSHA256, WireSHA256, IndexSHA256, EOFReceiptSHA256          string
 	QSourceSHA256, TestPlanSHA256                                         string
 	ObservationCount                                                      int
@@ -209,6 +210,20 @@ func qPathV3(value string) bool {
 // its full lifecycle is checked by the separate one-use verifier.
 func VerifyQPreSignV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope []byte,
 	machineKey ed25519.PublicKey, now time.Time) (VerifiedQPreSignV3, error) {
+	return verifyQPreSignWithTransportV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope,
+		machineKey, now, "brokered-b")
+}
+
+// VerifyQPreSignDirectCooperativeV3 accepts only the separate direct-Comms
+// cooperative reservation. It cannot substitute for brokered-B publication.
+func VerifyQPreSignDirectCooperativeV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope []byte,
+	machineKey ed25519.PublicKey, now time.Time) (VerifiedQPreSignV3, error) {
+	return verifyQPreSignWithTransportV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope,
+		machineKey, now, "direct-comms")
+}
+
+func verifyQPreSignWithTransportV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope []byte,
+	machineKey ed25519.PublicKey, now time.Time, cooperativeTransport string) (VerifiedQPreSignV3, error) {
 	var zero VerifiedQPreSignV3
 	if now.IsZero() || len(wireRaw) == 0 || len(wireRaw) > 32<<20 {
 		return zero, ErrUnqualified
@@ -251,7 +266,8 @@ func VerifyQPreSignV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope [
 	if e1 != nil || e2 != nil || e3 != nil || eofAt.After(issued) || issued.After(eofAt.Add(30*time.Second)) || !eofIssued.Equal(issued) || issued.After(now) {
 		return zero, ErrUnqualified
 	}
-	if digest(reservationEnvelope) != idx.ReservationSHA256 || qReservationJoinV3(reservationEnvelope, machineKey, idx) != nil {
+	if digest(reservationEnvelope) != idx.ReservationSHA256 ||
+		qReservationJoinV3(reservationEnvelope, machineKey, idx, cooperativeTransport) != nil {
 		return zero, ErrUnqualified
 	}
 	begin, e1 := decode(wire.Begin, qFrameMaxV3+4)
@@ -290,7 +306,11 @@ func VerifyQPreSignV3(wireRaw, indexEnvelope, eofEnvelope, reservationEnvelope [
 	if digest(ordered.Bytes()) != idx.OrderedFramesSHA256 || qVerifyTranscriptV3(beginRaw, readyRaw, reqRaw, obsRaw, finishRaw, finishedRaw, observations, idx, eofAt) != nil {
 		return zero, ErrUnqualified
 	}
-	return VerifiedQPreSignV3{verified: true, SessionID: idx.SessionID, CohortID: idx.CohortID, InstallationID: idx.InstallationID, SoulID: idx.SoulID, StartID: idx.StartID, HostID: idx.HostID, Profile: idx.Profile, ReservationSHA256: idx.ReservationSHA256, WireSHA256: idx.WireSHA256, IndexSHA256: digest(indexEnvelope), EOFReceiptSHA256: digest(eofEnvelope), QSourceSHA256: idx.QSourceSHA256, TestPlanSHA256: idx.TestPlanSHA256, ObservationCount: idx.ObservationCount}, nil
+	transport := ""
+	if idx.Profile == "managed-cooperative" {
+		transport = cooperativeTransport
+	}
+	return VerifiedQPreSignV3{verified: true, SessionID: idx.SessionID, CohortID: idx.CohortID, InstallationID: idx.InstallationID, SoulID: idx.SoulID, StartID: idx.StartID, HostID: idx.HostID, Profile: idx.Profile, AdapterTransport: transport, ReservationSHA256: idx.ReservationSHA256, WireSHA256: idx.WireSHA256, IndexSHA256: digest(indexEnvelope), EOFReceiptSHA256: digest(eofEnvelope), QSourceSHA256: idx.QSourceSHA256, TestPlanSHA256: idx.TestPlanSHA256, ObservationCount: idx.ObservationCount}, nil
 }
 
 func qLowerHexV3(s string) bool {
@@ -326,19 +346,22 @@ func qPrintableV3(s string, max int) bool {
 	return true
 }
 
-func qReservationJoinV3(envelope []byte, key ed25519.PublicKey, idx qIndexV3) error {
+func qReservationJoinV3(envelope []byte, key ed25519.PublicKey, idx qIndexV3, cooperativeTransport string) error {
 	if idx.Profile == "managed-cooperative" {
+		if cooperativeTransport != "direct-comms" && cooperativeTransport != "brokered-b" {
+			return ErrUnqualified
+		}
 		payload, err := qSignedRecordV3(envelope, cooperativeReservationPurposeV3, 3, key)
 		if err != nil {
 			return ErrUnqualified
 		}
-		return qReservationJoinCurrentV3(payload, idx, "soul-cooperative-reservation", true)
+		return qReservationJoinCurrentV3(payload, idx, "soul-cooperative-reservation", cooperativeTransport)
 	}
 	if idx.Profile != "managed-protected" {
 		return ErrUnqualified
 	}
 	if payload, err := qSignedRecordV3(envelope, qProtectedReservationPurposeV3, 3, key); err == nil {
-		return qReservationJoinCurrentV3(payload, idx, "stage2a-reservation", false)
+		return qReservationJoinCurrentV3(payload, idx, "stage2a-reservation", "")
 	}
 	return qReservationJoinLegacyV3(envelope, key, idx)
 }
@@ -346,7 +369,7 @@ func qReservationJoinV3(envelope []byte, key ed25519.PublicKey, idx qIndexV3) er
 // The Q pre-sign component joins the exact current A-signed reservation and
 // its complete v3 measurement binding. One-use spending, installed bytes,
 // release provenance and physical gate verdicts remain separate checks.
-func qReservationJoinCurrentV3(payload []byte, idx qIndexV3, kind string, cooperative bool) error {
+func qReservationJoinCurrentV3(payload []byte, idx qIndexV3, kind, cooperativeTransport string) error {
 	fields, err := canonicalBytes(payload, 64<<10)
 	if err != nil {
 		return ErrUnqualified
@@ -367,9 +390,28 @@ func qReservationJoinCurrentV3(payload []byte, idx qIndexV3, kind string, cooper
 		len(p.Assignment) == 0 || len(p.MeasurementBinding) == 0 {
 		return ErrUnqualified
 	}
-	if cooperative && p.AdapterTransport != "brokered-b" ||
-		!cooperative && p.AdapterTransport != "" {
+	if p.AdapterTransport != cooperativeTransport {
 		return ErrUnqualified
+	}
+	if cooperativeTransport != "" {
+		endpoints, err := strictObject(fields["endpoints"], 48<<10)
+		if err != nil {
+			return ErrUnqualified
+		}
+		if cooperativeTransport == "direct-comms" {
+			if !hasFields(endpoints, "admission", "broker") || fields["bridge_launch_sha256"] != nil {
+				return ErrUnqualified
+			}
+		} else if cooperativeTransport == "brokered-b" {
+			var bridgeLaunchSHA string
+			if !hasFields(endpoints, "admission", "member", "relay") ||
+				json.Unmarshal(fields["bridge_launch_sha256"], &bridgeLaunchSHA) != nil ||
+				!validSHA(bridgeLaunchSHA) {
+				return ErrUnqualified
+			}
+		} else {
+			return ErrUnqualified
+		}
 	}
 	assignment, err := strictObject(p.Assignment, 48<<10)
 	if err != nil {
@@ -388,7 +430,7 @@ func qReservationJoinCurrentV3(payload []byte, idx qIndexV3, kind string, cooper
 		return ErrUnqualified
 	}
 	var binding hrMeasurementBindingV3
-	if cooperative {
+	if cooperativeTransport != "" {
 		binding, err = parseCooperativeMeasurementBindingV3(fields["measurement_binding"])
 	} else {
 		binding, err = parseHRMeasurementBindingV3(fields["measurement_binding"])
