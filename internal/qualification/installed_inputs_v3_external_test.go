@@ -196,3 +196,48 @@ func TestInstalledInventoryRejectsUnmeasuredComponentWithMatchingRecordDigestV3(
 		t.Fatal("unmeasured component accepted despite recomputed matching record and binding digests")
 	}
 }
+
+func TestInstalledInventoryRejectsBrokenDefinitionTreeWithMatchingDigestV3(t *testing.T) {
+	root, inventory, bindingRaw := inventoryFixtureV3(t)
+	ref := inventory["definition_records"].(map[string]any)
+	name := strings.TrimPrefix(ref["sha256"].(string), "sha256:")
+	recordsRaw, err := os.ReadFile(filepath.Join(root, "objects", "sha256", name[:2], name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []map[string]any
+	if err := json.Unmarshal(recordsRaw, &records); err != nil {
+		t.Fatal(err)
+	}
+	var changedRecords []map[string]any
+	for _, record := range records {
+		if record["path"] != "Contents/opt" {
+			changedRecords = append(changedRecords, record)
+		}
+	}
+	changedDefinition, err := json.Marshal(changedRecords)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory["definition_records"] = inventoryBlobV3(t, root, "definition_records", changedDefinition)
+	var binding map[string]any
+	if err := json.Unmarshal(bindingRaw, &binding); err != nil {
+		t.Fatal(err)
+	}
+	measured := sha256.Sum256(append([]byte("agent-bot/stage2a-definition-opt-closure/v1\x00"), changedDefinition...))
+	binding["definition_measurement"] = "sha256:" + hex.EncodeToString(measured[:])
+	changedBinding, err := json.Marshal(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound := sha256.Sum256(changedBinding)
+	inventory["measurement_binding_sha256"] = "sha256:" + hex.EncodeToString(bound[:])
+	changedInventory, err := json.Marshal(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := qualification.ResolveInstalledInputInventoryV3(root, changedInventory,
+		changedBinding, time.Date(2026, 11, 22, 13, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("broken definition parent accepted despite recomputed matching digests")
+	}
+}

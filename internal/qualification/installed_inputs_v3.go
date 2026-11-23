@@ -3,6 +3,7 @@ package qualification
 import (
 	"bytes"
 	"encoding/json"
+	"path"
 	"reflect"
 	"strings"
 	"time"
@@ -124,6 +125,9 @@ func installedRecordFilesV3(raw []byte, scope string, expected map[string]instal
 	}
 	previous := ""
 	aliases := map[string]bool{}
+	kinds := map[string]string{}
+	impliedDirs := map[string]bool{}
+	children := map[string]map[string]string{}
 	var total uint64
 	for _, record := range records {
 		if !installedPathV3(record.Path) || !installedModeV3(record.Mode) ||
@@ -132,6 +136,42 @@ func installedRecordFilesV3(raw []byte, scope string, expected map[string]instal
 		}
 		previous = record.Path
 		aliases[strings.ToLower(record.Path)] = true
+		if scope == "definition" {
+			if record.Path != "Contents" && !strings.HasPrefix(record.Path, "Contents/") ||
+				record.Path != "Contents" && record.Path != "Contents/SoulInfo.json" &&
+					record.Path != "Contents/SoulLock.json" && record.Path != "Contents/opt" &&
+					record.Path != "Contents/primitives" &&
+					!strings.HasPrefix(record.Path, "Contents/opt/") &&
+					!strings.HasPrefix(record.Path, "Contents/primitives/") ||
+				record.Path != "Contents" && kinds[path.Dir(record.Path)] != "directory" {
+				return ErrUnqualified
+			}
+			kinds[record.Path] = record.Kind
+		} else {
+			parent := ""
+			parts := strings.Split(record.Path, "/")
+			for i, part := range parts {
+				if children[parent] == nil {
+					children[parent] = map[string]string{}
+				}
+				folded := strings.ToLower(part)
+				if old, exists := children[parent][folded]; exists && old != part {
+					return ErrUnqualified
+				}
+				children[parent][folded] = part
+				parent = path.Join(parent, part)
+				if i < len(parts)-1 {
+					if kinds[parent] == "regular" {
+						return ErrUnqualified
+					}
+					impliedDirs[parent] = true
+				}
+			}
+			if impliedDirs[record.Path] {
+				return ErrUnqualified
+			}
+			kinds[record.Path] = record.Kind
+		}
 		if scope == "definition" && record.Kind == "directory" {
 			if record.Size != nil || record.SHA256 != "" {
 				return ErrUnqualified
@@ -144,6 +184,17 @@ func installedRecordFilesV3(raw []byte, scope string, expected map[string]instal
 		}
 		total += *record.Size
 		expected[scope+"/"+record.Path] = record
+	}
+	if scope == "definition" {
+		for required, kind := range map[string]string{
+			"Contents": "directory", "Contents/SoulInfo.json": "regular",
+			"Contents/SoulLock.json": "regular", "Contents/opt": "directory",
+			"Contents/primitives": "directory",
+		} {
+			if kinds[required] != kind {
+				return ErrUnqualified
+			}
+		}
 	}
 	return nil
 }
