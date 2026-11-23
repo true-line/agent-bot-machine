@@ -376,8 +376,8 @@ func (s *Stage2aService) BeginDirectQualificationV3(uid int, epoch string,
 // pre receipt cannot be replayed into another process lifetime.
 func (s *Stage2aService) closeDirectQualificationV3(live *soulCooperativeLiveV3) {
 	if live != nil && live.directQ != nil {
-		if live.directQ.session != nil {
-			live.directQ.session.close()
+		if live.directQ.session != nil && live.directQ.session.conn != nil {
+			_ = live.directQ.session.conn.Close()
 		}
 		if live.directQ.wait != nil {
 			_ = live.directQ.wait()
