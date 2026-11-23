@@ -35,6 +35,7 @@ const stage2aMemberChildObserveVerb = "stage2a-member-child-observe"
 const stage2aMemberLiveVerb = "stage2a-member-live"
 const stage2aMemberReadyVerb = "stage2a-member-ready"
 const stage2aMemberRuntimeVerb = "stage2a-member-runtime"
+const stage2aMemberHQFinalizationVerb = "stage2a-member-finalization"
 
 var stage2aExecDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -52,7 +53,8 @@ func isStage2aVerb(verb string) bool {
 		verb == stage2aPeerRoleVerb || verb == stage2aMemberSetAssignVerb ||
 		verb == stage2aMemberProvisionalMapVerb || verb == stage2aMemberChildGrantVerb ||
 		verb == stage2aMemberChildObserveVerb || verb == stage2aMemberLiveVerb ||
-		verb == stage2aMemberReadyVerb || verb == stage2aMemberRuntimeVerb
+		verb == stage2aMemberReadyVerb || verb == stage2aMemberRuntimeVerb ||
+		verb == stage2aMemberHQFinalizationVerb
 }
 
 func stage2aFields(req *Request, raw []byte) (string, string) {
@@ -63,7 +65,8 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 		return "", ""
 	}
 	maxRequest := 8192
-	if req.Verb == stage2aControlProbeVerb {
+	if req.Verb == stage2aControlProbeVerb || req.Verb == stage2aMemberRuntimeVerb ||
+		req.Verb == stage2aMemberHQFinalizationVerb {
 		maxRequest = 16 << 10
 	}
 	fields, ok := deviceObject(raw)
@@ -223,6 +226,14 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 			return diag.DaemonUndeclared, "invalid Stage 2a member runtime request"
 		}
 		req.stage2aMemberRuntime = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aMemberHQFinalizationVerb {
+		parsed, err := members.ParseStage2aMemberHQFinalizationRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid Stage 2a member finalization request"
+		}
+		req.stage2aMemberHQFinalization = parsed
 		return "", ""
 	}
 	if req.Verb == stage2aMemberReadyVerb {
