@@ -2,6 +2,7 @@ package members
 
 import (
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -139,11 +140,47 @@ func TestStage2aV3AdapterChildEnvRequiresSealedRRow(t *testing.T) {
 		Snapshot: stage2aDomainNodeRefV3{Path: "/private/sealed-r"}}
 	executable := ref.Snapshot.Path + "/runtime/bin/claude-agent-acp"
 	input.HostProjection.Adapters["fixture-adapter"].(map[string]any)["command"] = []any{executable}
+	cliSize := uint64(42)
+	cliHash := strings.Repeat("e", 64)
+	input.Files = append(input.Files, Stage2aDefinitionRecord{
+		Path: "runtime/bin/claude", Kind: "regular", Mode: "0550",
+		Size: &cliSize, SHA256: cliHash,
+	})
+	sort.Slice(input.Files, func(i, j int) bool { return input.Files[i].Path < input.Files[j].Path })
 	inv := stage2aDomainInventoryV3{Domain: "R-runtime", InstallationID: ref.InstallationID,
-		Files: []stage2aDomainFileV3{{Path: "runtime/bin/claude-agent-acp", ComponentID: "adapter",
-			Mode: "0550", SHA256: input.ComponentDigests["adapter"]}}}
+		Files: []stage2aDomainFileV3{
+			{Path: "runtime/bin/claude-agent-acp", ComponentID: "adapter",
+				Mode: "0550", SHA256: input.ComponentDigests["adapter"]},
+			{Path: "runtime/bin/claude", ComponentID: "adapter", Kind: "regular",
+				Mode: "0550", SizeBytes: cliSize, SHA256: "sha256:" + cliHash},
+		}}
 	if err := stage2aAdapterChildEnvV3(input, &q, ref, inv); err != nil {
 		t.Fatalf("sealed R adapter refused: %v", err)
+	}
+	withoutCLI := cloneStage2aLaunch(t, input)
+	for i := range withoutCLI.Files {
+		if withoutCLI.Files[i].Path == "runtime/bin/claude" {
+			withoutCLI.Files = append(withoutCLI.Files[:i], withoutCLI.Files[i+1:]...)
+			break
+		}
+	}
+	if stage2aAdapterChildEnvV3(withoutCLI, &q, ref, inv) == nil {
+		t.Fatal("omitted selected stock CLI accepted")
+	}
+	badInventory := inv
+	badInventory.Files = append([]stage2aDomainFileV3(nil), inv.Files...)
+	badInventory.Files[1].SHA256 = "sha256:" + strings.Repeat("f", 64)
+	if stage2aAdapterChildEnvV3(input, &q, ref, badInventory) == nil {
+		t.Fatal("changed sealed stock CLI accepted")
+	}
+	tooLarge := cloneStage2aLaunch(t, input)
+	for i := range tooLarge.Files {
+		if tooLarge.Files[i].Path == "runtime/bin/claude" {
+			*tooLarge.Files[i].Size = 354630016
+		}
+	}
+	if _, _, err := Stage2aLaunchInputDigest(tooLarge); err == nil {
+		t.Fatal("stock CLI over current 256 MiB external limit accepted")
 	}
 	if stage2aAdapterChildEnv(input, &q, "/private/stage2a/snapshot-launch") == nil {
 		t.Fatal("legacy launch snapshot accepted the R-only child path")

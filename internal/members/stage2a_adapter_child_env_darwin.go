@@ -3,6 +3,7 @@ package members
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 )
 
 // The child environment is part of A's owner-reviewed launch-input object.
@@ -101,6 +102,9 @@ func stage2aAdapterChildEnvWithRows(input Stage2aLaunchInputRecords,
 	if !measured {
 		return invalid
 	}
+	if rFiles != nil && stage2aSelectedStockCLI(input.Files, rFiles) != nil {
+		return invalid
+	}
 	if raw["schema"] != stage2aAdapterChildEnvSchema ||
 		raw["provider"] != "anthropic-messages" ||
 		raw["base_url"] != "http://fixture.invalid" ||
@@ -120,6 +124,43 @@ func stage2aAdapterChildEnvWithRows(input Stage2aLaunchInputRecords,
 		model != qualification.Model || query != qualification.MessagesQuery ||
 		raw["http_host"] != qualification.HTTPHost) {
 		return invalid
+	}
+	return nil
+}
+
+// The stock ACP adapter invokes its adjacent Claude CLI. Count that actual
+// selected executable in the external launch-input measurement and require
+// the same bytes in A's sealed R inventory. This is only an omission check;
+// the full selected Node/HQ/Comms import closure and child read boundary still
+// need separate enforcement before protected qualification.
+func stage2aSelectedStockCLI(external []Stage2aDefinitionRecord, sealed []stage2aDomainFileV3) error {
+	const path = "runtime/bin/claude"
+	var selected *stage2aDomainFileV3
+	for i := range sealed {
+		if sealed[i].Path == path {
+			if selected != nil {
+				return errStage2aReservationAuthority
+			}
+			selected = &sealed[i]
+		}
+	}
+	if selected == nil || selected.ComponentID != "adapter" || selected.Kind != "regular" ||
+		selected.Mode != "0550" || selected.SizeBytes == 0 ||
+		!stage2aPrefixedDigest.MatchString(selected.SHA256) {
+		return errStage2aReservationAuthority
+	}
+	matched := 0
+	for _, file := range external {
+		if file.Path == path {
+			if file.Kind != "regular" || file.Mode != selected.Mode || file.Size == nil ||
+				*file.Size != selected.SizeBytes || file.SHA256 != strings.TrimPrefix(selected.SHA256, "sha256:") {
+				return errStage2aReservationAuthority
+			}
+			matched++
+		}
+	}
+	if matched != 1 {
+		return errStage2aReservationAuthority
 	}
 	return nil
 }

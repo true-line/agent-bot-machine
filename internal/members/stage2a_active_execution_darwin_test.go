@@ -2,6 +2,8 @@ package members
 
 import (
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -14,11 +16,19 @@ func TestStage2aActiveRuntimeV3RequiresSealedRows(t *testing.T) {
 	const node = "runtime/bin/node"
 	const entry = "runtime/bin/agent-bot-souls.mjs"
 	const adapter = "runtime/bin/claude-agent-acp"
+	const cli = "runtime/bin/claude"
+	cliSize := uint64(42)
+	cliHash := strings.Repeat("e", 64)
+	launch.Files = append(launch.Files, Stage2aDefinitionRecord{
+		Path: cli, Kind: "regular", Mode: "0550", Size: &cliSize, SHA256: cliHash,
+	})
+	sort.Slice(launch.Files, func(i, j int) bool { return launch.Files[i].Path < launch.Files[j].Path })
 	row := stage2aDomainInventoryV3{Domain: ref.Domain, InstallationID: ref.InstallationID,
 		Files: []stage2aDomainFileV3{
 			{Path: node, Mode: "0550", ComponentID: "node"},
 			{Path: entry, Mode: "0440", ComponentID: "souls"},
 			{Path: adapter, Mode: "0550", ComponentID: "adapter", SHA256: launch.ComponentDigests["adapter"]},
+			{Path: cli, Kind: "regular", Mode: "0550", ComponentID: "adapter", SizeBytes: cliSize, SHA256: "sha256:" + cliHash},
 		}}
 	policy := stage2aInstalledPolicy{LaunchInputs: launch, BridgeQualification: qualification,
 		Node: filepath.Join(root, node), Entry: filepath.Join(root, entry)}
