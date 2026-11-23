@@ -267,6 +267,18 @@ descriptor-read installed-file, snapshot and process custody. The raw ACP/OS
 captures, source issuer, T21 form and physical case inventory also remain
 necessary before public v3 acceptance.
 
+The portable `parseHRMeasurementBindingV3` component accepts only the
+ordinary `machine/v3` H/R binding from soul-contracts v0.8.0. It checks the
+inherited nonroot A snapshot constraints, the exact derived R snapshot and
+sidecar names, the owner plan and inventory digest joins, selected H descriptor
+digest, ordered R source/artifact/manifest claims, and the distinct adapter
+qualification attestation and broker executable fields. The synthetic
+Contracts vector and changed H/R, release, plan and source-tag refusals are
+parser tests. This component is not a signed reservation verifier and does
+not open public v3 acceptance. A first-qualification candidate requires a
+separate purpose and binding; it cannot satisfy this ordinary parser by
+omitting the adapter qualification attestation.
+
 The separate `mm-qualification-verify-release --host-v3` command parses the
 supplied owner root, policy, trusted Sigstore roots, exact release and Souls
 bundles, two host envelopes, two A pre-sign completion records, two A post-sign
