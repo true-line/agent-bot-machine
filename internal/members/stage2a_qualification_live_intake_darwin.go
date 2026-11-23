@@ -74,6 +74,20 @@ type stage2aLiveCustody struct {
 	launchWitness []byte
 }
 
+// The service entry is the only production path to the receiver. It supplies
+// A's own ChildReady/live-launch join on both sides of the transfer. Call it
+// without holding the service mutex; the join obtains that lock itself.
+func (s *Stage2aService) receiveStage2aLiveCapture(ctx context.Context, conn *net.UnixConn,
+	store stage2aAdminClaimStore, session *stage2aQualificationSessionV1,
+	command stage2aDriverCommand, requestFrame []byte, peer stage2aQualificationDriverPeer,
+	checkLive func() error) (stage2aLiveCustody, error) {
+	if s == nil {
+		return stage2aLiveCustody{}, errStage2aReservationAuthority
+	}
+	return receiveStage2aLiveCapture(ctx, conn, store, session, command, requestFrame, peer, checkLive,
+		func() ([]byte, error) { return s.observeStage2aLiveLaunchJoin(session, command, requestFrame) })
+}
+
 // receiveStage2aLiveCapture reads original bytes rather than a driver path,
 // digest or descriptor. A computes names, persists immutable records in its
 // guarded store, reopens them, and binds the index to A's exact sent frame.
@@ -123,7 +137,11 @@ func receiveStage2aLiveCapture(ctx context.Context, conn *net.UnixConn, store st
 	if err != nil {
 		return empty, errStage2aReservationAuthority
 	}
-	defer lock.Close()
+	defer func() {
+		if lock != nil {
+			lock.Close()
+		}
+	}()
 	slot := soulStartClaimName(command.InstallationID, command.StartID)
 	if store.checkDirectory(dir) != nil ||
 		stage2aCheckSpentClaim(dir, stage2aActiveClaimName(command.InstallationID), store.uid, store.gid) != nil ||
@@ -136,6 +154,10 @@ func receiveStage2aLiveCapture(ctx context.Context, conn *net.UnixConn, store st
 		store.uid, store.gid, binding, 8192) != nil {
 		return empty, errStage2aReservationAuthority
 	}
+	if lock.Close() != nil {
+		return empty, errStage2aReservationAuthority
+	}
+	lock = nil
 	// Include A's one-use case challenge in every filename. Identical bytes
 	// from another command are never silently reused for this session.
 	challengeName := strings.TrimPrefix(stage2aQualificationSHA256([]byte(command.Challenge)), "sha256:")
@@ -161,10 +183,21 @@ func receiveStage2aLiveCapture(ctx context.Context, conn *net.UnixConn, store st
 		}
 		digest := stage2aQualificationSHA256(raw)
 		name := prefix + strings.TrimPrefix(digest, "sha256:")
-		if commitStage2aReservation(dir, name, raw) != nil ||
+		lock, err = lockStage2aReservation(dir, store.uid, store.gid, command.InstallationID)
+		if err != nil || store.checkDirectory(dir) != nil ||
+			stage2aCheckSpentClaim(dir, stage2aActiveClaimName(command.InstallationID), store.uid, store.gid) != nil ||
+			stage2aCheckSpentClaim(dir, ".stage2a-q-session-"+slot, store.uid, store.gid) != nil ||
+			requireUnspentStage2aReservation(dir, ".stage2a-closed-"+slot) != nil ||
+			stage2aExactAdminRecord(dir, ".stage2a-q-binding-"+slot+".json",
+				store.uid, store.gid, binding, 8192) != nil ||
+			commitStage2aReservation(dir, name, raw) != nil ||
 			stage2aExactAdminRecord(dir, name, store.uid, store.gid, raw, stage2aLiveBlobMax) != nil {
 			return empty, errStage2aReservationAuthority
 		}
+		if lock.Close() != nil {
+			return empty, errStage2aReservationAuthority
+		}
+		lock = nil
 		if _, found := sizes[digest]; found {
 			return empty, errStage2aReservationAuthority
 		}
@@ -217,12 +250,23 @@ func receiveStage2aLiveCapture(ctx context.Context, conn *net.UnixConn, store st
 			return empty, errStage2aReservationAuthority
 		}
 	}
+	// The A witness takes the service mutex and installation lock. No raw
+	// transfer read or witness callback holds our installation lock.
 	// The final index becomes visible only if A's independently observed
 	// launch is the same after reading every source byte. Earlier immutable
 	// blobs on a failed transfer carry no completion or T03 credit.
 	after, err := observeLaunch()
 	if err != nil || !bytes.Equal(before, after) || ctx.Err() != nil ||
 		checkLive() != nil || peer.recheck() != nil {
+		return empty, errStage2aReservationAuthority
+	}
+	lock, err = lockStage2aReservation(dir, store.uid, store.gid, command.InstallationID)
+	if err != nil || store.checkDirectory(dir) != nil ||
+		stage2aCheckSpentClaim(dir, stage2aActiveClaimName(command.InstallationID), store.uid, store.gid) != nil ||
+		stage2aCheckSpentClaim(dir, ".stage2a-q-session-"+slot, store.uid, store.gid) != nil ||
+		requireUnspentStage2aReservation(dir, ".stage2a-closed-"+slot) != nil ||
+		stage2aExactAdminRecord(dir, ".stage2a-q-binding-"+slot+".json",
+			store.uid, store.gid, binding, 8192) != nil {
 		return empty, errStage2aReservationAuthority
 	}
 	name := prefix + "index-" + strings.TrimPrefix(stage2aQualificationSHA256(artifact), "sha256:")
