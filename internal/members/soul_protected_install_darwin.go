@@ -123,7 +123,7 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 		policy.Binding.ProfileInForce != "managed-protected" ||
 		policy.Binding.PlanID != "" || policy.Binding.InstalledPlanDigest != "" ||
 		policy.Binding.StartID != "" || policy.Binding.LaunchID != "" ||
-		len(policy.Plan) != 0 || len(policy.Receipt) != 0 || policy.Claims != (stage2aInstalledDirectory{}) ||
+		!stage2aPreApplyJSONEmpty(policy.Plan) || !stage2aPreApplyJSONEmpty(policy.Receipt) || policy.Claims != (stage2aInstalledDirectory{}) ||
 		policy.SnapshotNamespace != (stage2aInstalledDirectory{}) || policy.RelayParent != (stage2aInstalledDirectory{}) || policy.LegacySpent == nil ||
 		len(policy.LegacySpent) != 0 || !soulHQEpoch.MatchString(policy.Binding.HQEpoch) ||
 		!stage2aBindingID.MatchString(policy.Binding.HostID) ||
@@ -226,6 +226,13 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 		return Plan{}, invalid
 	}
 	return p, nil
+}
+
+// A prepared request may omit installer-only fields, while its normalized
+// owner-reviewed representation contains explicit nulls. Neither form can
+// carry a caller-supplied plan or root receipt into Build.
+func stage2aPreApplyJSONEmpty(raw json.RawMessage) bool {
+	return len(raw) == 0 || bytes.Equal(raw, []byte("null"))
 }
 
 func CheckDarwinSoulProtectedLaunch(s Saved, owner string, uid int) error {
