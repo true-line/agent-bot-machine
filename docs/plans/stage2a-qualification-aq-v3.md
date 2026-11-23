@@ -268,16 +268,27 @@ captures, source issuer, T21 form and physical case inventory also remain
 necessary before public v3 acceptance.
 
 The portable `parseHRMeasurementBindingV3` component accepts only the
-ordinary `machine/v3` H/R binding from soul-contracts v0.8.0. It checks the
-inherited nonroot A snapshot constraints, the exact derived R snapshot and
-sidecar names, the owner plan and inventory digest joins, selected H descriptor
-digest, ordered R source/artifact/manifest claims, and the distinct adapter
-qualification attestation and broker executable fields. The synthetic
-Contracts vector and changed H/R, release, plan and source-tag refusals are
-parser tests. This component is not a signed reservation verifier and does
-not open public v3 acceptance. A first-qualification candidate requires a
-separate purpose and binding; it cannot satisfy this ordinary parser by
+ordinary `machine/v3` H/R binding from soul-contracts v0.9.0 (introduced in
+v0.8.0). It checks inherited nonroot A snapshot constraints, the exact derived
+R snapshot and sidecar names, the owner plan and inventory digest joins,
+selected H descriptor digest, ordered R source/artifact/manifest claims, the
+distinct adapter qualification attestation, and broker executable fields. The
+synthetic Contracts vector and changed H/R, release, plan and source-tag
+refusals are parser tests. This component is not a signed reservation verifier
+and does not open public v3 acceptance. A first-qualification candidate
+requires a separate purpose and binding; it cannot satisfy this ordinary parser by
 omitting the adapter qualification attestation.
+
+The separate first-qualification component consumes the distinct signed
+candidate reservation from Contracts v0.9.0. It derives only the fixed
+`machine/v2` summary carried by the v3 host report, verifies the A signature
+under the independently enrolled Machine key, and joins the full reservation
+envelope digest, admission challenge, host and Soul identity, selected adapter
+ZIP, executable and ordered code-input paths to the report. Its tests use the
+exact Contracts candidate vector and the Machine H producer's paired report
+summary. This check does not verify approval spending, the sealed R files,
+Q/ACP/OS captures or any physical T result. The ordinary release attestation
+still follows qualification and the public acceptance gate remains closed.
 
 The separate `mm-qualification-verify-release --host-v3` command parses the
 supplied owner root, policy, trusted Sigstore roots, exact release and Souls

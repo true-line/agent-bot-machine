@@ -208,7 +208,7 @@ func hrComponentsV3(raw []byte) ([]hrReleaseComponentV3, error) {
 	return result, nil
 }
 
-// parseHRMeasurementBindingV3 consumes only the exact Contracts v0.8.0
+// parseHRMeasurementBindingV3 consumes only the exact Contracts v0.9.0
 // machine/v3 binding. The common frozen definition/launch fields retain the
 // v2 nonroot A constraints; H/R claims receive their own purpose and checks.
 func parseHRMeasurementBindingV3(raw []byte) (hrMeasurementBindingV3, error) {
