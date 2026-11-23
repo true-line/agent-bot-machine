@@ -134,7 +134,16 @@ func proveStage2aQualificationDriverListener(listener *net.UnixListener, path st
 			return
 		}
 		defer conn.Close()
-		_, err = conn.Write(challenge[:])
+		if err = conn.SetDeadline(time.Now().Add(2 * time.Second)); err == nil {
+			_, err = conn.Write(challenge[:])
+		}
+		if err == nil {
+			var ack [1]byte
+			_, err = io.ReadFull(conn, ack[:])
+			if err == nil && ack[0] != 0xa5 {
+				err = errStage2aReservationAuthority
+			}
+		}
 		dialDone <- err
 	}()
 	if listener.SetDeadline(time.Now().Add(2*time.Second)) != nil {
@@ -156,6 +165,9 @@ func proveStage2aQualificationDriverListener(listener *net.UnixListener, path st
 	if _, err := io.ReadFull(conn, observed[:]); err != nil ||
 		!bytes.Equal(observed[:], challenge[:]) {
 		return fmt.Errorf("driver listener probe challenge err=%v: %w", err, errStage2aReservationAuthority)
+	}
+	if _, err := conn.Write([]byte{0xa5}); err != nil {
+		return fmt.Errorf("driver listener probe acknowledgement: %w", err)
 	}
 	if err := <-dialDone; err != nil || ctx.Err() != nil {
 		return fmt.Errorf("driver listener probe dial err=%v context=%v: %w", err, ctx.Err(), errStage2aReservationAuthority)
