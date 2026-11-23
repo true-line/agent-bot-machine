@@ -23,6 +23,7 @@ type stage2aMemberRuntimeLeasePayload struct {
 	AssignmentEnvelopeSHA256       string                               `json:"assignment_envelope_sha256"`
 	ChildObservationEnvelopeSHA256 string                               `json:"child_observation_envelope_sha256"`
 	ReadyEnvelopeSHA256            string                               `json:"ready_envelope_sha256"`
+	HQFinalizationSHA256           string                               `json:"hq_finalization_sha256"`
 	BAuthorityEnvelopeSHA256       string                               `json:"member_b_authority_envelope_sha256"`
 	BindReceiptSHA256              string                               `json:"bind_receipt_sha256"`
 	MemberID                       string                               `json:"member_id"`
@@ -56,6 +57,7 @@ func (s *Stage2aService) MemberRuntime(hqUID int, epoch string,
 	var reply Stage2aLiveReply
 	if validateStage2aMemberLiveRequest(q.Stage2aMemberLiveRequest) != nil ||
 		!stage2aPrefixedDigest.MatchString(q.ReadyEnvelopeSHA256) ||
+		!stage2aPrefixedDigest.MatchString(q.HQFinalizationSHA256) ||
 		q.HQEpoch != epoch || len(s.key) != ed25519.PrivateKeySize {
 		return reply, errStage2aReservationAuthority
 	}
@@ -65,6 +67,8 @@ func (s *Stage2aService) MemberRuntime(hqUID int, epoch string,
 		len(r.memberReadyEnvelope) == 0 || len(r.memberChildObservationEnvelope) == 0 ||
 		len(r.memberSetAssignmentEnvelope) == 0 || len(r.memberBAuthorityEnvelope) == 0 ||
 		len(r.memberChildGrants) != 2 || r.protectedQ == nil ||
+		!stage2aPrefixedDigest.MatchString(r.memberHQFinalizationSHA256) ||
+		q.HQFinalizationSHA256 != r.memberHQFinalizationSHA256 ||
 		q.ReadyEnvelopeSHA256 != stage2aReservationSHA256(r.memberReadyEnvelope) ||
 		q.ChildObservationEnvelopeSHA256 != stage2aReservationSHA256(r.memberChildObservationEnvelope) {
 		return reply, errStage2aReservationAuthority
@@ -144,6 +148,7 @@ func (s *Stage2aService) MemberRuntime(hqUID int, epoch string,
 		AssignmentEnvelopeSHA256:       ready.AssignmentEnvelopeSHA256,
 		ChildObservationEnvelopeSHA256: ready.ChildObservationEnvelopeSHA256,
 		ReadyEnvelopeSHA256:            q.ReadyEnvelopeSHA256,
+		HQFinalizationSHA256:           q.HQFinalizationSHA256,
 		BAuthorityEnvelopeSHA256:       ready.MemberBAuthorityEnvelopeSHA256,
 		BindReceiptSHA256:              r.bindReceiptSHA256,
 		MemberID:                       q.MemberID, MemberSelector: q.MemberSelector,

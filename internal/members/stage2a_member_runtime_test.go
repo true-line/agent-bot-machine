@@ -20,7 +20,8 @@ func TestStage2aMemberRuntimeRequestRequiresPreviousEnvelopeOnRenewal(t *testing
 			ChallengeNonceBase64URL: base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
 			PriorExpiresAt:          time.Now().UTC().Add(5 * time.Second).Format(time.RFC3339Nano),
 		},
-		ReadyEnvelopeSHA256: "sha256:" + strings.Repeat("c", 64),
+		ReadyEnvelopeSHA256:  "sha256:" + strings.Repeat("c", 64),
+		HQFinalizationSHA256: "sha256:" + strings.Repeat("d", 64),
 	}
 	parse := func() error {
 		t.Helper()

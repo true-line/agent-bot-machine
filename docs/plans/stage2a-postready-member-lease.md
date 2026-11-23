@@ -30,6 +30,10 @@ T01, T03 or T21 evidence.
 - The fixed wrapper must verify and consume these leases before continuing
   the child. A separate B runtime lease and verified H/R/B consumer path are
   required before a protected end-to-end launch is enabled.
+- The member runtime lease requires the digest of H's separately committed,
+  Ready-bound two-member finalization. A's digest cache has no producer until
+  authenticated paired intake and durable rechecks for the exact H record
+  exist. It stays empty and the route refuses in this slice.
 
 ## Acceptance
 
