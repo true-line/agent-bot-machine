@@ -807,6 +807,11 @@ inputs, sealed R runtime, H code descriptor, and explicit `direct-comms`
 transport. Machine rechecks the applied receipt and measured H/R byte closures
 before signing a 30-second reservation with that transport. Machine keeps the
 content-addressed runtime inventories outside the paired review frame.
+For qualification, A also verifies the retained Q review against the same
+host, installation, R account and sealed adapter inventory. A remeasures
+the reviewed native harness and verifies the provider configuration against
+both owner reviews. The running Machine binary supplies the code digest
+for both the Machine and its inline deterministic provider.
 
 The A-owned claim store permanently spends the start and serializes active
 starts for the installation. Its signed pending journal lets Machine reconcile

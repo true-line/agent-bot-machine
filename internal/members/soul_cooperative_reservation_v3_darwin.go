@@ -101,14 +101,14 @@ type soulCooperativeReservationPayloadV3 struct {
 }
 
 type soulCooperativeVerifiedStartV3 struct {
-	installed            soulCooperativeInstalledV3
-	r                    stage2aVerifiedDomainRefV3
-	h                    stage2aVerifiedDomainRefV3
-	hDescriptorDigest    string
-	hComponents          []soulCooperativeComponentV3
-	hEntryPath           string
-	hEntrySHA256         string
-	qualificationDigests map[string]string
+	installed                  soulCooperativeInstalledV3
+	r                          stage2aVerifiedDomainRefV3
+	h                          stage2aVerifiedDomainRefV3
+	hDescriptorDigest          string
+	hComponents                []soulCooperativeComponentV3
+	hEntryPath                 string
+	hEntrySHA256               string
+	qualificationHarnessSHA256 string
 }
 
 func cooperativeV3RComponents(spec stage2aRuntimeV3Install) []soulCooperativeComponentV3 {
@@ -151,7 +151,17 @@ func cooperativeV3ComponentDigest(p SoulCooperativeLaunchPolicy, a soulCooperati
 			row.SHA256 == p.LaunchInputs.ComponentDigests["souls"] && row.ComponentID == "souls"
 	}
 	manager, err := managerBytes()
-	return entryRow && err == nil && p.LaunchInputs.ComponentDigests["machine"] == "sha256:"+harnessSHA(manager)
+	return entryRow && err == nil && cooperativeV3MachineComponentDigestsMatch(p.LaunchInputs.ComponentDigests, "sha256:"+harnessSHA(manager))
+}
+
+// The deterministic provider is a handler inside A's running Machine binary.
+// Its separately reviewed configuration is bound in effective_config.
+func cooperativeV3MachineComponentDigestsMatch(digests map[string]string, measured string) bool {
+	if !stage2aPrefixedDigest.MatchString(measured) || digests["machine"] != measured {
+		return false
+	}
+	provider, qualification := digests["test_provider"]
+	return !qualification || provider == measured
 }
 
 func cooperativeV3AdapterCodeMatches(p SoulCooperativeLaunchPolicy, inv stage2aDomainInventoryV3) bool {
@@ -265,12 +275,9 @@ func prepareSoulCooperativeReservationV3(a soulCooperativeVerifiedStartV3,
 		!cooperativeV3AdapterCodeMatches(p, inventory) {
 		return empty, errSoulCooperativeAuthority
 	}
-	if _, harness := p.LaunchInputs.ComponentDigests["harness"]; harness {
-		if a.qualificationDigests == nil ||
-			a.qualificationDigests["harness"] != p.LaunchInputs.ComponentDigests["harness"] ||
-			a.qualificationDigests["test_provider"] != p.LaunchInputs.ComponentDigests["test_provider"] {
-			return empty, errSoulCooperativeAuthority
-		}
+	if harness, qualification := p.LaunchInputs.ComponentDigests["harness"]; qualification &&
+		a.qualificationHarnessSHA256 != harness {
+		return empty, errSoulCooperativeAuthority
 	}
 	admission, err := cooperativeReviewedAdmission(p)
 	if err != nil {
