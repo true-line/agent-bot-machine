@@ -31,7 +31,11 @@ func serveStage2aQualificationDriverCasesFrom(ctx context.Context, conn net.Conn
 	defer stop()
 	challenges := make(map[string]bool, len(schedule))
 	for i, want := range schedule {
-		if ctx.Err() != nil || conn.SetDeadline(time.Now().Add(60*time.Second)) != nil || ctx.Err() != nil {
+		deadline := time.Now().Add(60 * time.Second)
+		if bound, ok := ctx.Deadline(); ok && bound.Before(deadline) {
+			deadline = bound
+		}
+		if ctx.Err() != nil || conn.SetDeadline(deadline) != nil || ctx.Err() != nil {
 			return errStage2aReservationAuthority
 		}
 		raw := first

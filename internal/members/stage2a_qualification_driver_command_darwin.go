@@ -96,10 +96,6 @@ func serveStage2aDriverBaseline(ctx context.Context, conn net.Conn, review stage
 	}
 	// Keep the authenticated generation alive until A has corroborated the
 	// last response and closed its side of the one-use connection.
-	deadline, _ := ctx.Deadline()
-	if conn.SetReadDeadline(deadline) != nil {
-		return errStage2aReservationAuthority
-	}
 	var trailing [1]byte
 	if n, err := conn.Read(trailing[:]); n != 0 || err != io.EOF {
 		return errStage2aReservationAuthority

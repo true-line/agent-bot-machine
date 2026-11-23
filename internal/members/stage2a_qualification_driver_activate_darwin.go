@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"reflect"
 	"slices"
 	"strconv"
 	"time"
@@ -17,9 +18,9 @@ func captureStage2aProtectedBaseline(hqUID int, epoch string, guard stage2aReser
 	sign func([]byte) ([]byte, error)) error {
 	// Absence after an owner-reviewed observer removal restores ordinary launch.
 	// An occupied but invalid installed record never drops a required baseline.
-	if _, err := os.Lstat(stage2aQualificationQConfig); errors.Is(err, os.ErrNotExist) {
+	if info, err := os.Lstat(stage2aQualificationQConfig); errors.Is(err, os.ErrNotExist) {
 		return nil
-	} else if err != nil {
+	} else if err != nil || !info.Mode().IsRegular() {
 		return errStage2aReservationAuthority
 	}
 	install, err := readStage2aQualificationQInstall()
@@ -67,7 +68,7 @@ func captureStage2aProtectedBaseline(hqUID int, epoch string, guard stage2aReser
 	store, _ := runtime.Policy.stores()
 	checkLive := func() error {
 		if ctx.Err() != nil ||
-			verifyStage2aQualificationFileLive(install, guard, key, got, reply) != nil {
+			recheckStage2aProtectedBaseline(install, guard, key, got, reply) != nil {
 			return errStage2aReservationAuthority
 		}
 		return stage2aRecheckVerifiedDomainV3(runtime.VerifiedR)
@@ -112,11 +113,10 @@ func captureStage2aProtectedBaseline(hqUID int, epoch string, guard stage2aReser
 	return checkLive()
 }
 
-func verifyStage2aQualificationFileLive(install stage2aQualificationQInstall, guard stage2aReservationGuardV3,
+func recheckStage2aProtectedBaseline(install stage2aQualificationQInstall, guard stage2aReservationGuardV3,
 	key ed25519.PublicKey, got stage2aReservation, reply stage2aReservationWorkerReplyV3) error {
 	current, err := readStage2aQualificationQInstall()
-	if err != nil || current.Review != install.Review ||
-		!slices.Equal(current.Roots, install.Roots) || current.UID != install.UID || current.GID != install.GID {
+	if err != nil || !reflect.DeepEqual(current, install) {
 		return errStage2aReservationAuthority
 	}
 	verified, err := verifyStage2aReservationModeV3(reply.Mode, got.envelope, got.sha256, reply.Expected, key, time.Now())
