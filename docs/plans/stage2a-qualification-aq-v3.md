@@ -175,6 +175,18 @@ schemas and independent measured-byte checks, and gate attempts and required
 negative cases still need authenticated enumeration. T21 needs its separate
 cooperative R-only form. The public v3 gate remains unqualified.
 
+The portable `VerifyMeasurementRecordDigestsV3` component accepts the exact
+canonical RFC 8785 JCS definition-record array and launch-input object. It
+independently computes the approved purpose-NUL-SHA-256 measurements and joins
+them to a `machine/v2` measurement binding. A cross-package synthetic vector
+matches Machine's definition and launch-input producers; changed, noncanonical
+and duplicate-key bytes refuse. This is a digest component only. The caller
+must authenticate the binding through the designated-host report and A
+reservation, validate every record against the owner plan, and prove A's
+descriptor-read installed-file, snapshot and process custody. The raw ACP/OS
+captures, source issuer, T21 form and physical case inventory also remain
+necessary before public v3 acceptance.
+
 The separate `mm-qualification-verify-release --host-v3` command parses the
 supplied owner root, policy, trusted Sigstore roots, exact release and Souls
 bundles, two host envelopes, two A pre-sign completion records, two A post-sign
