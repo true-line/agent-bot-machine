@@ -314,6 +314,9 @@ func Build(in Input, h Host) (Plan, error) {
 	if in.UpgradeFrom != nil && (in.HarnessLaunch != nil || in.Platform != PlatformDarwin || in.HQService == nil || in.HQAccount != DarwinHQAccount || len(in.Members) != 0) {
 		return Plan{}, refuse(RefusedList, "upgrade requires a dedicated macOS service-only plan")
 	}
+	if in.HQService != nil && in.HQService.Stage2a != nil && (in.UpgradeFrom == nil || in.Platform != PlatformDarwin) {
+		return Plan{}, refuse(RefusedList, "Stage 2a HQ requires the paired macOS service upgrade plan")
+	}
 	if in.HarnessLaunch != nil {
 		return buildHarnessLaunch(in, h)
 	}

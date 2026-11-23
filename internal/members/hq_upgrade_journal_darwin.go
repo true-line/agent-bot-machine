@@ -31,17 +31,19 @@ type stoppingHQ struct {
 	PID    string              `json:"pid"`
 }
 type upgradeJournal struct {
-	BootoutAccepted bool                `json:"bootout_accepted,omitempty"`
-	OriginalPlist   upgradeNodeIdentity `json:"original_plist"`
-	PreparedPlist   upgradeNodeIdentity `json:"prepared_plist"`
-	pair            upgradePairGuard
-	Approval        Approval      `json:"approval"`
-	Owner           string        `json:"owner"`
-	Upgrade         launchUpgrade `json:"upgrade"`
-	Stage           string        `json:"staged_plist"`
-	Signer          upgradeSigner `json:"previous_signer"`
-	Phase           string        `json:"phase"`
-	Stopping        *stoppingHQ   `json:"stopping,omitempty"`
+	BootoutAccepted      bool                `json:"bootout_accepted,omitempty"`
+	OriginalPlist        upgradeNodeIdentity `json:"original_plist"`
+	PreparedPlist        upgradeNodeIdentity `json:"prepared_plist"`
+	pair                 upgradePairGuard
+	protectedEvidence    *hqStage2aUpgradeEvidence
+	protectedPublication *hqStage2aPublication
+	Approval             Approval      `json:"approval"`
+	Owner                string        `json:"owner"`
+	Upgrade              launchUpgrade `json:"upgrade"`
+	Stage                string        `json:"staged_plist"`
+	Signer               upgradeSigner `json:"previous_signer"`
+	Phase                string        `json:"phase"`
+	Stopping             *stoppingHQ   `json:"stopping,omitempty"`
 }
 
 func currentUpgradeReceipt(a Approval, owner string) (Receipt, error) {
@@ -360,6 +362,14 @@ func clearRecordedEndpoint(path string, stop *stoppingHQ, remove func(*os.File, 
 	return remove(parent, info, stop.PID)
 }
 func (j *upgradeJournal) verify(r launchRecord) error {
+	if r.Stage2a != nil {
+		if j.protectedPublication == nil {
+			return errors.New(hqStage2aCutoverRefusal)
+		}
+		if err := j.protectedPublication.recheck(); err != nil {
+			return err
+		}
+	}
 	if err := j.pair(j.Approval, nil); err != nil {
 		return err
 	}
@@ -614,7 +624,7 @@ func restorePrevious(j upgradeOperations, rec launchUpgrade) error {
 		if e := j.verify(old); e != nil {
 			return e
 		}
-		return j.finish(false)
+		return errors.Join(rollbackProtectedHQ(j, rec), j.finish(false))
 	}
 	activeNew, newErr := j.active(next)
 	if newErr != nil || (!activeNew && oldErr != nil) {
@@ -628,7 +638,7 @@ func restorePrevious(j upgradeOperations, rec launchUpgrade) error {
 	if e := j.clearStoppedEndpoint(); e != nil {
 		return e
 	}
-	return restartPrevious(j, rec)
+	return errors.Join(rollbackProtectedHQ(j, rec), restartPrevious(j, rec))
 }
 
 func restartPrevious(j upgradeOperations, rec launchUpgrade) error {
@@ -691,11 +701,18 @@ func (j *upgradeJournal) start(r launchRecord) error {
 		return e
 	}
 	guardBootstrap := func(submit func() error) error { return j.pair(j.Approval, submit) }
+	var protectedCheck func() error
+	if r.Stage2a != nil {
+		if j.protectedPublication == nil {
+			return errors.New(hqStage2aCutoverRefusal)
+		}
+		protectedCheck = j.protectedPublication.recheck
+	}
 	return startReviewedRecord(r, j.Owner, guardBootstrap, func(parent *os.File, published os.FileInfo) error {
 		phase := "stopping-previous"
 		if r.Plist == j.Upgrade.Next.Plist {
 			phase = "stopping-next"
 		}
 		return j.stopObserved(r, phase, parent, published)
-	})
+	}, protectedCheck)
 }

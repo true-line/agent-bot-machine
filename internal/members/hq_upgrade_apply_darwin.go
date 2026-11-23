@@ -99,10 +99,10 @@ func pairedReleaseStatus(s HQService, fingerprint string) error {
 }
 
 func activateUpgrade(step Step, approval Approval, pair upgradePairGuard) error {
-	return withLaunchLock(step.Owner, syscall.LOCK_EX|syscall.LOCK_NB, func() error { return upgradeUnderLock(step, approval, pair) })
+	return withLaunchLock(step.Owner, syscall.LOCK_EX|syscall.LOCK_NB, func() error { return upgradeUnderLock(step, approval, pair, nil) })
 }
 
-func upgradeUnderLock(step Step, approval Approval, pair upgradePairGuard) (err error) {
+func upgradeUnderLock(step Step, approval Approval, pair upgradePairGuard, evidence *hqStage2aUpgradeEvidence) (err error) {
 	if pair == nil {
 		return errors.New("missing protected pairing verifier")
 	}
@@ -122,6 +122,10 @@ func upgradeUnderLock(step Step, approval Approval, pair upgradePairGuard) (err 
 	if step.Target != launchLabel || step.Action != upgradeAction || json.Unmarshal([]byte(step.Content), &rec) != nil {
 		return errors.New("invalid HQ upgrade step")
 	}
+	if rec.Previous.Service.Stage2a != nil || rec.Previous.Stage2a != nil ||
+		(rec.Next.Service.Stage2a != nil || rec.Next.Stage2a != nil) && evidence == nil {
+		return errors.New(hqStage2aCutoverRefusal)
+	}
 	if err = receiptForUpgrade(OSHost{}, rec.PreviousID, rec.PreviousDigest, step.Owner, checkDarwinACLs); err != nil {
 		return err
 	}
@@ -134,7 +138,7 @@ func upgradeUnderLock(step Step, approval Approval, pair upgradePairGuard) (err 
 		if e != nil {
 			return e
 		}
-		if cap != launchControlV2 || r.Plist != renderLaunchPlist(r.Service, r.OwnerUID, step.Owner, cap) {
+		if cap != launchControlV2 || !matchesReviewedHQPlist(r, step.Owner, cap) {
 			return errors.New("approved HQ release changed before cutover")
 		}
 	}
@@ -211,7 +215,7 @@ func upgradeUnderLock(step Step, approval Approval, pair upgradePairGuard) (err 
 	if e != nil {
 		return e
 	}
-	j := upgradeJournal{OriginalPlist: upgradeNode(oldInfo), PreparedPlist: upgradeNode(newInfo), pair: pair, Approval: approval, Owner: step.Owner, Upgrade: rec, Stage: staged, Signer: priorSigner, Phase: "prepared"}
+	j := upgradeJournal{protectedEvidence: evidence, OriginalPlist: upgradeNode(oldInfo), PreparedPlist: upgradeNode(newInfo), pair: pair, Approval: approval, Owner: step.Owner, Upgrade: rec, Stage: staged, Signer: priorSigner, Phase: "prepared"}
 	if e = j.write(journal, true); e != nil {
 		if _, x := os.Lstat(journal); !errors.Is(x, os.ErrNotExist) {
 			journalOwned = true
@@ -221,13 +225,13 @@ func upgradeUnderLock(step Step, approval Approval, pair upgradePairGuard) (err 
 	journalOwned = true
 	return performUpgrade(&j, rec)
 }
-func startReviewedRecord(r launchRecord, owner string, guardBootstrap func(func() error) error, stopStarted func(*os.File, os.FileInfo) error) error {
+func startReviewedRecord(r launchRecord, owner string, guardBootstrap func(func() error) error, stopStarted func(*os.File, os.FileInfo) error, protectedCheck func() error) error {
 	r.RuntimeDir = &launchDirectory{launchRuntimeDir, ActionNone, "root", "wheel", "0755"}
 	raw, e := json.Marshal(r)
 	if e != nil {
 		return e
 	}
-	return activateReviewedLaunch(Step{Kind: KindService, Target: launchLabel, Action: ActionWrite, Owner: owner, Content: string(raw)}, guardBootstrap, stopStarted)
+	return activateReviewedLaunch(Step{Kind: KindService, Target: launchLabel, Action: ActionWrite, Owner: owner, Content: string(raw)}, guardBootstrap, stopStarted, protectedCheck)
 }
 func validateUpgradeRoleCapability(r launchRecord) error {
 	b, err := hqProgramOutput("/usr/bin/sudo", "-n", "-H", "-u", DarwinHQAccount, "--", r.Service.Node, filepath.Join(r.Service.ReleaseDir, "hq/main.mjs"), "check-owner-control")
@@ -239,6 +243,18 @@ func validateUpgradeRoleCapability(r launchRecord) error {
 }
 
 func performUpgrade(j upgradeOperations, rec launchUpgrade) (e error) {
+	if rec.Next.Service.Stage2a != nil || rec.Next.Stage2a != nil {
+		protected, ok := j.(protectedHQUpgradeOperations)
+		if !ok {
+			return errors.New(hqStage2aCutoverRefusal)
+		}
+		if err := protected.prepareProtectedHQ(rec.Next); err != nil {
+			if baseErr := j.verify(rec.Previous); baseErr != nil {
+				return errors.Join(err, baseErr)
+			}
+			return errors.Join(err, j.finish(false))
+		}
+	}
 	if e = j.stop(rec.Previous, "stopping-previous"); e != nil {
 		return fmt.Errorf("preserved HQ transition evidence after stop: %w", e)
 	}

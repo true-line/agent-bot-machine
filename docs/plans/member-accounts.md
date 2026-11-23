@@ -1654,3 +1654,24 @@ First-install failure rolls back the new registration. Role-account state stays
 in its private home. This service operation does not qualify the protected
 profile. The [HQ service issue](https://github.com/true-line/agent-bot-hq/issues/88)
 tracks the scope and remaining acceptance evidence.
+
+### Stage 2a HQ code review
+
+A dedicated paired macOS HQ service upgrade may include a `stage2a` section
+in its `--hq-service` record. The saved paired plan includes the H installation
+and reader identities, fixed A authority pin, reviewed inventory source and
+limits, selected component evidence digests, and exact Ruby and Node command
+lines. The Darwin owner helper, preloader, entry and runtime guard are checked
+against their mapped release files. The default service record continues to
+produce the existing launchd job.
+
+This draft supports reviewing the proposed command and inputs. The protected
+upgrade hook stages a fresh H source, delegates sealing to the offline A
+helper, and requires the A-signed descriptor to be available and rechecked
+before launchd cutover. If the candidate fails, the hook stops it before
+withdrawing its exact descriptor and restoring the reviewed prior job.
+
+Applying a protected upgrade currently refuses before using its approval or
+changing the running service. Cutover requires the authenticated H/R evidence
+issuer to enforce owner-approved limits, exact release mapping, the installed
+R binding, and the runtime guard.

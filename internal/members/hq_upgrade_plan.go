@@ -101,6 +101,9 @@ func appendServiceUpgrade(p *Plan, in Input, h Host, next launchRecord) error {
 	if err != nil {
 		return err
 	}
+	if old.Service.Stage2a != nil || old.Stage2a != nil {
+		return errors.New(hqStage2aCutoverRefusal)
+	}
 	if !upgradeDirectory(old.RuntimeDir, true) || old.OwnerUID != next.OwnerUID || old.OwnerUID <= 0 || old.Service.Node != next.Service.Node || old.Service.NodeSHA256 != next.Service.NodeSHA256 || old.Service.ArtifactSHA256 == next.Service.ArtifactSHA256 || old.Service.ReleaseDir == next.Service.ReleaseDir || old.Service.Archive == next.Service.Archive {
 		return errors.New("upgrade must retain the approved owner, runtime and Node while switching to a distinct release")
 	}
