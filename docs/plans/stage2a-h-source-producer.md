@@ -17,9 +17,9 @@ digest, and H-selected runtime file count and digest. The source manifest
 contains every HQ release path considered for H: each path is either in the
 installed H inventory or in the exact omission list. Omissions are limited to
 reviewed synthetic Contracts fixtures. The Node component has exactly one
-installed `bin/node` row. A pinned full HQ archive may contain other source
-files; its whole-archive hash authenticates them, but they are never copied
-into the H snapshot.
+installed `bin/node` row. The raw HQ archive is partitioned across installed H rows, exact reviewed
+synthetic Contracts fixture omissions, and an explicit reviewed list of
+noninstalled release files. A new raw file fails closed until reviewed.
 
 Root reads the pinned raw artifacts from private, checked source locations,
 verifies the HQ archive and Node bytes, and stages only the selected rows.
@@ -49,9 +49,8 @@ approval, release attestations, and root install receipt.
 - The H inventory remains within the approved file, per-file, total-byte,
   and directory limits. A seals the exact staged rows and the H descriptor
   is published only from a verified install-plan proof and observed A seal.
-  Machine requires the three cooperative modules imported by the merged HQ
-  entrypoint and the reviewed B bridge verifier module in the selected H
-  inventory.
+  Machine requires the cooperative runtime modules, B bridge verifier, and
+  imported cooperative owner-install module in the selected H inventory.
 - Missing authority, mismatched artifacts, extra selected paths, stale or
   inconsistent source metadata, failed A seal, or descriptor mismatch fail
   closed. No qualification T result is claimed from an installer test.

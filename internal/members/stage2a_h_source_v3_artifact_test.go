@@ -55,6 +55,16 @@ func stage2aHSourceTestTarV3(t *testing.T, files map[string][]byte, link bool) [
 			t.Fatal(err)
 		}
 	}
+	if data, ok := files["runtime-entry.json"]; ok {
+		if err := w.WriteHeader(&tar.Header{Name: "hq/runtime-entry.json", Typeflag: tar.TypeReg,
+			Size: int64(len(data)), Mode: 0644, Uid: 0, Gid: 0,
+			ModTime: time.Unix(0, 0), Format: tar.FormatUSTAR}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if link {
 		if err := w.WriteHeader(&tar.Header{Name: "hq/unreviewed-link", Typeflag: tar.TypeSymlink,
 			Linkname: "hq/index.mjs", Mode: 0777, Uid: 0, Gid: 0,
@@ -206,6 +216,17 @@ func TestStage2aHSourceV3RawArtifactClosure(t *testing.T) {
 	changedPins.HQArtifactSHA256 = stage2aHSourceTestDigestV3(changedArchive)
 	if err := check(changedArchive, node, changedPins); err == nil {
 		t.Fatal("accepted a changed omitted fixture under a repinned archive hash")
+	}
+	unreviewed := map[string][]byte{}
+	for path, raw := range files {
+		unreviewed[path] = raw
+	}
+	unreviewed["runtime-entry.json"] = []byte(`{"type":"module"}`)
+	unreviewedArchive := stage2aHSourceTestTarV3(t, unreviewed, false)
+	unreviewedPins := pins
+	unreviewedPins.HQArtifactSHA256 = stage2aHSourceTestDigestV3(unreviewedArchive)
+	if err := check(unreviewedArchive, node, unreviewedPins); err == nil {
+		t.Fatal("accepted an unselected root file under a repinned archive hash")
 	}
 	linkedArchive := stage2aHSourceTestTarV3(t, files, true)
 	linkedPins := pins

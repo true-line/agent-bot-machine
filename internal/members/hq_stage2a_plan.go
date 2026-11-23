@@ -24,6 +24,7 @@ const (
 	hqStage2aCooperativeProof   = "hq/stage2a-cooperative-proof.mjs"
 	hqStage2aCooperativeStart   = "hq/stage2a-cooperative-start.mjs"
 	hqStage2aCooperativeBridge  = "hq/stage2a-cooperative-bridge.mjs"
+	hqStage2aCooperativeInstall = "hq/machine-soul-cooperative-launch.mjs"
 )
 
 // hqStage2aService is an explicit request carried by the existing paired
@@ -200,6 +201,7 @@ var hqStage2aContractsFixturePathsV0102 = [...]string{
 	"vendor/soul-contracts/fixtures/positive/stage2a-reservation-payload.v3-synthetic.json",
 	"vendor/soul-contracts/fixtures/positive/stage2a-signed-reservation.v3-synthetic.json",
 	"vendor/soul-contracts/fixtures/qualification/v3/q-presign-argv-synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v1/machine-658-synthetic.json",
 	"vendor/soul-contracts/fixtures/reservation/v3/machine-qualification-candidate-invalid-bytes.json",
 	"vendor/soul-contracts/fixtures/reservation/v3/machine-qualification-candidate-synthetic.json",
 	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-launch-inputs.brokered-b.synthetic.json",
@@ -239,7 +241,7 @@ func (s hqStage2aService) validate() error {
 		!stage2aPrefixedDigest.MatchString(s.AuthorityKeySHA256) || !stage2aPrefixedDigest.MatchString(s.GuardModuleSHA256) ||
 		s.PreloaderPath != hqStage2aPreloader ||
 		!stage2aAbsolutePath(s.InventorySource) || !stage2aPrefixedDigest.MatchString(s.InventoryDigest) ||
-		s.InventoryLimits.MaxFiles < 9 || s.InventoryLimits.MaxFiles > 512 ||
+		s.InventoryLimits.MaxFiles < 10 || s.InventoryLimits.MaxFiles > 512 ||
 		s.InventoryLimits.MaxFileBytes == 0 || s.InventoryLimits.MaxFileBytes > 384<<20 ||
 		s.InventoryLimits.MaxTotalBytes < s.InventoryLimits.MaxFileBytes || s.InventoryLimits.MaxTotalBytes > 1<<30 || !hqStage2aValidExclusions(s.ExcludedHQReleasePaths) ||
 		len(s.Components) != 2 || s.Components[0].ComponentID != "hq" || s.Components[1].ComponentID != "node" ||

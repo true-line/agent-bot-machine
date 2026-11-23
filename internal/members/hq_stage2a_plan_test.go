@@ -24,18 +24,18 @@ func stage2aHQTestService(t *testing.T) (HQService, []byte) {
 	svc := HQService{Archive: filepath.Join(root, "hq.tar"), ReleaseDir: filepath.Join(root, "hq"), Node: filepath.Join(root, "node"), ArtifactSHA256: digest[7:],
 		Stage2a: &hqStage2aService{HostID: "test-host", RuntimeInstallationID: "test-runtime", InstallationID: "test-install", MachineAccount: "test-owner", MachineUID: 501, MachineGID: 20,
 			ReaderUID: 309, ReaderGID: 309, AuthorityKeySHA256: digest, PreloaderPath: hqStage2aPreloader, InventorySource: "/fixture/release/h.jcs",
-			InventoryLimits: stage2aDomainInventoryLimitsV3{MaxFiles: 9, MaxFileBytes: 100, MaxTotalBytes: 900},
+			InventoryLimits: stage2aDomainInventoryLimitsV3{MaxFiles: 10, MaxFileBytes: 100, MaxTotalBytes: 900},
 			ContractsSource: hqStage2aContractsSource{Tag: "v0.10.0", Commit: strings.Repeat("a", 40),
 				FullDigest: digest, FullFiles: 2, RuntimeDigest: digest, RuntimeFiles: 2},
 			Components: []stage2aReleaseComponent{
 				{ComponentID: "hq", SourceRepository: "fixture/hq", SourceCommit: strings.Repeat("1", 40), ArtifactSource: "/fixture/hq.tar", ArtifactSHA256: digest, ManifestSource: "/fixture/hq.jcs", ManifestSHA256: digest},
 				{ComponentID: "node", SourceRepository: "fixture/node", SourceCommit: strings.Repeat("2", 40), ArtifactSource: "/fixture/node.tar", ArtifactSHA256: digest, ManifestSource: "/fixture/node.jcs", ManifestSHA256: digest},
 			}}}
-	rows := make([]stage2aDomainFileV3, 0, 9)
+	rows := make([]stage2aDomainFileV3, 0, 10)
 	var total uint64
 	for _, relative := range []string{hqStage2aNode, hqStage2aHelper, hqStage2aEntry, svc.Stage2a.PreloaderPath, hqStage2aGuard,
 		hqStage2aCooperativeMachine, hqStage2aCooperativeProof, hqStage2aCooperativeStart,
-		hqStage2aCooperativeBridge} {
+		hqStage2aCooperativeBridge, hqStage2aCooperativeInstall} {
 		contents := []byte("fixture " + relative + "\n")
 		hash := fmt.Sprintf("sha256:%x", sha256.Sum256(contents))
 		path, component, mode := filepath.Join(svc.ReleaseDir, relative), "hq", "0440"
@@ -128,7 +128,7 @@ func TestStage2aHQPlanRequiresReviewedContractsSourcePins(t *testing.T) {
 	withQWire.ExcludedHQReleasePaths = hqStage2aContractsFixturePathsV0102[:]
 	withQWire.ContractsSource.Tag = "v0.10.2"
 	withQWire.ContractsSource.FullFiles = 469
-	withQWire.ContractsSource.RuntimeFiles = 418
+	withQWire.ContractsSource.RuntimeFiles = 417
 	if err := withQWire.validate(); err != nil {
 		t.Fatalf("candidate v0.10.2 H subset refused: %v", err)
 	}
@@ -173,12 +173,12 @@ func TestStage2aHQV0101ExcludesOnlyReviewedFixtures(t *testing.T) {
 
 func TestStage2aHQV0102ExcludesOnlyReviewedFixtures(t *testing.T) {
 	final := hqStage2aContractsFixturePathsV0102[:]
-	if len(final) != 51 || !slices.IsSorted(final) || !hqStage2aValidExclusions(final) {
+	if len(final) != 52 || !slices.IsSorted(final) || !hqStage2aValidExclusions(final) {
 		t.Fatal("v0.10.2 Contracts fixture partition is not exact and ordered")
 	}
 	changed := slices.Clone(final)
 	changed[0] = "vendor/soul-contracts/schemas/machine/v3/stage2a-q-ready.schema.json"
-	if hqStage2aValidExclusions(changed) || hqStage2aValidExclusions(final[:50]) {
+	if hqStage2aValidExclusions(changed) || hqStage2aValidExclusions(final[:51]) {
 		t.Fatal("unreviewed or missing v0.10.2 fixture omission accepted")
 	}
 }
@@ -214,7 +214,7 @@ func TestStage2aHQSelectsAuthenticatedDarwinHelper(t *testing.T) {
 func TestStage2aHQRequiresEntrypointCooperativeImports(t *testing.T) {
 	svc, inventory := stage2aHQTestService(t)
 	for _, name := range []string{hqStage2aCooperativeMachine, hqStage2aCooperativeProof,
-		hqStage2aCooperativeStart, hqStage2aCooperativeBridge} {
+		hqStage2aCooperativeStart, hqStage2aCooperativeBridge, hqStage2aCooperativeInstall} {
 		path := filepath.Join(svc.ReleaseDir, name)
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)

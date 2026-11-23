@@ -22,7 +22,7 @@ func verifyHQStage2aReleaseRows(service HQService, raw []byte) (stage2aDomainInv
 		hqStage2aNode: "node", hqStage2aHelper: "hq", hqStage2aEntry: "hq",
 		s.PreloaderPath: "hq", hqStage2aGuard: "hq",
 		hqStage2aCooperativeMachine: "hq", hqStage2aCooperativeProof: "hq",
-		hqStage2aCooperativeStart: "hq", hqStage2aCooperativeBridge: "hq",
+		hqStage2aCooperativeStart: "hq", hqStage2aCooperativeBridge: "hq", hqStage2aCooperativeInstall: "hq",
 	}
 	for _, row := range inventory.Files {
 		component := required[row.Path]
