@@ -302,6 +302,21 @@ func (s Saved) CanonicalForReview() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.SoulCooperativeLaunch != nil || s.Plan.Purpose == SoulCooperativeLaunchInstallPurpose || s.Plan.SoulCooperativeLaunch != nil {
+		if s.SoulCooperativeLaunch == nil || s.Plan.SoulCooperativeLaunch == nil ||
+			s.Plan.Purpose != SoulCooperativeLaunchInstallPurpose || s.SoulProtectedLaunch != nil ||
+			s.SoulProtectedRetire != nil || s.SoulRunnerAccounts != nil || s.SoulBridgeAccounts != nil ||
+			s.HarnessLaunch != nil || s.QualificationRun != nil || s.HQService != nil || s.UpgradeFrom != nil ||
+			s.SoulCooperativeLaunch.validate() != nil {
+			return nil, errors.New("invalid saved cooperative Soul launch request")
+		}
+		a, errA := json.Marshal(s.SoulCooperativeLaunch)
+		b, errB := json.Marshal(s.Plan.SoulCooperativeLaunch)
+		if errA != nil || errB != nil || !bytes.Equal(a, b) {
+			return nil, errors.New("cooperative Soul launch request differs from canonical plan")
+		}
+		return raw, nil
+	}
 	if s.SoulProtectedRetire != nil || s.Plan.Purpose == SoulProtectedLaunchRetirePurpose || s.Plan.SoulProtectedRetire != nil {
 		if s.SoulProtectedRetire == nil || s.Plan.SoulProtectedRetire == nil ||
 			s.Plan.Purpose != SoulProtectedLaunchRetirePurpose || s.SoulProtectedLaunch != nil ||

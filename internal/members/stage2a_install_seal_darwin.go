@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -146,6 +145,15 @@ func RunStage2aInstallSeal() int {
 	if err != nil || len(raw) == 0 || len(raw) > 2<<20 || stage2aStrictJSON(raw) != nil {
 		return refuse()
 	}
+	var header struct {
+		Schema string `json:"schema"`
+	}
+	if json.Unmarshal(raw, &header) != nil {
+		return refuse()
+	}
+	if header.Schema == stage2aSharedSealSchema {
+		return runStage2aSharedSeal(raw)
+	}
 	var request stage2aInstallSealRequest
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -195,20 +203,8 @@ func stage2aSealAsAdmin(p stage2aInstalledPolicy, prepared stage2aPreparedSnapsh
 	if err != nil || len(raw) > 2<<20 {
 		return empty, "", errStage2aReservationAuthority
 	}
-	cmd := exec.Command("/usr/bin/sandbox-exec", "-p", stage2aInstallSealProfile,
-		SoulLauncher, "stage2a-seal")
-	cmd.Dir = "/"
-	cmd.Env = []string{"PATH=/usr/bin:/bin"}
-	cmd.Stdin = bytes.NewReader(raw)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{
-		Uid: uint32(p.MachineUID), Gid: uint32(p.MachineGID), Groups: []uint32{},
-	}}
-	output, err := cmd.Output()
-	if err != nil || len(output) > 8<<10 || stage2aStrictJSON(bytes.TrimSpace(output)) != nil {
-		return empty, "", errors.New("Stage 2a A-owned seal helper refused")
-	}
-	var reply stage2aInstallSealReply
-	if json.Unmarshal(output, &reply) != nil ||
+	reply, err := stage2aRunSealHelper(p.MachineUID, p.MachineGID, raw)
+	if err != nil ||
 		reply.Identity.RootPath != filepath.Join(p.SnapshotNamespace.Path,
 			stage2aInstallSnapshotName(p.Binding.InstallationID, kind)) ||
 		reply.Identity.OwnerUID != uint32(p.MachineUID) ||
