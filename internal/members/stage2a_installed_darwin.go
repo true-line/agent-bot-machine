@@ -25,6 +25,11 @@ import (
 const stage2aAuthorityDirectory = launchRuntimeDir + "/stage2a-authorities"
 const stage2aLaunchInstallPurpose = "soul-protected-launch-install"
 
+// This legacy v2 installation has no authenticated HQ selected-code closure.
+// The v3 successor must replace this constant only with the complete signed
+// H/R descriptor, preloader and migration checks. Fixture success cannot.
+const stage2aProtectedStartContractReady = false
+
 func stage2aAuthorityPath(installationID string) (string, error) {
 	if !soulInstallationID.MatchString(installationID) {
 		return "", errStage2aReservationAuthority
@@ -146,6 +151,14 @@ func loadStage2aInstalledPolicyForStop(key ed25519.PublicKey, hqUID int, epoch, 
 
 func loadStage2aInstalledPolicyWithLease(key ed25519.PublicKey, hqUID int, epoch, installationID string, requireLiveLease bool) (stage2aInstalledPolicy, []byte, error) {
 	var p stage2aInstalledPolicy
+	// machine/v2 observes Definition and R inputs, but has no authenticated
+	// H code closure. Keep every positive protected verb closed until a
+	// released H/R contract, A-signed H descriptor and HQ preloader exist.
+	// Stop retains the old-policy loader so an already active run can be
+	// contained, and owner-reviewed retirement remains available.
+	if requireLiveLease && !stage2aProtectedStartContractReady {
+		return p, nil, errStage2aReservationAuthority
+	}
 	path, err := stage2aAuthorityPath(installationID)
 	if err != nil {
 		return p, nil, err

@@ -33,6 +33,9 @@ func runSoulProtectedLaunchApply(s Saved, a Approval, owner string, h Host, deps
 	refused := func(err error) cli.Result {
 		return failure(diag.MembersNotApproved, "protected Soul launch apply refused: %v", err)
 	}
+	if !stage2aProtectedStartContractReady {
+		return refused(errors.New("authenticated H/R code contract and preloader are not released"))
+	}
 	if os.Getuid() != 0 || os.Geteuid() != 0 || deps.Root != nil ||
 		a.Purpose != SoulProtectedLaunchInstallPurpose || a.PlanID != s.PlanID ||
 		a.PlanDigest != s.PlanDigest || !digestPattern.MatchString(a.PairCommitment) ||

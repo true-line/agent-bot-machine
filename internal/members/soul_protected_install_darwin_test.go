@@ -10,7 +10,23 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/qwts/managed-machine/internal/diag"
 )
+
+func TestStage2aV2ProtectedApplyAndStartStayClosed(t *testing.T) {
+	called := false
+	result := runSoulProtectedLaunchApply(Saved{}, Approval{}, "", nil, Deps{},
+		func(Approval, func() error) error { called = true; return nil })
+	if called || result.Diagnostic == nil || result.Diagnostic.ID != diag.MembersNotApproved ||
+		!strings.Contains(result.Diagnostic.Message, "H/R code contract") {
+		t.Fatalf("legacy v2 install entered protected apply: %+v, paired=%v", result.Diagnostic, called)
+	}
+	_, raw, err := loadStage2aInstalledPolicyWithLease(nil, 0, "", "", true)
+	if err != errStage2aReservationAuthority || raw != nil {
+		t.Fatalf("legacy v2 policy entered a protected start: %v, %q", err, raw)
+	}
+}
 
 func TestStage2aInstalledPolicyMustMatchReviewedTemplate(t *testing.T) {
 	key := ed25519.PublicKey(strings.Repeat("k", ed25519.PublicKeySize))
@@ -166,6 +182,14 @@ func TestStage2aProtectedInstallPreparedPolicyRoundTripsThroughBuild(t *testing.
 	if _, err := Build(Input{SoulProtectedLaunch: plan.SoulProtectedLaunch, HQAccount: DarwinHQAccount,
 		Dir: DarwinDir, Platform: PlatformDarwin, Invoker: owner}, host); err != nil {
 		t.Fatalf("saved normalized request refused on rebuild: %v", err)
+	}
+	// This under-limit reviewed v2 fixture can be planned, but cannot apply
+	// or authorize a protected start until H's code closure is authenticated.
+	blocked := runSoulProtectedLaunchApply(Saved{SoulProtectedLaunch: plan.SoulProtectedLaunch,
+		Plan: plan}, Approval{}, owner, host, Deps{}, nil)
+	if blocked.Diagnostic == nil || blocked.Diagnostic.ID != diag.MembersNotApproved ||
+		!strings.Contains(blocked.Diagnostic.Message, "H/R code contract") {
+		t.Fatalf("under-limit v2 plan reached protected apply: %+v", blocked.Diagnostic)
 	}
 	var installed stage2aInstalledPolicy
 	if err := json.Unmarshal(plan.SoulProtectedLaunch.Policy, &installed); err != nil {
