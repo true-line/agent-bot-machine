@@ -292,11 +292,12 @@ summary. This check does not verify approval spending, the sealed R files,
 Q/ACP/OS captures or any physical T result. The ordinary release attestation
 still follows qualification and the public acceptance gate remains closed.
 
-The managed-cooperative T21 diagnostic consumes the distinct A-signed
-`agent-bot/soul-cooperative-reservation/v3` envelope from Contracts successor
-#75 (merged reviewed head `2076eb64022921624a75dd271d024bc02e2ef55a`,
-pending its immutable successor tag). This source replaced the closed draft
-#74 vector.
+The earlier managed-cooperative T21 diagnostic consumes the distinct A-signed
+`agent-bot/soul-cooperative-reservation/v3` envelope from Contracts #75
+(merged reviewed head `2076eb64022921624a75dd271d024bc02e2ef55a`).
+That direct-transport vector was superseded for the protected B route by
+Contracts v0.10.1 and v0.10.2; this earlier diagnostic grants no brokered-B
+qualification.
 It verifies the enrolled A key and exact canonical bytes, derives the fixed
 `machine/v2` host-report projection, and joins the report to the H descriptor,
 sealed R inventory, frozen definition and launch roots, runner UID/GID,
@@ -325,6 +326,23 @@ release manifest, Q runner and physical T21 result are not established by it.
 One-use spending, release attestation, T21 segment artifacts and physical
 results remain separate gates; this diagnostic cannot return a positive Stage
 2a acceptance result.
+
+The protected B successor in Contracts v0.10.2 binds two distinct A-signed
+canonical envelopes. The R-visible primary reservation selects exactly
+`adapter_transport: "brokered-b"` and carries the digest of the static B
+launch object plus explicit member and relay endpoints. The H/B-only
+`agent-bot/soul-cooperative-bridge-assignment/v3` envelope binds the SHA-256 of
+the complete primary envelope and carries the full B launch object and broker
+endpoint. `VerifyCooperativeBridgeAssignmentV3` checks both signatures under
+the independently enrolled Machine public key, exact canonical bytes and
+field sets, host/installation/start/launch/plan/HQ epoch/time equality,
+measurement binding, exact digest joins, Machine-derived R/B accounts and
+UID/GID ranges, endpoint paths/modes/peer and parent identity claims, and the
+ordered `sandbox-exec` argv. Tests use the released synthetic B vector and
+coherently re-signed substitutions. This helper is source-only: it neither
+measures installed B/R files or live socket parents nor verifies one-use
+spending, release attestation, raw Q/ACP/OS captures, physical T21, or a v3
+report/completion successor. The public acceptance result remains unqualified.
 
 The separate `mm-qualification-verify-release --host-v3` command parses the
 supplied owner root, policy, trusted Sigstore roots, exact release and Souls
