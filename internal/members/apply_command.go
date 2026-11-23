@@ -119,10 +119,6 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 		return failure(diag.MembersNotApproved, "qualification review plans are non-applicable and cannot install or launch a harness")
 	}
 
-	if saved.HQService != nil && saved.HQService.Stage2a != nil {
-		return failure(diag.MembersNotApproved, hqStage2aCutoverRefusal)
-	}
-
 	if saved.isHarnessLaunchPlan() {
 		if platform != PlatformDarwin || saved.HarnessLaunch == nil || saved.HQService != nil || saved.UpgradeFrom != nil {
 			return failure(diag.MembersNotApproved, "a harness rule requires its own exact Darwin plan")
@@ -156,6 +152,10 @@ func runApply(deps Deps, ctx cli.Context, args []string) cli.Result {
 			}
 			return cli.Result{Records: []*output.Record{output.New().Set("plan_id", planID).Set("plan_digest", saved.PlanDigest).Set("applied", true).Set("receipt", ReceiptPath(planID))}}
 		}
+	}
+
+	if saved.HQService != nil && saved.HQService.Stage2a != nil {
+		return failure(diag.MembersNotApproved, hqStage2aCutoverRefusal)
 	}
 
 	if r := saved.HarnessLaunch; r != nil && r.Action == "install" && deps.Root == nil {

@@ -252,6 +252,9 @@ func performUpgrade(j upgradeOperations, rec launchUpgrade) (e error) {
 			if baseErr := j.verify(rec.Previous); baseErr != nil {
 				return errors.Join(err, baseErr)
 			}
+			if cleanupErr := rollbackProtectedHQ(j, rec); cleanupErr != nil {
+				return errors.Join(err, cleanupErr)
+			}
 			return errors.Join(err, j.finish(false))
 		}
 	}

@@ -67,6 +67,8 @@ func main() {
 			os.Exit(members.RunHarness())
 		case "stage2a-seal":
 			os.Exit(members.RunStage2aInstallSeal())
+		case "stage2a-h-withdraw":
+			os.Exit(members.RunStage2aHQWithdraw())
 		}
 	}
 	if role, ok := stage2aRoleCommand(runtime.GOOS, os.Args); ok {

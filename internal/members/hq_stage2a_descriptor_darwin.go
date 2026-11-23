@@ -5,9 +5,14 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -38,6 +43,14 @@ func provisionHQStage2aDescriptorDirectory(rec launchRecord) (stage2aInstalledDi
 		return empty, err
 	}
 	return stage2aInstalledDirectoryIdentity(hqStage2aMetadataDir, s.MachineUID, s.ReaderGID, 0750)
+}
+
+func checkHQStage2aDescriptorDirectory(s hqStage2aService, reviewed stage2aInstalledDirectory) error {
+	current, err := stage2aInstalledDirectoryIdentity(hqStage2aMetadataDir, s.MachineUID, s.ReaderGID, 0750)
+	if err != nil || current != reviewed {
+		return errStage2aReservationAuthority
+	}
+	return nil
 }
 
 func removeHQStage2aDescriptorDirectory(s hqStage2aService, reviewed stage2aInstalledDirectory) error {
@@ -153,4 +166,74 @@ func withdrawHQStage2aDescriptorAsAdmin(s hqStage2aService, descriptor stage2aDo
 func hqStage2aIsOfflineAdmin(s hqStage2aService) bool {
 	return s.MachineUID >= 400 && s.MachineGID > 0 && os.Getuid() == s.MachineUID && os.Geteuid() == s.MachineUID &&
 		os.Getgid() == s.MachineGID && os.Getegid() == s.MachineGID && stage2aInstallSealOnlyPrimaryGroup(s.MachineGID) && stage2aInstallSealNoIP()
+}
+
+func validHQStage2aDescriptorWitness(s hqStage2aService, witness stage2aDomainSidecarRefV3) bool {
+	return witness.Path == hqStage2aDescriptor && witness.OwnerUID == uint32(s.MachineUID) &&
+		witness.OwnerGID == uint32(s.ReaderGID) && witness.Mode == "0440" && witness.SizeBytes > 0 &&
+		witness.SizeBytes <= 64<<10 && stage2aPrefixedDigest.MatchString(witness.SHA256)
+}
+
+type hqStage2aWithdrawRequest struct {
+	LauncherSHA256 string                    `json:"launcher_sha256"`
+	Service        hqStage2aService          `json:"service"`
+	Descriptor     stage2aDomainSidecarRefV3 `json:"descriptor"`
+}
+
+// Only a protected journal may supply a prior publication witness. Root
+// cannot withdraw it itself, and the offline A command accepts a fixed leaf.
+func withdrawHQStage2aDescriptorOffline(rec launchRecord, witness stage2aDomainSidecarRefV3) error {
+	s := rec.Service.Stage2a
+	if os.Getuid() != 0 || os.Geteuid() != 0 || s == nil || rec.Stage2a == nil || !validHQStage2aDescriptorWitness(*s, witness) {
+		return errStage2aReservationAuthority
+	}
+	observed, _, err := stage2aV3SidecarAt(hqStage2aDescriptor, uint32(s.MachineUID), uint32(s.ReaderGID))
+	if err != nil || observed != witness {
+		return errors.New("preserving changed protected HQ descriptor")
+	}
+	if err := trustedPath(OSHost{}, SoulLauncher, false); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(hqStage2aWithdrawRequest{LauncherSHA256: rec.Stage2a.LauncherSHA256, Service: *s, Descriptor: witness})
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("/usr/bin/sandbox-exec", "-p", stage2aInstallSealProfile, SoulLauncher, "stage2a-h-withdraw")
+	cmd.Dir = "/"
+	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	cmd.Stdin = bytes.NewReader(raw)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(s.MachineUID), Gid: uint32(s.MachineGID), Groups: []uint32{}}}
+	if err := cmd.Run(); err != nil {
+		return errors.New("offline A helper refused to withdraw the recorded HQ descriptor")
+	}
+	if _, err := os.Lstat(hqStage2aDescriptor); !errors.Is(err, os.ErrNotExist) {
+		return errors.New("cannot confirm the recorded HQ descriptor was withdrawn")
+	}
+	return nil
+}
+
+// RunStage2aHQWithdraw is a fixed offline helper entry for the interrupted
+// protected transition. It does not accept a destination, a command, or data.
+func RunStage2aHQWithdraw() int {
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, (8<<10)+1))
+	if err != nil || len(raw) > 8<<10 || stage2aStrictJSON(raw) != nil {
+		return harnessRefused
+	}
+	var request hqStage2aWithdrawRequest
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil || decoder.Decode(new(any)) != io.EOF || request.Service.validate() != nil ||
+		!validHQStage2aDescriptorWitness(request.Service, request.Descriptor) {
+		return harnessRefused
+	}
+	me, err := os.Executable()
+	if err != nil || me != SoulLauncher {
+		return harnessRefused
+	}
+	binary, err := managerBytes()
+	if err != nil || "sha256:"+harnessSHA(binary) != request.LauncherSHA256 ||
+		withdrawHQStage2aDescriptorAsAdmin(request.Service, request.Descriptor) != nil {
+		return harnessRefused
+	}
+	return 0
 }

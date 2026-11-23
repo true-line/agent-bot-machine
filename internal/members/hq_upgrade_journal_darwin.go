@@ -37,13 +37,14 @@ type upgradeJournal struct {
 	pair                 upgradePairGuard
 	protectedEvidence    *hqStage2aUpgradeEvidence
 	protectedPublication *hqStage2aPublication
-	Approval             Approval      `json:"approval"`
-	Owner                string        `json:"owner"`
-	Upgrade              launchUpgrade `json:"upgrade"`
-	Stage                string        `json:"staged_plist"`
-	Signer               upgradeSigner `json:"previous_signer"`
-	Phase                string        `json:"phase"`
-	Stopping             *stoppingHQ   `json:"stopping,omitempty"`
+	ProtectedDescriptor  *hqStage2aJournalDescriptor `json:"protected_descriptor,omitempty"`
+	Approval             Approval                    `json:"approval"`
+	Owner                string                      `json:"owner"`
+	Upgrade              launchUpgrade               `json:"upgrade"`
+	Stage                string                      `json:"staged_plist"`
+	Signer               upgradeSigner               `json:"previous_signer"`
+	Phase                string                      `json:"phase"`
+	Stopping             *stoppingHQ                 `json:"stopping,omitempty"`
 }
 
 func currentUpgradeReceipt(a Approval, owner string) (Receipt, error) {
@@ -483,6 +484,9 @@ func resumeServiceUpgrade(saved Saved, owner string, pair upgradePairGuard) (boo
 		if e != nil || d != j.Approval.PlanDigest || len(saved.Plan.Steps) != 2 {
 			return errors.New("saved approved upgrade digest changed")
 		}
+		if j.ProtectedDescriptor != nil && (j.Upgrade.Next.Stage2a == nil || j.Upgrade.Next.Service.Stage2a == nil) {
+			return errors.New("protected descriptor evidence belongs to a different upgrade")
+		}
 		b, e := json.Marshal(j.Upgrade)
 		if e != nil || !bytes.Equal(b, []byte(saved.Plan.Steps[1].Content)) {
 			return errors.New("saved upgrade does not match the protected release records")
@@ -496,7 +500,7 @@ func resumeServiceUpgrade(saved Saved, owner string, pair upgradePairGuard) (boo
 		}
 		for _, rec := range []launchRecord{j.Upgrade.Previous, j.Upgrade.Next} {
 			capability, err := verifyDarwinRelease(rec.Service, OSHost{})
-			if err != nil || capability != launchControlV2 || rec.Plist != renderLaunchPlist(rec.Service, rec.OwnerUID, owner, capability) {
+			if err != nil || capability != launchControlV2 || !matchesReviewedHQPlist(rec, owner, capability) {
 				return errors.New("preserving upgrade state because a retained release no longer verifies")
 			}
 		}
@@ -553,7 +557,7 @@ func completedUpgrade(saved Saved, owner string, pair upgradePairGuard) (bool, e
 			return errors.New("unknown upgrade outcome")
 		}
 		capability, e := verifyDarwinRelease(verify.Service, OSHost{})
-		if e != nil || capability != launchControlV2 || verify.Plist != renderLaunchPlist(verify.Service, verify.OwnerUID, owner, capability) {
+		if e != nil || capability != launchControlV2 || !matchesReviewedHQPlist(verify, owner, capability) {
 			return errors.New("previously verified HQ release changed")
 		}
 		if e := j.verify(verify); e != nil {
@@ -624,7 +628,10 @@ func restorePrevious(j upgradeOperations, rec launchUpgrade) error {
 		if e := j.verify(old); e != nil {
 			return e
 		}
-		return errors.Join(rollbackProtectedHQ(j, rec), j.finish(false))
+		if e := rollbackProtectedHQ(j, rec); e != nil {
+			return e
+		}
+		return j.finish(false)
 	}
 	activeNew, newErr := j.active(next)
 	if newErr != nil || (!activeNew && oldErr != nil) {
@@ -638,10 +645,13 @@ func restorePrevious(j upgradeOperations, rec launchUpgrade) error {
 	if e := j.clearStoppedEndpoint(); e != nil {
 		return e
 	}
-	return errors.Join(rollbackProtectedHQ(j, rec), restartPrevious(j, rec))
+	return restartPrevious(j, rec)
 }
 
 func restartPrevious(j upgradeOperations, rec launchUpgrade) error {
+	if err := rollbackProtectedHQ(j, rec); err != nil {
+		return err
+	}
 	old, next := rec.Previous, rec.Next
 	if e := j.installed(old); e != nil {
 		if e = j.phase("restoring-previous"); e != nil {

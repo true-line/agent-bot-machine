@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -64,7 +65,7 @@ func prepareHQStage2aSeal(rec launchRecord, planDigest string, raw []byte) (stag
 		Domain: inv.Domain, InstallationID: inv.InstallationID, MachineAccount: s.MachineAccount,
 		MachineUID: s.MachineUID, MachineGID: s.MachineGID, ReaderAccount: DarwinHQAccount,
 		ReaderUID: s.ReaderUID, ReaderGID: s.ReaderGID, OwnerPlanDigest: ownerPlan,
-		ReviewedDigest: s.InventoryDigest, Namespace: nsIdentity, LauncherSHA256: launch.LauncherSHA256,
+		ReviewedDigest: s.InventoryDigest, Namespace: nsIdentity, LauncherSHA256: strings.TrimPrefix(launch.LauncherSHA256, "sha256:"),
 		Prepared: prepared, Inventory: raw})
 }
 

@@ -1,6 +1,15 @@
 package members
 
-import "errors"
+import (
+	"errors"
+	"os"
+	"path/filepath"
+)
+
+type hqStage2aJournalDescriptor struct {
+	Directory  stage2aInstalledDirectory  `json:"directory"`
+	Descriptor *stage2aDomainSidecarRefV3 `json:"descriptor,omitempty"`
+}
 
 type protectedHQUpgradeOperations interface {
 	prepareProtectedHQ(launchRecord) error
@@ -19,6 +28,7 @@ type hqStage2aUpgradeEvidence struct {
 }
 
 type hqStage2aPublication struct {
+	witness stage2aDomainSidecarRefV3
 	// Before launchd submission, recheck the sealed H/R, A signature,
 	// selected bytes, and the exact published descriptor inode.
 	recheck func() error
@@ -47,11 +57,16 @@ func (j *upgradeJournal) prepareProtectedHQ(rec launchRecord) error {
 	if err != nil {
 		return err
 	}
+	j.ProtectedDescriptor = &hqStage2aJournalDescriptor{Directory: metadata}
+	journal := filepath.Join(receiptsDir(), upgradeJournalName)
+	if err := j.write(journal, false); err != nil {
+		return err
+	}
 	published, err := evidence.publish(rec, j.Approval, sealed)
 	if err != nil {
 		return err
 	}
-	if published == nil || published.recheck == nil || published.withdraw == nil {
+	if published == nil || published.recheck == nil || published.withdraw == nil || !validHQStage2aDescriptorWitness(*rec.Service.Stage2a, published.witness) {
 		return errors.New(hqStage2aCutoverRefusal)
 	}
 	withdraw := published.withdraw
@@ -61,18 +76,47 @@ func (j *upgradeJournal) prepareProtectedHQ(rec launchRecord) error {
 		}
 		return removeHQStage2aDescriptorDirectory(*rec.Service.Stage2a, metadata)
 	}
-	if err := published.recheck(); err != nil {
-		return errors.Join(err, published.withdraw())
-	}
 	j.protectedPublication = published
-	return nil
+	if err := published.recheck(); err != nil {
+		return err
+	}
+	j.ProtectedDescriptor.Descriptor = &published.witness
+	return j.write(journal, false)
 }
 
 func (j *upgradeJournal) rollbackProtectedHQ() error {
-	if j.protectedPublication == nil || j.protectedPublication.withdraw == nil {
+	if j.protectedPublication != nil && j.protectedPublication.withdraw != nil {
+		return j.protectedPublication.withdraw()
+	}
+	rec := j.Upgrade.Next
+	if rec.Stage2a == nil || rec.Service.Stage2a == nil {
 		return errors.New(hqStage2aCutoverRefusal)
 	}
-	return j.protectedPublication.withdraw()
+	state := j.ProtectedDescriptor
+	if _, err := os.Lstat(hqStage2aMetadataDir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if state == nil || state.Directory.Path != hqStage2aMetadataDir {
+		return errors.New("preserving unrecorded protected HQ descriptor directory")
+	}
+	s := *rec.Service.Stage2a
+	if err := checkHQStage2aDescriptorDirectory(s, state.Directory); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(hqStage2aDescriptor); !errors.Is(err, os.ErrNotExist) {
+		if err != nil {
+			return err
+		}
+		if state.Descriptor == nil || !validHQStage2aDescriptorWitness(s, *state.Descriptor) {
+			return errors.New("preserving an unrecorded protected HQ descriptor")
+		}
+		if err := withdrawHQStage2aDescriptorOffline(rec, *state.Descriptor); err != nil {
+			return err
+		}
+	}
+	return removeHQStage2aDescriptorDirectory(s, state.Directory)
 }
 
 func rollbackProtectedHQ(j upgradeOperations, rec launchUpgrade) error {
