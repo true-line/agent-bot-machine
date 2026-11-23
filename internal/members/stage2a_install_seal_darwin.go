@@ -153,7 +153,7 @@ func RunStage2aInstallSeal() int {
 		return refuse()
 	}
 	if header.Schema == stage2aDomainSealSchemaV3 {
-		if stage2aStrictJSONBounded(raw, 3<<20, 8192) != nil {
+		if stage2aStrictJSONBounded(raw, 3<<20, stage2aV3MaxJSONNodes) != nil {
 			return refuse()
 		}
 		return runStage2aDomainSealV3(raw)

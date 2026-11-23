@@ -90,3 +90,35 @@ func TestStage2aV3DomainInventoryDigestAndRefusals(t *testing.T) {
 		t.Fatal("accepted unknown field")
 	}
 }
+
+func TestStage2aV3InventoryMaximumFileAndDirectoryClosure(t *testing.T) {
+	inv := stage2aV3TestInventory()
+	inv.Directories = nil
+	inv.Files = nil
+	inv.TotalBytes = 0
+	inv.Limits.MaxFileBytes = 1
+	for i := 0; i < 512; i++ {
+		parent := fmt.Sprintf("d%03d", i)
+		inv.Directories = append(inv.Directories,
+			stage2aDomainDirectoryV3{Path: parent, Kind: "directory", Mode: "0550"},
+			stage2aDomainDirectoryV3{Path: parent + "/a", Kind: "directory", Mode: "0550"})
+		path := parent + "/a/f"
+		inv.Files = append(inv.Files, stage2aDomainFileV3{Path: path, Kind: "regular", Mode: "0440",
+			SizeBytes: 0, SHA256: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+			ComponentID: "max-fixture", ReleasePath: path})
+	}
+	raw := stage2aV3TestCanonical(t, inv)
+	if len(raw) > 2<<20 || stage2aStrictJSON(raw) == nil {
+		t.Fatalf("fixture did not exercise v3-only parser budget: bytes=%d", len(raw))
+	}
+	if _, _, err := stage2aDomainInventoryDigestV3(raw); err != nil {
+		t.Fatalf("declared maximum closure refused: %v", err)
+	}
+	outer, err := json.Marshal(struct {
+		Schema    string          `json:"schema"`
+		Inventory json.RawMessage `json:"inventory"`
+	}{Schema: "agent-bot-machine/stage2a-domain-install-seal/v3", Inventory: raw})
+	if err != nil || stage2aStrictJSONBounded(outer, 3<<20, stage2aV3MaxJSONNodes) != nil {
+		t.Fatalf("v3 outer handoff budget refused maximum inventory: %v", err)
+	}
+}

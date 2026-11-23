@@ -21,6 +21,7 @@ const (
 	stage2aRRuntimeInventoryPurposeV3 = "agent-bot/stage2a-r-runtime-inventory/v3"
 	stage2aV3MaxInventoryFileBytes    = 402653184
 	stage2aV3MaxInventoryTotalBytes   = 1 << 30
+	stage2aV3MaxJSONNodes             = 16384
 )
 
 // These POSIX paths are Machine's macOS targets even when a plan is rendered
@@ -87,7 +88,7 @@ func stage2aV3InventoryRecordPath(value string) bool {
 func stage2aDomainInventoryDigestV3(raw []byte) (stage2aDomainInventoryV3, string, error) {
 	var inv stage2aDomainInventoryV3
 	invalid := errors.New("invalid Stage 2a v3 domain inventory")
-	if stage2aStrictJSONBounded(raw, 2<<20, 8192) != nil {
+	if stage2aStrictJSONBounded(raw, 2<<20, stage2aV3MaxJSONNodes) != nil {
 		return inv, "", invalid
 	}
 	canonical, err := jsoncanonicalizer.Transform(raw)
