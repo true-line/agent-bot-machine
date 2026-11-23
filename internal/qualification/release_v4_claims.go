@@ -128,6 +128,7 @@ func verifyV4ReportPairClaims(policy VerifiedPolicy, qualification map[string]js
 	if mapping.SoulID != pBinding.SoulID || mapping.ArtifactSHA256 != artifact ||
 		mapping.ClaimedDefinitionDigest != pBinding.ClaimedDefinitionDigest ||
 		mapping.DefinitionMeasurement != pBinding.DefinitionMeasurement ||
+		pMeasured.AdapterRelease != cMeasured.AdapterRelease ||
 		pBinding.InstallationID != cBinding.InstallationID || pBinding.SoulID != cBinding.SoulID ||
 		pBinding.HostID != cBinding.HostID || pBinding.PackageSHA256 != cBinding.PackageSHA256 ||
 		pBinding.SoulArtifactSHA256 != cBinding.SoulArtifactSHA256 ||
