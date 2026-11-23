@@ -284,15 +284,18 @@ func runService(ctx context.Context, root, requiredIdentity string) error {
 			return applyWithProvider(ctx, item, option, target, dir, impl)
 		},
 	}
+	t02Monitor := newStage2aT02KeydMonitor()
 	return Serve(ctx, ln, gate, priv, peerCred, Hooks{
-		Status:       func() (string, []byte, error) { return statusBody(dir) },
-		Receipts:     func() ([]byte, error) { return receiptsBody(dir) },
-		Plan:         planner.Plan,
-		Apply:        planner.Apply,
-		Update:       planner.Update,
-		Catalog:      func(req Request) (string, string, string) { return session.accept(dir, req) },
-		HQDevice:     func(req Request) Response { return requestHQDevice(ctx, root, priv, req, time.Now, runDeviceKeyd) },
-		Stage2a:      stage2aHandler(priv),
+		Status:   func() (string, []byte, error) { return statusBody(dir) },
+		Receipts: func() ([]byte, error) { return receiptsBody(dir) },
+		Plan:     planner.Plan,
+		Apply:    planner.Apply,
+		Update:   planner.Update,
+		Catalog:  func(req Request) (string, string, string) { return session.accept(dir, req) },
+		HQDevice: func(req Request) Response {
+			return requestHQDevice(ctx, root, priv, req, time.Now, t02Monitor.provider)
+		},
+		Stage2a:      stage2aHandler(priv, t02Monitor),
 		MembersPlans: func(option, id string) ([]byte, error) { return readMembersPlans(root, option, id) },
 		ServiceRecovery: func(req Request) Response {
 			return recoverHQService(dir, priv.Public().(ed25519.PublicKey), req, time.Now, func(id, digest string, uid int) (string, error) {

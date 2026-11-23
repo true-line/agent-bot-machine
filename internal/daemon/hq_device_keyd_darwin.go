@@ -193,11 +193,18 @@ func (b *keydOutput) Write(p []byte) (int, error) {
 }
 
 func runDeviceKeyd(ctx context.Context, home string, envelope deviceDelegation) ([]byte, error) {
+	return runDeviceKeydObserved(ctx, home, envelope, nil)
+}
+
+// The observer is installed only by the one-use T02 qualification path. The
+// ordinary paired device route continues to execute the same keyd command.
+func runDeviceKeydObserved(ctx context.Context, home string, envelope deviceDelegation,
+	observe func(stage2aT02KeydObservation) error) ([]byte, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return nil, errHQDevice
 	}
-	path, _, err := deviceKeydPackagePath(executable)
+	path, machinePath, err := deviceKeydPackagePath(executable)
 	if err != nil {
 		return nil, errHQDevice
 	}
@@ -223,7 +230,30 @@ func runDeviceKeyd(ctx context.Context, home string, envelope deviceDelegation) 
 	cmd.Stdin = bytes.NewReader(append(buf, '\n'))
 	out := keydOutput{limit: outputLimit}
 	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
+	if observe == nil {
+		if err := cmd.Run(); err != nil {
+			return nil, errHQDevice
+		}
+		return out.buf.Bytes(), nil
+	}
+	// The qualified path uses the same verified image but records its live
+	// kernel identity while the child performs the exact signed operation.
+	if envelope.Option != "enrollment-proof" || !deviceNonce.MatchString(envelope.Nonce) ||
+		envelope.Epoch == "" || envelope.UID <= 0 {
+		return nil, errHQDevice
+	}
+	cmd.Path = filepath.Join(cwd, "agent-bot-keyd")
+	cmd.Args[0] = cmd.Path
+	if err := cmd.Start(); err != nil {
+		return nil, errHQDevice
+	}
+	witness, observationErr := observeStage2aT02KeydCommand(cmd.Process.Pid, cwd, machinePath, envelope)
+	runErr := cmd.Wait()
+	if observationErr != nil || runErr != nil {
+		return nil, errHQDevice
+	}
+	witness.OutputSHA256 = stage2aT02Digest(out.buf.Bytes())
+	if err := observe(witness); err != nil {
 		return nil, errHQDevice
 	}
 	return out.buf.Bytes(), nil

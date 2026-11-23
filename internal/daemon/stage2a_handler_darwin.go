@@ -11,7 +11,8 @@ import (
 	"github.com/qwts/managed-machine/internal/members"
 )
 
-func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
+func stage2aHandler(key ed25519.PrivateKey, t02Monitor *stage2aT02KeydMonitor) func(Request) Response {
+	_ = t02Monitor // The reviewed post-ChildReady hook will arm and consume it.
 	service := members.NewStage2aService(key)
 	return func(req Request) Response {
 		var body any
