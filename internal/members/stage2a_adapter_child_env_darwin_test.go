@@ -182,6 +182,12 @@ func TestStage2aV3AdapterChildEnvRequiresSealedRRow(t *testing.T) {
 	if _, _, err := Stage2aLaunchInputDigest(tooLarge); err == nil {
 		t.Fatal("stock CLI over current 256 MiB external limit accepted")
 	}
+	tooLargeInventory := inv
+	tooLargeInventory.Files = append([]stage2aDomainFileV3(nil), inv.Files...)
+	tooLargeInventory.Files[1].SizeBytes = 354630016
+	if stage2aAdapterChildEnvV3(tooLarge, &q, ref, tooLargeInventory) == nil {
+		t.Fatal("stock CLI over current 256 MiB external limit authorized")
+	}
 	if stage2aAdapterChildEnv(input, &q, "/private/stage2a/snapshot-launch") == nil {
 		t.Fatal("legacy launch snapshot accepted the R-only child path")
 	}

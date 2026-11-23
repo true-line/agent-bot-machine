@@ -145,7 +145,7 @@ func stage2aSelectedStockCLI(external []Stage2aDefinitionRecord, sealed []stage2
 		}
 	}
 	if selected == nil || selected.ComponentID != "adapter" || selected.Kind != "regular" ||
-		selected.Mode != "0550" || selected.SizeBytes == 0 ||
+		selected.Mode != "0550" || selected.SizeBytes == 0 || selected.SizeBytes > stage2aMaxFileBytes ||
 		!stage2aPrefixedDigest.MatchString(selected.SHA256) {
 		return errStage2aReservationAuthority
 	}
