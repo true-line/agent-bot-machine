@@ -22,7 +22,7 @@ const stage2aCooperativeRSealPurpose = "agent-bot/stage2a-cooperative-r-seal/v1"
 func stage2aRunSealHelper(adminUID, adminGID int, raw []byte) (stage2aInstallSealReply, error) {
 	var empty stage2aInstallSealReply
 	if os.Getuid() != 0 || os.Geteuid() != 0 || adminUID < 400 || adminGID <= 0 ||
-		len(raw) == 0 || len(raw) > 2<<20 {
+		len(raw) == 0 || len(raw) > 3<<20 {
 		return empty, errStage2aReservationAuthority
 	}
 	cmd := exec.Command("/usr/bin/sandbox-exec", "-p", stage2aInstallSealProfile,
@@ -34,6 +34,12 @@ func stage2aRunSealHelper(adminUID, adminGID int, raw []byte) (stage2aInstallSea
 		Uid: uint32(adminUID), Gid: uint32(adminGID), Groups: []uint32{},
 	}}
 	output, err := cmd.Output()
+	if err != nil {
+		stage2aGuestSealDiagnostic("child-exit", err)
+		if exit, ok := err.(*exec.ExitError); ok && len(exit.Stderr) > 0 {
+			stage2aGuestSealDiagnostic("child-stderr", errors.New(string(bytes.TrimSpace(exit.Stderr))))
+		}
+	}
 	if err != nil || len(output) == 0 || len(output) > 8<<10 ||
 		stage2aStrictJSON(bytes.TrimSpace(output)) != nil {
 		return empty, errors.New("Stage 2a A-owned seal helper refused")
