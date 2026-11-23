@@ -39,7 +39,8 @@ func Serve(ctx context.Context, ln net.Listener, g *Gate, priv ed25519.PrivateKe
 
 func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.Conn) (int, error), hooks Hooks) {
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	started := time.Now()
+	_ = conn.SetDeadline(stage2aConnDeadline(started, ""))
 	reader := bufio.NewReader(io.LimitReader(conn, maxMessage))
 	line, err := reader.ReadBytes('\n')
 	uid := -1
@@ -58,6 +59,12 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 		} else if req.Verb == "bootstrap" {
 			res = bootstrapReply(priv)
 		} else if isStage2aVerb(req.Verb) && hooks.Stage2a != nil {
+			// Cooperative stop may wait for its untrusted R child to exit. Give
+			// only the cutoff verbs enough time for a bounded cancel and signature;
+			// all other daemon requests retain the five-second deadline.
+			if req.Verb == stage2aCooperativeStopVerb || req.Verb == stage2aCooperativeAbortVerb {
+				_ = conn.SetDeadline(stage2aConnDeadline(started, req.Verb))
+			}
 			unlock, err := lockStage2aPairing(g.Dir, req)
 			if err != nil {
 				res = refused(diag.DaemonPeerRefused, "Stage 2a requires the current protected HQ pairing")
@@ -66,6 +73,9 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 				res = hooks.reply(req)
 			}
 		} else {
+			if req.Verb == stage2aCooperativeRecoveryVerb {
+				_ = conn.SetDeadline(stage2aConnDeadline(started, req.Verb))
+			}
 			res = hooks.reply(req)
 			if req.Verb == deviceVerb && res.OK {
 				unlock, err := lockDeviceDelivery(g.Dir, req, res.Body)
@@ -90,6 +100,14 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 	if merr == nil {
 		_, _ = conn.Write(body)
 	}
+}
+
+func stage2aConnDeadline(started time.Time, verb string) time.Time {
+	if verb == stage2aCooperativeStopVerb || verb == stage2aCooperativeAbortVerb ||
+		verb == stage2aCooperativeRecoveryVerb {
+		return started.Add(9 * time.Second)
+	}
+	return started.Add(5 * time.Second)
 }
 
 // Hooks supplies the read-only bodies for status and receipts and the
@@ -179,12 +197,12 @@ func (h Hooks) reply(req Request) Response {
 			return deviceUnavailable()
 		}
 		return h.HQDevice(req)
-	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb:
+	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aCooperativeReserveVerb, stage2aCooperativeReserveResultVerb, stage2aCooperativeAttachVerb, stage2aCooperativeStopVerb, stage2aCooperativeProjectionVerb, stage2aCooperativeProviderVerb, stage2aCooperativeLookupVerb, stage2aCooperativeLiveVerb, stage2aCooperativeAbortVerb:
 		if h.Stage2a == nil {
 			return refused(diag.DaemonUnimplemented, "Stage 2a reserve authority is unavailable")
 		}
 		return h.Stage2a(req)
-	case recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose:
+	case recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose, members.SoulCooperativeLaunchInstallPurpose, stage2aCooperativeRecoveryVerb:
 		if h.ServiceRecovery == nil {
 			return refused(diag.DaemonUnimplemented, "service recovery is unavailable")
 		}

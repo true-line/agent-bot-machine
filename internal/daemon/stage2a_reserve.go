@@ -26,6 +26,16 @@ const stage2aHelloStartVerb = "stage2a-hello-start"
 const stage2aHelloFinalizeVerb = "stage2a-hello-finalize"
 const stage2aHelloAbortVerb = "stage2a-hello-abort"
 const stage2aPeerRoleVerb = "stage2a-peer-role"
+const stage2aCooperativeReserveVerb = "stage2a-cooperative-reserve-v3"
+const stage2aCooperativeReserveResultVerb = "stage2a-cooperative-reserve-result-v3"
+const stage2aCooperativeAttachVerb = "stage2a-cooperative-attach-v3"
+const stage2aCooperativeStopVerb = "stage2a-cooperative-stop-v3"
+const stage2aCooperativeProjectionVerb = "stage2a-cooperative-launch-inputs-v3"
+const stage2aCooperativeProviderVerb = "stage2a-cooperative-provider-v3"
+const stage2aCooperativeLookupVerb = "stage2a-cooperative-lookup-v3"
+const stage2aCooperativeLiveVerb = "stage2a-cooperative-live-v3"
+const stage2aCooperativeAbortVerb = "stage2a-cooperative-abort-v3"
+const stage2aCooperativeRecoveryVerb = "stage2a-cooperative-recovery-v3"
 
 var stage2aExecDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -40,10 +50,27 @@ func isStage2aVerb(verb string) bool {
 	return verb == stage2aReserveVerb || verb == stage2aExecVerb ||
 		verb == stage2aVerifyBVerb || verb == stage2aLookupVerb || verb == stage2aListVerb || verb == stage2aPrepareBVerb || verb == stage2aStopVerb || verb == stage2aFinalizeBVerb || verb == stage2aLiveVerb || verb == stage2aProviderVerb || verb == stage2aChildReadyVerb ||
 		verb == stage2aHelloStartVerb || verb == stage2aHelloFinalizeVerb || verb == stage2aHelloAbortVerb ||
-		verb == stage2aPeerRoleVerb
+		verb == stage2aPeerRoleVerb || verb == stage2aCooperativeReserveVerb ||
+		verb == stage2aCooperativeAttachVerb || verb == stage2aCooperativeStopVerb ||
+		verb == stage2aCooperativeProjectionVerb || verb == stage2aCooperativeProviderVerb ||
+		verb == stage2aCooperativeLookupVerb || verb == stage2aCooperativeLiveVerb ||
+		verb == stage2aCooperativeAbortVerb || verb == stage2aCooperativeReserveResultVerb
 }
 
 func stage2aFields(req *Request, raw []byte) (string, string) {
+	if req.Verb == stage2aCooperativeRecoveryVerb {
+		decoded, err := base64.RawURLEncoding.Strict().DecodeString(req.Stage2aRequest)
+		if err != nil || len(decoded) == 0 || len(decoded) > 2048 ||
+			base64.RawURLEncoding.EncodeToString(decoded) != req.Stage2aRequest {
+			return diag.DaemonUndeclared, "invalid cooperative recovery selectors"
+		}
+		q, err := members.ParseStage2aStopRequest(decoded)
+		if err != nil || q.PlanID != req.PlanID || q.PlanDigest != req.PlanDigest {
+			return diag.DaemonUndeclared, "cooperative recovery selectors mismatch"
+		}
+		req.stage2aCooperativeRecovery = q
+		return "", ""
+	}
 	if !isStage2aVerb(req.Verb) {
 		if req.Stage2aRequest != "" || hasRawField(raw, "stage2a_request") {
 			return diag.DaemonUndeclared, "Stage 2a request is not declared on this verb"
@@ -71,6 +98,70 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 			return diag.DaemonUndeclared, "invalid Stage 2a reserve request"
 		}
 		req.stage2aReserve = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeReserveVerb || req.Verb == stage2aCooperativeReserveResultVerb {
+		parsed, err := members.ParseSoulCooperativeStartRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative Soul reserve request"
+		}
+		req.stage2aCooperativeReserve = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeAttachVerb {
+		parsed, err := members.ParseSoulCooperativeAttachRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative Soul attach request"
+		}
+		req.stage2aCooperativeAttach = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeStopVerb {
+		parsed, err := members.ParseStage2aStopRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative Soul stop request"
+		}
+		req.stage2aCooperativeStop = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeProjectionVerb {
+		parsed, err := members.ParseStage2aStopRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative launch-input request"
+		}
+		req.stage2aCooperativeProjection = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeProviderVerb {
+		parsed, err := members.ParseSoulCooperativeProviderRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative provider request"
+		}
+		req.stage2aCooperativeProvider = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeLookupVerb {
+		parsed, err := members.ParseStage2aLookupRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative installed lookup"
+		}
+		req.stage2aCooperativeLookup = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeLiveVerb {
+		parsed, err := members.ParseSoulCooperativeLiveRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative liveness request"
+		}
+		req.stage2aCooperativeLive = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeAbortVerb {
+		parsed, err := members.ParseStage2aStopRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative preattach abort request"
+		}
+		req.stage2aCooperativeAbort = parsed
 		return "", ""
 	}
 	if req.Verb == stage2aLookupVerb {

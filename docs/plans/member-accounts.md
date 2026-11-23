@@ -800,31 +800,22 @@ credential. This plan is for one explicitly selected Soul installation; it
 neither selects a stock harness nor adds one to the base install.
 
 **Target.** `members plan --soul-cooperative-launch-install <request.json>`
-saves a separate owner-reviewable `soul-cooperative-launch-install` plan. It
-pins the host, paired HQ epoch,
-dedicated runner identity, owner source path, frozen runner package and
-definition digests, Node, entry, launcher and approval end. A request carries
-only the installation, start, owner package path, plan digest, host, epoch and
-the literal `managed-cooperative` profile. A derives the per-start socket path
-and its H/R peer ownership from those reviewed identities.
-This v1 reservation covers R's frozen package only. It is not proof of the
-selected HQ/Comms/contracts code loaded by H. A versioned successor must
-carry A's exact H code descriptor and bind it to HQ's startup-loaded digest;
-A must remeasure those H bytes at launch. The inventory is content-addressed
-outside the bounded plan and handoff, with separate H/R access. No truncated
-inventory or R-only digest can qualify that closure.
-`PrepareSoulCooperativeReservation` signs a purpose-separated, canonical
-30-second reservation only from an installed authority, after its caller has
-rechecked the root applied receipt, live pairing and frozen bytes. It requires
-a durable installation/start spend before returning the signature. The A-owned
-claim store creates a permanent spent-start marker and one active-installation
-marker under an installation lock. A different start cannot enter while that
-marker exists, and only the matching start may release it after an independent
-containment check. Lost responses and retries cannot recover a spent start.
-The installed loader,
-owner-approved apply, paired daemon verbs, fixed launcher, signed completion
-and HQ production wiring remain implementation gates; this plan and proof code
-alone does not enable a host launch or qualify T21.
+saves a separate owner-reviewable plan. The paired daemon serves the escaped
+canonical review within its 64 KiB signed response frame. The v3 owner plan
+pins the host and HQ pairing, dedicated runner, frozen definition and launch
+inputs, sealed R runtime, H code descriptor, and explicit `direct-comms`
+transport. Machine rechecks the applied receipt and measured H/R byte closures
+before signing a 30-second reservation with that transport. Machine keeps the
+content-addressed runtime inventories outside the paired review frame.
+
+The A-owned claim store permanently spends the start and serializes active
+starts for the installation. Its signed pending journal lets Machine reconcile
+an interrupted publish or cancel. The fixed per-runner launchd job reads the
+A-published request, verifies the reservation and measured launch inputs, and
+starts the runner with the direct Comms broker and one-use HQ admission
+endpoint. HQ can query A for the signed launch projection, live state and
+terminal completion. An owner-approved installation and physical T21
+qualification remain separate host actions.
 
 **Acceptance.** A positive synthetic test verifies the signed reviewed
 identity, package and profile and proves one-use refusal. Separate negatives

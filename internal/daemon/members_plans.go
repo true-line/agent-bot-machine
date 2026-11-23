@@ -35,12 +35,8 @@ func membersPlanBody(id string, raw []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	body, err := json.Marshal(struct {
-		ID        string `json:"plan_id"`
-		Digest    string `json:"plan_digest"`
-		Canonical string `json:"plan_canonical"`
-	}{id, saved.PlanDigest, string(canonical)})
-	if err != nil || len(body) > maxMessage-1024 { // signed response envelope and bounded request nonce
+	body, err := members.EncodePairedPlanReview(id, saved.PlanDigest, canonical)
+	if err != nil {
 		return nil, errMembersPlans
 	}
 	return body, nil

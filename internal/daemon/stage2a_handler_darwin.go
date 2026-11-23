@@ -11,8 +11,32 @@ import (
 	"github.com/qwts/managed-machine/internal/members"
 )
 
-func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
+func stage2aHandler(key ed25519.PrivateKey, dir, account string) func(Request) Response {
+	return stage2aHandlerWithService(members.NewStage2aService(key), dir, account)
+}
+
+func stage2aServiceHandlers(key ed25519.PrivateKey, dir, account string) (
+	func(Request) Response, cooperativeRecoveryApply) {
 	service := members.NewStage2aService(key)
+	return stage2aHandlerWithService(service, dir, account),
+		func(recovery Request, paired func(string, func() error) error) Response {
+			body, err := service.ReconcileCooperativeAfterRestart(recovery.peerUID,
+				recovery.stage2aEpoch, recovery.stage2aCooperativeRecovery, paired)
+			if err != nil {
+				return refused(diag.DaemonUnimplemented, "cooperative recovery cutoff refused")
+			}
+			raw, err := json.Marshal(body)
+			if err != nil || len(raw) > maxMessage-1024 {
+				return refused(diag.DaemonUnimplemented, "cooperative recovery cutoff exceeds transport limit")
+			}
+			return Response{OK: true, State: "cooperative-recovered", Body: raw}
+		}
+}
+
+func stage2aHandlerWithService(service *members.Stage2aService, dir, account string) func(Request) Response {
+	paired := func(commitment string, run func() error) error {
+		return CheckHQUpgradePair(dir, account, commitment, run)
+	}
 	return func(req Request) Response {
 		var body any
 		var err error
@@ -26,6 +50,44 @@ func stage2aHandler(key ed25519.PrivateKey) func(Request) Response {
 			body, err = service.Lookup(req.peerUID, req.stage2aEpoch, req.stage2aLookup)
 		case stage2aReserveVerb:
 			body, err = service.Reserve(req.peerUID, req.stage2aEpoch, req.stage2aReserve)
+		case stage2aCooperativeReserveVerb:
+			state = "cooperative-reserved"
+			body, err = service.ReserveCooperativeV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeReserve, func(digest string) (members.Saved, error) {
+					return findUniqueCooperativeHPlan(account, digest)
+				}, paired)
+		case stage2aCooperativeReserveResultVerb:
+			state = "cooperative-reserve-result"
+			body, err = service.CooperativeReserveResultV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeReserve.SoulCooperativeReserveRequest, paired)
+		case stage2aCooperativeAttachVerb:
+			state = "cooperative-attached"
+			body, err = service.AttachCooperativeVerified(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeAttach, paired)
+		case stage2aCooperativeStopVerb:
+			state = "cooperative-stopped"
+			body, err = service.StopCooperativeVerified(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeStop, paired)
+		case stage2aCooperativeProjectionVerb:
+			state = "cooperative-launch-inputs"
+			body, err = service.CooperativeLaunchProjection(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeProjection, paired)
+		case stage2aCooperativeProviderVerb:
+			state = "cooperative-provided"
+			body, err = service.CooperativeProviderV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeProvider, paired)
+		case stage2aCooperativeLookupVerb:
+			state = "cooperative-found"
+			body, err = service.LookupCooperativeInstalled(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeLookup, paired)
+		case stage2aCooperativeLiveVerb:
+			state = "cooperative-live"
+			body, err = service.CooperativeLiveV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeLive, paired)
+		case stage2aCooperativeAbortVerb:
+			state = "cooperative-aborted"
+			body, err = service.AbortCooperativePreAttach(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeAbort, paired)
 		case stage2aExecVerb:
 			state = "granted"
 			q := req.stage2aExec

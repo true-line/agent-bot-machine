@@ -28,6 +28,32 @@ type Stage2aProviderReply struct {
 	ExpiresAtMS          int64  `json:"expires_at_ms"`
 }
 
+// Cooperative provider authority is separate from the protected B bind. HQ
+// presents the A-signed attach identity; R receives only the broker response.
+type SoulCooperativeProviderRequestV3 struct {
+	Stage2aStopRequest
+	AttachSHA256 string `json:"attach_sha256"`
+	Model        string `json:"model"`
+	PromptSHA256 string `json:"prompt_sha256"`
+}
+
+func ParseSoulCooperativeProviderRequestV3(raw []byte) (SoulCooperativeProviderRequestV3, error) {
+	var q SoulCooperativeProviderRequestV3
+	if len(raw) == 0 || len(raw) > 4096 || stage2aStrictJSON(raw) != nil {
+		return q, errors.New("invalid cooperative provider request")
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(&q) != nil || d.Decode(new(any)) != io.EOF ||
+		!validStage2aStopRequest(q.Stage2aStopRequest) ||
+		!stage2aPrefixedDigest.MatchString(q.AttachSHA256) ||
+		!stage2aBindingID.MatchString(q.Model) ||
+		!stage2aPrefixedDigest.MatchString(q.PromptSHA256) {
+		return SoulCooperativeProviderRequestV3{}, errors.New("invalid cooperative provider request")
+	}
+	return q, nil
+}
+
 type stage2aProviderConfigBytes struct {
 	Model         string `json:"model"`
 	RequestSHA256 string `json:"request_sha256"`

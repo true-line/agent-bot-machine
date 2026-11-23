@@ -61,6 +61,9 @@ func brewPrefix(target string) string {
 }
 
 func main() {
+	if runtime.GOOS == "darwin" && len(os.Args) == 3 && os.Args[1] == "cooperative-dispatch" {
+		os.Exit(members.RunSoulCooperativeDispatch(os.Args[2]))
+	}
 	if runtime.GOOS == "darwin" && len(os.Args) >= 2 && os.Args[1] == "stage2a-qualification-remove" {
 		if err := members.RunStage2aQualificationQRemove(members.ApplyDeps{DaemonState: membersDaemonState}, os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
