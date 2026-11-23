@@ -293,7 +293,13 @@ func (s *Stage2aService) MemberReady(hqUID int, epoch string,
 	envelope, err := signStage2aEnvelope(ready, 1, Stage2aMemberReadyPurpose, key, s.sign)
 	if err != nil || len(envelope) == 0 || len(envelope) > 16<<10 || !time.Now().Before(until) ||
 		r.protectedQ.recheckMemberQ() != nil ||
-		stage2aHelloCheckLive(r, p, q.Stage2aStopRequest) != nil {
+		stage2aHelloCheckLive(r, p, q.Stage2aStopRequest) != nil ||
+		checkStage2aHelloRunnerPeer(r.hello.peerProcess.PID, r, p, r.hello.peerProcess) != nil ||
+		r.twoMemberChildren.recheck(func(pid int) (soulKernelProcessSnapshot, error) {
+			return observeStage2aRoleProcess(pid, p.Runner.UID, p.Runner.GID, "child")
+		}, func(pid, parent int) (soulKernelProcessSnapshot, error) {
+			return observeStage2aChildProcess(pid, parent, p.Runner, p.LaunchInputs)
+		}) != nil {
 		return reply, errStage2aReservationAuthority
 	}
 	r.memberReadyEnvelope, r.memberReadyExpires = envelope, until
