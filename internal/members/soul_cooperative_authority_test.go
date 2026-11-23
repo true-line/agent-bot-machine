@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -129,7 +131,7 @@ func TestSoulCooperativeReservationOneUseAndSignature(t *testing.T) {
 	p, q, private, now := cooperativeFixture(t)
 	policyRaw, _ := json.Marshal(p)
 	parsedPolicy, err := ParseSoulCooperativeLaunchPolicy(policyRaw)
-	if err != nil || parsedPolicy != p {
+	if err != nil || !reflect.DeepEqual(parsedPolicy, p) {
 		t.Fatalf("parse reviewed policy: %v", err)
 	}
 	requestRaw, _ := json.Marshal(q)
@@ -276,4 +278,105 @@ func TestSoulCooperativePlanIsSeparateAndReviewable(t *testing.T) {
 	if _, err := saved.CanonicalForReview(); err == nil {
 		t.Fatal("protected profile was accepted as cooperative review")
 	}
+}
+
+func cooperativeTwoMemberPolicyFixture(t *testing.T) (SoulCooperativeLaunchPolicy, SoulCooperativeReserveRequest, ed25519.PrivateKey, time.Time, *fakeHost) {
+	t.Helper()
+	p, q, private, now := cooperativeFixture(t)
+	p.Schema = soulCooperativeTwoMemberInstallSchemaV3
+	p.MachineUID, p.MachineGID = 501, 20
+	p.HQInstallationID = "inst_0000000000000001"
+	p.HOwnerPlanDigest = "sha256:" + strings.Repeat("a", 64)
+	p.ReviewedStartID = q.StartID
+	p.OwnerPlanMemberSetSHA256 = "sha256:" + strings.Repeat("b", 64)
+	p.ReviewedQPlanSHA256 = "sha256:" + strings.Repeat("c", 64)
+	p.Bridge = &SoulBridge{SoulID: p.Runner.SoulID, InstallationID: p.Runner.InstallationID,
+		Account: SoulBridgeName(p.Runner.InstallationID), UID: 312, GID: 312}
+	launch := stage2aLaunchFixture(t)
+	launch.EffectiveConfig["profile"] = "managed-cooperative"
+	launch.AdapterTransport = "brokered-b"
+	launch.HostProjection.Installation["id"] = p.Runner.InstallationID
+	space, snap, _, err := stage2aDomainNamesV3("R-runtime", p.Runner.InstallationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.NodePath = path.Join(space, snap, "bin/node")
+	p.Entry, p.LauncherPath = "bin/agent-bot-souls.mjs", SoulLauncher
+	launch.SelectedCommand, launch.Argv[0] = p.NodePath, p.NodePath
+	p.BridgeExecutable = &HarnessArtifact{Path: SoulBridgeBinary,
+		SHA256: strings.TrimPrefix(launch.ComponentDigests["bridge"], "sha256:")}
+	records := stage2aSyntheticRecords()
+	manifestSize := uint64(17)
+	manifest := Stage2aDefinitionRecord{Path: "Contents/opt/stock-claude.json", Kind: "regular",
+		Mode: "0444", Size: &manifestSize, SHA256: strings.Repeat("a", 64)}
+	p.Definition = append(append([]Stage2aDefinitionRecord{}, records[:6]...), manifest)
+	p.Definition = append(p.Definition, records[6:]...)
+	p.DefinitionMeasurement, _, err = Stage2aDefinitionDigest(p.Definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.LaunchInputs = &launch
+	p.LaunchInputMeasurement, _, err = Stage2aLaunchInputDigest(launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.RuntimeV3 = &stage2aRuntimeV3Install{InventorySource: "/fixture/r/inventory.json",
+		InventoryDigest: "sha256:" + strings.Repeat("d", 64),
+		Components: []stage2aRuntimeV3ComponentPin{{ComponentID: "souls",
+			SourceRepository: "true-line/agent-bot-souls", SourceCommit: strings.Repeat("e", 40),
+			ArtifactFormat: "tar", ArtifactSource: "/fixture/r/souls.tar",
+			ReleaseArtifactSHA256: "sha256:" + strings.Repeat("f", 64),
+			ManifestSource:        "/fixture/r/manifest.json",
+			ReleaseManifestSHA256: "sha256:" + strings.Repeat("0", 64)}},
+		SourceRoots: map[string]string{"souls": "/fixture/r/souls"}}
+	qualification := Stage2aBridgeQualification{Model: "qualification-model", HTTPHost: "fixture-host",
+		RequestSHA256: "sha256:" + strings.Repeat("1", 64), HeadersSHA256: "sha256:" + strings.Repeat("2", 64),
+		ClientKeySHA256: stage2aFixtureClientKeySHA256, ResponseText: "qualification response"}
+	p.BridgeQualification = &qualification
+	p.MemberBridgeQualifications = []SoulCooperativeMemberQualification{
+		{MemberID: "m_lead", Qualification: qualification}, {MemberID: "m_spec", Qualification: qualification}}
+	p.Runner.PackageRoot = cooperativeV3TestPackageRoot(p.Runner.InstallationID)
+	h := &fakeHost{accounts: map[string]Account{
+		DarwinHQAccount:  {Name: DarwinHQAccount, UID: p.HQUID, GID: p.HQUID},
+		p.Runner.Account: {Name: p.Runner.Account, UID: p.Runner.UID, GID: p.Runner.GID},
+		p.Bridge.Account: {Name: p.Bridge.Account, UID: p.Bridge.UID, GID: p.Bridge.GID},
+	}}
+	return p, q, private, now, h
+}
+
+func TestSoulCooperativeTwoMemberPlanRequiresSeparateBAndQ(t *testing.T) {
+	p, q, private, now, h := cooperativeTwoMemberPolicyFixture(t)
+	if p.validate() != nil {
+		t.Fatal("separate cooperative B policy refused")
+	}
+	plan, err := Build(Input{SoulCooperativeLaunch: &p, HQAccount: DarwinHQAccount,
+		Dir: DarwinDir, Platform: PlatformDarwin, Invoker: "owner"}, h)
+	if err != nil || len(plan.Members) != 2 || plan.SoulProtectedLaunch != nil {
+		t.Fatalf("cooperative B review: %v", err)
+	}
+	for name, edit := range map[string]func(*SoulCooperativeLaunchPolicy){
+		"protected profile":  func(v *SoulCooperativeLaunchPolicy) { v.Profile = "managed-protected" },
+		"missing B":          func(v *SoulCooperativeLaunchPolicy) { v.Bridge = nil },
+		"missing Q":          func(v *SoulCooperativeLaunchPolicy) { v.ReviewedQPlanSHA256 = "" },
+		"missing projection": func(v *SoulCooperativeLaunchPolicy) { v.OwnerPlanMemberSetSHA256 = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := p
+			edit(&changed)
+			if changed.validate() == nil {
+				t.Fatal("unreviewed cooperative policy accepted")
+			}
+		})
+	}
+	in := SoulCooperativeInstalledAuthority{Policy: p}
+	sign := func(body []byte) ([]byte, error) { return ed25519.Sign(private, body), nil }
+	if _, err := PrepareSoulCooperativeReservation(in, q, now, sign, func(string, string) error { return nil }); err == nil {
+		t.Fatal("v3 cooperative plan obtained legacy v1 reservation")
+	}
+}
+
+func cooperativeV3TestPackageRoot(installationID string) string {
+	namespace := path.Join(stage2aDomainSnapshotParentV3, soulEndpointInstallationSlot(installationID))
+	sum := sha256.Sum256([]byte("agent-bot-machine/stage2a-install-snapshot/v1\x00definition\x00" + installationID))
+	return path.Join(namespace, fmt.Sprintf("snap_%x", sum[:12]))
 }
