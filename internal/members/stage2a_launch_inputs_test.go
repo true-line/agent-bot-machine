@@ -155,6 +155,32 @@ func TestStage2aLaunchInputRejectsIncompleteOrUnboundedObject(t *testing.T) {
 	}
 }
 
+func TestStage2aV3InventoryBudgetKeepsLegacyParserClosed(t *testing.T) {
+	rows := make([]map[string]any, 512)
+	for i := range rows {
+		rows[i] = map[string]any{
+			"path": fmt.Sprintf("hq/file-%03d.mjs", i), "kind": "regular",
+			"mode": "0440", "size_bytes": 1, "sha256": strings.Repeat("a", 64),
+			"component_id": "hq", "release_path": fmt.Sprintf("file-%03d.mjs", i),
+		}
+	}
+	raw, err := json.Marshal(map[string]any{"files": rows})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stage2aStrictJSON(raw); err == nil {
+		t.Fatal("v1/v2 node budget accepted a maximum-sized v3 inventory")
+	}
+	if err := stage2aStrictJSONBounded(raw, 2<<20, 8192); err != nil {
+		t.Fatalf("explicit v3 sidecar budget refused reviewed row count: %v", err)
+	}
+	if stage2aStrictJSONBounded(raw, len(raw)-1, 8192) == nil ||
+		stage2aStrictJSONBounded(raw, 2<<20, 4096) == nil ||
+		stage2aStrictJSONBounded([]byte(`{"x":1,"x":2}`), 2<<20, 8192) == nil {
+		t.Fatal("bounded sidecar parser accepted oversized or ambiguous JSON")
+	}
+}
+
 func TestStage2aLaunchInputRejectsInvalidUTF8BeforeMarshal(t *testing.T) {
 	invalid := string([]byte{0xff})
 	replacement := "\ufffd"

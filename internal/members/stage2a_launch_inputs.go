@@ -72,7 +72,15 @@ func stage2aAbsolutePath(p string) bool {
 // JSON shape after a typed producer has serialized its object. This avoids
 // accepting a RawMessage hidden in an otherwise ordinary map value.
 func stage2aStrictJSON(raw []byte) error {
-	if len(raw) == 0 || len(raw) > 1<<20 || !utf8.Valid(raw) || !json.Valid(raw) ||
+	return stage2aStrictJSONBounded(raw, 1<<20, 4096)
+}
+
+// V3 inventory sidecars contain hundreds of individually reviewed file rows.
+// Keep the v1/v2 parser budget unchanged; only the sidecar reader may request
+// a larger explicit node budget for those complete inventories.
+func stage2aStrictJSONBounded(raw []byte, maxBytes, maxNodes int) error {
+	if maxBytes <= 0 || maxNodes <= 0 || len(raw) == 0 || len(raw) > maxBytes ||
+		!utf8.Valid(raw) || !json.Valid(raw) ||
 		!stage2aValidJSONSurrogates(raw) {
 		return errors.New("invalid Stage 2a JSON")
 	}
@@ -81,7 +89,7 @@ func stage2aStrictJSON(raw []byte) error {
 	nodes := 0
 	var read func(int) error
 	read = func(depth int) error {
-		if depth > 16 || nodes >= 4096 {
+		if depth > 16 || nodes >= maxNodes {
 			return errors.New("Stage 2a JSON exceeds nesting or node limit")
 		}
 		nodes++

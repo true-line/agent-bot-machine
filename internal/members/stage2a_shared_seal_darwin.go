@@ -22,7 +22,7 @@ const stage2aCooperativeRSealPurpose = "agent-bot/stage2a-cooperative-r-seal/v1"
 func stage2aRunSealHelper(adminUID, adminGID int, raw []byte) (stage2aInstallSealReply, error) {
 	var empty stage2aInstallSealReply
 	if os.Getuid() != 0 || os.Geteuid() != 0 || adminUID < 400 || adminGID <= 0 ||
-		len(raw) == 0 || len(raw) > 2<<20 {
+		len(raw) == 0 || len(raw) > 3<<20 {
 		return empty, errStage2aReservationAuthority
 	}
 	cmd := exec.Command("/usr/bin/sandbox-exec", "-p", stage2aInstallSealProfile,

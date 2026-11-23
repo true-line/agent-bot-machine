@@ -28,8 +28,9 @@ type stage2aInstallSealRequest struct {
 }
 
 type stage2aInstallSealReply struct {
-	Identity Stage2aSnapshotIdentity `json:"identity"`
-	Digest   string                  `json:"digest"`
+	Identity Stage2aSnapshotIdentity      `json:"identity"`
+	Digest   string                       `json:"digest"`
+	DomainV3 *stage2aDomainInventoryRefV3 `json:"domain_v3,omitempty"`
 }
 
 // The fixed install helper runs under A in a sandbox that denies IPv4 and
@@ -141,14 +142,23 @@ func RunStage2aInstallSeal() int {
 	if !stage2aInstallSealNoIP() {
 		return refuse()
 	}
-	raw, err := io.ReadAll(io.LimitReader(os.Stdin, (2<<20)+1))
-	if err != nil || len(raw) == 0 || len(raw) > 2<<20 || stage2aStrictJSON(raw) != nil {
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, (3<<20)+1))
+	if err != nil || len(raw) == 0 || len(raw) > 3<<20 {
 		return refuse()
 	}
 	var header struct {
 		Schema string `json:"schema"`
 	}
 	if json.Unmarshal(raw, &header) != nil {
+		return refuse()
+	}
+	if header.Schema == stage2aDomainSealSchemaV3 {
+		if stage2aStrictJSONBounded(raw, 3<<20, 8192) != nil {
+			return refuse()
+		}
+		return runStage2aDomainSealV3(raw)
+	}
+	if stage2aStrictJSON(raw) != nil {
 		return refuse()
 	}
 	if header.Schema == stage2aSharedSealSchema {

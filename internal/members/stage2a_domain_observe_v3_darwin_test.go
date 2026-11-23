@@ -1,0 +1,162 @@
+//go:build darwin
+
+package members
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"golang.org/x/sys/unix"
+)
+
+func TestStage2aObserveDomainV3At(t *testing.T) {
+	if os.Getuid() < 400 {
+		t.Skip("requires a nonroot test UID")
+	}
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(parent, "snap_aaaaaaaaaaaaaaaaaaaaaaaa")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"bin", "hq"} {
+		if err := os.Mkdir(filepath.Join(root, dir), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inv := stage2aV3TestInventory()
+	for i := range inv.Files {
+		file := &inv.Files[i]
+		data := []byte("reviewed " + file.Path)
+		file.SizeBytes = uint64(len(data))
+		file.SHA256 = fmt.Sprintf("sha256:%x", sha256.Sum256(data))
+		if err := os.WriteFile(filepath.Join(root, file.Path), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		mode := os.FileMode(0440)
+		if file.Mode == "0550" {
+			mode = 0550
+		}
+		if err := os.Chmod(filepath.Join(root, file.Path), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inv.TotalBytes = inv.Files[0].SizeBytes + inv.Files[1].SizeBytes
+	for _, dir := range inv.Directories {
+		if err := os.Chmod(filepath.Join(root, dir.Path), 0550); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(root, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(parent, 0700)
+		_ = os.Chmod(root, 0700)
+		for _, dir := range inv.Directories {
+			_ = os.Chmod(filepath.Join(root, dir.Path), 0700)
+		}
+		for _, file := range inv.Files {
+			_ = os.Chmod(filepath.Join(root, file.Path), 0600)
+		}
+	})
+	raw := stage2aV3TestCanonical(t, inv)
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if private, _, err := stage2aObserveDomainV3AtMode(root, uint32(os.Getuid()),
+		uint32(os.Getgid()), raw, true); err != nil || private.Mode != "0700" {
+		t.Fatalf("valid private staging root refused: %+v %v", private, err)
+	}
+	if err := os.Chmod(root, 0555); err != nil {
+		t.Fatal(err)
+	}
+	sidecar := filepath.Join(parent, "inventory.jcs")
+	if err := os.WriteFile(sidecar, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sidecar, 0440); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0750); err != nil {
+		t.Fatal(err)
+	}
+	identity, digest, err := stage2aObserveDomainV3At(root, uint32(os.Getuid()), uint32(os.Getgid()), raw)
+	if err != nil || identity.RootPath != root || identity.Mode != "0555" || digest == "" {
+		t.Fatalf("valid frozen domain refused: identity=%+v digest=%q err=%v", identity, digest, err)
+	}
+	verified, err := stage2aObserveInstalledDomainV3(root, sidecar, uint32(os.Getuid()),
+		uint32(os.Getuid()+1), uint32(os.Getgid()),
+		"sha256:1111111111111111111111111111111111111111111111111111111111111111", digest)
+	if err != nil || !verified.verified || verified.ref.Snapshot.Path != root ||
+		verified.ref.Sidecar.Path != sidecar || stage2aRecheckVerifiedDomainV3(verified) != nil {
+		t.Fatalf("valid installed reference refused: ref=%+v err=%v", verified.ref, err)
+	}
+	if err := os.Chmod(filepath.Join(root, "hq"), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := stage2aObserveDomainV3At(root, uint32(os.Getuid()), uint32(os.Getgid()), raw); err == nil {
+		t.Fatal("accepted changed directory mode")
+	}
+	if err := stage2aRecheckVerifiedDomainV3(verified); err == nil {
+		t.Fatal("accepted changed installed reference")
+	}
+}
+
+func TestStage2aDomainNamesV3SeparateHAndR(t *testing.T) {
+	hParent, hRoot, hSidecar, err := stage2aDomainNamesV3("H-code", "install-one")
+	if err != nil || hParent == "" || len(hRoot) != len("snap_")+24 ||
+		hSidecar == hRoot || filepath.Dir(hParent) != stage2aFrozenSnapshotParent {
+		t.Fatalf("invalid H domain paths: %q %q %q %v", hParent, hRoot, hSidecar, err)
+	}
+	rParent, rRoot, rSidecar, err := stage2aDomainNamesV3("R-runtime", "install-one")
+	if err != nil || hParent == rParent || hRoot == rRoot || hSidecar == rSidecar {
+		t.Fatalf("H and R paths overlap: %q %q %q %v", rParent, rRoot, rSidecar, err)
+	}
+	if _, _, _, err := stage2aDomainNamesV3("H-code", "../escape"); err == nil {
+		t.Fatal("accepted path traversal installation ID")
+	}
+}
+
+func TestStage2aPreparedV3SidecarExactBytes(t *testing.T) {
+	if os.Getuid() < 400 {
+		t.Skip("requires a nonroot test UID")
+	}
+	wrapper, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(wrapper, "inventory")
+	raw := stage2aV3TestCanonical(t, stage2aV3TestInventory())
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	parentFD, err := unix.Open(wrapper, stage2aDirectoryOpenFlags, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(parentFD)
+	fd, err := stage2aOpenPreparedV3Sidecar(parentFD, path, uint32(os.Getuid()), uint32(os.Getgid()), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unix.Close(fd)
+	if fd, err := stage2aOpenPreparedV3Sidecar(parentFD, path, uint32(os.Getuid()),
+		uint32(os.Getgid()), append(append([]byte(nil), raw...), ' ')); err == nil {
+		unix.Close(fd)
+		t.Fatal("accepted changed staged sidecar bytes")
+	}
+	if err := os.Chmod(path, 0440); err != nil {
+		t.Fatal(err)
+	}
+	if fd, err := stage2aOpenPreparedV3Sidecar(parentFD, path, uint32(os.Getuid()),
+		uint32(os.Getgid()), raw); err == nil {
+		unix.Close(fd)
+		t.Fatal("accepted staged sidecar with final mode")
+	}
+}
