@@ -91,6 +91,12 @@ func TestHQServiceRejectsInvalidRecord(t *testing.T) {
 	}
 }
 
+func TestHQServiceLinuxStillRejectsSpaceBearingSystemdArguments(t *testing.T) {
+	if validHQServiceArgumentPath("/Library/Application Support/TrueLine/stage2a/node") {
+		t.Fatal("Linux accepted an unquoted systemd ExecStart argument")
+	}
+}
+
 func TestHQOwnerStatusRequiresAuthenticatedPublicEndpoint(t *testing.T) {
 	good := `{"hq":{"account":"agent-bot-hq","sockets":{"ownerControl":{"account":"operator","uid":1002,"path":"/run/agent-bot-hq/control.sock","peer_check":"SO_PEERCRED"}}}}`
 	if !confirmsHQOwner([]byte(good), "operator", "1002") {
