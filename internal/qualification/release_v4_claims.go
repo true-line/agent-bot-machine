@@ -130,6 +130,22 @@ func verifyV4ReportPairClaims(policy VerifiedPolicy, qualification map[string]js
 		!sameJSON(qualification["conformance_checks"], p["checks"]) {
 		return ErrUnqualified
 	}
+	// The two physical profiles need separate HQ launch and A observation
+	// objects, even when they reuse the same frozen Soul installation. A URI
+	// alias or the same bytes under another URI cannot stand for another run.
+	var pStart, cStart struct {
+		HQLaunchReceipt    reportReference `json:"hq_launch_receipt"`
+		MachineObservation reportReference `json:"machine_observation"`
+	}
+	if json.Unmarshal(p["soul_start"], &pStart) != nil || json.Unmarshal(c["soul_start"], &cStart) != nil ||
+		!reportRef(pStart.HQLaunchReceipt) || !reportRef(cStart.HQLaunchReceipt) ||
+		!reportRef(pStart.MachineObservation) || !reportRef(cStart.MachineObservation) ||
+		pStart.HQLaunchReceipt.URI == cStart.HQLaunchReceipt.URI ||
+		pStart.HQLaunchReceipt.SHA256 == cStart.HQLaunchReceipt.SHA256 ||
+		pStart.MachineObservation.URI == cStart.MachineObservation.URI ||
+		pStart.MachineObservation.SHA256 == cStart.MachineObservation.SHA256 {
+		return ErrUnqualified
+	}
 	for _, raw := range [][]byte{protected, cooperative} {
 		var report struct {
 			RecordedAt string `json:"recorded_at"`

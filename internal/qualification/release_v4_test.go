@@ -201,9 +201,34 @@ func TestV4QualificationAndStatementContractBytes(t *testing.T) {
 	if err := check(statement, cNewCommitment); err != nil {
 		t.Fatal("synthetic v4 release candidate refused:", err)
 	}
-	_, signedRefs, signedBuild, _, err := qualificationObjectV4(qualified, now)
+	qualifiedFields, signedRefs, signedBuild, qualifiedAt, err := qualificationObjectV4(qualified, now)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := verifyV4ReportPairClaims(verified, qualifiedFields, pRaw, cNewReport, artifact, qualifiedAt, now); err != nil {
+		t.Fatal("distinct synthetic HQ starts refused:", err)
+	}
+	var protectedStart map[string]any
+	if json.Unmarshal(pRaw, &protectedStart) != nil {
+		t.Fatal("invalid synthetic report")
+	}
+	for _, reused := range []struct{ ref, field string }{
+		{"hq_launch_receipt", "sha256"}, {"hq_launch_receipt", "uri"},
+		{"machine_observation", "sha256"}, {"machine_observation", "uri"},
+	} {
+		var repeatedStart map[string]any
+		if json.Unmarshal(cNewReport, &repeatedStart) != nil {
+			t.Fatal("invalid cooperative report")
+		}
+		repeatedStart["soul_start"].(map[string]any)[reused.ref].(map[string]any)[reused.field] =
+			protectedStart["soul_start"].(map[string]any)[reused.ref].(map[string]any)[reused.field]
+		repeatedStartRaw, err := canonicalMarshalRecordV3(repeatedStart)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if verifyV4ReportPairClaims(verified, qualifiedFields, pRaw, repeatedStartRaw, artifact, qualifiedAt, now) == nil {
+			t.Fatalf("reused %s %s accepted across distinct runs", reused.ref, reused.field)
+		}
 	}
 	// This locally fabricated receipt exercises only the binding to a release
 	// verifier result. It is not a Sigstore bundle or physical qualification.
