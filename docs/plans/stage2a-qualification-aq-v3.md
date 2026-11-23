@@ -192,6 +192,12 @@ sandbox-policy digest references to launch files, the effective profile,
 and the separately hashed host projection files. It does not archive large
 executable bytes.
 
+The current wrapper covers the frozen definition and R-readable launch-input
+snapshot. It does not attest a separate H-readable HQ/Comms/contracts code
+domain or join that domain to a signed release. The two-domain binding,
+access and measurement limits still need a reviewed contract. H and R must
+not gain a shared writable or readable group through this draft.
+
 This component currently prepares an unsigned wrapper and nested bytes.
 There is no production A archive publisher or A-signed segment issuer for
 it yet. The physical segment attestation must bind the exact wrapper digest
