@@ -72,6 +72,16 @@ while that approval is valid. An apply claims one receipt. After an interrupted
 or partial apply, save a new plan from the current host and approve the
 remaining changes.
 
+Before reporting a usable plan ID, the planner syncs the private temporary
+file, closes it, atomically renames it, and syncs the plans directory. On macOS
+the file barrier uses `F_FULLFSYNC`; newly created plan-directory names are
+also synced through their parents. A failed write, close, rename, or barrier
+returns a plan failure. Before exporting an owner challenge on a disposable
+guest, read back the exact saved plan and digest after a clean stop and restart.
+The earlier missing first-HQ plan in [#709](https://github.com/true-line/agent-bot-machine/issues/709)
+has no established cause; a successful readback is evidence for that new plan
+only.
+
 ## Review a macOS harness launch rule
 
 After the dedicated HQ account, harness accounts and broker directories exist,

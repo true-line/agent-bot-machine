@@ -615,8 +615,47 @@ func usernameOS(platform string) string {
 
 // save writes the plan file, private to the account that made it.
 func save(dir string, s Saved) error {
+	return saveWith(dir, s, savedPlanIO{
+		createTemp: os.CreateTemp,
+		write:      func(f *os.File, b []byte) (int, error) { return f.Write(b) },
+		syncFile:   syncSavedPlanFile,
+		close:      func(f *os.File) error { return f.Close() },
+		rename:     os.Rename,
+		syncDir:    syncSavedPlanDirectory,
+	})
+}
+
+type savedPlanIO struct {
+	createTemp func(string, string) (*os.File, error)
+	write      func(*os.File, []byte) (int, error)
+	syncFile   func(*os.File) error
+	close      func(*os.File) error
+	rename     func(string, string) error
+	syncDir    func(string) error
+}
+
+func saveWith(dir string, s Saved, ops savedPlanIO) error {
+	// A newly made plans directory also needs its name committed in its
+	// parent. Record every missing component before MkdirAll creates it.
+	var missing []string
+	for path := dir; ; path = filepath.Dir(path) {
+		if _, err := os.Stat(path); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		missing = append(missing, path)
+		if filepath.Dir(path) == path {
+			return errors.New("no existing plan directory ancestor")
+		}
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		if err := ops.syncDir(filepath.Dir(missing[i])); err != nil {
+			return err
+		}
 	}
 	var raw []byte
 	var err error
@@ -630,17 +669,28 @@ func save(dir string, s Saved) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".plan-*")
+	tmp, err := ops.createTemp(dir, ".plan-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(append(raw, '\n')); err != nil {
-		tmp.Close()
+	body := append(raw, '\n')
+	if n, err := ops.write(tmp, body); err != nil || n != len(body) {
+		_ = ops.close(tmp)
+		if err == nil {
+			return io.ErrShortWrite
+		}
 		return err
 	}
-	if err := tmp.Close(); err != nil {
+	if err := ops.syncFile(tmp); err != nil {
+		_ = ops.close(tmp)
 		return err
 	}
-	return os.Rename(tmp.Name(), filepath.Join(dir, s.PlanID+".json"))
+	if err := ops.close(tmp); err != nil {
+		return err
+	}
+	if err := ops.rename(tmp.Name(), filepath.Join(dir, s.PlanID+".json")); err != nil {
+		return err
+	}
+	return ops.syncDir(dir)
 }
