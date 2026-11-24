@@ -79,7 +79,10 @@ run managed-machine daemon start as the prefix owner, then request the challenge
 For a paired macOS Machine, verify-identity checks this executable's access
 to the existing Machine signing identity without changing the key or service.
 Use daemon run --require-identity FINGERPRINT for a temporary replacement
-that must use that exact previously paired identity.
+that must use that exact previously paired identity. For a reviewed macOS
+service recovery, daemon start --prior-keyd-path ABSOLUTE_PATH
+--prior-keyd-sha256 SHA256 accepts only that signed prior Machine keyd in an
+adjacent staged package while replacing its exact registered LaunchAgent.
 For a disposable Tart qualification guest only, the paired administrator can
 issue a short-lived permit for one exact guest-signed owner challenge with
 guest-owner-permit CHALLENGE_FILE VM_NAME VM_MAC GUEST_BUILD TARTCTL_SHA256
@@ -118,8 +121,8 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	if len(args) > 0 && args[0] == "first-hq" {
 		return firstHQ(deps, args[1:])
 	}
-	var verb, enroll, fingerprint, clientName, userName, requiredIdentity string
-	var enrollSet, fingerprintSet, userSet, debug, identitySet bool
+	var verb, enroll, fingerprint, clientName, userName, requiredIdentity, priorKeydPath, priorKeydSHA string
+	var enrollSet, fingerprintSet, userSet, debug, identitySet, priorKeydPathSet, priorKeydSet bool
 	var clientCount int
 	var owner ownerPairOptions
 	clientName = "terminal"
@@ -128,13 +131,15 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		PositionalName: "daemon verb",
 		Bools:          map[string]*bool{"--debug": &debug, "--owner-challenge": &owner.challenge},
 		Values: map[string]command.Flag{
-			"--require-identity": {Value: &requiredIdentity, Set: &identitySet},
-			"--pin-owner":        {Value: &owner.pin, Set: &owner.pinSet},
-			"--owner-proof":      {Value: &owner.proof, Set: &owner.proofSet},
-			"--enroll":           {Value: &enroll, Set: &enrollSet},
-			"--fingerprint":      {Value: &fingerprint, Set: &fingerprintSet},
-			"--client":           {Value: &clientName, Count: &clientCount},
-			"--user":             {Value: &userName, Set: &userSet},
+			"--prior-keyd-path":   {Value: &priorKeydPath, Set: &priorKeydPathSet},
+			"--prior-keyd-sha256": {Value: &priorKeydSHA, Set: &priorKeydSet},
+			"--require-identity":  {Value: &requiredIdentity, Set: &identitySet},
+			"--pin-owner":         {Value: &owner.pin, Set: &owner.pinSet},
+			"--owner-proof":       {Value: &owner.proof, Set: &owner.proofSet},
+			"--enroll":            {Value: &enroll, Set: &enrollSet},
+			"--fingerprint":       {Value: &fingerprint, Set: &fingerprintSet},
+			"--client":            {Value: &clientName, Count: &clientCount},
+			"--user":              {Value: &userName, Set: &userSet},
 		},
 	}); d != nil {
 		return cli.Result{Diagnostic: d}
@@ -173,6 +178,9 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 	if identitySet && (verb != "run" || goos != "darwin" || !exactKey(requiredIdentity)) {
 		return cli.Result{Diagnostic: command.UsageErr("--require-identity takes the paired Machine's lowercase SHA-256 fingerprint with daemon run on macOS")}
 	}
+	if priorKeydPathSet != priorKeydSet || priorKeydSet && (verb != "start" || goos != "darwin" || !exactKey(priorKeydSHA) || !filepath.IsAbs(priorKeydPath) || filepath.Clean(priorKeydPath) != priorKeydPath || filepath.Base(priorKeydPath) != "agent-bot-keyd" || debug || userSet || enrollSet || fingerprintSet || identitySet || clientCount != 0 || owner.pinSet || owner.challenge || owner.proofSet) {
+		return cli.Result{Diagnostic: command.UsageErr("--prior-keyd-path and --prior-keyd-sha256 require one exact prior bundled keyd path and SHA-256 with daemon start on macOS")}
+	}
 	if owner.pinSet || owner.challenge || owner.proofSet {
 		if goos != "darwin" || verb != "pair" || (owner.pinSet && (enrollSet || fingerprintSet || userSet || clientName != "terminal" || owner.challenge || owner.proofSet)) ||
 			(!owner.pinSet && (!hqEnroll || (owner.challenge && owner.proofSet))) {
@@ -190,6 +198,9 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		}
 		if identitySet && (caller.PrefixOwner == "" || !caller.DarwinAdmin) {
 			return ownerPairRefused("paired foreground startup requires the macOS prefix administrator")
+		}
+		if priorKeydSet && (caller.PrefixOwner == "" || !caller.DarwinAdmin) {
+			return ownerPairRefused("prior keyd recovery requires the macOS Homebrew prefix administrator")
 		}
 		switch verb {
 		case "pair":
@@ -236,7 +247,7 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		if err != nil {
 			return serviceFailed(err)
 		}
-		reviewed, err = inspectServiceLifecycle(caller, root, executable, verb, deps.ReadUserJob)
+		reviewed, err = inspectServiceLifecycle(caller, root, executable, verb, deps.ReadUserJob, priorKeydPath, priorKeydSHA)
 		if err != nil {
 			return serviceFailed(err)
 		}

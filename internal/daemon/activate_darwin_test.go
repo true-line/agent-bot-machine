@@ -96,7 +96,7 @@ func TestDarwinServiceLifecycleRetainsSeparateHelperAndChangedFiles(t *testing.T
 		}
 		return []byte("\tpath = " + keydPath + "\n\tprogram = " + priorKeyd + "\n\targuments = {\n\t\t" + priorKeyd + "\n\t\tserve\n\t\t--state-dir\n\t\t" + state + "\n\t}\n"), true, nil
 	}
-	if _, err := inspectServiceLifecycle(caller, home, current, "stop", deps.ReadUserJob); err != nil {
+	if _, err := inspectServiceLifecycle(caller, home, current, "stop", deps.ReadUserJob, "", ""); err != nil {
 		t.Fatalf("previous manual installation: %v", err)
 	}
 	// A newly supplied independent plist must survive an uninstall in progress.
@@ -132,6 +132,41 @@ func TestDarwinServiceLifecycleRetainsSeparateHelperAndChangedFiles(t *testing.T
 	}
 	if len(actions) != 2 || actions[0] != file || actions[1] != file {
 		t.Fatal("Machine-only startup acted on independent keyd")
+	}
+}
+
+func TestSortedPilotServicePreflightChecksBothRegistrations(t *testing.T) {
+	home := t.TempDir()
+	caller := Caller{UID: os.Getuid(), RegisteredHome: home}
+	agents := filepath.Join(home, "Library", "LaunchAgents")
+	if err := os.MkdirAll(agents, 0700); err != nil {
+		t.Fatal(err)
+	}
+	machine := filepath.Join(home, "machine-new-package", "managed-machine")
+	keyd := filepath.Join(home, "machine-old-package", "agent-bot-keyd")
+	state := filepath.Join(home, ".local", "state", "agent-bot")
+	machinePath := filepath.Join(agents, darwinServiceLabel+".plist")
+	keydPath := filepath.Join(agents, darwinKeydServiceLabel+".plist")
+	for path, body := range map[string]string{
+		machinePath: darwinAgentSorted(home, machine),
+		keydPath:    keydAgentSorted(state, keyd),
+	} {
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readJob := func(int, string, string) ([]byte, bool, error) { return nil, false, nil }
+	accept := func(program string, isKeyd, fromPlist bool) bool {
+		return fromPlist && (isKeyd && program == keyd || !isKeyd && program == machine)
+	}
+	if _, err := inspectUserServices(caller, readJob, true, false, accept); err != nil {
+		t.Fatalf("exact sorted service preflight: %v", err)
+	}
+	if err := os.WriteFile(keydPath, []byte(strings.Replace(keydAgentSorted(state, keyd), "<string>serve</string>", "<string>stop</string>", 1)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inspectUserServices(caller, readJob, true, false, accept); err == nil {
+		t.Fatal("accepted changed keyd service command")
 	}
 }
 
@@ -219,7 +254,7 @@ func TestDarwinServiceLifecycleAcceptsOldHomebrewKeg(t *testing.T) {
 		}
 		return []byte("\tpath = " + file + "\n\tprogram = " + bin + "\n\targuments = {\n\t\t" + bin + "\n\t\tserve\n\t\t--state-dir\n\t\t" + state + "\n\t}\n"), true, nil
 	}
-	if _, err := inspectServiceLifecycle(caller, home, "/opt/homebrew/opt/managed-machine/bin/managed-machine", "stop", readJob); err != nil {
+	if _, err := inspectServiceLifecycle(caller, home, "/opt/homebrew/opt/managed-machine/bin/managed-machine", "stop", readJob, "", ""); err != nil {
 		t.Fatal(err)
 	}
 }

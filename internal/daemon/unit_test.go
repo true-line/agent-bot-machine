@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,6 +110,48 @@ func TestDarwinAgentIncludesBackgroundSessionAndHome(t *testing.T) {
 	for _, want := range []string{"<string>Background</string>", "<string>Aqua</string>", "<key>HOME</key>", "<string>/Users/admin</string>"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("darwinAgent missing %s:\n%s", want, body)
+		}
+	}
+}
+
+func TestSortedPilotServiceRegistrationsAreExact(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("exact macOS plist bytes and absolute paths")
+	}
+	const home = "/Users/admin"
+	const machine = "/private/var/db/managed-machine/stage2a-pilot/machine-f19d8303-package/managed-machine"
+	const keyd = "/private/var/db/managed-machine/stage2a-pilot/machine-9776d7d0-package/agent-bot-keyd"
+	state := filepath.Join(home, ".local", "state", "agent-bot")
+	machineBody := darwinAgentSorted(home, machine)
+	keydBody := keydAgentSorted(state, keyd)
+	for name, item := range map[string]struct{ body, want string }{
+		"Machine": {machineBody, "1f2611b4b6c1610afc544ce50a8591a8379009e41767f17edf16349f1a8a2943"},
+		"keyd":    {keydBody, "050f1fe69164b2a8efd03d52d59f426d9f3be0e87657b3ac7b12776e2878021e"},
+	} {
+		sum := sha256.Sum256([]byte(item.body))
+		if got := hex.EncodeToString(sum[:]); got != item.want {
+			t.Fatalf("%s sorted template differs from the prestart guest receipt: %s", name, got)
+		}
+	}
+	if !machineAgentRegistration(machineBody, home, machine) || !machineKeydRegistration([]byte(keydBody), state) {
+		t.Fatal("exact sorted Machine registrations refused")
+	}
+	for name, body := range map[string]string{
+		"machine command":   strings.Replace(machineBody, "<string>run</string>", "<string>stop</string>", 1),
+		"machine home":      strings.Replace(machineBody, "<string>"+home+"</string>", "<string>/Users/other</string>", 1),
+		"machine extra key": strings.Replace(machineBody, "</dict>\n</plist>", "\t<key>KeepAlive</key>\n\t<true/>\n</dict>\n</plist>", 1),
+	} {
+		if machineAgentRegistration(body, home, machine) {
+			t.Fatal("accepted altered sorted Machine registration:", name)
+		}
+	}
+	for name, body := range map[string]string{
+		"keyd command":   strings.Replace(keydBody, "<string>serve</string>", "<string>stop</string>", 1),
+		"keyd state":     strings.Replace(keydBody, "<string>"+state+"</string>", "<string>/Users/other</string>", 1),
+		"keyd extra key": strings.Replace(keydBody, "</dict>\n</plist>", "\t<key>KeepAlive</key>\n\t<true/>\n</dict>\n</plist>", 1),
+	} {
+		if machineKeydRegistration([]byte(body), state) {
+			t.Fatal("accepted altered sorted keyd registration:", name)
 		}
 	}
 }
