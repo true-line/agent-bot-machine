@@ -16,8 +16,13 @@ GUEST_BUILD TARTCTL_SHA256 TART_APP_SHA256 --human`. The private challenge
 file lives in the administrator's mode 0700 `~/Library/TartQualification`
 directory and is mode 0600. The command requires the current paired Machine
 identity and owner pin, rejects an agent session, checks the guest-signed
-response and the exact plan digest, then observes the running VM through the
-locally pinned Tart wrapper. It compares the VM's host-reported MAC, the
+response and the exact plan digest, then observes the running VM through a
+root-owned, non-writable Tart copy at
+`/private/var/db/agent-bot-stage2a-tart`. Every path component to the
+wrapper and app executable must be root-owned and not group or world
+writable, so the administrator account cannot replace a hashed executable
+before it runs. The app bundle's contents must have the same custody and
+pass a strict code-signature verification. Machine compares the VM's host-reported MAC, the
 guest's interface MAC and OS build, and the guest's published Machine key.
 The administrator supplies the independently reviewed wrapper and app digests;
 Machine checks those bytes and signs both digests into the permit. The
@@ -45,7 +50,8 @@ guest, key, plan, or challenge authorizes nothing.
 
 The paired administrator can issue a permit only for the exact live Tart
 guest key, signed challenge, approved owner key, plan, and 120-second window.
-Changed executable bytes, a stopped or replaced VM, wrong account, changed
+Changed executable bytes, an administrator-owned Tart path, a stopped or
+replaced VM, wrong account, changed
 plan, missing owner pairing, or expired challenge must refuse. The identity
 reviewer must refuse a changed permit and guest replay. Owner presence and
 plan application are separate actions.

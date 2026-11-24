@@ -14,7 +14,7 @@ import (
 
 // The host administrator invokes this one-shot command only after the
 // owner's reviewed VM/key/plan packet has identified the exact guest. It
-// observes the live named VM again through the pinned local Tart executable;
+// observes the live named VM again through the root-owned Tart executable;
 // the challenge's own guest signature is never an independent observation.
 func guestOwnerPermitCommand(deps Deps, args []string) (result cli.Result) {
 	usage := command.UsageErr("guest-owner-permit takes CHALLENGE_FILE VM_NAME VM_MAC GUEST_BUILD TARTCTL_SHA256 TART_APP_SHA256; use --human for the exact permit JSON line")

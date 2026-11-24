@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/qwts/managed-machine/internal/daemon"
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -34,6 +35,7 @@ var (
 func exactSHA(v string) bool { return shaPattern.MatchString(v) }
 
 const tartGuestPublicKeyPath = "/opt/homebrew/var/agent-machine/daemon.pub"
+const protectedTartRoot = "/private/var/db/agent-bot-stage2a-tart"
 
 type tartVMStatus struct {
 	OS      string `json:"OS"`
@@ -54,17 +56,24 @@ func (b *boundedTartOutput) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
-func checkedTartFile(path, home string, uid int, expectedSHA string) error {
-	if !filepath.IsAbs(path) || !strings.HasPrefix(path, home+string(filepath.Separator)) || !exactSHA(expectedSHA) {
+func checkedTartFile(path, expectedSHA string) error {
+	if !filepath.IsAbs(path) || !strings.HasPrefix(path, protectedTartRoot+string(filepath.Separator)) ||
+		!exactSHA(expectedSHA) {
 		return errGuestObservation
 	}
-	for current := path; current != home; current = filepath.Dir(current) {
+	for current := path; ; current = filepath.Dir(current) {
 		info, err := os.Lstat(current)
 		if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o022 != 0 {
 			return errGuestObservation
 		}
+		// macOS ACLs can grant this administrator write access even when the
+		// mode bits and root ownership look safe. Such a path is not pinned.
+		if err := unix.Access(current, unix.W_OK); err == nil ||
+			(err != syscall.EACCES && err != syscall.EPERM && err != syscall.EROFS) {
+			return errGuestObservation
+		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || int(stat.Uid) != uid {
+		if !ok || stat.Uid != 0 {
 			return errGuestObservation
 		}
 		if current == path && !info.Mode().IsRegular() {
@@ -72,6 +81,9 @@ func checkedTartFile(path, home string, uid int, expectedSHA string) error {
 		}
 		if current != path && !info.IsDir() {
 			return errGuestObservation
+		}
+		if current == "/" {
+			break
 		}
 	}
 	f, err := os.Open(path)
@@ -85,6 +97,46 @@ func checkedTartFile(path, home string, uid int, expectedSHA string) error {
 	}
 	info, err := f.Stat()
 	if err != nil || info.Size() > 128*1024*1024 || hex.EncodeToString(h.Sum(nil)) != expectedSHA {
+		return errGuestObservation
+	}
+	return nil
+}
+
+func checkedTartBundle(ctx context.Context, path string) error {
+	if path != filepath.Join(protectedTartRoot, "tart.app") {
+		return errGuestObservation
+	}
+	count := 0
+	if err := filepath.WalkDir(path, func(name string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || count > 64 {
+			return errGuestObservation
+		}
+		count++
+		info, err := entry.Info()
+		if err != nil || (!info.IsDir() && !info.Mode().IsRegular()) ||
+			info.Mode().Perm()&0o022 != 0 {
+			return errGuestObservation
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid != 0 {
+			return errGuestObservation
+		}
+		if err := unix.Access(name, unix.W_OK); err == nil ||
+			(err != syscall.EACCES && err != syscall.EPERM && err != syscall.EROFS) {
+			return errGuestObservation
+		}
+		return nil
+	}); err != nil || count == 0 {
+		return errGuestObservation
+	}
+	call, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(call, "/usr/bin/codesign", "--verify", "--deep", "--strict", path)
+	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	cmd.Stdin = nil
+	cmd.Stdout = &boundedTartOutput{limit: 2048}
+	cmd.Stderr = &boundedTartOutput{limit: 2048}
+	if err := cmd.Run(); err != nil || call.Err() != nil {
 		return errGuestObservation
 	}
 	return nil
@@ -112,13 +164,16 @@ func ObserveTartGuest(ctx context.Context, caller daemon.Caller, vmName, expecte
 		!buildPattern.MatchString(expectedBuild) || caller.UID < 501 {
 		return observed, errGuestObservation
 	}
-	base := filepath.Join(caller.RegisteredHome, "Library", "TartQualification")
+	base := protectedTartRoot
 	wrapper := filepath.Join(base, "tartctl")
 	app := filepath.Join(base, "tart.app", "Contents", "MacOS", "tart")
-	if err := checkedTartFile(wrapper, caller.RegisteredHome, caller.UID, wrapperSHA); err != nil {
+	if err := checkedTartFile(wrapper, wrapperSHA); err != nil {
 		return observed, err
 	}
-	if err := checkedTartFile(app, caller.RegisteredHome, caller.UID, appSHA); err != nil {
+	if err := checkedTartFile(app, appSHA); err != nil {
+		return observed, err
+	}
+	if err := checkedTartBundle(ctx, filepath.Join(base, "tart.app")); err != nil {
 		return observed, err
 	}
 	readStatus := func() (tartVMStatus, error) {

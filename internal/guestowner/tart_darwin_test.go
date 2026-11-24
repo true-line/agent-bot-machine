@@ -4,39 +4,23 @@ package guestowner
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/qwts/managed-machine/internal/daemon"
 )
 
-func TestCheckedTartFileRequiresOwnedRegularPinnedBytes(t *testing.T) {
-	home := t.TempDir()
-	dir := filepath.Join(home, "Library", "TartQualification")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+func TestCheckedTartFileRejectsAdministratorOwnedOrUnpinnedPath(t *testing.T) {
+	path := t.TempDir() + "/tartctl"
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "tartctl")
-	content := []byte("#!/bin/sh\nexit 0\n")
-	if err := os.WriteFile(path, content, 0o700); err != nil {
-		t.Fatal(err)
+	if err := checkedTartFile(path, hex.EncodeToString(make([]byte, 32))); err == nil {
+		t.Fatal("administrator-owned executable path accepted")
 	}
-	sum := sha256.Sum256(content)
-	digest := hex.EncodeToString(sum[:])
-	if err := checkedTartFile(path, home, os.Getuid(), digest); err != nil {
-		t.Fatalf("owned pinned executable refused: %v", err)
-	}
-	if err := checkedTartFile(path, home, os.Getuid(), hex.EncodeToString(make([]byte, 32))); err == nil {
-		t.Fatal("substituted executable digest accepted")
-	}
-	if err := os.Chmod(dir, 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := checkedTartFile(path, home, os.Getuid(), digest); err == nil {
-		t.Fatal("writable Tart directory accepted")
+	if err := checkedTartFile(protectedTartRoot+"/tartctl", "bad-digest"); err == nil {
+		t.Fatal("unreviewed executable digest accepted")
 	}
 }
 
