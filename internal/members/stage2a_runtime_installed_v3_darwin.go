@@ -57,6 +57,7 @@ func stage2aLoadInstalledRuntimeV3(key ed25519.PublicKey, hqUID int, epoch,
 	inv, digest, err := stage2aDomainInventoryDigestV3(inventoryBytes)
 	if err != nil || digest != spec.InventoryDigest || inv.Domain != "R-runtime" ||
 		inv.InstallationID != installationID || inv.Limits != spec.Limits ||
+		stage2aRuntimeNeedsQualificationV3(inv) != spec.QualificationOnly ||
 		!stage2aRuntimeSourcesMatchInventory(inv, spec.SourceRoots) ||
 		stage2aRecheckVerifiedDomainV3(verified) != nil {
 		return empty, errStage2aReservationAuthority

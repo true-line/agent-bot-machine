@@ -739,7 +739,14 @@ separate frozen `Contents/` closure retain their existing bounds. The selected
 v3 R inventory row is checked for the same tuple before its release
 manifest, root source and A-sealed snapshot are accepted. Other v3 R rows
 above the ordinary external-file bound refuse. This exception does not grant
-a start; the paired owner-reviewed plan still pins every byte.
+a start; the paired owner-reviewed plan still pins every byte. A v3 R install
+containing that oversized row requires `runtime_v3.qualification_only: true`
+in the reviewed plan, and the flag refuses when the row is absent. The
+protected positive route additionally requires the later root-installed Q
+candidate authority and one-use owner approval. A cooperative v3 plan with
+the oversized row requires that same reviewed flag, a fixed reviewed start ID
+and a measured qualification provider; its start remains one-use. An ordinary
+R plan without this explicit scope refuses the oversized row.
 The helper
 does not prove that the projected files or selected process actually have
 those bytes or that the claimed system images are loaded. A protected caller

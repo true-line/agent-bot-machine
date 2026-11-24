@@ -250,6 +250,9 @@ func (p SoulCooperativeLaunchPolicy) validate() error {
 		}
 		launchDigest, _, launchErr := Stage2aLaunchInputDigest(*p.LaunchInputs)
 		if launchErr != nil || launchDigest != p.LaunchInputMeasurement ||
+			p.RuntimeV3.QualificationOnly != stage2aLaunchNeedsQualification(p.LaunchInputs.Files) ||
+			(p.RuntimeV3.QualificationOnly &&
+				(p.QualificationProvider == nil || !soulStartID.MatchString(p.ReviewedStartID))) ||
 			p.LaunchInputs.AdapterTransport != p.AdapterTransport ||
 			!p.AdapterRelease.valid(p.RuntimeRoot, p.RuntimeV3) ||
 			!p.HQBroker.valid(p.HQInstallationID) ||
