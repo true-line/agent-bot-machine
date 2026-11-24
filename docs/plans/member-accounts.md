@@ -373,9 +373,13 @@ the exact request digest, selected candidate and harness files, ordered
 arguments, runner and provider pins, target role and UID, host description,
 definition and suite revisions, and the fixed T01/T02/T03 protected plus T21
 cooperative assignments. The request is structured data; it cannot supply a
-command to execute. Large code closures may be represented by one pinned
-manifest artifact. The eventual runner must verify the installed tree against
-that manifest before executing it.
+command to execute. Schema 1 allows a pinned code-input manifest. A schema-2 candidate plan
+requires 1–512 explicit code inputs from the sealed R inventory and checks the
+dedicated Soul runner derived from the installation ID and requires its
+reviewed UID. The planner hashes the reviewed Q source before installation.
+The Q install binds those bytes to its fixed source path. A checks a schema-2
+adapter's executable and explicit code inputs against the sealed R inventory
+before signing a reservation. Schema 1 checks the dedicated harness account.
 
 For schema-v2 candidate Q setup, `runner.binary_path` is the fixed future
 `qualification-q/qualification-runner.mjs` destination and `runner.source_path`
@@ -858,6 +862,11 @@ inputs, sealed R runtime, H code descriptor, and explicit `direct-comms`
 transport. Machine rechecks the applied receipt and measured H/R byte closures
 before signing a 30-second reservation with that transport. Machine keeps the
 content-addressed runtime inventories outside the paired review frame.
+For qualification, A also verifies the retained Q review against the same
+host, installation, R account and sealed adapter inventory. A remeasures
+the reviewed native harness and verifies the provider configuration against
+both owner reviews. The running Machine binary supplies the code digest
+for both the Machine and its inline deterministic provider.
 
 The A-owned claim store permanently spends the start and serializes active
 starts for the installation. Its signed pending journal lets Machine reconcile
