@@ -23,56 +23,61 @@ const timestampSkew = 5 * time.Minute
 // Request is one signed command. Fields the catalog did not declare are
 // rejected by DisallowUnknownFields before a signature is considered.
 type Request struct {
-	Verb                         string `json:"verb"`
-	Name                         string `json:"name,omitempty"`
-	Option                       string `json:"option,omitempty"`
-	Target                       string `json:"target,omitempty"`
-	DeviceSession                string `json:"session,omitempty"`
-	HQEpoch                      string `json:"hq_epoch,omitempty"`
-	ReceiptBody                  string `json:"receipt_body,omitempty"`
-	ReceiptJTI                   string `json:"receipt_jti,omitempty"`
-	ReceiptKID                   string `json:"receipt_kid,omitempty"`
-	ReceiptSignature             string `json:"receipt_signature,omitempty"`
-	Stage2aRequest               string `json:"stage2a_request,omitempty"`
-	stage2aReserve               members.Stage2aReserveRequest
-	stage2aCooperativeReserve    members.SoulCooperativeStartRequestV3
-	stage2aCooperativeProvider   members.SoulCooperativeProviderRequestV3
-	stage2aCooperativeLookup     members.Stage2aLookupRequest
-	stage2aCooperativeLive       members.SoulCooperativeLiveRequestV3
-	stage2aCooperativeAbort      members.Stage2aStopRequest
-	stage2aCooperativeAttach     members.SoulCooperativeAttachRequestV3
-	stage2aCooperativeStop       members.Stage2aStopRequest
-	stage2aCooperativeProjection members.Stage2aStopRequest
-	stage2aCooperativeRecovery   members.Stage2aStopRequest
-	stage2aExec                  stage2aExecRequest
-	stage2aChildReady            members.Stage2aChildReadyRequest
-	stage2aVerifyB               members.Stage2aVerifyBRequest
-	stage2aPrepareB              members.Stage2aPrepareBRequest
-	stage2aStop                  members.Stage2aStopRequest
-	stage2aFinalizeB             members.Stage2aFinalizeBRequest
-	stage2aLive                  members.Stage2aLiveRequest
-	stage2aProvider              members.Stage2aProviderRequest
-	stage2aLookup                members.Stage2aLookupRequest
-	stage2aHelloStart            members.Stage2aHelloStartRequest
-	stage2aHelloFinalize         members.Stage2aHelloFinalizeRequest
-	stage2aHelloAbort            members.Stage2aStopRequest
-	stage2aPeerRole              members.Stage2aPeerRequest
-	stage2aEpoch                 string
-	peerUID                      int
-	ChallengeNonce               string           `json:"challenge_nonce,omitempty"`
-	OwnerSignature               string           `json:"owner_signature,omitempty"`
-	PlanID                       string           `json:"plan_id,omitempty"`
-	PlanDigest                   string           `json:"plan_digest,omitempty"`
-	Soul                         string           `json:"soul,omitempty"`
-	Harness                      string           `json:"harness,omitempty"`
-	SessionID                    string           `json:"session_id,omitempty"`
-	CatalogKey                   *CatalogKey      `json:"catalog_key,omitempty"`
-	Floor                        *CatalogFloor    `json:"floor,omitempty"`
-	Envelope                     *CatalogEnvelope `json:"envelope,omitempty"`
-	Timestamp                    int64            `json:"timestamp"`
-	Nonce                        string           `json:"nonce"`
-	PublicKey                    string           `json:"public_key"`
-	Signature                    string           `json:"signature"`
+	Verb                             string `json:"verb"`
+	Name                             string `json:"name,omitempty"`
+	Option                           string `json:"option,omitempty"`
+	Target                           string `json:"target,omitempty"`
+	DeviceSession                    string `json:"session,omitempty"`
+	HQEpoch                          string `json:"hq_epoch,omitempty"`
+	ReceiptBody                      string `json:"receipt_body,omitempty"`
+	ReceiptJTI                       string `json:"receipt_jti,omitempty"`
+	ReceiptKID                       string `json:"receipt_kid,omitempty"`
+	ReceiptSignature                 string `json:"receipt_signature,omitempty"`
+	Stage2aRequest                   string `json:"stage2a_request,omitempty"`
+	stage2aReserve                   members.Stage2aReserveRequest
+	stage2aCooperativeReserve        members.SoulCooperativeStartRequestV3
+	stage2aCooperativeProvider       members.SoulCooperativeProviderRequestV3
+	stage2aCooperativeLookup         members.Stage2aLookupRequest
+	stage2aCooperativeLive           members.SoulCooperativeLiveRequestV3
+	stage2aCooperativeQBegin         members.SoulCooperativeLiveRequestV3
+	stage2aCooperativeQFinish        members.Stage2aDirectQFinishRequestV3
+	stage2aCooperativeQWitnessBegin  members.Stage2aDirectQWitnessBeginRequestV3
+	stage2aCooperativeQWitnessFinish members.Stage2aDirectQWitnessFinishRequestV3
+	stage2aCooperativeAbort          members.Stage2aStopRequest
+	stage2aCooperativeAttach         members.SoulCooperativeAttachRequestV3
+	stage2aCooperativeStop           members.Stage2aStopRequest
+	stage2aCooperativeProjection     members.Stage2aStopRequest
+	stage2aCooperativeRecovery       members.Stage2aStopRequest
+	stage2aExec                      stage2aExecRequest
+	stage2aChildReady                members.Stage2aChildReadyRequest
+	stage2aVerifyB                   members.Stage2aVerifyBRequest
+	stage2aPrepareB                  members.Stage2aPrepareBRequest
+	stage2aStop                      members.Stage2aStopRequest
+	stage2aFinalizeB                 members.Stage2aFinalizeBRequest
+	stage2aLive                      members.Stage2aLiveRequest
+	stage2aProvider                  members.Stage2aProviderRequest
+	stage2aLookup                    members.Stage2aLookupRequest
+	stage2aHelloStart                members.Stage2aHelloStartRequest
+	stage2aHelloFinalize             members.Stage2aHelloFinalizeRequest
+	stage2aHelloAbort                members.Stage2aStopRequest
+	stage2aPeerRole                  members.Stage2aPeerRequest
+	stage2aEpoch                     string
+	peerUID                          int
+	peerPID                          int
+	ChallengeNonce                   string           `json:"challenge_nonce,omitempty"`
+	OwnerSignature                   string           `json:"owner_signature,omitempty"`
+	PlanID                           string           `json:"plan_id,omitempty"`
+	PlanDigest                       string           `json:"plan_digest,omitempty"`
+	Soul                             string           `json:"soul,omitempty"`
+	Harness                          string           `json:"harness,omitempty"`
+	SessionID                        string           `json:"session_id,omitempty"`
+	CatalogKey                       *CatalogKey      `json:"catalog_key,omitempty"`
+	Floor                            *CatalogFloor    `json:"floor,omitempty"`
+	Envelope                         *CatalogEnvelope `json:"envelope,omitempty"`
+	Timestamp                        int64            `json:"timestamp"`
+	Nonce                            string           `json:"nonce"`
+	PublicKey                        string           `json:"public_key"`
+	Signature                        string           `json:"signature"`
 }
 
 // Response is signed by the daemon. Signature is over the other fields.

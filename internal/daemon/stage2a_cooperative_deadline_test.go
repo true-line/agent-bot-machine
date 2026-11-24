@@ -13,6 +13,11 @@ func TestCooperativeContainmentDeadlineIsBoundedWithoutChangingOtherVerbs(t *tes
 			t.Fatalf("%s deadline = %s", verb, got.Sub(start))
 		}
 	}
+	for _, verb := range []string{stage2aCooperativeQBeginVerb, stage2aCooperativeQFinishVerb} {
+		if !stage2aLongQVerb(verb) || stage2aConnDeadline(start, verb).Sub(start) != 130*time.Second {
+			t.Fatalf("%s must have a bounded Q-only deadline", verb)
+		}
+	}
 	for _, verb := range []string{"", stage2aReserveVerb, stage2aProviderVerb,
 		stage2aCooperativeReserveVerb, stage2aCooperativeProviderVerb} {
 		if got := stage2aConnDeadline(start, verb); got.Sub(start) != 5*time.Second {

@@ -38,7 +38,12 @@ func Serve(ctx context.Context, ln net.Listener, g *Gate, priv ed25519.PrivateKe
 }
 
 func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.Conn) (int, error), hooks Hooks) {
-	defer conn.Close()
+	async := false
+	defer func() {
+		if !async {
+			_ = conn.Close()
+		}
+	}()
 	started := time.Now()
 	_ = conn.SetDeadline(stage2aConnDeadline(started, ""))
 	reader := bufio.NewReader(io.LimitReader(conn, maxMessage))
@@ -59,6 +64,34 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 		} else if req.Verb == "bootstrap" {
 			res = bootstrapReply(priv)
 		} else if isStage2aVerb(req.Verb) && hooks.Stage2a != nil {
+			if stage2aWitnessVerb(req.Verb) {
+				req.peerPID, err = stage2aPeerPID(conn)
+				if err != nil {
+					res = refused(diag.DaemonPeerRefused, "Stage 2a witness requires the measured HQ process")
+					writeConnResponse(conn, priv, res, requestNonce)
+					return
+				}
+			}
+			if stage2aLongQVerb(req.Verb) {
+				// The Q exchange is bounded but may run for two minutes. The
+				// accept loop must remain available for HQ's five-second live
+				// lease refresh while Q waits for its independent observer.
+				async = true
+				go func() {
+					defer conn.Close()
+					_ = conn.SetDeadline(stage2aConnDeadline(started, req.Verb))
+					unlock, e := lockStage2aPairing(g.Dir, req)
+					var response Response
+					if e != nil {
+						response = refused(diag.DaemonPeerRefused, "Stage 2a requires the current protected HQ pairing")
+					} else {
+						response = hooks.reply(req)
+						_ = unlock()
+					}
+					writeConnResponse(conn, priv, response, requestNonce)
+				}()
+				return
+			}
 			// Cooperative stop may wait for its untrusted R child to exit. Give
 			// only the cutoff verbs enough time for a bounded cancel and signature;
 			// other Stage 2a requests retain the five-second deadline.
@@ -96,6 +129,10 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 			}
 		}
 	}
+	writeConnResponse(conn, priv, res, requestNonce)
+}
+
+func writeConnResponse(conn net.Conn, priv ed25519.PrivateKey, res Response, requestNonce string) {
 	res.RequestNonce = requestNonce
 	res.Timestamp = time.Now().Unix()
 	nonce, nerr := newNonce()
@@ -112,11 +149,18 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 }
 
 func stage2aConnDeadline(started time.Time, verb string) time.Time {
+	if stage2aLongQVerb(verb) {
+		return started.Add(130 * time.Second)
+	}
 	if verb == stage2aCooperativeStopVerb || verb == stage2aCooperativeAbortVerb ||
 		verb == stage2aCooperativeRecoveryVerb || verb == upgradeVerb || verb == recoveryVerb {
 		return started.Add(9 * time.Second)
 	}
 	return started.Add(5 * time.Second)
+}
+
+func stage2aLongQVerb(verb string) bool {
+	return verb == stage2aCooperativeQBeginVerb || verb == stage2aCooperativeQFinishVerb
 }
 
 // Hooks supplies the read-only bodies for status and receipts and the

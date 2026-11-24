@@ -84,6 +84,22 @@ func stage2aHandlerWithService(service *members.Stage2aService, dir, account str
 			state = "cooperative-live"
 			body, err = service.CooperativeLiveV3(req.peerUID, req.stage2aEpoch,
 				req.stage2aCooperativeLive, paired)
+		case stage2aCooperativeQBeginVerb:
+			state = "cooperative-q-pre"
+			body, err = service.BeginDirectQualificationV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeQBegin, paired)
+		case stage2aCooperativeQFinishVerb:
+			state = "cooperative-q-captured"
+			body, err = service.FinishDirectQualificationV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeQFinish, paired)
+		case stage2aCooperativeQWitnessBeginVerb:
+			state = "cooperative-q-witness-challenge"
+			body, err = service.BeginDirectQualificationWitnessV3(req.peerUID, req.peerPID,
+				req.stage2aEpoch, req.stage2aCooperativeQWitnessBegin, paired)
+		case stage2aCooperativeQWitnessFinishVerb:
+			state = "cooperative-q-witnessed"
+			body, err = service.FinishDirectQualificationWitnessV3(req.peerUID, req.peerPID,
+				req.stage2aEpoch, req.stage2aCooperativeQWitnessFinish, paired)
 		case stage2aCooperativeAbortVerb:
 			state = "cooperative-aborted"
 			body, err = service.AbortCooperativePreAttach(req.peerUID, req.stage2aEpoch,
