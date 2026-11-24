@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -62,7 +63,7 @@ func TestSavedPlanFlushesNewDirectoriesAndRenamedFile(t *testing.T) {
 	if err != nil || !strings.Contains(string(raw), `"plan_id": "`+s.PlanID+`"`) {
 		t.Fatalf("saved plan readback: %q, %v", raw, err)
 	}
-	if info, err := os.Stat(file); err != nil || info.Mode().Perm() != 0600 {
+	if info, err := os.Stat(file); err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Fatalf("saved plan private mode: %v, %v", info, err)
 	}
 }
