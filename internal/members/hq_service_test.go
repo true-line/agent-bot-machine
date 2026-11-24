@@ -91,6 +91,28 @@ func TestHQServiceRejectsInvalidRecord(t *testing.T) {
 	}
 }
 
+func TestHQServiceAcceptsOnlyInstalledDarwinReleaseSpace(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	base := "/Library/Application Support/ai.true-line.agent-bot-hq/releases/daf7c958"
+	s := HQService{ReleaseDir: base + "/hq", Node: base + "/node", ArtifactSHA256: digest, NodeSHA256: digest}
+	if err := s.validate(); err != nil {
+		t.Fatalf("installed Darwin release refused: %v", err)
+	}
+	for _, path := range []string{
+		"/Library/Other Support/ai.true-line.agent-bot-hq/releases/daf7c958/node",
+		"/Library/Application Support/other/releases/daf7c958/node",
+		base + "/../other/node",
+		base + "/node\nother",
+		base + "/node;other",
+	} {
+		candidate := s
+		candidate.Node = path
+		if err := candidate.validate(); err == nil {
+			t.Fatalf("unsafe service argument accepted: %q", path)
+		}
+	}
+}
+
 func TestHQOwnerStatusRequiresAuthenticatedPublicEndpoint(t *testing.T) {
 	good := `{"hq":{"account":"agent-bot-hq","sockets":{"ownerControl":{"account":"operator","uid":1002,"path":"/run/agent-bot-hq/control.sock","peer_check":"SO_PEERCRED"}}}}`
 	if !confirmsHQOwner([]byte(good), "operator", "1002") {

@@ -27,6 +27,11 @@ const (
 )
 
 var systemdPath = regexp.MustCompile(`^/[a-zA-Z0-9._/+:-]+$`)
+
+// launchd receives separate argv entries, so the installed Darwin HQ release
+// may use macOS's standard Application Support directory. Keep the exception
+// inside that fixed release root; Linux unit arguments remain space-free.
+var darwinHQReleasePath = regexp.MustCompile(`^/Library/Application Support/ai\.true-line\.agent-bot-hq/releases/[a-zA-Z0-9._/+:-]+$`)
 var digestHex = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 // HQService identifies an installed, operator-approved interim release.
@@ -64,7 +69,7 @@ func (s HQService) validate() error {
 		paths = append(paths, s.Archive)
 	}
 	for _, p := range paths {
-		if !systemdPath.MatchString(p) || filepath.Clean(p) != p || p == "/" {
+		if !(systemdPath.MatchString(p) || darwinHQReleasePath.MatchString(p)) || filepath.Clean(p) != p || p == "/" {
 			return refuse(RefusedPath, "HQ service paths must be clean absolute service arguments")
 		}
 	}
