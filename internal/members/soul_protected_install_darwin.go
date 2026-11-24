@@ -190,6 +190,11 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 	if err != nil || launchDigest != policy.Binding.LaunchInputMeasurement {
 		return Plan{}, invalid
 	}
+	needsQualification := stage2aLaunchNeedsQualification(policy.LaunchInputs.Files)
+	if needsQualification && r.RuntimeV3 == nil ||
+		r.RuntimeV3 != nil && r.RuntimeV3.QualificationOnly != needsQualification {
+		return Plan{}, invalid
+	}
 	if r.RuntimeV3 == nil {
 		if stage2aAdapterChildEnv(policy.LaunchInputs, &policy.BridgeQualification, policy.Binding.Snapshots.LaunchInputs.RootPath) != nil {
 			return Plan{}, invalid

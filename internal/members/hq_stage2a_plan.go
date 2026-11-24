@@ -25,7 +25,12 @@ const (
 	hqStage2aCooperativeStart   = "hq/stage2a-cooperative-start.mjs"
 	hqStage2aCooperativeBridge  = "hq/stage2a-cooperative-bridge.mjs"
 	hqStage2aCooperativeInstall = "hq/machine-soul-cooperative-launch.mjs"
+	hqStage2aRelayPeer          = "hq/stage2a-relay-peer.mjs"
 )
+
+func hqStage2aBrokeredRelayRequired(s *hqStage2aService) bool {
+	return s != nil && slices.Equal(s.ExcludedHQReleasePaths, hqStage2aContractsFixturePathsV0102Brokered[:])
+}
 
 // hqStage2aService is an explicit request carried by the existing paired
 // service upgrade. The approved digest includes the reviewed inventory and
@@ -211,11 +216,122 @@ var hqStage2aContractsFixturePathsV0102 = [...]string{
 	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-signed-reservation.synthetic.json",
 }
 
+var hqStage2aContractsFixturePathsV0102Brokered = [...]string{
+	"vendor/soul-contracts/fixtures/negative/action-record.missing-idempotency-key.json",
+	"vendor/soul-contracts/fixtures/negative/action-record.unknown-state.json",
+	"vendor/soul-contracts/fixtures/negative/adapter-manifest.invalid-package-version.json",
+	"vendor/soul-contracts/fixtures/negative/adapter-manifest.missing-qualification-list.json",
+	"vendor/soul-contracts/fixtures/negative/adapter-manifest.undeclared-cost-bound.json",
+	"vendor/soul-contracts/fixtures/negative/adapter-manifest.unsupported-qualification.json",
+	"vendor/soul-contracts/fixtures/negative/admission-result.client-no-source.json",
+	"vendor/soul-contracts/fixtures/negative/admission-result.client-unknown-source.json",
+	"vendor/soul-contracts/fixtures/negative/admission-result.epoch-zero.json",
+	"vendor/soul-contracts/fixtures/negative/admission-result.no-lease-generation.json",
+	"vendor/soul-contracts/fixtures/negative/admission-result.short-binding.json",
+	"vendor/soul-contracts/fixtures/negative/admission-result.unknown-profile.json",
+	"vendor/soul-contracts/fixtures/negative/approval-record.expired.json",
+	"vendor/soul-contracts/fixtures/negative/approval-record.malformed-digest.json",
+	"vendor/soul-contracts/fixtures/negative/candidate-revision-record.change-without-provenance.json",
+	"vendor/soul-contracts/fixtures/negative/candidate-revision-record.partial-accept-status.json",
+	"vendor/soul-contracts/fixtures/negative/credential-issuance-record.embeds-token.json",
+	"vendor/soul-contracts/fixtures/negative/credential-issuance-record.short-thumbprint.json",
+	"vendor/soul-contracts/fixtures/negative/definition-records.stage2a-backslash-path.json",
+	"vendor/soul-contracts/fixtures/negative/definition-records.stage2a-missing-size.json",
+	"vendor/soul-contracts/fixtures/negative/definition-records.stage2a-symlink-kind.json",
+	"vendor/soul-contracts/fixtures/negative/device-enrollment.additional-missing-presence.json",
+	"vendor/soul-contracts/fixtures/negative/device-enrollment.bad-issuer-key.json",
+	"vendor/soul-contracts/fixtures/negative/device-enrollment.first-device-linked.json",
+	"vendor/soul-contracts/fixtures/negative/device-enrollment.first-device-missing-bootstrap.json",
+	"vendor/soul-contracts/fixtures/negative/device-enrollment.first-device-wrong-local-owner.json",
+	"vendor/soul-contracts/fixtures/negative/device-enrollment.missing-issuer.json",
+	"vendor/soul-contracts/fixtures/negative/directive-or-query.from-peer-text.json",
+	"vendor/soul-contracts/fixtures/negative/domain-inventory.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/dream-grant-record.traversal-into-primitives.json",
+	"vendor/soul-contracts/fixtures/negative/dream-grant-record.writes-primitives.json",
+	"vendor/soul-contracts/fixtures/negative/dream-grant-record.zero-wall-clock.json",
+	"vendor/soul-contracts/fixtures/negative/equip.embeds-secret.json",
+	"vendor/soul-contracts/fixtures/negative/equip.user-chosen-short-handle.json",
+	"vendor/soul-contracts/fixtures/negative/error-response.carries-token.json",
+	"vendor/soul-contracts/fixtures/negative/error-response.empty-explanation.json",
+	"vendor/soul-contracts/fixtures/negative/error-response.no-correlation-id.json",
+	"vendor/soul-contracts/fixtures/negative/error-response.unregistered-code.json",
+	"vendor/soul-contracts/fixtures/negative/eval-plan-record.no-cells.json",
+	"vendor/soul-contracts/fixtures/negative/grant-record.negative-budget.json",
+	"vendor/soul-contracts/fixtures/negative/grant-record.unscoped.json",
+	"vendor/soul-contracts/fixtures/negative/h-service-descriptor-payload.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/h-service-descriptor-signed.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/hello.bad-digest.json",
+	"vendor/soul-contracts/fixtures/negative/hello.client-bad-app-id.json",
+	"vendor/soul-contracts/fixtures/negative/hello.client-source-claimed.json",
+	"vendor/soul-contracts/fixtures/negative/hello.missing-lead.json",
+	"vendor/soul-contracts/fixtures/negative/hello.stale-epoch.json",
+	"vendor/soul-contracts/fixtures/negative/hello.two-leads.json",
+	"vendor/soul-contracts/fixtures/negative/hello.unaccepted-definition.json",
+	"vendor/soul-contracts/fixtures/negative/hello.unknown-field.json",
+	"vendor/soul-contracts/fixtures/negative/hello.unpinned-version.json",
+	"vendor/soul-contracts/fixtures/negative/hello.unsupported-profile.json",
+	"vendor/soul-contracts/fixtures/negative/hello.unsupported-version.json",
+	"vendor/soul-contracts/fixtures/negative/hello.version-zero.json",
+	"vendor/soul-contracts/fixtures/negative/inventory-ref.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/launch-input-records.stage2a-absolute-path.json",
+	"vendor/soul-contracts/fixtures/negative/launch-input-records.stage2a-file-too-large.json",
+	"vendor/soul-contracts/fixtures/negative/launch-input-records.stage2a-missing-comms-broker.json",
+	"vendor/soul-contracts/fixtures/negative/measurement-binding.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-bridge-assignment-payload.missing-reservation.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-bridge-signed-assignment.wrong-purpose.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-reservation-payload.bridge-claim.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-reservation-payload.missing-broker.json",
+	"vendor/soul-contracts/fixtures/negative/soul-cooperative-signed-reservation.wrong-purpose.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-begin.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-clean-eof.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-framed-wire.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-pre-sign-index.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-ready.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-signed-eof.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-q-signed-index.synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-binding.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-reservation-payload.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-qualification-candidate-signed-reservation.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-reservation-payload.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/negative/stage2a-signed-reservation.v3-synthetic.bad.json",
+	"vendor/soul-contracts/fixtures/positive/domain-inventory.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/h-service-descriptor-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/h-service-descriptor-signed.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/inventory-ref.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/measurement-binding.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-bridge-assignment-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-bridge-signed-assignment.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-reservation-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/soul-cooperative-signed-reservation.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-begin.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-clean-eof.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-framed-wire.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-pre-sign-index.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-ready.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-signed-eof.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-q-signed-index.synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-qualification-candidate-binding.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-qualification-candidate-reservation-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-qualification-candidate-signed-reservation.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-reservation-payload.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/positive/stage2a-signed-reservation.v3-synthetic.json",
+	"vendor/soul-contracts/fixtures/qualification/v3/q-presign-argv-synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v1/machine-658-synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/machine-qualification-candidate-invalid-bytes.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/machine-qualification-candidate-synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-launch-inputs.brokered-b.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-launch-inputs.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-r-inventory.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-signed-reservation.brokered-b.synthetic.json",
+	"vendor/soul-contracts/fixtures/reservation/v3/soul-cooperative-signed-reservation.synthetic.json",
+}
+
 func hqStage2aValidExclusions(paths []string) bool {
 	return len(paths) == 0 || slices.Equal(paths, hqStage2aContractsFixturePaths[:]) ||
 		slices.Equal(paths, hqStage2aContractsFixturePathsV010[:]) ||
 		slices.Equal(paths, hqStage2aContractsFixturePathsV0101[:]) ||
-		slices.Equal(paths, hqStage2aContractsFixturePathsV0102[:])
+		slices.Equal(paths, hqStage2aContractsFixturePathsV0102[:]) ||
+		slices.Equal(paths, hqStage2aContractsFixturePathsV0102Brokered[:])
 }
 
 func hqStage2aValidExclusionsForTag(tag string, paths []string) bool {
@@ -225,7 +341,8 @@ func hqStage2aValidExclusionsForTag(tag string, paths []string) bool {
 	case "v0.10.1":
 		return slices.Equal(paths, hqStage2aContractsFixturePathsV0101[:])
 	case "v0.10.2":
-		return slices.Equal(paths, hqStage2aContractsFixturePathsV0102[:])
+		return slices.Equal(paths, hqStage2aContractsFixturePathsV0102[:]) ||
+			slices.Equal(paths, hqStage2aContractsFixturePathsV0102Brokered[:])
 	default:
 		return false
 	}

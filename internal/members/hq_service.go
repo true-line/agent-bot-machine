@@ -27,6 +27,11 @@ const (
 )
 
 var systemdPath = regexp.MustCompile(`^/[a-zA-Z0-9._/+:-]+$`)
+
+// launchd receives separate argv entries, so the installed Darwin HQ release
+// may use macOS's standard Application Support directory. Keep the exception
+// inside that fixed release root; Linux unit arguments remain space-free.
+var darwinHQReleasePath = regexp.MustCompile(`^/Library/Application Support/ai\.true-line\.agent-bot-hq/releases/[a-zA-Z0-9._/+:-]+$`)
 var digestHex = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 // HQService identifies an installed, operator-approved interim release.
@@ -64,7 +69,7 @@ func (s HQService) validate() error {
 		paths = append(paths, s.Archive)
 	}
 	for _, p := range paths {
-		if !systemdPath.MatchString(p) || filepath.Clean(p) != p || p == "/" {
+		if !(systemdPath.MatchString(p) || darwinHQReleasePath.MatchString(p)) || filepath.Clean(p) != p || p == "/" {
 			return refuse(RefusedPath, "HQ service paths must be clean absolute service arguments")
 		}
 	}
@@ -182,6 +187,9 @@ func appendHQService(p *Plan, in Input, h Host) error {
 	s := in.HQService
 	if s.Archive != "" {
 		return refuse(RefusedList, "archive is used only by the macOS installer")
+	}
+	if !systemdPath.MatchString(s.ReleaseDir) || !systemdPath.MatchString(s.Node) {
+		return refuse(RefusedPath, "Linux HQ service paths must be space-free systemd arguments")
 	}
 	if in.Platform != "" || p.HQAccount != DefaultHQAccount || p.SharedHQAdvice() != "" || in.Invoker == DefaultHQAccount || !accountName.MatchString(in.Invoker) {
 		return refuse(RefusedAccount, "the Linux HQ service needs the dedicated HQ account and a separate owner")

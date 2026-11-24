@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "internal/members/darwin/soul-runner-egress.sb"
 BRIDGE = ROOT / "internal/members/darwin/soul-bridge-egress.sb"
 CHILD = ROOT / "internal/members/darwin/soul-child-egress.sb"
+CHILD_PROBE = ROOT / "tests/fixtures/darwin-stock-child-egress.c"
 REQUEST = b"GET fixture\n"
 REPLY = b"fixture ready\n"
 
@@ -104,13 +105,6 @@ def runner_child(port4, port6, broker, admission, member, sibling, relay, other_
             raise AssertionError("runner could not reach its assigned relay")
 
 
-def stock_child(port4, port6, broker, admission, member, sibling, relay, other_bind):
-    check_denials(port4, port6, broker, admission, member, sibling)
-    denied_bind(socket.AF_UNIX, other_bind)
-    if exchange(socket.AF_UNIX, relay) != REPLY:
-        raise AssertionError("stock child could not reach its assigned B relay")
-
-
 class Listener:
     def __init__(self, family, address):
         self.socket = socket.socket(family, socket.SOCK_STREAM)
@@ -167,10 +161,20 @@ class DarwinSoulProfiles(unittest.TestCase):
             sibling = listen(socket.AF_UNIX, str(Path(tmp) / "sibling.sock"))
             relay = listen(socket.AF_UNIX, str(Path(tmp) / "relay.sock"))
             other_bind = str(Path(tmp) / "other-bind.sock")
+            code = Path(tmp) / "code"
+            state = Path(tmp) / "state"
+            code.mkdir()
+            state.mkdir()
+            adapter = code / "claude-agent-acp"
+            cli = code / "claude"
+            subprocess.run(["/usr/bin/clang", "-O2", "-o", str(adapter), str(CHILD_PROBE)], check=True)
+            cli.write_bytes(adapter.read_bytes())
+            cli.chmod(0o550)
             command = [
                 "/usr/bin/sandbox-exec", "-D", "RELAY_SOCKET=" + relay.address,
-                "-f", str(CHILD),
-                sys.executable, "-I", str(Path(__file__).resolve()), "--child",
+                "-D", "R_CODE=" + str(code), "-D", "STATE=" + str(state),
+                "-D", "ADAPTER=" + str(adapter), "-D", "CLI=" + str(cli),
+                "-f", str(CHILD), str(adapter),
                 str(v4.address[1]), str(v6.address[1]), broker.address, admission.address,
                 member.address, sibling.address, relay.address, other_bind,
             ]
@@ -254,8 +258,6 @@ if __name__ == "__main__":
         bridge_child(*sys.argv[2:])
     elif sys.argv[1:2] == ["--runner"]:
         runner_child(*sys.argv[2:])
-    elif sys.argv[1:2] == ["--child"]:
-        stock_child(*sys.argv[2:])
     elif sys.argv[1:2] == ["--replacement"]:
         sys.stdin.readline()
         denied_connect(socket.AF_UNIX, sys.argv[2])

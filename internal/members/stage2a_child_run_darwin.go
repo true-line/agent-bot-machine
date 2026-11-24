@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"time"
@@ -73,7 +74,13 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 	if stage2aCreateChildState(in.Runner, in.Start) != nil {
 		return harnessRefused
 	}
-	cmd := exec.Command("/usr/bin/sandbox-exec", "-D", "RELAY_SOCKET="+child.RelaySocket,
+	cli := filepath.Join(filepath.Dir(child.Executable), "claude")
+	cmd := exec.Command("/usr/bin/sandbox-exec",
+		"-D", "RELAY_SOCKET="+child.RelaySocket,
+		"-D", "R_CODE="+child.RuntimeV3.Snapshot.Path,
+		"-D", "STATE="+filepath.Dir(workdir),
+		"-D", "ADAPTER="+child.Executable,
+		"-D", "CLI="+cli,
 		"-f", child.SandboxPath, child.Executable)
 	cmd.Dir = child.Workdir
 	cmd.Env = make([]string, 0, len(environment))
@@ -84,6 +91,7 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	reporter := &harnessReporter{output: status}
+	var probe *stage2aT03ProbeCoordinator
 	onStart := func(pid int) error {
 		var observed soulKernelProcessSnapshot
 		for time.Now().Before(expires) {
@@ -131,11 +139,23 @@ func runStage2aChild(ctx context.Context, in Stage2aRoleInvocation, grantSHA256 
 		}{"child-accepted", receipt.SHA256, first.Sequence}) != nil {
 			return errors.New("protected child acceptance not delivered")
 		}
-		go watchStage2aChildLive(childCtx, cancel, in, receipt.SHA256,
-			launcher, observed, pub, first)
+		probe = newStage2aT03ProbeCoordinator(childCtx, cancel, in, receipt.SHA256, reporter)
+		if err := probe.onLease(first); err != nil {
+			return err
+		}
+		go watchStage2aChildLiveWithProbe(childCtx, cancel, in, receipt.SHA256,
+			launcher, observed, pub, first, probe.onLease)
 		return nil
 	}
-	return superviseHarnessStarted(childCtx, cmd, acp, control, stdout, reporter, time.Second, onStart)
+	code := superviseHarnessStarted(childCtx, cmd, acp, control, stdout, reporter, time.Second, onStart)
+	cancel()
+	if probe != nil && !probe.stopped(5*time.Second) {
+		return harnessUncontained
+	}
+	if probe != nil && probe.failed() && code == harnessClosed {
+		return harnessRefused
+	}
+	return code
 }
 
 func stage2aCreateChildState(runner SoulRunner, start SoulStartAssignment) error {
@@ -168,17 +188,24 @@ func stage2aCreateChildState(runner SoulRunner, start SoulStartAssignment) error
 func watchStage2aChildLive(ctx context.Context, cancel context.CancelFunc, in Stage2aRoleInvocation,
 	receiptSHA256 string, launcher, child soulKernelProcessSnapshot, pub ed25519.PublicKey,
 	first Stage2aLiveLeasePayload) {
+	watchStage2aChildLiveWithProbe(ctx, cancel, in, receiptSHA256, launcher, child, pub, first, nil)
+}
+
+func watchStage2aChildLiveWithProbe(ctx context.Context, cancel context.CancelFunc, in Stage2aRoleInvocation,
+	receiptSHA256 string, launcher, child soulKernelProcessSnapshot, pub ed25519.PublicKey,
+	first Stage2aLiveLeasePayload, onLease func(Stage2aLiveLeasePayload) error) {
 	watchStage2aChildLiveWithRequest(ctx, cancel, first, func(after uint64,
 		priorExpires time.Time) (Stage2aLiveLeasePayload, error) {
 		return requestStage2aChildLive(in, receiptSHA256, launcher, child,
 			pub, after, priorExpires)
-	})
+	}, onLease)
 }
 
 // The independent timer cancels the child even if the HQ renewal I/O blocks.
 // A late signed response never extends a lease that already lapsed.
 func watchStage2aChildLiveWithRequest(ctx context.Context, cancel context.CancelFunc,
-	first Stage2aLiveLeasePayload, request func(uint64, time.Time) (Stage2aLiveLeasePayload, error)) {
+	first Stage2aLiveLeasePayload, request func(uint64, time.Time) (Stage2aLiveLeasePayload, error),
+	onLease ...func(Stage2aLiveLeasePayload) error) {
 	last := first
 	for {
 		expires := time.UnixMilli(last.ExpiresAtMS)
@@ -212,6 +239,10 @@ func watchStage2aChildLiveWithRequest(ctx context.Context, cancel context.Cancel
 			}
 			if err == nil && next.Sequence > last.Sequence &&
 				time.Now().UnixMilli() < next.ExpiresAtMS {
+				if len(onLease) != 0 && onLease[0] != nil && onLease[0](next) != nil {
+					cancel()
+					return
+				}
 				if !expiryTimer.Stop() || ctx.Err() != nil || !time.Now().Before(expires) {
 					cancel()
 					return

@@ -8,6 +8,7 @@ import (
 	"github.com/qwts/managed-machine/internal/target"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -51,6 +52,40 @@ func TestQualificationRequestStrictShape(t *testing.T) {
 				t.Fatal("invalid request accepted")
 			}
 		})
+	}
+}
+
+func TestQualificationCandidateQRunnerReviewsPendingSource(t *testing.T) {
+	r := validQualificationRequest()
+	r.SchemaVersion = 2
+	r.Candidate = &qualificationCandidatePlan{
+		HostUUID:       "A0000000-0000-0000-0000-000000000001",
+		InstallationID: "inst_0000000000000001", InstalledPlanDigest: strings.Repeat("a", 64),
+		RuntimeInventorySHA: strings.Repeat("b", 64), ComponentID: "adapter",
+		Manifest: qualificationFile{"/private/tmp/manifest.json", strings.Repeat("c", 64)},
+		TestPlan: qualificationFile{"/private/tmp/gate-plan.json", strings.Repeat("d", 64)},
+	}
+	r.Runner.BinaryPath = path.Join(stage2aQualificationQHome, "qualification-runner.mjs")
+	r.Runner.SourcePath = "/private/var/db/managed-machine/pending-q/runner.mjs"
+	if err := validateQualificationRequest(r); err != nil {
+		t.Fatalf("reviewed pending Q source refused: %v", err)
+	}
+	f, staged := qualificationRunnerReviewFile(r)
+	if !staged || f.Path != r.Runner.SourcePath || f.SHA256 != r.Runner.BinarySHA {
+		t.Fatal("planner tried to hash the uncreated Q destination")
+	}
+	for name, change := range map[string]func(*QualificationRequest){
+		"missing pending source":    func(v *QualificationRequest) { v.Runner.SourcePath = "" },
+		"source in Q home":          func(v *QualificationRequest) { v.Runner.SourcePath = stage2aQualificationQHome + "/source.mjs" },
+		"source equals destination": func(v *QualificationRequest) { v.Runner.SourcePath = v.Runner.BinaryPath },
+		"alternate destination":     func(v *QualificationRequest) { v.Runner.BinaryPath = "/private/tmp/other.mjs" },
+		"legacy source":             func(v *QualificationRequest) { v.SchemaVersion = 1; v.Candidate = nil },
+	} {
+		bad := r
+		change(&bad)
+		if err := validateQualificationRequest(bad); err == nil {
+			t.Errorf("accepted %s", name)
+		}
 	}
 }
 
@@ -224,6 +259,18 @@ func TestCandidateQualificationPlanRequiresExactHostAndInputs(t *testing.T) {
 	if err := validateQualificationRequest(request); err != nil {
 		t.Fatalf("exact candidate inputs refused: %v", err)
 	}
+	manifestOnly := request
+	manifestOnly.Adapter.Launch.CodeInputs = []qualificationCodeInput{}
+	manifestOnly.Adapter.Launch.CodeInputManifest = qualificationFile{
+		Path: "/private/tmp/closure.json", SHA256: strings.Repeat("f", 64),
+	}
+	raw, err := json.Marshal(manifestOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeQualificationRequest(raw); err == nil || !strings.Contains(err.Error(), "requires 1–512 explicit code inputs") {
+		t.Fatalf("manifest-backed candidate request returned %v", err)
+	}
 	run := &QualificationRun{RequestSHA256: strings.Repeat("e", 64), Request: request,
 		MemberState: "disposable", OneUse: true, Gates: fixedQualificationGates()}
 	before, err := qualificationPlan(run)
@@ -246,5 +293,43 @@ func TestCandidateQualificationPlanRequiresExactHostAndInputs(t *testing.T) {
 	request.SchemaVersion = 1
 	if err := validateQualificationRequest(request); err == nil {
 		t.Fatal("schema-1 request accepted candidate authority")
+	}
+}
+
+func TestCandidateQualificationRequiresInstalledSoulRunner(t *testing.T) {
+	const installation = "inst_0123456789abcdef"
+	const uid = 325
+	name := soulRunnerName(installation)
+	h := emptyHost()
+	account := Account{Name: name, Group: name, UID: uid, GID: uid, Home: darwinSoulRunnerHome(name),
+		Shell: DarwinNoLoginShell, DarwinRole: darwinSoulRunnerRoleName}
+	h.accounts[name] = account
+	h.entries[account.Home] = Entry{Dir: true, Owner: name, Group: name, Mode: 0700}
+	r := validQualificationRequest()
+	r.SchemaVersion = 2
+	r.Candidate = &qualificationCandidatePlan{InstallationID: installation}
+	r.Target.Account, r.Target.UID = name, uid
+	if err := checkQualificationTarget(r, h); err != nil {
+		t.Fatal(err)
+	}
+	wrong := r
+	wrong.Target.UID++
+	if err := checkQualificationTarget(wrong, h); err == nil {
+		t.Fatal("accepted different runner UID")
+	}
+	wrong = r
+	wrong.Candidate = &qualificationCandidatePlan{InstallationID: "inst_fedcba9876543210"}
+	if err := checkQualificationTarget(wrong, h); err == nil {
+		t.Fatal("accepted runner for another installation")
+	}
+	account.DarwinRole, account.Home = darwinHarnessRoleName, darwinHarnessHome(name)
+	h.accounts[name] = account
+	h.entries[account.Home] = Entry{Dir: true, Owner: name, Group: name, Mode: 0700}
+	if err := checkQualificationTarget(r, h); err == nil {
+		t.Fatal("accepted harness in place of dedicated Soul runner")
+	}
+	r.SchemaVersion, r.Candidate = 1, nil
+	if err := checkQualificationTarget(r, h); err != nil {
+		t.Fatalf("legacy harness role failed: %v", err)
 	}
 }

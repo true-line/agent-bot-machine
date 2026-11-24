@@ -197,19 +197,22 @@ func TestAcceptanceWitnessV2AndVersionRegression(t *testing.T) {
 	policy, _, _ := fixturePolicy(t, now)
 	policy.Contract = "control/v2"
 	policy.SoulsBuildWorkflow = &struct {
-		ID                   string `json:"id"`
-		Repository           string `json:"repository"`
-		WorkflowPath         string `json:"workflow_path"`
-		SourceCommit         string `json:"source_commit"`
-		SourceTree           string `json:"source_tree"`
-		OIDCIssuer           string `json:"oidc_issuer"`
-		CertificateIdentity  string `json:"certificate_identity"`
-		TrustRootSHA256      string `json:"trust_root_sha256"`
-		BuilderSHA256        string `json:"builder_sha256"`
-		ToolchainSHA256      string `json:"toolchain_sha256"`
-		ReceiptPredicateType string `json:"receipt_predicate_type"`
-		BundleMediaType      string `json:"bundle_media_type"`
-		DSSEPayloadType      string `json:"dsse_payload_type"`
+		ID                      string `json:"id"`
+		Repository              string `json:"repository"`
+		WorkflowPath            string `json:"workflow_path"`
+		SourceCommit            string `json:"source_commit"`
+		SourceTree              string `json:"source_tree"`
+		OIDCIssuer              string `json:"oidc_issuer"`
+		CertificateIdentity     string `json:"certificate_identity"`
+		TrustRootSHA256         string `json:"trust_root_sha256"`
+		BuilderSHA256           string `json:"builder_sha256"`
+		ToolchainSHA256         string `json:"toolchain_sha256"`
+		SourceNPMSHA256         string `json:"source_npm_sha256,omitempty"`
+		DerivativeBuilderSHA256 string `json:"derivative_builder_sha256,omitempty"`
+		SelectedManifestSHA256  string `json:"selected_manifest_sha256,omitempty"`
+		ReceiptPredicateType    string `json:"receipt_predicate_type"`
+		BundleMediaType         string `json:"bundle_media_type"`
+		DSSEPayloadType         string `json:"dsse_payload_type"`
 	}{
 		ID: "fixture-souls-build", Repository: "true-line/agent-bot-souls", WorkflowPath: ".github/workflows/release.yml",
 		SourceCommit: strings.Repeat("1", 40), SourceTree: strings.Repeat("2", 40),

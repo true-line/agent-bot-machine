@@ -4,6 +4,7 @@ package members
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -36,6 +37,7 @@ type soulCooperativeLiveV3 struct {
 	runner            soulKernelProcessSnapshot
 	attached          bool
 	attachSHA256      string
+	directQ           *stage2aDirectQRunV3
 }
 
 // ReserveCooperativeV3 reconstructs the candidate solely from current
@@ -102,6 +104,20 @@ func (s *Stage2aService) ReserveCooperativeV3(hqUID int, epoch string,
 			hEntrySHA256: descriptor.Runtime.EntrySHA256}
 		for _, c := range descriptor.Components {
 			proof.hComponents = append(proof.hComponents, soulCooperativeComponentV3(c))
+		}
+		if current.Policy.QualificationProvider != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			install, request, err := loadStage2aQualificationQAuthority(ctx)
+			if err != nil {
+				return errSoulCooperativeAuthority
+			}
+			proof.qualificationHarnessSHA256, err = cooperativeQualificationHarnessV3(
+				install, request, current.Policy, selector.Owner, selector.CooperativePlanDigest, r.ref.InventoryDigest)
+			if err != nil {
+				return err
+			}
+			proof.qualificationCodeInputs = request.Adapter.Launch.CodeInputs
 		}
 		issued = time.Now().UTC()
 		reply, err = publishSoulCooperativeStartV3(proof, q, challenge, issued, key, s.sign)

@@ -250,6 +250,11 @@ func publishStage2aQualificationPreSignWithDriver(store stage2aAdminClaimStore,
 			store.uid, store.gid, reservation, 64<<10) != nil {
 		return empty, errStage2aReservationAuthority
 	}
+	if driver != nil && driver.phase == stage2aDriverProtectedT03Run &&
+		(stage2aCheckSpentClaim(dir, stage2aActiveClaimName(session.begin.InstallationID), store.uid, store.gid) != nil ||
+			requireUnspentStage2aReservation(dir, ".stage2a-closed-"+slot) != nil) {
+		return empty, errStage2aReservationAuthority
+	}
 	wire, index, eofReceipt, err := issueStage2aQualificationPreSignV1(session,
 		launchChallengeSHA256, now, machineKey, sign)
 	if err != nil {

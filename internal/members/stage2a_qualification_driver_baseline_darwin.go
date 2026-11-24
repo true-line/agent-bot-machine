@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var errStage2aDriverLiveUnsupported = errors.New("owner driver supports before-launch baselines only")
+var errStage2aDriverLiveUnsupported = errors.New("owner driver phase is disabled by installed review")
 
 type stage2aDriverBaselineWitness struct {
 	Path          string `json:"path"`

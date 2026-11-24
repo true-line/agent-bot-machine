@@ -20,6 +20,12 @@ const stage2aPrepareBVerb = "stage2a-prepare-b"
 const stage2aStopVerb = "stage2a-stop"
 const stage2aFinalizeBVerb = "stage2a-finalize-b"
 const stage2aLiveVerb = "stage2a-live"
+const stage2aT03PositiveVerb = "stage2a-t03-positive"
+const stage2aT03PrewriteVerb = "stage2a-t03-prewrite-peer"
+const stage2aT03ReadyVerb = "stage2a-t03-ready"
+const stage2aT03CompleteVerb = "stage2a-t03-complete"
+const stage2aT03SiblingWitnessVerb = "stage2a-t03-sibling-credential-witness"
+const stage2aT03DirectChildWitnessVerb = "stage2a-t03-child-credential-witness"
 const stage2aProviderVerb = "stage2a-provider"
 const stage2aChildReadyVerb = "stage2a-child-ready"
 const stage2aHelloStartVerb = "stage2a-hello-start"
@@ -36,6 +42,10 @@ const stage2aCooperativeLookupVerb = "stage2a-cooperative-lookup-v3"
 const stage2aCooperativeLiveVerb = "stage2a-cooperative-live-v3"
 const stage2aCooperativeAbortVerb = "stage2a-cooperative-abort-v3"
 const stage2aCooperativeRecoveryVerb = "stage2a-cooperative-recovery-v3"
+const stage2aCooperativeQBeginVerb = "stage2a-cooperative-q-begin-v3"
+const stage2aCooperativeQFinishVerb = "stage2a-cooperative-q-finish-v3"
+const stage2aCooperativeQWitnessBeginVerb = "stage2a-cooperative-q-witness-begin-v3"
+const stage2aCooperativeQWitnessFinishVerb = "stage2a-cooperative-q-witness-finish-v3"
 
 var stage2aExecDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -47,14 +57,17 @@ type stage2aExecRequest struct {
 }
 
 func isStage2aVerb(verb string) bool {
-	return verb == stage2aReserveVerb || verb == stage2aExecVerb ||
+	return verb == stage2aReserveVerb || verb == stage2aExecVerb || verb == stage2aT03PositiveVerb || verb == stage2aT03PrewriteVerb ||
+		verb == stage2aT03ReadyVerb || verb == stage2aT03CompleteVerb || verb == stage2aT03SiblingWitnessVerb ||
 		verb == stage2aVerifyBVerb || verb == stage2aLookupVerb || verb == stage2aListVerb || verb == stage2aPrepareBVerb || verb == stage2aStopVerb || verb == stage2aFinalizeBVerb || verb == stage2aLiveVerb || verb == stage2aProviderVerb || verb == stage2aChildReadyVerb ||
 		verb == stage2aHelloStartVerb || verb == stage2aHelloFinalizeVerb || verb == stage2aHelloAbortVerb ||
 		verb == stage2aPeerRoleVerb || verb == stage2aCooperativeReserveVerb ||
 		verb == stage2aCooperativeAttachVerb || verb == stage2aCooperativeStopVerb ||
 		verb == stage2aCooperativeProjectionVerb || verb == stage2aCooperativeProviderVerb ||
 		verb == stage2aCooperativeLookupVerb || verb == stage2aCooperativeLiveVerb ||
-		verb == stage2aCooperativeAbortVerb || verb == stage2aCooperativeReserveResultVerb
+		verb == stage2aCooperativeAbortVerb || verb == stage2aCooperativeReserveResultVerb ||
+		verb == stage2aCooperativeQBeginVerb || verb == stage2aCooperativeQFinishVerb ||
+		verb == stage2aCooperativeQWitnessBeginVerb || verb == stage2aCooperativeQWitnessFinishVerb
 }
 
 func stage2aFields(req *Request, raw []byte) (string, string) {
@@ -156,6 +169,38 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 		req.stage2aCooperativeLive = parsed
 		return "", ""
 	}
+	if req.Verb == stage2aCooperativeQBeginVerb {
+		parsed, err := members.ParseSoulCooperativeLiveRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative Q begin request"
+		}
+		req.stage2aCooperativeQBegin = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeQFinishVerb {
+		parsed, err := members.ParseStage2aDirectQFinishRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative Q finish request"
+		}
+		req.stage2aCooperativeQFinish = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeQWitnessBeginVerb {
+		parsed, err := members.ParseStage2aDirectQWitnessBeginRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative Q witness begin"
+		}
+		req.stage2aCooperativeQWitnessBegin = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aCooperativeQWitnessFinishVerb {
+		parsed, err := members.ParseStage2aDirectQWitnessFinishRequestV3(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid cooperative Q witness finish"
+		}
+		req.stage2aCooperativeQWitnessFinish = parsed
+		return "", ""
+	}
 	if req.Verb == stage2aCooperativeAbortVerb {
 		parsed, err := members.ParseStage2aStopRequest(decoded)
 		if err != nil {
@@ -194,6 +239,46 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 			return diag.DaemonUndeclared, "invalid Stage 2a stop request"
 		}
 		req.stage2aStop = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aT03PositiveVerb {
+		parsed, err := members.ParseStage2aT03ArmRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid protected T03 positive receipt"
+		}
+		req.stage2aT03Positive = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aT03PrewriteVerb {
+		parsed, err := members.ParseStage2aT03PrewriteRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid protected T03 broker prewrite"
+		}
+		req.stage2aT03Prewrite = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aT03ReadyVerb {
+		parsed, err := members.ParseStage2aT03ReadyRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid protected T03 ready record"
+		}
+		req.stage2aT03Ready = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aT03CompleteVerb {
+		parsed, err := members.ParseStage2aT03CompleteRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid protected T03 completion record"
+		}
+		req.stage2aT03Complete = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aT03SiblingWitnessVerb {
+		parsed, err := members.ParseStage2aT03SiblingCredentialWitnessRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid protected T03 sibling credential witness"
+		}
+		req.stage2aT03SiblingWitness = parsed
 		return "", ""
 	}
 	if req.Verb == stage2aLiveVerb {
@@ -273,6 +358,10 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 	}
 	req.stage2aExec = parsed
 	return "", ""
+}
+
+func stage2aWitnessVerb(verb string) bool {
+	return verb == stage2aCooperativeQWitnessBeginVerb || verb == stage2aCooperativeQWitnessFinishVerb
 }
 
 func lockStage2aPairing(dir string, req Request) (func() error, error) {

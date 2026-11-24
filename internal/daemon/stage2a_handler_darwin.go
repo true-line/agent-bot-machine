@@ -84,6 +84,22 @@ func stage2aHandlerWithService(service *members.Stage2aService, dir, account str
 			state = "cooperative-live"
 			body, err = service.CooperativeLiveV3(req.peerUID, req.stage2aEpoch,
 				req.stage2aCooperativeLive, paired)
+		case stage2aCooperativeQBeginVerb:
+			state = "cooperative-q-pre"
+			body, err = service.BeginDirectQualificationV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeQBegin, paired)
+		case stage2aCooperativeQFinishVerb:
+			state = "cooperative-q-captured"
+			body, err = service.FinishDirectQualificationV3(req.peerUID, req.stage2aEpoch,
+				req.stage2aCooperativeQFinish, paired)
+		case stage2aCooperativeQWitnessBeginVerb:
+			state = "cooperative-q-witness-challenge"
+			body, err = service.BeginDirectQualificationWitnessV3(req.peerUID, req.peerPID,
+				req.stage2aEpoch, req.stage2aCooperativeQWitnessBegin, paired)
+		case stage2aCooperativeQWitnessFinishVerb:
+			state = "cooperative-q-witnessed"
+			body, err = service.FinishDirectQualificationWitnessV3(req.peerUID, req.peerPID,
+				req.stage2aEpoch, req.stage2aCooperativeQWitnessFinish, paired)
 		case stage2aCooperativeAbortVerb:
 			state = "cooperative-aborted"
 			body, err = service.AbortCooperativePreAttach(req.peerUID, req.stage2aEpoch,
@@ -104,6 +120,66 @@ func stage2aHandlerWithService(service *members.Stage2aService, dir, account str
 		case stage2aFinalizeBVerb:
 			state = "finalized"
 			body, err = service.FinalizeB(req.peerUID, req.stage2aEpoch, req.stage2aFinalizeB)
+		case stage2aT03PositiveVerb:
+			state = "t03-positive-recorded"
+			var digest string
+			digest, err = service.Stage2aT03AcceptPositive(req.peerUID, req.stage2aEpoch, req.stage2aT03Positive)
+			if err == nil {
+				service.StartProtectedT03(req.peerUID, req.stage2aEpoch, req.stage2aT03Positive.Stage2aStopRequest,
+					func(run func() error) error {
+						unlock, err := lockStage2aPairing(dir, req)
+						if err != nil {
+							return err
+						}
+						defer unlock()
+						return run()
+					})
+			}
+			body = struct {
+				SHA256 string `json:"sha256"`
+			}{digest}
+		case stage2aT03PrewriteVerb:
+			state = "t03-prewrite-peer-observed"
+			var receipt string
+			receipt, err = service.Stage2aT03AcceptPrewrite(req.peerUID, req.stage2aEpoch, req.stage2aT03Prewrite)
+			body = struct {
+				PrewriteReceipt string `json:"prewrite_receipt"`
+			}{receipt}
+		case stage2aT03ReadyVerb:
+			state = "t03-ready-observed"
+			err = service.Stage2aT03AcceptReady(req.peerUID, req.stage2aEpoch, req.stage2aT03Ready)
+			body = struct {
+				Accepted bool `json:"accepted"`
+			}{err == nil}
+		case stage2aT03CompleteVerb:
+			state = "t03-completion-recorded"
+			var digest string
+			digest, err = service.Stage2aT03AcceptComplete(req.peerUID, req.stage2aEpoch, req.stage2aT03Complete)
+			body = struct {
+				SHA256 string `json:"sha256"`
+			}{digest}
+		case stage2aT03SiblingWitnessVerb:
+			state = "t03-sibling-credential-witnessed"
+			var digest string
+			var sequence uint64
+			digest, sequence, err = service.Stage2aT03AcceptSiblingWitness(req.peerUID, req.stage2aEpoch,
+				req.stage2aT03SiblingWitness)
+			body = struct {
+				Accepted       bool   `json:"accepted"`
+				MetadataSHA256 string `json:"metadata_sha256"`
+				LeaseSequence  uint64 `json:"lease_sequence"`
+			}{err == nil, digest, sequence}
+		case stage2aT03DirectChildWitnessVerb:
+			state = "t03-sibling-credential-observed"
+			var digest string
+			var sequence uint64
+			digest, sequence, err = service.Stage2aT03ObserveDirectChildWitness(req.peerUID, req.peerPID,
+				req.stage2aT03SiblingWitness)
+			body = struct {
+				Accepted       bool   `json:"accepted"`
+				MetadataSHA256 string `json:"metadata_sha256"`
+				LeaseSequence  uint64 `json:"lease_sequence"`
+			}{err == nil, digest, sequence}
 		case stage2aLiveVerb:
 			state = "live"
 			body, err = service.Live(req.peerUID, req.stage2aEpoch, req.stage2aLive)

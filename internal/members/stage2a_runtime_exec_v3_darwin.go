@@ -90,23 +90,34 @@ func stage2aCheckChildCodeV3(ref stage2aDomainInventoryRefV3,
 
 func stage2aChildCodeRowsV3(ref stage2aDomainInventoryRefV3, inv stage2aDomainInventoryV3,
 	executable, executableSHA256 string) error {
-	invalid := errors.New("stock child executable is outside the sealed R inventory")
+	invalid := errors.New("stock ACP or adjacent CLI is outside the sealed R inventory")
 	if !stage2aAbsolutePath(ref.Snapshot.Path) || !stage2aAbsolutePath(executable) ||
 		!stage2aPrefixedDigest.MatchString(executableSHA256) {
 		return invalid
 	}
-	found := false
-	for _, row := range inv.Files {
-		if filepath.Join(ref.Snapshot.Path, filepath.FromSlash(row.Path)) != executable {
-			continue
-		}
-		if found || row.Path != "runtime/bin/claude-agent-acp" || row.ComponentID != "adapter" ||
-			row.Mode != "0550" || row.SHA256 != executableSHA256 {
-			return invalid
-		}
-		found = true
+	cli := filepath.Join(ref.Snapshot.Path, "runtime/bin/claude")
+	if executable != filepath.Join(ref.Snapshot.Path, "runtime/bin/claude-agent-acp") ||
+		filepath.Dir(executable) != filepath.Dir(cli) {
+		return invalid
 	}
-	if !found {
+	foundACP, foundCLI := false, false
+	for _, row := range inv.Files {
+		switch filepath.Join(ref.Snapshot.Path, filepath.FromSlash(row.Path)) {
+		case executable:
+			if foundACP || row.Path != "runtime/bin/claude-agent-acp" || row.ComponentID != "adapter" ||
+				row.Mode != "0550" || row.SHA256 != executableSHA256 {
+				return invalid
+			}
+			foundACP = true
+		case cli:
+			if foundCLI || row.Path != "runtime/bin/claude" || row.ComponentID != "adapter" ||
+				row.Mode != "0550" || !stage2aPrefixedDigest.MatchString(row.SHA256) {
+				return invalid
+			}
+			foundCLI = true
+		}
+	}
+	if !foundACP || !foundCLI {
 		return invalid
 	}
 	return nil

@@ -274,6 +274,22 @@ func stage2aValidLaunchStrings(input Stage2aLaunchInputRecords) bool {
 		stage2aValidJSONStrings(input.EffectiveConfig, 0, &nodes)
 }
 
+// Discussion #124 permits this one stock CLI in the external launch-input
+// closure. The frozen Contents closure retains its separate 256 MiB bound.
+const (
+	stage2aClaudeExternalPath   = "runtime/bin/claude"
+	stage2aClaudeExternalSize   = 354630016
+	stage2aClaudeExternalSHA256 = "e85547190ef8cd983033ba61b17194045a6fea00035da349efeabed86badacc9"
+	stage2aClaudeExternalLimit  = 384 << 20
+)
+
+func stage2aApprovedClaudeExternalFile(file Stage2aDefinitionRecord) bool {
+	return file.Path == stage2aClaudeExternalPath && file.Kind == "regular" &&
+		file.Mode == "0550" && file.Size != nil &&
+		*file.Size == stage2aClaudeExternalSize && *file.Size <= stage2aClaudeExternalLimit &&
+		file.SHA256 == stage2aClaudeExternalSHA256
+}
+
 func stage2aLaunchFiles(files []Stage2aDefinitionRecord) (map[string]bool, error) {
 	invalid := errors.New("invalid Stage 2a launch-input file records")
 	if len(files) == 0 || len(files) > 64 {
@@ -290,7 +306,8 @@ func stage2aLaunchFiles(files []Stage2aDefinitionRecord) (map[string]bool, error
 	for i, file := range files {
 		if !stage2aRecordPath(file.Path) || !stage2aReadOnlyMode(file.Mode) ||
 			file.Kind != "regular" || file.Size == nil || file.SHA256 == "" ||
-			!soulDigest.MatchString(file.SHA256) || *file.Size > stage2aMaxFileBytes ||
+			!soulDigest.MatchString(file.SHA256) ||
+			(*file.Size > stage2aMaxFileBytes && !stage2aApprovedClaudeExternalFile(file)) ||
 			total > stage2aMaxTotalBytes-*file.Size ||
 			(i != 0 && file.Path <= previous) || aliases[strings.ToLower(file.Path)] {
 			return nil, invalid

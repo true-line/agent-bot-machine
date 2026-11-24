@@ -36,11 +36,32 @@ type stage2aRuntimeV3ComponentPin struct {
 }
 
 type stage2aRuntimeV3Install struct {
-	InventorySource string                         `json:"inventory_source"`
-	InventoryDigest string                         `json:"inventory_digest"`
-	Limits          stage2aDomainInventoryLimitsV3 `json:"limits"`
-	Components      []stage2aRuntimeV3ComponentPin `json:"components"`
-	SourceRoots     map[string]string              `json:"source_roots"`
+	InventorySource   string                         `json:"inventory_source"`
+	InventoryDigest   string                         `json:"inventory_digest"`
+	QualificationOnly bool                           `json:"qualification_only,omitempty"`
+	Limits            stage2aDomainInventoryLimitsV3 `json:"limits"`
+	Components        []stage2aRuntimeV3ComponentPin `json:"components"`
+	SourceRoots       map[string]string              `json:"source_roots"`
+}
+
+// The selected oversized stock CLI is an explicit owner-reviewed
+// qualification input. The ordinary R plan shape cannot silently acquire it.
+func stage2aRuntimeNeedsQualificationV3(inv stage2aDomainInventoryV3) bool {
+	for _, file := range inv.Files {
+		if file.SizeBytes > stage2aMaxFileBytes {
+			return true
+		}
+	}
+	return false
+}
+
+func stage2aLaunchNeedsQualification(files []Stage2aDefinitionRecord) bool {
+	for _, file := range files {
+		if file.Size != nil && *file.Size > stage2aMaxFileBytes {
+			return true
+		}
+	}
+	return false
 }
 
 type stage2aRuntimeV3ManifestRow struct {
@@ -67,6 +88,7 @@ func stage2aValidateRuntimeV3Plan(spec stage2aRuntimeV3Install, inv stage2aDomai
 	digest string, manifests map[string][]byte) error {
 	invalid := errors.New("Stage 2a v3 R plan does not pin exact source and release manifests")
 	if inv.Domain != "R-runtime" || digest != spec.InventoryDigest ||
+		stage2aRuntimeNeedsQualificationV3(inv) != spec.QualificationOnly ||
 		inv.Limits != spec.Limits || !stage2aAbsolutePath(spec.InventorySource) ||
 		len(spec.Components) == 0 || len(spec.Components) > 32 ||
 		len(spec.SourceRoots) != len(spec.Components) || len(manifests) != len(spec.Components) ||

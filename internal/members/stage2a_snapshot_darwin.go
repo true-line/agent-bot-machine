@@ -57,6 +57,10 @@ func stage2aCheckedNode(fd int, ownerUID, ownerGID uint32) (unix.Stat_t, error) 
 }
 
 func stage2aCheckedSourceNode(fd int, ownerUID, ownerGID uint32, mutable bool) (unix.Stat_t, error) {
+	return stage2aCheckedSourceNodeAt(fd, ownerUID, ownerGID, mutable, "")
+}
+
+func stage2aCheckedSourceNodeAt(fd int, ownerUID, ownerGID uint32, mutable bool, relative string) (unix.Stat_t, error) {
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
 		return st, err
@@ -68,9 +72,14 @@ func stage2aCheckedSourceNode(fd int, ownerUID, ownerGID uint32, mutable bool) (
 		}
 		mode &^= 0200
 	}
+	maxFileBytes := int64(stage2aMaxFileBytes)
+	if relative == stage2aClaudeExternalPath && st.Size == stage2aClaudeExternalSize &&
+		fmt.Sprintf("%04o", mode) == "0550" {
+		maxFileBytes = stage2aClaudeExternalLimit
+	}
 	if st.Uid != ownerUID || st.Gid != ownerGID || !stage2aReadOnlyMode(fmt.Sprintf("%04o", mode)) ||
 		(st.Mode&unix.S_IFMT != unix.S_IFDIR && st.Mode&unix.S_IFMT != unix.S_IFREG) ||
-		(st.Mode&unix.S_IFMT == unix.S_IFREG && (st.Nlink != 1 || st.Size < 0 || st.Size > stage2aMaxFileBytes)) {
+		(st.Mode&unix.S_IFMT == unix.S_IFREG && (st.Nlink != 1 || st.Size < 0 || st.Size > maxFileBytes)) {
 		return st, errors.New("unsafe Stage 2a frozen node custody")
 	}
 	return st, nil
@@ -163,7 +172,7 @@ func stage2aCollectFrozen(dir *os.File, relative string, ownerUID, ownerGID uint
 		}
 		absolute := filepath.Join(dir.Name(), name)
 		opened := os.NewFile(uintptr(fd), absolute)
-		st, err := stage2aCheckedSourceNode(fd, ownerUID, ownerGID, mutable)
+		st, err := stage2aCheckedSourceNodeAt(fd, ownerUID, ownerGID, mutable, path)
 		if err != nil {
 			opened.Close()
 			return err
@@ -221,7 +230,7 @@ func stage2aReopenSource(rootFD int, relative string, ownerUID, ownerGID uint32,
 		} else {
 			current += "/" + part
 		}
-		st, checkErr := stage2aCheckedSourceNode(fd, ownerUID, ownerGID, mutable)
+		st, checkErr := stage2aCheckedSourceNodeAt(fd, ownerUID, ownerGID, mutable, current)
 		if checkErr != nil || !stage2aSameNode(st, metadata[current]) {
 			unix.Close(fd)
 			return nil, errors.New("Stage 2a frozen path changed between observations")

@@ -1,6 +1,20 @@
 (version 1)
-; A separate Machine-granted R-UID wrapper starts the stock ACP child with
-; only B's per-start relay. HQ admission belongs to the Souls R process.
-(allow default)
-(deny network*)
+; The Machine-granted R-UID wrapper supplies paths from its sealed R inventory
+; and one private child-state slot. The stock ACP may exec only its adjacent CLI.
+(deny default)
+(import "dyld-support.sb")
+(allow process-fork)
+(allow process-exec file-read* file-map-executable
+       (literal (param "ADAPTER")) (literal (param "CLI")))
+(allow file-read* (subpath (param "R_CODE")))
+(allow file-read* file-map-executable
+       (literal "/usr/lib/libicucore.A.dylib")
+       (literal "/usr/lib/libresolv.9.dylib")
+       (literal "/usr/lib/libc++.1.dylib")
+       (literal "/usr/lib/libSystem.B.dylib"))
+(allow file-read* (regex #"^/usr/share/icu/icudt[0-9]+l[.]dat$"))
+(allow file-read* file-write* (subpath (param "STATE")))
+(allow file-read* (literal "/dev/urandom") (literal "/dev/random"))
+(allow file-read* file-write* (literal "/dev/null"))
+(allow sysctl-read)
 (allow network-outbound (remote unix-socket (path-literal (param "RELAY_SOCKET"))))

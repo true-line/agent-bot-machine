@@ -62,3 +62,33 @@ func TestStage2aRuntimeV3PlanRequiresExactComponentPins(t *testing.T) {
 		}
 	}
 }
+
+func TestStage2aRuntimeV3PlanScopesOversizedClaudeToQualification(t *testing.T) {
+	manifest := []byte(`[{"path":"claude","sha256":"sha256:` + stage2aClaudeExternalSHA256 + `"}]`)
+	sum := sha256.Sum256(manifest)
+	inv := stage2aDomainInventoryV3{Domain: "R-runtime", InstallationID: "install-one",
+		Limits: stage2aDomainInventoryLimitsV3{MaxFiles: 1, MaxFileBytes: stage2aClaudeExternalLimit,
+			MaxTotalBytes: stage2aV3MaxInventoryTotalBytes},
+		Files: []stage2aDomainFileV3{{Path: stage2aClaudeExternalPath, Kind: "regular", Mode: "0550",
+			SizeBytes: stage2aClaudeExternalSize, SHA256: "sha256:" + stage2aClaudeExternalSHA256,
+			ComponentID: "adapter", ReleasePath: "claude"}}, TotalBytes: stage2aClaudeExternalSize}
+	spec := stage2aRuntimeV3Install{InventorySource: "/private/var/db/r-inventory.jcs",
+		InventoryDigest: "sha256:" + strings.Repeat("3", 64), Limits: inv.Limits,
+		Components: []stage2aRuntimeV3ComponentPin{{ComponentID: "adapter", SourceRepository: "soul-adapters/claude-agent-acp",
+			ArtifactFormat: "zip", SourceCommit: strings.Repeat("4", 40),
+			ArtifactSource: "/private/var/db/adapter.zip", ReleaseArtifactSHA256: "sha256:" + strings.Repeat("5", 64),
+			ManifestSource: "/private/var/db/adapter-manifest.jcs", ReleaseManifestSHA256: fmt.Sprintf("sha256:%x", sum)}},
+		SourceRoots: map[string]string{"adapter": "/private/var/db/adapter-source"}}
+	manifests := map[string][]byte{"adapter": manifest}
+	if err := stage2aValidateRuntimeV3Plan(spec, inv, spec.InventoryDigest, manifests); err == nil {
+		t.Fatal("ordinary R plan accepted oversized Claude")
+	}
+	spec.QualificationOnly = true
+	if err := stage2aValidateRuntimeV3Plan(spec, inv, spec.InventoryDigest, manifests); err != nil {
+		t.Fatalf("qualification-only R plan refused: %v", err)
+	}
+	inv.Files[0].SizeBytes = 1
+	if err := stage2aValidateRuntimeV3Plan(spec, inv, spec.InventoryDigest, manifests); err == nil {
+		t.Fatal("qualification flag accepted without the exact oversized row")
+	}
+}

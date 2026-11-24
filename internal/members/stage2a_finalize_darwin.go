@@ -101,12 +101,16 @@ func (s *Stage2aService) Live(hqUID int, epoch string, q Stage2aLiveRequest) (St
 	if !validStage2aLiveChallenge(q.Challenge) {
 		return Stage2aLiveReply{}, errStage2aReservationAuthority
 	}
-	return s.live(hqUID, epoch, q.Stage2aStopRequest, q.Challenge)
+	return s.liveForChild(hqUID, epoch, q.Stage2aStopRequest, q.Challenge, q.ChildReceiptSHA256)
 }
 
 // Provider's A-internal status check does not issue an R lease. Only the
 // paired Live request with a fresh R challenge can receive a signed renewal.
 func (s *Stage2aService) live(hqUID int, epoch string, q Stage2aStopRequest, challenge string) (Stage2aLiveReply, error) {
+	return s.liveForChild(hqUID, epoch, q, challenge, "")
+}
+
+func (s *Stage2aService) liveForChild(hqUID int, epoch string, q Stage2aStopRequest, challenge, childReceipt string) (Stage2aLiveReply, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var reply Stage2aLiveReply
@@ -114,10 +118,14 @@ func (s *Stage2aService) live(hqUID int, epoch string, q Stage2aStopRequest, cha
 		return reply, errStage2aReservationAuthority
 	}
 	r := s.active[q.ReservationSHA256]
-	if !stage2aMatchesStopSelectors(r, q, hqUID) || r.hello != nil && r.hello.aborted {
+	if !stage2aMatchesStopSelectors(r, q, hqUID) || r.hello != nil && r.hello.aborted ||
+		childReceipt != "" && (len(r.childReceiptEnvelope) == 0 || childReceipt != stage2aReservationSHA256(r.childReceiptEnvelope)) {
 		return reply, errStage2aReservationAuthority
 	}
-	p, raw, err := loadStage2aInstalledPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, q.InstallationID)
+	// The active v3 candidate/qualified route has its own installed H/R
+	// authority. The legacy v2 loader deliberately keeps positive launch
+	// closed; using it here also rejected every v3 child renewal.
+	p, raw, err := loadStage2aActiveExecutionPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, r)
 	if err != nil || stage2aReservationSHA256(raw) != r.policyDigest {
 		return reply, errStage2aReservationAuthority
 	}
@@ -180,10 +188,75 @@ func (s *Stage2aService) live(hqUID int, epoch string, q Stage2aStopRequest, cha
 		return reply, nil
 	}
 	sequence := r.liveSequence + 1
-	envelope, err := signStage2aLiveLease(q, challenge, r, sequence, issued, lease,
-		s.key.Public().(ed25519.PublicKey), s.sign)
+	var directive *Stage2aT03ProbeDirective
+	pending := r.t03Pending
+	if pending != nil && pending.issuedLease == "" && childReceipt == pending.directive.ChildReceiptSHA256 &&
+		issued.UnixMilli() < pending.directive.ExpiresAtMS {
+		copy := pending.directive
+		copy.LeaseSequence = sequence
+		directive = &copy
+	}
+	var proceed *Stage2aT03ProbeGo
+	var attempt *stage2aT03ObservedAttempt
+	if pending != nil && childReceipt == pending.directive.ChildReceiptSHA256 &&
+		pending.issuedLease != "" && issued.UnixMilli() < pending.directive.ExpiresAtMS && len(pending.attempts) > 0 {
+		last := &pending.attempts[len(pending.attempts)-1]
+		if last.GoLeaseSHA256 == "" {
+			observed, err := observeStage2aT03Process(last.Ready, last.Ready.CLIExecutable, r.childLauncherPID,
+				p.Runner, p.BridgeQualification.Model)
+			if err != nil || last.Process != observed.Process {
+				return Stage2aLiveReply{}, errStage2aReservationAuthority
+			}
+			attempt = last
+			proceed = &Stage2aT03ProbeGo{ChallengeBase64URL: pending.directive.ChallengeBase64URL,
+				ChildReceiptSHA256: childReceipt, ProbeLeaseSequence: pending.directive.LeaseSequence,
+				GoLeaseSequence: sequence, Kind: last.Ready.Kind, PID: last.Process.PID,
+				StartSeconds: last.Process.StartSeconds, StartMicros: last.Process.StartMicros}
+		}
+	}
+	var siblingProbe *Stage2aT03SiblingCredentialProbe
+	if state := r.t03SiblingWitness; state != nil && len(r.childReceiptEnvelope) != 0 &&
+		childReceipt == stage2aReservationSHA256(r.childReceiptEnvelope) {
+		siblingProbe = &Stage2aT03SiblingCredentialProbe{
+			Schema:                   "agent-bot-machine/stage2a-t03-sibling-credential-probe/v1",
+			ChallengeBase64URL:       state.ChallengeBase64URL,
+			PrimaryReservationSHA256: state.PrimaryReservationSHA256,
+			SiblingReservationSHA256: q.ReservationSHA256,
+			SiblingInstallationID:    q.InstallationID, SiblingStartID: q.StartID,
+			ChildReceiptSHA256: childReceipt, LeaseSequence: sequence,
+			CredentialPath: state.Path, ExpiresAtMS: lease.UnixMilli(),
+		}
+	}
+	envelope, err := signStage2aLiveLeaseWithProbe(q, challenge, r, sequence, issued, lease,
+		s.key.Public().(ed25519.PublicKey), s.sign, directive, proceed, siblingProbe)
 	if err != nil || len(envelope) == 0 || len(envelope) > 8192 || !time.Now().Before(lease) {
 		return Stage2aLiveReply{}, errStage2aReservationAuthority
+	}
+	if directive != nil {
+		name := ".stage2a-t03-issued-" + soulStartClaimName(q.InstallationID, q.StartID) + ".json"
+		if err := commitStage2aReservation(dir, name, envelope); err != nil {
+			// An ambiguous publication is spent. Never reissue this directive.
+			r.t03Pending = nil
+			return Stage2aLiveReply{}, err
+		}
+		pending.directive = *directive
+		pending.issuedLease = stage2aReservationSHA256(envelope)
+		pending.issuedAt = issued
+	}
+	if proceed != nil {
+		name := ".stage2a-t03-go-" + soulStartClaimName(q.InstallationID, q.StartID) + "-" + proceed.Kind + ".json"
+		if err := commitStage2aReservation(dir, name, envelope); err != nil {
+			r.t03Pending = nil
+			return Stage2aLiveReply{}, err
+		}
+		attempt.GoLeaseSHA256 = stage2aReservationSHA256(envelope)
+		attempt.GoIssuedAtMS = issued.UnixMilli()
+	}
+	if siblingProbe != nil {
+		state := r.t03SiblingWitness
+		state.IssuedSequence = sequence
+		state.IssuedAtMS = issued.UnixMilli()
+		state.ExpiresAtMS = lease.UnixMilli()
 	}
 	r.liveSequence = sequence
 	reply.LeaseEnvelopeBase64URL = base64.RawURLEncoding.EncodeToString(envelope)
@@ -195,6 +268,13 @@ func (s *Stage2aService) live(hqUID int, epoch string, q Stage2aStopRequest, cha
 func signStage2aLiveLease(q Stage2aStopRequest, challenge string, r *stage2aLiveReservation,
 	sequence uint64, issued, expires time.Time, key ed25519.PublicKey,
 	sign func([]byte) ([]byte, error)) ([]byte, error) {
+	return signStage2aLiveLeaseWithProbe(q, challenge, r, sequence, issued, expires, key, sign, nil, nil, nil)
+}
+
+func signStage2aLiveLeaseWithProbe(q Stage2aStopRequest, challenge string, r *stage2aLiveReservation,
+	sequence uint64, issued, expires time.Time, key ed25519.PublicKey, sign func([]byte) ([]byte, error),
+	probe *Stage2aT03ProbeDirective, proceed *Stage2aT03ProbeGo,
+	siblingProbe *Stage2aT03SiblingCredentialProbe) ([]byte, error) {
 	if r == nil || !validStage2aStopRequest(q) || r.digest != q.ReservationSHA256 ||
 		!validStage2aLiveChallenge(challenge) || sequence == 0 || sequence > (1<<53)-1 ||
 		sequence != r.liveSequence+1 || r.runnerPID <= 1 || r.bridgePID <= 1 ||
@@ -221,6 +301,25 @@ func signStage2aLiveLease(q Stage2aStopRequest, challenge string, r *stage2aLive
 		launcher, child := stage2aLiveRoleIdentity(r.childLauncherProcess), stage2aLiveRoleIdentity(r.childProcess)
 		payload.ChildLauncher, payload.Child = &launcher, &child
 		payload.ChildReceiptSHA256 = stage2aReservationSHA256(r.childReceiptEnvelope)
+	}
+	if probe != nil {
+		if payload.ChildReceiptSHA256 != probe.ChildReceiptSHA256 || probe.LeaseSequence != sequence {
+			return nil, errStage2aReservationAuthority
+		}
+		payload.T03Probe = probe
+	}
+	if proceed != nil {
+		if payload.ChildReceiptSHA256 != proceed.ChildReceiptSHA256 || proceed.GoLeaseSequence != sequence {
+			return nil, errStage2aReservationAuthority
+		}
+		payload.T03ProbeGo = proceed
+	}
+	if siblingProbe != nil {
+		if probe != nil || proceed != nil || payload.ChildReceiptSHA256 != siblingProbe.ChildReceiptSHA256 ||
+			siblingProbe.LeaseSequence != sequence || siblingProbe.ExpiresAtMS != expires.UnixMilli() {
+			return nil, errStage2aReservationAuthority
+		}
+		payload.T03SiblingCredentialProbe = siblingProbe
 	}
 	return signStage2aEnvelope(payload, 1, Stage2aLiveLeasePurpose, key, sign)
 }

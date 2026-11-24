@@ -24,7 +24,7 @@ func (s *Stage2aService) Provider(hqUID int, epoch string, q Stage2aProviderRequ
 		return reply, errStage2aReservationAuthority
 	}
 	r := s.active[q.ReservationSHA256]
-	p, raw, err := loadStage2aInstalledPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, q.InstallationID)
+	p, raw, err := loadStage2aActiveExecutionPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, r)
 	if err != nil || stage2aReservationSHA256(raw) != r.policyDigest ||
 		q.Model != p.BridgeQualification.Model || q.PromptSHA256 != p.BridgeQualification.RequestSHA256 ||
 		q.BindReceiptSHA256 != r.bindReceiptSHA256 || len(r.finalizationEnvelope) == 0 ||

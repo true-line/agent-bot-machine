@@ -3,7 +3,6 @@ package members
 import (
 	"context"
 	"crypto/ed25519"
-	"os"
 	"slices"
 	"time"
 )
@@ -18,11 +17,10 @@ func openStage2aQualificationObserverV3(ctx context.Context,
 	if ctx == nil || checkLiveRun == nil || checkLiveRun() != nil {
 		return nil, nil, errQualificationAdmissionUnavailable
 	}
-	install, err := loadStage2aQualificationQInstall()
-	if err != nil || os.Getuid() != os.Geteuid() || os.Geteuid() != install.AdminUID ||
-		os.Getgid() != os.Getegid() || os.Getegid() != install.AdminGID ||
-		begin.HostID != install.Review.HostID || begin.InstallationID != install.Review.InstallationID ||
+	install, request, err := loadStage2aQualificationQAuthority(ctx)
+	if err != nil || begin.HostID != install.Review.HostID || begin.InstallationID != install.Review.InstallationID ||
 		begin.TestPlanSHA256 != "sha256:"+install.Review.TestPlan.SHA256 ||
+		begin.SuiteRevision != request.SuiteRevision ||
 		begin.QUID != install.UID || begin.QGID != install.GID || begin.PSSHA256 != "sha256:"+install.PS.SHA256 ||
 		!slices.Equal(begin.PathRoots, install.Roots) {
 		return nil, nil, errQualificationAdmissionUnavailable
@@ -43,8 +41,7 @@ func openStage2aQualificationObserverV3(ctx context.Context,
 		return nil, nil, errQualificationAdmissionUnavailable
 	}
 	if !stage2aQualificationAssignmentMatchesQInstall(assignment, install, begin.StartID) ||
-		observeStage2aQualificationHost(ctx, install.Review.HostUUID) != nil ||
-		verifyQualificationFile(install.Review.TestPlan) != nil || verifyQualificationFile(install.Review.Provider) != nil {
+		assignment.RunnerUID != request.Target.UID || assignment.RunnerAccount != request.Target.Account {
 		return nil, nil, errQualificationAdmissionUnavailable
 	}
 	now := time.Now()

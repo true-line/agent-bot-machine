@@ -365,6 +365,48 @@ func TestDirectCooperativePlanPinsReviewedStartAndAdmissionSocket(t *testing.T) 
 	if err := p.validate(); err != nil {
 		t.Fatalf("exact owner-reviewed plan refused: %v", err)
 	}
+	oversized := cloneStage2aLaunch(t, input)
+	claudeSize := uint64(stage2aClaudeExternalSize)
+	oversized.Files = append(oversized.Files, Stage2aDefinitionRecord{
+		Path: stage2aClaudeExternalPath, Kind: "regular", Mode: "0550",
+		Size: &claudeSize, SHA256: stage2aClaudeExternalSHA256,
+	})
+	p.LaunchInputs = &oversized
+	p.LaunchInputMeasurement, _, err = Stage2aLaunchInputDigest(oversized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.validate(); err == nil {
+		t.Fatal("ordinary cooperative plan accepted oversized Claude")
+	}
+	p.RuntimeV3.QualificationOnly = true
+	if err := p.validate(); err == nil {
+		t.Fatal("qualification-only cooperative plan accepted without its provider")
+	}
+	provider := &Stage2aBridgeQualification{Model: "qualification-model",
+		RequestSHA256: "sha256:" + strings.Repeat("a", 64), ResponseText: "fixed response"}
+	_, providerDigest, err := stage2aProviderConfig(*provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oversized.EffectiveConfig["qualification_provider_config_sha256"] = "sha256:" + providerDigest
+	oversized.ComponentDigests["harness"] = "sha256:" + strings.Repeat("b", 64)
+	oversized.ComponentDigests["test_provider"] = "sha256:" + strings.Repeat("c", 64)
+	p.QualificationProvider = provider
+	p.LaunchInputMeasurement, _, err = Stage2aLaunchInputDigest(oversized)
+	if err != nil {
+		t.Fatalf("reviewed one-use qualification cooperative plan refused: %v", err)
+	}
+	if err := p.validate(); err != nil {
+		t.Fatalf("reviewed one-use qualification cooperative plan refused: %v", err)
+	}
+	p.RuntimeV3.QualificationOnly = false
+	p.QualificationProvider = nil
+	p.LaunchInputs = &input
+	p.LaunchInputMeasurement, _, err = Stage2aLaunchInputDigest(input)
+	if err != nil {
+		t.Fatal(err)
+	}
 	other := p
 	other.ReviewedStartID = "st_ffffffffffffffffffffffff"
 	if err := other.validate(); err == nil {

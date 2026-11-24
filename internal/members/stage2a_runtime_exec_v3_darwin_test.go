@@ -42,10 +42,12 @@ func TestStage2aRunnerCodeRowsV3RequireSealedNodeAndEntry(t *testing.T) {
 
 func TestStage2aChildCodeRowsV3RequiresSealedAdapter(t *testing.T) {
 	ref := stage2aDomainInventoryRefV3{Snapshot: stage2aDomainNodeRefV3{Path: "/private/r-snapshot"}}
-	inv := stage2aDomainInventoryV3{Files: []stage2aDomainFileV3{{
-		Path: "runtime/bin/claude-agent-acp", ComponentID: "adapter", Mode: "0550",
-		SHA256: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-	}}}
+	inv := stage2aDomainInventoryV3{Files: []stage2aDomainFileV3{
+		{Path: "runtime/bin/claude-agent-acp", ComponentID: "adapter", Mode: "0550",
+			SHA256: "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+		{Path: "runtime/bin/claude", ComponentID: "adapter", Mode: "0550",
+			SHA256: "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
+	}}
 	executable := filepath.Join(ref.Snapshot.Path, inv.Files[0].Path)
 	hash := inv.Files[0].SHA256
 	if err := stage2aChildCodeRowsV3(ref, inv, executable, hash); err != nil {
@@ -58,5 +60,14 @@ func TestStage2aChildCodeRowsV3RequiresSealedAdapter(t *testing.T) {
 	inv.Files[0].ComponentID = "souls"
 	if stage2aChildCodeRowsV3(ref, inv, executable, hash) == nil {
 		t.Fatal("nonadapter component accepted for stock child")
+	}
+	inv.Files[0].ComponentID = "adapter"
+	inv.Files[1].Mode = "0440"
+	if stage2aChildCodeRowsV3(ref, inv, executable, hash) == nil {
+		t.Fatal("nonexecutable adjacent CLI accepted")
+	}
+	inv.Files = inv.Files[:1]
+	if stage2aChildCodeRowsV3(ref, inv, executable, hash) == nil {
+		t.Fatal("missing adjacent CLI accepted")
 	}
 }

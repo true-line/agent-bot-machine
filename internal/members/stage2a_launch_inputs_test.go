@@ -52,6 +52,33 @@ func TestStage2aLaunchInputDigestMatchesSyntheticFullObject(t *testing.T) {
 	}
 }
 
+func TestStage2aLaunchInputExactStockClaudeException(t *testing.T) {
+	base := stage2aLaunchFixture(t)
+	size := uint64(stage2aClaudeExternalSize)
+	base.Files = append(base.Files, Stage2aDefinitionRecord{
+		Path: stage2aClaudeExternalPath, Kind: "regular", Mode: "0550",
+		Size: &size, SHA256: stage2aClaudeExternalSHA256,
+	})
+	if _, _, err := Stage2aLaunchInputDigest(base); err != nil {
+		t.Fatalf("exact owner-approved external CLI refused: %v", err)
+	}
+	for name, change := range map[string]func(*Stage2aDefinitionRecord){
+		"different path":   func(r *Stage2aDefinitionRecord) { r.Path = "runtime/bin/other" },
+		"different mode":   func(r *Stage2aDefinitionRecord) { r.Mode = "0555" },
+		"different size":   func(r *Stage2aDefinitionRecord) { n := size + 1; r.Size = &n },
+		"different digest": func(r *Stage2aDefinitionRecord) { r.SHA256 = strings.Repeat("a", 64) },
+		"above ceiling":    func(r *Stage2aDefinitionRecord) { n := uint64(stage2aClaudeExternalLimit + 1); r.Size = &n },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := cloneStage2aLaunch(t, base)
+			change(&changed.Files[len(changed.Files)-1])
+			if _, _, err := Stage2aLaunchInputDigest(changed); err == nil {
+				t.Fatal("unreviewed large external file accepted")
+			}
+		})
+	}
+}
+
 func TestStage2aLaunchInputDigestBindsEveryNonFileInput(t *testing.T) {
 	baseline := stage2aLaunchFixture(t)
 	want, _, err := Stage2aLaunchInputDigest(baseline)

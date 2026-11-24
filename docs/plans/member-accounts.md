@@ -173,6 +173,18 @@ root at `trust/qualification/souls-trusted-root.json`, with its exact SHA-256
 in the owner-signed v2 policy. The `-bridge-v2` preflight and offline verify
 commands require `-souls-build-bundle`, `-souls-package` and
 `-souls-trusted-root` local files; the package is hashed with a 256 MiB limit.
+For a v3 selected R runtime, the separate receipt may sign a content-addressed
+`.tar` derivative instead of the v2 npm `.tgz`. Machine checks the exact tar
+subject digest against the supplied `-souls-package` bytes and requires the
+signed predicate to name the source npm digest, derivative builder digest,
+selected manifest digest and a bounded, sorted list of excluded paths. The
+first three digests must match the owner-signed v3 policy's exact pins. A v3
+policy without those pins retains the signed npm `.tgz` path and cannot
+qualify the tar derivative. The v2 receipt remains `.tgz` only. Receipt
+verification alone does not join the
+signed selected manifest to an installed R snapshot or prove a physical run;
+Machine's reviewed R inventory, sealed bytes and live observations remain
+separate acceptance gates.
 No production root or signed Souls receipt is present in this worktree.
 Private R2 storage, if used, transports release evidence before installation;
 it is not an HQ, Soul or Machine runtime dependency. Installed protected
@@ -361,9 +373,24 @@ the exact request digest, selected candidate and harness files, ordered
 arguments, runner and provider pins, target role and UID, host description,
 definition and suite revisions, and the fixed T01/T02/T03 protected plus T21
 cooperative assignments. The request is structured data; it cannot supply a
-command to execute. Large code closures may be represented by one pinned
-manifest artifact. The eventual runner must verify the installed tree against
-that manifest before executing it.
+command to execute. Schema 1 allows a pinned code-input manifest. A schema-2 candidate plan
+requires 1–512 explicit code inputs from the sealed R inventory and checks the
+dedicated Soul runner derived from the installation ID and requires its
+reviewed UID. The planner hashes the reviewed Q source before installation.
+The Q install binds those bytes to its fixed source path. A checks a schema-2
+adapter's executable and explicit code inputs against the sealed R inventory
+before signing a reservation. Schema 1 checks the dedicated harness account.
+
+For schema-v2 candidate Q setup, `runner.binary_path` is the fixed future
+`qualification-q/qualification-runner.mjs` destination and `runner.source_path`
+is a separate pending root-owned source outside Q home. Planning and the
+paired owner challenge rehash that source through a bounded no-follow read
+with trusted ancestry and ACL checks; the saved plan binds both paths and the
+same SHA-256. Owner Q install rechecks the pending source and embedded runner
+bytes against the saved digest, refuses an occupied Q destination, and creates
+Q home itself. Schema-v1 requests and other runner paths retain their existing
+file verification. The pending source must remain available until the one-use
+candidate admission rechecks the saved plan.
 
 This command only reviews and saves inputs. It does not run tests, issue a
 qualification, authorize installation, or open a persistent launch grant.
@@ -719,6 +746,23 @@ effective profile/config, macOS image constraints, sandbox digest and all
 eight named component digests. It rejects missing host JSON records, unlisted
 named digests, path aliases, writable files and unbounded nested JSON. Its
 synthetic byte vector matches the distinct launch-input domain. The helper
+implements the exact stock Claude external-file exception recorded in
+[Platform Discussion #124](https://github.com/true-line/agent-bot-platform/discussions/124):
+the selected `runtime/bin/claude` tuple is accepted through the physical
+no-follow observation and copy path, while other external files and the
+separate frozen `Contents/` closure retain their existing bounds. The selected
+v3 R inventory row is checked for the same tuple before its release
+manifest, root source and A-sealed snapshot are accepted. Other v3 R rows
+above the ordinary external-file bound refuse. This exception does not grant
+a start; the paired owner-reviewed plan still pins every byte. A v3 R install
+containing that oversized row requires `runtime_v3.qualification_only: true`
+in the reviewed plan, and the flag refuses when the row is absent. The
+protected positive route additionally requires the later root-installed Q
+candidate authority and one-use owner approval. A cooperative v3 plan with
+the oversized row requires that same reviewed flag, a fixed reviewed start ID
+and a measured qualification provider; its start remains one-use. An ordinary
+R plan without this explicit scope refuses the oversized row.
+The helper
 does not prove that the projected files or selected process actually have
 those bytes or that the claimed system images are loaded. A protected caller
 must compare every value with the installed root-receipted plan and live
@@ -818,6 +862,11 @@ inputs, sealed R runtime, H code descriptor, and explicit `direct-comms`
 transport. Machine rechecks the applied receipt and measured H/R byte closures
 before signing a 30-second reservation with that transport. Machine keeps the
 content-addressed runtime inventories outside the paired review frame.
+For qualification, A also verifies the retained Q review against the same
+host, installation, R account and sealed adapter inventory. A remeasures
+the reviewed native harness and verifies the provider configuration against
+both owner reviews. The running Machine binary supplies the code digest
+for both the Machine and its inline deterministic provider.
 
 The A-owned claim store permanently spends the start and serializes active
 starts for the installation. Its signed pending journal lets Machine reconcile

@@ -116,43 +116,58 @@ func stage2aDriverReceiptPayload(session stage2aQualificationSessionResultV1, ph
 func joinStage2aDriverFrames(session stage2aQualificationSessionResultV1, phase stage2aDriverRunPhase,
 	trace []stage2aDriverEvidence) ([]byte, error) {
 	begin := session.begin
-	schedule := stage2aDriverSchedule(begin.Profile, phase)
-	if len(schedule) == 0 || len(schedule) != len(trace) || verifyStage2aQualificationPairedFramesV1(session) != nil {
+	phases := []stage2aDriverRunPhase{phase}
+	if phase == stage2aDriverProtectedT03Run {
+		if begin.Profile != "managed-protected" {
+			return nil, errStage2aReservationAuthority
+		}
+		phases = []stage2aDriverRunPhase{stage2aDriverBeforeLaunch, stage2aDriverLiveT03}
+	}
+	if len(trace) == 0 || verifyStage2aQualificationPairedFramesV1(session) != nil {
 		return nil, errStage2aReservationAuthority
 	}
 	requests := bytes.NewReader(session.requestFrames)
-	challenges := make(map[string]bool, len(schedule))
-	artifacts := make(map[string]bool, len(schedule))
+	challenges := make(map[string]bool, len(trace))
+	artifacts := make(map[string]bool, len(trace))
 	var wire bytes.Buffer
-	for i, step := range schedule {
-		pair := trace[i]
-		commandReader, responseReader := bytes.NewReader(pair.request), bytes.NewReader(pair.response)
-		raw, commandErr := readStage2aQualificationFrame(commandReader)
-		response, responseErr := readStage2aQualificationFrame(responseReader)
-		if commandErr != nil || responseErr != nil || commandReader.Len() != 0 || responseReader.Len() != 0 {
+	offset := 0
+	for _, current := range phases {
+		schedule := stage2aDriverSchedule(begin.Profile, current)
+		if len(schedule) == 0 || offset+len(schedule) > len(trace) {
 			return nil, errStage2aReservationAuthority
 		}
-		command, err := parseStage2aDriverCommand(raw, begin, phase, i+1, step)
-		if err != nil || challenges[command.Challenge] {
-			return nil, errStage2aReservationAuthority
+		for i, step := range schedule {
+			pair := trace[offset+i]
+			commandReader, responseReader := bytes.NewReader(pair.request), bytes.NewReader(pair.response)
+			raw, commandErr := readStage2aQualificationFrame(commandReader)
+			response, responseErr := readStage2aQualificationFrame(responseReader)
+			if commandErr != nil || responseErr != nil || commandReader.Len() != 0 || responseReader.Len() != 0 {
+				return nil, errStage2aReservationAuthority
+			}
+			command, err := parseStage2aDriverCommand(raw, begin, current, i+1, step)
+			if err != nil || challenges[command.Challenge] {
+				return nil, errStage2aReservationAuthority
+			}
+			challenges[command.Challenge] = true
+			capture, err := parseStage2aDriverResponse(response, raw)
+			corroboration := stage2aDriverCorroboration{artifact: pair.artifact, osWitness: pair.osWitness}
+			if err != nil || artifacts[capture.ArtifactSHA] || !corroboration.matches(capture.ArtifactSHA) {
+				return nil, errStage2aReservationAuthority
+			}
+			artifacts[capture.ArtifactSHA] = true
+			probe, err := readStage2aDriverPhaseProbe(requests, current)
+			if err != nil || probe.Gate != step.Gate || probe.EventID != step.Event ||
+				probe.StimulusRef == nil || probe.StimulusRef.SHA256 != capture.ArtifactSHA ||
+				probe.StimulusRef.URI != stage2aDriverStimulusURI(begin.SessionID, step.Event) {
+				return nil, errStage2aReservationAuthority
+			}
+			wire.Write(pair.request)
+			wire.Write(pair.response)
 		}
-		challenges[command.Challenge] = true
-		capture, err := parseStage2aDriverResponse(response, raw)
-		corroboration := stage2aDriverCorroboration{artifact: pair.artifact, osWitness: pair.osWitness}
-		if err != nil || artifacts[capture.ArtifactSHA] || !corroboration.matches(capture.ArtifactSHA) {
-			return nil, errStage2aReservationAuthority
-		}
-		artifacts[capture.ArtifactSHA] = true
-		probe, err := readStage2aDriverPhaseProbe(requests, phase)
-		if err != nil || probe.Gate != step.Gate || probe.EventID != step.Event ||
-			probe.StimulusRef == nil || probe.StimulusRef.SHA256 != capture.ArtifactSHA ||
-			probe.StimulusRef.URI != stage2aDriverStimulusURI(begin.SessionID, step.Event) {
-			return nil, errStage2aReservationAuthority
-		}
-		wire.Write(pair.request)
-		wire.Write(pair.response)
+		offset += len(schedule)
 	}
-	if _, err := readStage2aDriverPhaseProbe(requests, phase); err == nil || wire.Len() > 24<<10 {
+	_, extraPhase := readStage2aDriverPhaseProbe(requests, phase)
+	if extraPhase == nil || offset != len(trace) || (phase == stage2aDriverProtectedT03Run && session.count != offset) || wire.Len() > 24<<10 {
 		return nil, errStage2aReservationAuthority
 	}
 	return wire.Bytes(), nil

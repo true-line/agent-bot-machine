@@ -195,6 +195,29 @@ func TestStage2aProtectedInstallPreparedPolicyRoundTripsThroughBuild(t *testing.
 	if err != nil {
 		t.Fatalf("prepared protected install refused: %v", err)
 	}
+	large := policy
+	large.LaunchInputs = cloneStage2aLaunch(t, launch)
+	claudeSize := uint64(stage2aClaudeExternalSize)
+	large.LaunchInputs.Files = append(large.LaunchInputs.Files, Stage2aDefinitionRecord{
+		Path: stage2aClaudeExternalPath, Kind: "regular", Mode: "0550",
+		Size: &claudeSize, SHA256: stage2aClaudeExternalSHA256,
+	})
+	sort.Slice(large.LaunchInputs.Files, func(i, j int) bool {
+		return large.LaunchInputs.Files[i].Path < large.LaunchInputs.Files[j].Path
+	})
+	large.Binding.LaunchInputMeasurement, _, err = Stage2aLaunchInputDigest(large.LaunchInputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinaryLarge := *request
+	ordinaryLarge.Policy, err = json.Marshal(large)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Build(Input{SoulProtectedLaunch: &ordinaryLarge, HQAccount: DarwinHQAccount,
+		Dir: DarwinDir, Platform: PlatformDarwin, Invoker: owner}, host); err == nil {
+		t.Fatal("ordinary protected plan accepted oversized Claude without qualification authority")
+	}
 	if _, err := Build(Input{SoulProtectedLaunch: plan.SoulProtectedLaunch, HQAccount: DarwinHQAccount,
 		Dir: DarwinDir, Platform: PlatformDarwin, Invoker: owner}, host); err != nil {
 		t.Fatalf("saved normalized request refused on rebuild: %v", err)

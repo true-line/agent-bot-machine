@@ -31,6 +31,7 @@ type Deps struct {
 	Executable    func() (string, error)
 	Caller        func() (Caller, error)
 	Root          func() (string, error)
+	ObserveGuest  func(context.Context, Caller, string, string, string, string, string) (GuestTartObservation, error)
 	LockLifecycle func(string, int) (io.Closer, error)
 	ReadUserJob   func(int, string, string) ([]byte, bool, error)
 	Activate      func(path string) error
@@ -41,13 +42,13 @@ type Deps struct {
 	Reload func() error
 }
 
-// Command is `managed-machine daemon <run|install|start|stop|uninstall|status|receipts|pair|unpair|revoke-hq|verify-identity>`.
+// Command is `managed-machine daemon <run|install|start|stop|uninstall|status|receipts|pair|unpair|revoke-hq|verify-identity|guest-owner-permit>`.
 func Command(deps Deps) cli.Command {
 	return cli.Command{
 		Name:    "daemon",
 		Summary: "install and run the per-user agent-machine executor",
-		Usage: `managed-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpair|revoke-hq|verify-identity
-agent-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpair|revoke-hq|verify-identity
+		Usage: `managed-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpair|revoke-hq|verify-identity|guest-owner-permit
+agent-machine daemon run|install|start|stop|uninstall|status|receipts|pair|unpair|revoke-hq|verify-identity|guest-owner-permit
 
 revoke-hq immediately disables the enrolled HQ on this Machine. It is a local
 administrative action. The terminal pairing and the device key are preserved.
@@ -79,6 +80,14 @@ For a paired macOS Machine, verify-identity checks this executable's access
 to the existing Machine signing identity without changing the key or service.
 Use daemon run --require-identity FINGERPRINT for a temporary replacement
 that must use that exact previously paired identity.
+For a disposable Tart qualification guest only, the paired administrator can
+issue a short-lived permit for one exact guest-signed owner challenge with
+guest-owner-permit CHALLENGE_FILE VM_NAME VM_MAC GUEST_BUILD TARTCTL_SHA256
+TART_APP_SHA256 --human. The challenge file must be private under the admin
+TartQualification directory. Machine observes the named running VM directly
+through the root-owned qualification Tart executable and checks its published guest key,
+MAC and OS build. It never copies an owner or Machine private key. The
+ordinary owner helper still requires its local installed Machine pin.
 unpair revokes the terminal client. It accepts at most one --client terminal.
 The terminal client is a debug tool and is off by default. install --debug
 turns it on, and install without --debug turns it off again. While it is
@@ -97,6 +106,9 @@ description. Nothing is registered with a system service manager.`,
 }
 
 func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
+	if len(args) > 0 && args[0] == "guest-owner-permit" {
+		return guestOwnerPermitCommand(deps, args[1:])
+	}
 	if len(args) > 0 && args[0] == "verify-identity" {
 		if len(args) != 1 {
 			return cli.Result{Diagnostic: command.UsageErr("verify-identity takes no arguments")}

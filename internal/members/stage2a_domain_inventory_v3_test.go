@@ -92,6 +92,49 @@ func TestStage2aV3DomainInventoryDigestAndRefusals(t *testing.T) {
 	}
 }
 
+func TestStage2aV3RInventoryExactStockClaudeException(t *testing.T) {
+	base := stage2aDomainInventoryV3{
+		Contract: "machine/v3", Kind: "stage2a-domain-inventory", SchemaVersion: 3,
+		Domain: "R-runtime", InstallationID: "runner-test-1",
+		Limits: stage2aDomainInventoryLimitsV3{MaxFiles: 2,
+			MaxFileBytes: stage2aClaudeExternalLimit, MaxTotalBytes: stage2aV3MaxInventoryTotalBytes},
+		Directories: []stage2aDomainDirectoryV3{
+			{Path: "runtime", Kind: "directory", Mode: "0550"},
+			{Path: "runtime/bin", Kind: "directory", Mode: "0550"},
+		},
+		Files: []stage2aDomainFileV3{
+			{Path: stage2aClaudeExternalPath, Kind: "regular", Mode: "0550",
+				SizeBytes: stage2aClaudeExternalSize, SHA256: "sha256:" + stage2aClaudeExternalSHA256,
+				ComponentID: "adapter", ReleasePath: "claude"},
+			{Path: "runtime/bin/small", Kind: "regular", Mode: "0550", SizeBytes: 1,
+				SHA256: "sha256:" + strings.Repeat("a", 64), ComponentID: "adapter", ReleasePath: "small"},
+		},
+		TotalBytes: stage2aClaudeExternalSize + 1,
+	}
+	if _, _, err := stage2aDomainInventoryDigestV3(stage2aV3TestCanonical(t, base)); err != nil {
+		t.Fatalf("exact reviewed v3 R row refused: %v", err)
+	}
+	for name, change := range map[string]func(*stage2aDomainInventoryV3){
+		"different path":         func(v *stage2aDomainInventoryV3) { v.Files[0].Path = "runtime/bin/other" },
+		"different mode":         func(v *stage2aDomainInventoryV3) { v.Files[0].Mode = "0440" },
+		"different size":         func(v *stage2aDomainInventoryV3) { v.Files[0].SizeBytes++ },
+		"different digest":       func(v *stage2aDomainInventoryV3) { v.Files[0].SHA256 = "sha256:" + strings.Repeat("b", 64) },
+		"different component":    func(v *stage2aDomainInventoryV3) { v.Files[0].ComponentID = "other" },
+		"different release path": func(v *stage2aDomainInventoryV3) { v.Files[0].ReleasePath = "other" },
+		"other large file":       func(v *stage2aDomainInventoryV3) { v.Files[1].SizeBytes = stage2aClaudeExternalSize },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := base
+			changed.Files = append([]stage2aDomainFileV3(nil), base.Files...)
+			change(&changed)
+			changed.TotalBytes = changed.Files[0].SizeBytes + changed.Files[1].SizeBytes
+			if _, _, err := stage2aDomainInventoryDigestV3(stage2aV3TestCanonical(t, changed)); err == nil {
+				t.Fatal("unreviewed large v3 R row accepted")
+			}
+		})
+	}
+}
+
 func TestStage2aV3InventoryMaximumFileAndDirectoryClosure(t *testing.T) {
 	inv := stage2aV3TestInventory()
 	inv.Directories = nil
