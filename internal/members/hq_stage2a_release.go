@@ -24,6 +24,9 @@ func verifyHQStage2aReleaseRows(service HQService, raw []byte) (stage2aDomainInv
 		hqStage2aCooperativeMachine: "hq", hqStage2aCooperativeProof: "hq",
 		hqStage2aCooperativeStart: "hq", hqStage2aCooperativeBridge: "hq", hqStage2aCooperativeInstall: "hq",
 	}
+	if hqStage2aBrokeredRelayRequired(s) {
+		required[hqStage2aRelayPeer] = "hq"
+	}
 	for _, row := range inventory.Files {
 		component := required[row.Path]
 		if component != "" && (row.ComponentID != component || row.ReleasePath != row.Path || row.SizeBytes == 0) {

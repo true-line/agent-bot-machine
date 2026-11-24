@@ -202,6 +202,7 @@ var stage2aHSourceNonInstalledV3 = map[string]bool{
 	"tests/stage2a-protected-start.test.mjs":                           true,
 	"tests/stage2a-qualification-provider.test.mjs":                    true,
 	"tests/stage2a-r-admission.test.mjs":                               true,
+	"tests/stage2a-relay-peer.test.mjs":                                true,
 	"tests/stage2a-reservation-v3.test.mjs":                            true,
 	"tests/stage2a-reservation.test.mjs":                               true,
 	"tests/stage2a-selected-code.test.mjs":                             true,

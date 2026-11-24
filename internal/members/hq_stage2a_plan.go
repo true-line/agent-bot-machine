@@ -25,7 +25,12 @@ const (
 	hqStage2aCooperativeStart   = "hq/stage2a-cooperative-start.mjs"
 	hqStage2aCooperativeBridge  = "hq/stage2a-cooperative-bridge.mjs"
 	hqStage2aCooperativeInstall = "hq/machine-soul-cooperative-launch.mjs"
+	hqStage2aRelayPeer          = "hq/stage2a-relay-peer.mjs"
 )
+
+func hqStage2aBrokeredRelayRequired(s *hqStage2aService) bool {
+	return s != nil && slices.Equal(s.ExcludedHQReleasePaths, hqStage2aContractsFixturePathsV0102Brokered[:])
+}
 
 // hqStage2aService is an explicit request carried by the existing paired
 // service upgrade. The approved digest includes the reviewed inventory and

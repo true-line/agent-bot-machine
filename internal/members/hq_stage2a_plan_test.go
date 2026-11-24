@@ -260,6 +260,14 @@ func TestStage2aHQRequiresEntrypointCooperativeImports(t *testing.T) {
 	}
 }
 
+func TestStage2aHQBrokeredRelayRequiresSelectedPeer(t *testing.T) {
+	svc, inventory := stage2aHQTestService(t)
+	svc.Stage2a.ExcludedHQReleasePaths = append([]string(nil), hqStage2aContractsFixturePathsV0102Brokered[:]...)
+	if _, err := verifyHQStage2aReleaseRows(svc, inventory); err == nil {
+		t.Fatal("accepted brokered H inventory without the relay peer module")
+	}
+}
+
 func TestStage2aHQCandidateSkipsDirectRoleProbe(t *testing.T) {
 	for _, rec := range []launchRecord{{Stage2a: &hqStage2aLaunch{}}, {Service: HQService{Stage2a: &hqStage2aService{}}}} {
 		if err := probeBaseHQRole(rec, func() error {
