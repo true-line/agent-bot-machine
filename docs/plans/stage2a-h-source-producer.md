@@ -26,6 +26,10 @@ verifies the HQ archive and Node bytes, and stages only the selected rows.
 It also checks the archive's `governance/soul-contracts.json` and
 `governance/interim-release.json` against those owner-plan pins. The raw
 source proof runs immediately before staging on the root install path.
+For the brokered v0.10.2 HQ source at `daf7c958ea52ea543adedabc86491580d39b4666`,
+the reviewed omission set contains 107
+synthetic Contracts fixture paths. Machine accepts that exact ordered set or
+the earlier v0.10.2 set; a shorter, extra, or changed omission list refuses.
 The existing A-owned v3 seal remeasures the staged tree. The separate H
 descriptor signer binds the sealed inventory, owner plan, runtime argv, and
 fixed preloader paths. A receives no network access or new runtime helper.
