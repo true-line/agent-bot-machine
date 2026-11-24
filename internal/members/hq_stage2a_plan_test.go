@@ -201,6 +201,20 @@ func TestStage2aHQV0102ExcludesOnlyReviewedFixtures(t *testing.T) {
 	}
 }
 
+func TestStage2aHQV0102BrokeredExcludesOnlyReviewedFixtures(t *testing.T) {
+	final := hqStage2aContractsFixturePathsV0102Brokered[:]
+	if len(final) != 107 || !slices.IsSorted(final) ||
+		!hqStage2aValidExclusionsForTag("v0.10.2", final) || !hqStage2aValidExclusions(final) {
+		t.Fatal("brokered v0.10.2 fixture partition is not exact and ordered")
+	}
+	changed := slices.Clone(final)
+	changed[0] = "vendor/soul-contracts/schemas/machine/v3/stage2a-q-ready.schema.json"
+	if hqStage2aValidExclusionsForTag("v0.10.2", changed) ||
+		hqStage2aValidExclusionsForTag("v0.10.2", final[:106]) {
+		t.Fatal("unreviewed or missing brokered fixture omission accepted")
+	}
+}
+
 func TestStage2aHQPlanRefusesFirstInstallAndLinux(t *testing.T) {
 	svc, _ := stage2aHQTestService(t)
 	for _, platform := range []string{PlatformDarwin, ""} {
