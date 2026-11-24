@@ -177,6 +177,9 @@ func runSoulProtectedLaunchApply(s Saved, a Approval, owner string, h Host, deps
 
 func stage2aInstallFiles(s Saved, request *SoulProtectedLaunchInstall, p *stage2aInstalledPolicy, ownerUID uint32,
 	key, manager, artifact, bridgeBinary []byte) error {
+	if request.RuntimeV3 != nil && !stage2aProtectedPackageMeasurementV3(*p) {
+		return errStage2aReservationAuthority
+	}
 	p.Binding.PlanID, p.Binding.InstalledPlanDigest = s.PlanID, s.PlanDigest
 	if err := stage2aEnsureInstallDirectory(launchRuntimeDir, 0, 0, 0755); err != nil {
 		return err
@@ -291,6 +294,7 @@ func stage2aInstallFiles(s Saved, request *SoulProtectedLaunchInstall, p *stage2
 		}
 		*source.identity = identity
 	}
+	var runtimeInventory stage2aDomainInventoryV3
 	if request.RuntimeV3 != nil {
 		inv, raw, err := stage2aReadReviewedRuntimeV3(*request.RuntimeV3, p.Binding.InstallationID)
 		if err != nil {
@@ -313,11 +317,13 @@ func stage2aInstallFiles(s Saved, request *SoulProtectedLaunchInstall, p *stage2
 			return err
 		}
 		p.RuntimeV3 = &ref
+		runtimeInventory = inv
 	}
 	if _, _, err := stage2aBindingDigestForOwner(p.Binding, uint32(p.MachineUID)); err != nil {
 		return err
 	}
-	if !stage2aSelectedCommandRecorded(p.Binding, p.Definition, p.LaunchInputs) {
+	if p.RuntimeV3 == nil && !stage2aSelectedCommandRecorded(p.Binding, p.Definition, p.LaunchInputs) ||
+		p.RuntimeV3 != nil && !stage2aSelectedCommandRecordedV3(*p, runtimeInventory) {
 		return errStage2aReservationAuthority
 	}
 	adapters, err := stage2aReadProjectedFile(p.Binding.Snapshots.LaunchInputs, p.LaunchInputs.Files, "host/adapters.json")

@@ -23,8 +23,10 @@ type SoulRunner struct {
 	UID            int    `json:"uid"`
 	GID            int    `json:"gid"`
 	PackageRoot    string `json:"package_root"`
-	// Proposed review field only. No canonical immutable .soul measurement or
-	// installed package verifier exists yet; this cannot authorize launch.
+	// Protected v3 interprets this bare digest as the domain-separated
+	// Stage2aDefinitionDigest of the complete frozen Definition/opt inventory
+	// at PackageRoot. It is distinct from the .soul transport archive digest.
+	// Older runner mappings remain proposal fields and cannot authorize launch.
 	PackageSHA256 string `json:"package_sha256"`
 }
 

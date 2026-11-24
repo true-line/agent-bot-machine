@@ -183,7 +183,8 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 		return Plan{}, invalid
 	}
 	definitionDigest, _, err := Stage2aDefinitionDigest(policy.Definition)
-	if err != nil || definitionDigest != policy.Binding.DefinitionMeasurement {
+	if err != nil || definitionDigest != policy.Binding.DefinitionMeasurement ||
+		r.RuntimeV3 != nil && !stage2aProtectedPackageMeasurementV3(policy) {
 		return Plan{}, invalid
 	}
 	launchDigest, _, err := Stage2aLaunchInputDigest(policy.LaunchInputs)
