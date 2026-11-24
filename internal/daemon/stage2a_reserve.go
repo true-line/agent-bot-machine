@@ -20,6 +20,9 @@ const stage2aPrepareBVerb = "stage2a-prepare-b"
 const stage2aStopVerb = "stage2a-stop"
 const stage2aFinalizeBVerb = "stage2a-finalize-b"
 const stage2aLiveVerb = "stage2a-live"
+const stage2aT03PositiveVerb = "stage2a-t03-positive"
+const stage2aT03ReadyVerb = "stage2a-t03-ready"
+const stage2aT03CompleteVerb = "stage2a-t03-complete"
 const stage2aProviderVerb = "stage2a-provider"
 const stage2aChildReadyVerb = "stage2a-child-ready"
 const stage2aHelloStartVerb = "stage2a-hello-start"
@@ -51,7 +54,8 @@ type stage2aExecRequest struct {
 }
 
 func isStage2aVerb(verb string) bool {
-	return verb == stage2aReserveVerb || verb == stage2aExecVerb ||
+	return verb == stage2aReserveVerb || verb == stage2aExecVerb || verb == stage2aT03PositiveVerb ||
+		verb == stage2aT03ReadyVerb || verb == stage2aT03CompleteVerb ||
 		verb == stage2aVerifyBVerb || verb == stage2aLookupVerb || verb == stage2aListVerb || verb == stage2aPrepareBVerb || verb == stage2aStopVerb || verb == stage2aFinalizeBVerb || verb == stage2aLiveVerb || verb == stage2aProviderVerb || verb == stage2aChildReadyVerb ||
 		verb == stage2aHelloStartVerb || verb == stage2aHelloFinalizeVerb || verb == stage2aHelloAbortVerb ||
 		verb == stage2aPeerRoleVerb || verb == stage2aCooperativeReserveVerb ||
@@ -232,6 +236,30 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 			return diag.DaemonUndeclared, "invalid Stage 2a stop request"
 		}
 		req.stage2aStop = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aT03PositiveVerb {
+		parsed, err := members.ParseStage2aT03ArmRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid protected T03 positive receipt"
+		}
+		req.stage2aT03Positive = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aT03ReadyVerb {
+		parsed, err := members.ParseStage2aT03ReadyRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid protected T03 ready record"
+		}
+		req.stage2aT03Ready = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aT03CompleteVerb {
+		parsed, err := members.ParseStage2aT03CompleteRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid protected T03 completion record"
+		}
+		req.stage2aT03Complete = parsed
 		return "", ""
 	}
 	if req.Verb == stage2aLiveVerb {

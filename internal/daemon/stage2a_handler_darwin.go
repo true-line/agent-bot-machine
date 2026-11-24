@@ -120,6 +120,37 @@ func stage2aHandlerWithService(service *members.Stage2aService, dir, account str
 		case stage2aFinalizeBVerb:
 			state = "finalized"
 			body, err = service.FinalizeB(req.peerUID, req.stage2aEpoch, req.stage2aFinalizeB)
+		case stage2aT03PositiveVerb:
+			state = "t03-positive-recorded"
+			var digest string
+			digest, err = service.Stage2aT03AcceptPositive(req.peerUID, req.stage2aEpoch, req.stage2aT03Positive)
+			if err == nil {
+				service.StartProtectedT03(req.peerUID, req.stage2aEpoch, req.stage2aT03Positive.Stage2aStopRequest,
+					func(run func() error) error {
+						unlock, err := lockStage2aPairing(dir, req)
+						if err != nil {
+							return err
+						}
+						defer unlock()
+						return run()
+					})
+			}
+			body = struct {
+				SHA256 string `json:"sha256"`
+			}{digest}
+		case stage2aT03ReadyVerb:
+			state = "t03-ready-observed"
+			err = service.Stage2aT03AcceptReady(req.peerUID, req.stage2aEpoch, req.stage2aT03Ready)
+			body = struct {
+				Accepted bool `json:"accepted"`
+			}{err == nil}
+		case stage2aT03CompleteVerb:
+			state = "t03-completion-recorded"
+			var digest string
+			digest, err = service.Stage2aT03AcceptComplete(req.peerUID, req.stage2aEpoch, req.stage2aT03Complete)
+			body = struct {
+				SHA256 string `json:"sha256"`
+			}{digest}
 		case stage2aLiveVerb:
 			state = "live"
 			body, err = service.Live(req.peerUID, req.stage2aEpoch, req.stage2aLive)

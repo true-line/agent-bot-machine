@@ -16,9 +16,11 @@ const stage2aDriverCaseSchema = "agent-bot-machine/qualification-owner-driver/v1
 type stage2aDriverRunPhase string
 
 const (
-	stage2aDriverBeforeLaunch stage2aDriverRunPhase = "before-launch"
-	stage2aDriverLiveStart    stage2aDriverRunPhase = "live-start"
-	stage2aDriverRestart      stage2aDriverRunPhase = "live-restart"
+	stage2aDriverBeforeLaunch    stage2aDriverRunPhase = "before-launch"
+	stage2aDriverLiveStart       stage2aDriverRunPhase = "live-start"
+	stage2aDriverLiveT03         stage2aDriverRunPhase = "live-t03"
+	stage2aDriverProtectedT03Run stage2aDriverRunPhase = "protected-t03-run"
+	stage2aDriverRestart         stage2aDriverRunPhase = "live-restart"
 )
 
 type stage2aDriverCase struct {
@@ -34,6 +36,8 @@ func stage2aDriverSchedule(profile string, phase stage2aDriverRunPhase) []stage2
 		switch phase {
 		case stage2aDriverBeforeLaunch:
 			return []stage2aDriverCase{{"T02", "custody-baseline"}, {"T03", "policy-baseline"}}
+		case stage2aDriverLiveT03:
+			return []stage2aDriverCase{{"T03", "direct-route-refused"}}
 		case stage2aDriverLiveStart:
 			return []stage2aDriverCase{
 				{"T01", "copied-handle-refused"},
@@ -130,9 +134,18 @@ func runStage2aQualificationDriverCases(ctx context.Context, conn *net.UnixConn,
 func exchangeStage2aDriverCases(ctx context.Context, conn net.Conn, begin stage2aQualificationBeginV1,
 	phase stage2aDriverRunPhase, checkLive func() error, verify stage2aDriverVerify,
 	observe func(stage2aQualificationObserveV1) ([]byte, error)) ([]stage2aDriverEvidence, error) {
+	return exchangeStage2aDriverCasesWithCapture(ctx, conn, begin, phase, checkLive, verify, observe, nil)
+}
+
+type stage2aProtectedT03Capture func(context.Context, stage2aDriverCommand) (stage2aDriverCorroboration, error)
+
+func exchangeStage2aDriverCasesWithCapture(ctx context.Context, conn net.Conn, begin stage2aQualificationBeginV1,
+	phase stage2aDriverRunPhase, checkLive func() error, verify stage2aDriverVerify,
+	observe func(stage2aQualificationObserveV1) ([]byte, error), capture stage2aProtectedT03Capture) ([]stage2aDriverEvidence, error) {
 	schedule := stage2aDriverSchedule(begin.Profile, phase)
 	deadline, err := time.Parse(time.RFC3339Nano, begin.DeadlineAt)
-	if ctx == nil || checkLive == nil || verify == nil || observe == nil || len(schedule) == 0 ||
+	if ctx == nil || checkLive == nil || (capture != nil) != (phase == stage2aDriverLiveT03) ||
+		(capture == nil && verify == nil) || observe == nil || len(schedule) == 0 ||
 		err != nil || !time.Now().Before(deadline) || !stage2aQualificationDigest(begin.ReservationSHA256) ||
 		!stage2aQualificationDigest(begin.TestPlanSHA256) || len(begin.SessionID) != 32 || !stage2aQualificationHex(begin.SessionID) {
 		return nil, errStage2aReservationAuthority
@@ -168,6 +181,26 @@ func exchangeStage2aDriverCases(ctx context.Context, conn net.Conn, begin stage2
 		if err != nil {
 			return nil, err
 		}
+		var corroboration stage2aDriverCorroboration
+		if capture != nil {
+			if confirmStage2aDriverLiveArmed(conn, request[4:]) != nil || checkLive() != nil {
+				return nil, errStage2aReservationAuthority
+			}
+			caseCtx, cancelCase := context.WithDeadline(ctx, frameDeadline)
+			corroboration, err = capture(caseCtx, command)
+			cancelCase()
+			if err != nil || checkLive() != nil || stage2aQualificationCanonical(corroboration.artifact) != nil {
+				return nil, errStage2aReservationAuthority
+			}
+			commitment := stage2aDriverLiveArtifact{
+				Schema: stage2aDriverCaseSchema, Kind: "live-artifact",
+				RequestSHA:  stage2aQualificationSHA256(request[4:]),
+				ArtifactSHA: stage2aQualificationSHA256(corroboration.artifact),
+			}
+			if _, err := writeStage2aQualificationFrame(conn, commitment); err != nil {
+				return nil, err
+			}
+		}
 		raw, response, err := readStage2aQualificationObservedFrame(conn)
 		if err != nil || ctx.Err() != nil || checkLive() != nil {
 			return nil, errStage2aReservationAuthority
@@ -177,7 +210,9 @@ func exchangeStage2aDriverCases(ctx context.Context, conn net.Conn, begin stage2
 			return nil, errStage2aReservationAuthority
 		}
 		usedArtifacts[r.ArtifactSHA] = true
-		corroboration, err := verify(ctx, command, r.ArtifactSHA)
+		if capture == nil {
+			corroboration, err = verify(ctx, command, r.ArtifactSHA)
+		}
 		probe := corroboration.probe
 		if err != nil || ctx.Err() != nil || checkLive() != nil ||
 			!corroboration.matches(r.ArtifactSHA) || len(probe.Processes)+len(probe.Paths) == 0 {

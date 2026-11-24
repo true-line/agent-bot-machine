@@ -84,17 +84,19 @@ func requestStage2aChildLive(in Stage2aRoleInvocation, receiptSHA256 string,
 		ID      int    `json:"id"`
 		Op      string `json:"op"`
 		Payload struct {
-			InstallationID    string `json:"installation_id"`
-			StartID           string `json:"start_id"`
-			LaunchID          string `json:"launch_id"`
-			ReservationSHA256 string `json:"reservation_sha256"`
-			Challenge         string `json:"challenge"`
+			InstallationID     string `json:"installation_id"`
+			StartID            string `json:"start_id"`
+			LaunchID           string `json:"launch_id"`
+			ReservationSHA256  string `json:"reservation_sha256"`
+			ChildReceiptSHA256 string `json:"child_receipt_sha256"`
+			Challenge          string `json:"challenge"`
 		} `json:"payload"`
 	}{ID: 1, Op: "launch.live"}
 	request.Payload.InstallationID = in.Request.InstallationID
 	request.Payload.StartID = in.Request.StartID
 	request.Payload.LaunchID = in.Start.LaunchID
 	request.Payload.ReservationSHA256 = in.ChildExec.ReservationSHA256
+	request.Payload.ChildReceiptSHA256 = receiptSHA256
 	request.Payload.Challenge = challenge
 	body, err := json.Marshal(request)
 	deadline := time.Now().Add(1500 * time.Millisecond)

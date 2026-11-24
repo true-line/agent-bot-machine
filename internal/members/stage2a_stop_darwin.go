@@ -84,6 +84,9 @@ func (s *Stage2aService) Stop(hqUID int, epoch string, q Stage2aStopRequest) (St
 	if err := stage2aStoreStopEnvelope(dir, name, store.uid, store.gid, envelope); err != nil {
 		return reply, err
 	}
+	if r.qT03 != nil {
+		r.qT03.cancel()
+	}
 	clear(r.bridgeProof[:])
 	delete(s.active, q.ReservationSHA256)
 	return Stage2aStopReply{EnvelopeBase64URL: base64.RawURLEncoding.EncodeToString(envelope), SHA256: stage2aReservationSHA256(envelope)}, nil

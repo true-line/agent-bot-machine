@@ -17,13 +17,14 @@ type stage2aQualificationQReview struct {
 	InstalledPlanDigest string            `json:"installed_plan_digest"`
 	TestPlan            qualificationFile `json:"test_plan"`
 	Provider            qualificationFile `json:"provider"`
+	DriverLiveT03       bool              `json:"driver_live_t03,omitempty"`
 	DriverBaselineOnly  bool              `json:"driver_baseline_only,omitempty"`
 }
 
 var stage2aQualificationUUID = regexp.MustCompile(`^[0-9A-F]{8}-(?:[0-9A-F]{4}-){3}[0-9A-F]{12}$`)
 
 func (r stage2aQualificationQReview) valid() bool {
-	return r.Owner != "" && ValidApproval(r.PlanID, r.PlanDigest) &&
+	return !(r.DriverBaselineOnly && r.DriverLiveT03) && r.Owner != "" && ValidApproval(r.PlanID, r.PlanDigest) &&
 		stage2aQualificationUUID.MatchString(r.HostUUID) && stage2aQualificationPrintable(r.HostID, 128) &&
 		soulInstallationID.MatchString(r.InstallationID) && digestPattern.MatchString(r.InstalledPlanDigest) &&
 		stage2aAbsolutePath(r.TestPlan.Path) && stage2aAbsolutePath(r.Provider.Path) &&

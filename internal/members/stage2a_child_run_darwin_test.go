@@ -63,3 +63,67 @@ func TestStage2aChildLiveCancelsWhileRenewalBlocksPastExpiry(t *testing.T) {
 		t.Fatalf("late renewal restarted the child watcher: %d calls", calls.Load())
 	}
 }
+
+func TestStage2aChildLiveCancelsWhenProbeLeaseIsRejected(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := Stage2aLiveLeasePayload{Sequence: 7, ExpiresAtMS: time.Now().Add(1500 * time.Millisecond).UnixMilli()}
+	var calls atomic.Int32
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchStage2aChildLiveWithRequest(ctx, cancel, first, func(after uint64,
+			deadline time.Time) (Stage2aLiveLeasePayload, error) {
+			calls.Add(1)
+			return Stage2aLiveLeasePayload{Sequence: after + 1,
+				ExpiresAtMS: time.Now().Add(5 * time.Second).UnixMilli()}, nil
+		}, func(Stage2aLiveLeasePayload) error { return errStage2aReservationAuthority })
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("rejected T03 directive left the protected child running")
+	}
+	if ctx.Err() == nil || calls.Load() != 1 {
+		t.Fatalf("rejected T03 lease did not cut off one renewal: cancelled=%v calls=%d", ctx.Err(), calls.Load())
+	}
+}
+
+func TestStage2aChildLiveKeepsOldCutoffWhileProbeChecks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := Stage2aLiveLeasePayload{Sequence: 7, ExpiresAtMS: time.Now().Add(800 * time.Millisecond).UnixMilli()}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchStage2aChildLiveWithRequest(ctx, cancel, first, func(after uint64,
+			deadline time.Time) (Stage2aLiveLeasePayload, error) {
+			return Stage2aLiveLeasePayload{Sequence: after + 1,
+				ExpiresAtMS: time.Now().Add(5 * time.Second).UnixMilli()}, nil
+		}, func(Stage2aLiveLeasePayload) error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(500 * time.Millisecond):
+		close(release)
+		t.Fatal("probe callback did not begin before old lease expiry")
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(1200 * time.Millisecond):
+		close(release)
+		t.Fatal("old signed lease cutoff was hidden by probe validation")
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("late probe callback renewed an expired child")
+	}
+}

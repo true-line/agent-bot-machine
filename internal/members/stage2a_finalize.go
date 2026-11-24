@@ -53,7 +53,8 @@ type Stage2aLiveReply struct {
 
 type Stage2aLiveRequest struct {
 	Stage2aStopRequest
-	Challenge string `json:"challenge"`
+	Challenge          string `json:"challenge"`
+	ChildReceiptSHA256 string `json:"child_receipt_sha256,omitempty"`
 }
 
 // A signs each short finalized lease after rechecking the installed policy,
@@ -71,18 +72,20 @@ type Stage2aLiveRoleIdentity struct {
 type Stage2aLiveLeasePayload struct {
 	Schema string `json:"schema"`
 	Stage2aStopRequest
-	FinalizationSHA256      string                   `json:"finalization_sha256"`
-	HelloFinalizationSHA256 string                   `json:"hello_finalization_sha256,omitempty"`
-	BindReceiptSHA256       string                   `json:"bind_receipt_sha256"`
-	Challenge               string                   `json:"challenge"`
-	Runner                  Stage2aLiveRoleIdentity  `json:"runner"`
-	Bridge                  Stage2aLiveRoleIdentity  `json:"bridge"`
-	ChildLauncher           *Stage2aLiveRoleIdentity `json:"child_launcher,omitempty"`
-	Child                   *Stage2aLiveRoleIdentity `json:"child,omitempty"`
-	ChildReceiptSHA256      string                   `json:"child_receipt_sha256,omitempty"`
-	Sequence                uint64                   `json:"sequence"`
-	IssuedAtMS              int64                    `json:"issued_at_ms"`
-	ExpiresAtMS             int64                    `json:"expires_at_ms"`
+	FinalizationSHA256      string                    `json:"finalization_sha256"`
+	HelloFinalizationSHA256 string                    `json:"hello_finalization_sha256,omitempty"`
+	BindReceiptSHA256       string                    `json:"bind_receipt_sha256"`
+	Challenge               string                    `json:"challenge"`
+	Runner                  Stage2aLiveRoleIdentity   `json:"runner"`
+	Bridge                  Stage2aLiveRoleIdentity   `json:"bridge"`
+	ChildLauncher           *Stage2aLiveRoleIdentity  `json:"child_launcher,omitempty"`
+	Child                   *Stage2aLiveRoleIdentity  `json:"child,omitempty"`
+	ChildReceiptSHA256      string                    `json:"child_receipt_sha256,omitempty"`
+	Sequence                uint64                    `json:"sequence"`
+	T03Probe                *Stage2aT03ProbeDirective `json:"t03_probe,omitempty"`
+	T03ProbeGo              *Stage2aT03ProbeGo        `json:"t03_probe_go,omitempty"`
+	IssuedAtMS              int64                     `json:"issued_at_ms"`
+	ExpiresAtMS             int64                     `json:"expires_at_ms"`
 }
 
 func ParseStage2aFinalizeBRequest(raw []byte) (Stage2aFinalizeBRequest, error) {
@@ -112,7 +115,8 @@ func ParseStage2aLiveRequest(raw []byte) (Stage2aLiveRequest, error) {
 	if d.Decode(&q) != nil || d.Decode(new(any)) != io.EOF || !validStage2aStopRequest(q.Stage2aStopRequest) {
 		return Stage2aLiveRequest{}, errors.New("invalid Stage 2a Live request")
 	}
-	if !validStage2aLiveChallenge(q.Challenge) {
+	if !validStage2aLiveChallenge(q.Challenge) ||
+		q.ChildReceiptSHA256 != "" && !stage2aPrefixedDigest.MatchString(q.ChildReceiptSHA256) {
 		return Stage2aLiveRequest{}, errors.New("invalid Stage 2a Live challenge")
 	}
 	return q, nil

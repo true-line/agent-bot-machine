@@ -57,7 +57,10 @@ type stage2aLiveReservation struct {
 	childProcess         soulKernelProcessSnapshot
 	childReceiptEnvelope []byte
 	liveSequence         uint64
+	t03Pending           *stage2aT03Pending
+	t03Positive          *Stage2aT03ArmRequest
 	hello                *stage2aHelloState
+	qT03                 *stage2aPendingT03
 }
 
 func NewStage2aService(key ed25519.PrivateKey) *Stage2aService {
@@ -192,7 +195,8 @@ func (s *Stage2aService) Reserve(hqUID int, epoch string, request Stage2aReserve
 	}
 	// A's installed opt-in consumes Q and captures the baseline after the
 	// durable reservation, before a bridge proof or live runner is published.
-	if err := captureStage2aProtectedBaseline(hqUID, epoch, guard, got, result, key, s.sign); err != nil {
+	pendingQ, err := captureStage2aProtectedBaseline(hqUID, epoch, guard, got, result, key, s.sign)
+	if err != nil {
 		return reply, err
 	}
 	// Role plumbing still uses a legacy field projection. The guard authenticates
@@ -207,10 +211,13 @@ func (s *Stage2aService) Reserve(hqUID int, epoch string, request Stage2aReserve
 	defer clear(proof[:])
 	if _, err := rand.Read(proof[:]); err != nil ||
 		publishStage2aBridgeProof(payload.Assignment.SoulStartAssignment, proof[:]) != nil {
+		if pendingQ != nil {
+			pendingQ.cancel()
+		}
 		return reply, errStage2aReservationAuthority
 	}
 	s.active[got.sha256] = &stage2aLiveReservation{
-		digest: got.sha256, policyDigest: result.PolicyDigest, envelope: got.envelope,
+		qT03: pendingQ, digest: got.sha256, policyDigest: result.PolicyDigest, envelope: got.envelope,
 		payload: payload, payloadV3: result.Expected, runModeV3: result.Mode, runtimeRefV3: guard.r, request: req, proofDigest: stage2aReservationSHA256(proof[:]), bridgeProof: proof,
 	}
 	return Stage2aReserveReply{EnvelopeBase64URL: stage2aEncodeEnvelope(got.envelope), SHA256: got.sha256}, nil

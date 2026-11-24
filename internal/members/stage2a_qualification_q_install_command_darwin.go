@@ -81,7 +81,7 @@ func RunStage2aQualificationQInstall(deps ApplyDeps, args []string) error {
 		request.Runner.SourcePath == "" || verifyQualificationRunnerReviewFile(request) != nil {
 		return errStage2aReservationAuthority
 	}
-	if review.DriverBaselineOnly {
+	if review.DriverBaselineOnly || review.DriverLiveT03 {
 		driver, err := loadStage2aQualificationDriverReview(review.TestPlan)
 		if err != nil || !stage2aQualificationPrintable(driver.CohortID, 128) ||
 			driver.SuiteRevision != request.SuiteRevision || driver.Policy.SHA256 != request.Host.EnforcementPolicySHA ||
