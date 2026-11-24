@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
 	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
+	"golang.org/x/sys/unix"
 )
 
 type hqStage2aManifestRow struct {
@@ -69,8 +72,22 @@ func checkStage2aReleaseSourcePartition(components []stage2aReleaseComponent, in
 		if err != nil {
 			return err
 		}
+		if len(omitted) != 0 {
+			// appendLaunchDaemon has just matched this entire root-owned release
+			// tree to its pinned archive and checked all of its ACLs. Recheck the
+			// exact omitted paths in bounded batches, then inspect each opened
+			// file descriptor. Rewalking every ancestor with a fresh /bin/ls for
+			// each row made the owner challenge exceed its request deadline.
+			paths := make([]string, len(omitted))
+			for i, row := range omitted {
+				paths[i] = filepath.Join(releaseDir, row.Path)
+			}
+			if err := checkDarwinACLs(paths); err != nil {
+				return err
+			}
+		}
 		for _, row := range omitted {
-			raw, err := stage2aReadRootFile(filepath.Join(releaseDir, row.Path), 2<<20, 0444, 0644)
+			raw, err := readVerifiedHQOmittedFile(filepath.Join(releaseDir, row.Path))
 			if err != nil || fmt.Sprintf("sha256:%x", sha256.Sum256(raw)) != row.SHA256 {
 				return errStage2aReservationAuthority
 			}
@@ -78,6 +95,33 @@ func checkStage2aReleaseSourcePartition(components []stage2aReleaseComponent, in
 		delete(files, c.ComponentID)
 	}
 	return nil
+}
+
+// Only the omitted-H branch above calls this after the complete release tree
+// and the batched per-file ACL check. Root owns that verified tree, so the
+// administrator cannot change an ancestor between the two checks. Keep the
+// leaf opened without symlink following and compare its full metadata after
+// reading; a changed node or content still refuses the reviewed plan.
+func readVerifiedHQOmittedFile(path string) ([]byte, error) {
+	const limit = 2 << 20
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, errStage2aReservationAuthority
+	}
+	f := os.NewFile(uintptr(fd), path)
+	defer f.Close()
+	var before, after unix.Stat_t
+	if unix.Fstat(fd, &before) != nil || before.Uid != 0 || before.Gid != 0 || before.Nlink != 1 ||
+		before.Mode&unix.S_IFMT != unix.S_IFREG ||
+		(before.Mode&07777 != 0444 && before.Mode&07777 != 0644) ||
+		before.Size < 1 || before.Size > limit {
+		return nil, errStage2aReservationAuthority
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || int64(len(raw)) != before.Size || unix.Fstat(fd, &after) != nil || !stage2aSameNode(before, after) {
+		return nil, errStage2aReservationAuthority
+	}
+	return raw, nil
 }
 
 func checkHQStage2aManifestRows(raw []byte, expectedDigest string, selected map[string]string) error {
