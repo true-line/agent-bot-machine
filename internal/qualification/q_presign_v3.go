@@ -39,7 +39,7 @@ type VerifiedQPreSignV3 struct {
 	SessionID, CohortID, InstallationID, SoulID, StartID, HostID, Profile string
 	AdapterTransport                                                      string
 	ReservationSHA256, WireSHA256, IndexSHA256, EOFReceiptSHA256          string
-	QSourceSHA256, TestPlanSHA256                                         string
+	QSourceSHA256, TestPlanSHA256, LaunchChallengeSHA256                  string
 	ObservationCount                                                      int
 }
 
@@ -314,7 +314,7 @@ func verifyQPreSignWithTransportV3(wireRaw, indexEnvelope, eofEnvelope, reservat
 	if idx.Profile == "managed-cooperative" {
 		transport = cooperativeTransport
 	}
-	return VerifiedQPreSignV3{verified: true, SessionID: idx.SessionID, CohortID: idx.CohortID, InstallationID: idx.InstallationID, SoulID: idx.SoulID, StartID: idx.StartID, HostID: idx.HostID, Profile: idx.Profile, AdapterTransport: transport, ReservationSHA256: idx.ReservationSHA256, WireSHA256: idx.WireSHA256, IndexSHA256: digest(indexEnvelope), EOFReceiptSHA256: digest(eofEnvelope), QSourceSHA256: idx.QSourceSHA256, TestPlanSHA256: idx.TestPlanSHA256, ObservationCount: idx.ObservationCount}, nil
+	return VerifiedQPreSignV3{verified: true, SessionID: idx.SessionID, CohortID: idx.CohortID, InstallationID: idx.InstallationID, SoulID: idx.SoulID, StartID: idx.StartID, HostID: idx.HostID, Profile: idx.Profile, AdapterTransport: transport, ReservationSHA256: idx.ReservationSHA256, WireSHA256: idx.WireSHA256, IndexSHA256: digest(indexEnvelope), EOFReceiptSHA256: digest(eofEnvelope), QSourceSHA256: idx.QSourceSHA256, TestPlanSHA256: idx.TestPlanSHA256, LaunchChallengeSHA256: idx.LaunchChallengeSHA256, ObservationCount: idx.ObservationCount}, nil
 }
 
 func qLowerHexV3(s string) bool {

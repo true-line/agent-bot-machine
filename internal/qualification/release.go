@@ -38,11 +38,19 @@ type VerifiedRelease struct {
 	v3SoulsBuild        *soulsBuildRef
 	v3SoulArtifact      string
 	v3ExpiresAt         time.Time
+	v4Reports           *qualificationReportPairV4
+	v4SoulsBuild        *soulsBuildRef
+	v4SoulArtifact      string
+	v4ExpiresAt         time.Time
+	v4StatementSHA256   string
 }
 
 func (r VerifiedRelease) HostReportDigests() []string {
 	if !r.verified {
 		return nil
+	}
+	if r.v4Reports != nil {
+		return []string{r.v4Reports.ProtectedReport.Payload.SHA256, r.v4Reports.CooperativeReport.Payload.SHA256}
 	}
 	if r.v3Reports != nil {
 		return []string{r.v3Reports.ProtectedReport.Payload.SHA256, r.v3Reports.CooperativeReport.Payload.SHA256}
@@ -60,6 +68,9 @@ func (r VerifiedRelease) HostReportDigests() []string {
 func (r VerifiedRelease) HostEnvelopeDigests() []string {
 	if !r.verified {
 		return nil
+	}
+	if r.v4Reports != nil {
+		return []string{r.v4Reports.ProtectedReport.Signature.SHA256, r.v4Reports.CooperativeReport.Signature.SHA256}
 	}
 	if r.v3Reports != nil {
 		return []string{r.v3Reports.ProtectedReport.Signature.SHA256, r.v3Reports.CooperativeReport.Signature.SHA256}
@@ -153,8 +164,19 @@ func VerifyReleaseAttestationV3(policy VerifiedPolicy, trustedRootJSON, bundleJS
 	return verifyReleaseAttestation(policy, trustedRootJSON, bundleJSON, qualificationJSON, expectedBundleSHA256, now, 3)
 }
 
+// VerifyReleaseAttestationV4 authenticates the release workflow's DSSE v4
+// Statement, exact qualification.json subject and signing time using the
+// owner-pinned Sigstore root. The resulting release proof grants no launch
+// permission without the separate installed-byte and physical evidence gates.
+func VerifyReleaseAttestationV4(policy VerifiedPolicy, trustedRootJSON, bundleJSON, qualificationJSON []byte, expectedBundleSHA256 string, now time.Time) (VerifiedRelease, error) {
+	if policy.version != 3 {
+		return VerifiedRelease{}, ErrUnqualified
+	}
+	return verifyReleaseAttestation(policy, trustedRootJSON, bundleJSON, qualificationJSON, expectedBundleSHA256, now, 4)
+}
+
 func verifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON, qualificationJSON []byte, expectedBundleSHA256 string, now time.Time, version int) (VerifiedRelease, error) {
-	if version < 1 || version > 3 || !policy.verified || now.IsZero() || !policy.at.Equal(now) ||
+	if version < 1 || version > 4 || !policy.verified || now.IsZero() || !policy.at.Equal(now) ||
 		len(trustedRootJSON) == 0 || len(trustedRootJSON) > maxTrustedRoot ||
 		len(bundleJSON) == 0 || len(bundleJSON) > maxReleaseBundle ||
 		len(qualificationJSON) == 0 || len(qualificationJSON) > MaxReportBytes ||
@@ -205,6 +227,29 @@ func verifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON
 		}
 	}
 	qualificationSHA := digest(qualificationJSON)
+	if version == 4 {
+		qualification, qualificationReports, qualificationBuild, recorded, err := qualificationObjectV4(qualificationJSON, now)
+		if err != nil {
+			return VerifiedRelease{}, ErrUnqualified
+		}
+		var soulArtifact string
+		if json.Unmarshal(qualification["soul_artifact_sha256"], &soulArtifact) != nil {
+			return VerifiedRelease{}, ErrUnqualified
+		}
+		reports, build, expires, err := fixedStatementV4(b.GetDsseEnvelope().GetPayload(), policy.value, qualificationSHA, soulArtifact, recorded, now)
+		if err != nil || reports != qualificationReports || build != qualificationBuild {
+			return VerifiedRelease{}, ErrUnqualified
+		}
+		for _, timestamp := range result.VerifiedTimestamps {
+			if timestamp.Timestamp.Before(recorded) || !timestamp.Timestamp.Before(expires) {
+				return VerifiedRelease{}, ErrUnqualified
+			}
+		}
+		return VerifiedRelease{verified: true, bundleSHA256: expectedBundleSHA256, qualificationSHA256: qualificationSHA,
+			v4Reports: &reports, v4SoulsBuild: &build, v4SoulArtifact: soulArtifact, v4ExpiresAt: expires,
+			v4StatementSHA256: digest(b.GetDsseEnvelope().GetPayload()),
+			ownerKeyID:        policy.value.OwnerKeyID, policyRevision: policy.value.PolicyRevision}, nil
+	}
 	if version == 3 {
 		qualification, qualificationReports, qualificationBuild, recorded, err := qualificationObjectV3(qualificationJSON, now)
 		if err != nil {

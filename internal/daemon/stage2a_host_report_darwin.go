@@ -22,10 +22,35 @@ import (
 func signStage2aHostReportV3(ctx context.Context, adminHome string, machine ed25519.PrivateKey,
 	report, executionCompletionEnvelope []byte, hostID, signerID string,
 	policyAt func(time.Time) (qualification.VerifiedPolicy, error), provider deviceProvider) ([]byte, error) {
-	if os.Getuid() == 0 || os.Getuid() != os.Geteuid() || len(machine) != ed25519.PrivateKeySize ||
+	return signStage2aHostReportVersion(ctx, adminHome, machine, report, executionCompletionEnvelope,
+		hostID, signerID, policyAt, provider, "qualification-host-report-v3",
+		qualification.VerifyExecutionCompletionBeforeSignV3, qualification.VerifyHostReportV3)
+}
+
+// signStage2aHostReportV4 is the A-local successor. Only the secure-admin
+// Machine path can call keyd, after a completed physical run, signed v2
+// pre-sign record, owner-designated signer and fresh policy are verified.
+// It is deliberately not a remotely callable HQ device option.
+func signStage2aHostReportV4(ctx context.Context, adminHome string, machine ed25519.PrivateKey,
+	report, executionCompletionEnvelope []byte, hostID, signerID string,
+	policyAt func(time.Time) (qualification.VerifiedPolicy, error), provider deviceProvider) ([]byte, error) {
+	return signStage2aHostReportVersion(ctx, adminHome, machine, report, executionCompletionEnvelope,
+		hostID, signerID, policyAt, provider, "qualification-host-report-v4",
+		qualification.VerifyExecutionCompletionBeforeSignV4, qualification.VerifyHostReportV4)
+}
+
+func signStage2aHostReportVersion(ctx context.Context, adminHome string, machine ed25519.PrivateKey,
+	report, executionCompletionEnvelope []byte, hostID, signerID string,
+	policyAt func(time.Time) (qualification.VerifiedPolicy, error), provider deviceProvider,
+	option string,
+	verifyBefore func([]byte, []byte, ed25519.PublicKey, time.Time) error,
+	verifyAfter func([]byte, qualification.VerifiedPolicy, time.Time) ([]byte, error)) ([]byte, error) {
+	if ctx == nil || os.Getuid() == 0 || os.Getuid() != os.Geteuid() || len(machine) != ed25519.PrivateKeySize ||
 		len(report) == 0 || len(report) > qualification.MaxReportBytes ||
 		len(executionCompletionEnvelope) == 0 || len(executionCompletionEnvelope) > qualification.MaxReportBytes ||
-		hostID == "" || signerID == "" || policyAt == nil || provider == nil {
+		hostID == "" || signerID == "" || policyAt == nil || provider == nil ||
+		verifyBefore == nil || verifyAfter == nil ||
+		(option != "qualification-host-report-v3" && option != "qualification-host-report-v4") {
 		return nil, errHQDevice
 	}
 	dir := stateDir(adminHome)
@@ -41,7 +66,7 @@ func signStage2aHostReportV3(ctx context.Context, adminHome string, machine ed25
 		return nil, errHQDevice
 	}
 	before := time.Now()
-	if qualification.VerifyExecutionCompletionBeforeSignV3(report, executionCompletionEnvelope,
+	if verifyBefore(report, executionCompletionEnvelope,
 		machine.Public().(ed25519.PublicKey), before) != nil {
 		return nil, errHQDevice
 	}
@@ -60,7 +85,7 @@ func signStage2aHostReportV3(ctx context.Context, adminHome string, machine ed25
 	delegation := deviceDelegation{
 		Epoch: pair.HQEpoch, Machine: base64.StdEncoding.EncodeToString(machine.Public().(ed25519.PublicKey)),
 		HQ: base64.StdEncoding.EncodeToString(pair.AgentDaemon), UID: pair.AgentDaemonUID,
-		Nonce: nonce, Timestamp: before.Unix(), Option: "qualification-host-report-v3",
+		Nonce: nonce, Timestamp: before.Unix(), Option: option,
 		ReportBase64URL: base64.RawURLEncoding.EncodeToString(report), HostID: hostID, SignerID: signerID,
 	}
 	delegation.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(machine, delegation.transcript()))
@@ -84,7 +109,7 @@ func signStage2aHostReportV3(ctx context.Context, adminHome string, machine ed25
 	if err != nil || newRevision != revision || newDigest != policyDigest {
 		return nil, errHQDevice
 	}
-	verified, err := qualification.VerifyHostReportV3(envelope, policy, after)
+	verified, err := verifyAfter(envelope, policy, after)
 	if err != nil || !bytes.Equal(verified, report) {
 		return nil, errHQDevice
 	}

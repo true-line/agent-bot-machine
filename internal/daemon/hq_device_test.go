@@ -35,7 +35,7 @@ func fixtureDeviceKey(t *testing.T) (*ecdsa.PrivateKey, keydIdentity) {
 }
 
 func TestReportDelegationBindsReportFields(t *testing.T) {
-	for _, option := range []string{"qualification-host-report-v2", "qualification-host-report-v3"} {
+	for _, option := range []string{"qualification-host-report-v2", "qualification-host-report-v3", "qualification-host-report-v4"} {
 		d := deviceDelegation{Option: option, Epoch: "epoch", ReportBase64URL: "cmVwb3J0", HostID: "host", SignerID: "signer"}
 		transcript := string(d.transcript())
 		if !strings.Contains(transcript, option) ||
@@ -46,7 +46,7 @@ func TestReportDelegationBindsReportFields(t *testing.T) {
 }
 
 func TestHQDevicePublicParserRejectsHostReportOptions(t *testing.T) {
-	for _, option := range []string{"qualification-host-report", "qualification-host-report-v2", "qualification-host-report-v3"} {
+	for _, option := range []string{"qualification-host-report", "qualification-host-report-v2", "qualification-host-report-v3", "qualification-host-report-v4"} {
 		t.Run(option, func(t *testing.T) {
 			req := Request{Verb: deviceVerb, Option: option, Nonce: "abcdefghijklmnop", HQEpoch: "legacy"}
 			wire := []byte(`{"verb":"hq-device","option":"` + option + `","nonce":"abcdefghijklmnop","timestamp":1,"public_key":"x","signature":"x","hq_epoch":"legacy"}`)

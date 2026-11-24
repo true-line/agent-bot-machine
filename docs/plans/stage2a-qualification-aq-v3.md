@@ -395,6 +395,11 @@ identities/references, and exactly one report anchor across the set.
 It returns the bytes for the future physical verifier; it does not verify
 segment signatures, raw issuer receipts, Q or ACP streams, installed inputs,
 or physical outcomes, and it cannot credit a gate.
+The v4 successor uses the same local gate-manifest resolver after verifying
+the v4 host signature and owner-designated signer. It keeps these limits and
+refusals, including exact content-addressed references and one report anchor.
+Its synthetic positive test proves only the local byte join; issuer, raw
+observation, installed-file and physical-result verification remain open.
 Restart, outage, race, and recovery checks need distinct
 spent starts and Q sessions in a reviewed multi-segment aggregation rule;
 the report's top-level run chain covers only its primary segment. An

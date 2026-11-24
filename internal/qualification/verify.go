@@ -25,6 +25,7 @@ const (
 	HostPurpose      = "agent-bot/qualification-host-report/v1"
 	HostPurposeV2    = "agent-bot/qualification-host-report/v2"
 	HostPurposeV3    = "agent-bot/qualification-host-report/v3"
+	HostPurposeV4    = "agent-bot/qualification-host-report/v4"
 	PolicyPurpose    = "agent-bot/qualification-policy/v1"
 	PolicyPurposeV2  = "agent-bot/qualification-policy/v2"
 	PolicyPurposeV3  = "agent-bot/qualification-policy/v3"
@@ -313,6 +314,8 @@ func parseEnvelope(raw []byte, expected string) (Envelope, error) {
 		version = 2
 	} else if expected == HostPurposeV3 || expected == PolicyPurposeV3 {
 		version = 3
+	} else if expected == HostPurposeV4 {
+		version = 4
 	}
 	if json.Unmarshal(raw, &e) != nil || e.SchemaVersion != version || e.Purpose != expected {
 		return Envelope{}, ErrUnqualified
@@ -582,6 +585,16 @@ func VerifyHostReportV3(envelope []byte, verified VerifiedPolicy, now time.Time)
 	return verifyHostReport(envelope, verified, now, HostPurposeV3, 3, reportShapeV3)
 }
 
+// VerifyHostReportV4 authenticates the exact successor report and its
+// owner-designated host signer. Physical evidence and release refs still need
+// independent offline verification before qualification.
+func VerifyHostReportV4(envelope []byte, verified VerifiedPolicy, now time.Time) ([]byte, error) {
+	if verified.version != 3 {
+		return nil, ErrUnqualified
+	}
+	return verifyHostReport(envelope, verified, now, HostPurposeV4, 4, reportShapeV4)
+}
+
 func verifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time, purpose string, version int, shape func([]byte) error) ([]byte, error) {
 	if !verified.verified || !verified.at.Equal(now) || now.IsZero() {
 		return nil, ErrUnqualified
@@ -595,7 +608,12 @@ func verifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time, p
 	if err != nil || digest(raw) != e.ReportSHA256 {
 		return nil, ErrUnqualified
 	}
-	fields, err := canonicalBytes(raw, MaxReportBytes)
+	var fields map[string]json.RawMessage
+	if version == 4 {
+		fields, err = canonicalObjectV4(raw, MaxReportBytes)
+	} else {
+		fields, err = canonicalBytes(raw, MaxReportBytes)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -605,7 +623,7 @@ func verifyHostReport(envelope []byte, verified VerifiedPolicy, now time.Time, p
 	required := []string{"adapter", "checks", "cost_bound", "evaluation_cells", "gates", "harness", "host", "launch", "outcome", "profile_in_force", "recorded_at", "renders", "run_id", "runner", "schema_version", "soul_start", "suite_revision"}
 	if version == 2 {
 		required = append(required, "bridge")
-	} else if version == 3 {
+	} else if version == 3 || version == 4 {
 		required = append(required, "measurement_binding", "run_evidence")
 		if _, protected := fields["bridge"]; protected {
 			required = append(required, "bridge")
@@ -710,6 +728,12 @@ func CheckDesignatedHostSignerV3(verified VerifiedPolicy, hostID, signerID strin
 	}
 	_, err := designatedHostSigner(verified.value, hostID, signerID)
 	return err
+}
+
+// The v4 report continues to use the verified owner-signed v3 policy. A
+// purpose upgrade never changes the designated host or signer trust anchor.
+func CheckDesignatedHostSignerV4(verified VerifiedPolicy, hostID, signerID string, at time.Time) error {
+	return CheckDesignatedHostSignerV3(verified, hostID, signerID, at)
 }
 
 func designatedHostSigner(policy Policy, hostID, signerID string) (*ecdsa.PublicKey, error) {
