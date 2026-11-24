@@ -99,7 +99,7 @@ func testDarwinHQRecoveryPlan(t *testing.T, version string) {
 	}
 }
 
-func makeTestHQRelease(t *testing.T, h *fakeHost, base, version, nodePath, main string) *HQService {
+func makeTestHQRelease(t *testing.T, h *fakeHost, base, version, nodePath, main string, hPin ...string) *HQService {
 	t.Helper()
 	release := filepath.Join(base, "hq")
 	for _, dir := range []string{release, filepath.Dir(launchPlist)} {
@@ -117,11 +117,15 @@ func makeTestHQRelease(t *testing.T, h *fakeHost, base, version, nodePath, main 
 	}
 	var archive bytes.Buffer
 	tw := tar.NewWriter(&archive)
-	for _, entry := range []struct{ name, content string }{
+	entries := []struct{ name, content string }{
 		{"hq/", ""}, {"hq/governance/", ""}, {"hq/governance/interim-release.json", meta},
 		{"hq/helpers/", ""}, {"hq/helpers/darwin-owner.rb", "# fixture\n"},
 		{"hq/hq/", ""}, {"hq/hq/main.mjs", main},
-	} {
+	}
+	if len(hPin) != 0 {
+		entries = append(entries, struct{ name, content string }{"hq/governance/soul-contracts.json", hPin[0]})
+	}
+	for _, entry := range entries {
 		path := filepath.Join(base, entry.name)
 		dir := strings.HasSuffix(entry.name, "/")
 		header := &tar.Header{Name: entry.name, Mode: 0644, Typeflag: tar.TypeReg, Size: int64(len(entry.content)), Format: tar.FormatUSTAR}
