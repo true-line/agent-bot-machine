@@ -50,7 +50,9 @@ type Stage2aMeasurementBinding struct {
 	HQEpoch             string `json:"hq_epoch"`
 	PlanID              string `json:"plan_id"`
 	InstalledPlanDigest string `json:"installed_plan_digest"`
-	PackageSHA256       string `json:"package_sha256"`
+	// Protected v3 carries the bare suffix of DefinitionMeasurement here;
+	// installed A remeasures the frozen package root before reservation.
+	PackageSHA256 string `json:"package_sha256"`
 	// SoulArtifactSHA256 is the exact frozen .soul byte digest. It is distinct
 	// from the legacy package field, adapter release, and Souls runtime .tgz.
 	// Old machine/v1 readers may omit it; v3 host reports must require it.

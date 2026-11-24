@@ -8,6 +8,32 @@ import (
 	"path/filepath"
 )
 
+// In protected v3, the legacy package_sha256 field is the bare suffix of
+// the domain-separated definition inventory digest. The definition snapshot
+// is the selected package root; .soul transport bytes have their own digest.
+// Apply sealing, reservation input loading, and the R child separately
+// reobserve the frozen files against this reviewed inventory.
+func stage2aProtectedPackageMeasurementV3(p stage2aInstalledPolicy) bool {
+	digest, _, err := Stage2aDefinitionDigest(p.Definition)
+	return err == nil && p.Runner.PackageRoot == p.Binding.Snapshots.Definition.RootPath &&
+		p.Runner.PackageSHA256 == p.Binding.PackageSHA256 &&
+		p.Binding.DefinitionMeasurement == digest &&
+		digest == "sha256:"+p.Binding.PackageSHA256
+}
+
+// The runner's v3 R reference has already passed its no-follow installed
+// inventory check before this final join. Legacy bindings retain their
+// existing package field meaning.
+func stage2aRunnerPackageMatchesRuntimeV3(ref stage2aDomainInventoryRefV3,
+	runner SoulRunner, binding Stage2aMeasurementBinding, definitionDigest string) bool {
+	if ref.Contract != "machine/v3" {
+		return true
+	}
+	return ref.Domain == "R-runtime" && definitionDigest == "sha256:"+binding.PackageSHA256 &&
+		runner.PackageSHA256 == binding.PackageSHA256 &&
+		runner.PackageRoot == binding.Snapshots.Definition.RootPath
+}
+
 // A's signed v3 reservation names this exact R snapshot. R independently
 // reopens it before exec and requires the actual Node and Souls entrypoint to
 // be the two fixed, reviewed rows in that snapshot. Legacy launch-input rows
@@ -62,6 +88,13 @@ func stage2aRunnerCodeRowsV3(ref stage2aDomainInventoryRefV3,
 		return invalid
 	}
 	return nil
+}
+
+// The v3 selected command is authorized by the sealed R inventory. The
+// legacy definition/launch-input snapshot check cannot describe this path.
+func stage2aSelectedCommandRecordedV3(p stage2aInstalledPolicy, inv stage2aDomainInventoryV3) bool {
+	return p.RuntimeV3 != nil && p.LaunchInputs.SelectedCommand == p.Node &&
+		stage2aRunnerCodeRowsV3(*p.RuntimeV3, inv, p.Node, p.Entry) == nil
 }
 
 // The child grant is A-signed, but R still opens the complete sealed tree and

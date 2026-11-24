@@ -24,7 +24,7 @@ func stage2aLoadInstalledRuntimeV3(key ed25519.PublicKey, hqUID int, epoch,
 	// The stop loader checks the installed A policy against the exact root
 	// owner plan and applied receipt without the legacy positive-start gate.
 	p, raw, err := loadStage2aInstalledPolicyForStop(key, hqUID, epoch, installationID)
-	if err != nil || p.RuntimeV3 == nil {
+	if err != nil || p.RuntimeV3 == nil || !stage2aProtectedPackageMeasurementV3(p) {
 		return empty, errStage2aReservationAuthority
 	}
 	lease, err := time.Parse(time.RFC3339Nano, p.ApprovedUntil)
@@ -59,7 +59,8 @@ func stage2aLoadInstalledRuntimeV3(key ed25519.PublicKey, hqUID int, epoch,
 		inv.InstallationID != installationID || inv.Limits != spec.Limits ||
 		stage2aRuntimeNeedsQualificationV3(inv) != spec.QualificationOnly ||
 		!stage2aRuntimeSourcesMatchInventory(inv, spec.SourceRoots) ||
-		stage2aRecheckVerifiedDomainV3(verified) != nil {
+		stage2aRecheckVerifiedDomainV3(verified) != nil ||
+		!stage2aSelectedCommandRecordedV3(p, inv) {
 		return empty, errStage2aReservationAuthority
 	}
 	return stage2aInstalledRuntimeV3{Policy: p, PolicyRaw: raw,

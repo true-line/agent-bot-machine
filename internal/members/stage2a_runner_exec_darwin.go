@@ -54,7 +54,8 @@ func runStage2aRunner(ctx context.Context, request SoulRunRequest, start SoulSta
 		return harnessRefused
 	}
 	defDigest, _, err := Stage2aDefinitionDigest(definition)
-	if err != nil || defDigest != binding.DefinitionMeasurement {
+	if err != nil || defDigest != binding.DefinitionMeasurement ||
+		!stage2aRunnerPackageMatchesRuntimeV3(runtimeRef, runner, binding, defDigest) {
 		return harnessRefused
 	}
 	pkg := binding.Snapshots.Definition
