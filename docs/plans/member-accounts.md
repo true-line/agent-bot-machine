@@ -735,8 +735,11 @@ implements the exact stock Claude external-file exception recorded in
 [Platform Discussion #124](https://github.com/true-line/agent-bot-platform/discussions/124):
 the selected `runtime/bin/claude` tuple is accepted through the physical
 no-follow observation and copy path, while other external files and the
-separate frozen `Contents/` closure retain their existing bounds. The tuple
-does not grant a start; the paired owner-reviewed plan still pins every byte.
+separate frozen `Contents/` closure retain their existing bounds. The selected
+v3 R inventory row is checked for the same tuple before its release
+manifest, root source and A-sealed snapshot are accepted. Other v3 R rows
+above the ordinary external-file bound refuse. This exception does not grant
+a start; the paired owner-reviewed plan still pins every byte.
 The helper
 does not prove that the projected files or selected process actually have
 those bytes or that the claimed system images are loaded. A protected caller

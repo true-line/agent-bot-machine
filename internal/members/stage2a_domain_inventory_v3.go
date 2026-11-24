@@ -81,6 +81,13 @@ type stage2aDomainInventoryV3 struct {
 	TotalBytes     uint64                         `json:"total_bytes"`
 }
 
+func stage2aApprovedClaudeRuntimeRow(file stage2aDomainFileV3) bool {
+	return file.Path == stage2aClaudeExternalPath && file.ComponentID == "adapter" &&
+		file.ReleasePath == "claude" && file.Kind == "regular" && file.Mode == "0550" &&
+		file.SizeBytes == stage2aClaudeExternalSize &&
+		file.SHA256 == "sha256:"+stage2aClaudeExternalSHA256
+}
+
 func stage2aV3InventoryRecordPath(value string) bool {
 	return len(value) <= 1024 && stage2aRecordPath(value) && stage2aV3InventoryPath.MatchString(value)
 }
@@ -123,6 +130,7 @@ func stage2aDomainInventoryDigestV3(raw []byte) (stage2aDomainInventoryV3, strin
 			file.Path <= previous || seen[folded] ||
 			file.Kind != "regular" || file.Mode != "0440" && file.Mode != "0550" ||
 			file.SizeBytes > inv.Limits.MaxFileBytes || !stage2aPrefixedDigest.MatchString(file.SHA256) ||
+			(inv.Domain == "R-runtime" && file.SizeBytes > stage2aMaxFileBytes && !stage2aApprovedClaudeRuntimeRow(file)) ||
 			!stage2aBindingID.MatchString(file.ComponentID) ||
 			!stage2aV3InventoryRecordPath(file.ReleasePath) ||
 			released[file.ComponentID+"\x00"+strings.ToLower(file.ReleasePath)] {
