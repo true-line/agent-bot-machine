@@ -124,16 +124,52 @@ func machineKeydRegistration(previous []byte, stateDir string) bool {
 			Values []string `xml:"string"`
 		} `xml:"dict>array"`
 	}
-	if xml.Unmarshal(previous, &plist) != nil || len(plist.Arrays) == 0 || len(plist.Arrays[0].Values) != 4 {
+	if xml.Unmarshal(previous, &plist) != nil {
 		return false
 	}
-	bin := plist.Arrays[0].Values[0]
+	var bin string
+	for _, array := range plist.Arrays {
+		values := array.Values
+		if len(values) == 4 && values[1] == "serve" && values[2] == "--state-dir" && values[3] == stateDir {
+			if bin != "" {
+				return false
+			}
+			bin = values[0]
+		}
+	}
 	if !filepath.IsAbs(bin) || filepath.Base(bin) != "agent-bot-keyd" {
 		return false
 	}
 	body := string(previous)
 	// Releases before background login support wrote no session types.
-	return body == keydAgent(stateDir, bin) || body == renderKeydAgent(stateDir, bin, "")
+	return body == keydAgent(stateDir, bin) || body == renderKeydAgent(stateDir, bin, "") ||
+		body == keydAgentSorted(stateDir, bin)
+}
+
+// Some managed pilot registrations were serialized with plist keys sorted by
+// name. Recognize only those exact bytes, with the same program and state
+// directory. Activation still replaces the file with Machine's own template.
+func keydAgentSorted(stateDir, bin string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>%s</string>
+%s	<key>ProgramArguments</key>
+	<array>
+		<string>%s</string>
+		<string>serve</string>
+		<string>--state-dir</string>
+		<string>%s</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+</dict>
+</plist>
+`, darwinKeydServiceLabel, keydSessionTypes, xmlEscape(bin), xmlEscape(stateDir))
 }
 
 type keydUnitPlan struct {
@@ -290,6 +326,46 @@ func darwinAgent(root, executable string) string {
 </dict>
 </plist>
 `, darwinServiceLabel, xmlEscape(executable), xmlEscape(root))
+}
+
+func machineAgentRegistration(body, root, executable string) bool {
+	return body == darwinAgent(root, executable) || body == darwinAgentSorted(root, executable)
+}
+
+// This is the exact alternate order observed in a Machine-managed pilot
+// LaunchAgent. It grants no additional label, command, environment, session
+// type or path. Other serializations remain refused by lifecycle preflight.
+func darwinAgentSorted(root, executable string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>%s</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>%s</string>
+	<key>LimitLoadToSessionType</key>
+	<array>
+		<string>Aqua</string>
+		<string>Background</string>
+		<string>StandardIO</string>
+	</array>
+	<key>ProgramArguments</key>
+	<array>
+		<string>%s</string>
+		<string>daemon</string>
+		<string>run</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+</dict>
+</plist>
+`, xmlEscape(root), darwinServiceLabel, xmlEscape(executable))
 }
 
 // linuxWritablePaths are the only paths ProtectSystem=strict leaves writable:

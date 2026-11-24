@@ -2,6 +2,9 @@ package daemon
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -19,6 +22,68 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+// An explicit, exact-file recovery selector can bridge one manually staged
+// prior Machine keyd into the current adjacent package. It refuses unrelated
+// directories, bytes changed through the post-signature recheck, and any
+// signature outside Machine's bundled keyd requirement. The secure admin
+// account remains trusted after that check; loaded-job and binary readback
+// are required after activation. Normal preflight checks the exact plist and
+// loaded job before replacing either registration.
+func approvedPriorKeyd(prior, current, digest string, uid int) bool {
+	return approvedPriorKeydWithChecks(prior, current, digest, uid, openDeviceKeydParent, verifyDeviceCode)
+}
+
+func approvedPriorKeydWithChecks(prior, current, digest string, uid int,
+	openParent func(string) (*os.File, string, error),
+	verifyCode func(context.Context, string, string, string) error) bool {
+	if !exactKey(digest) || prior == current || filepath.Base(prior) != "agent-bot-keyd" ||
+		filepath.Base(current) != "agent-bot-keyd" || !filepath.IsAbs(prior) ||
+		filepath.Clean(prior) != prior ||
+		filepath.Dir(filepath.Dir(prior)) != filepath.Dir(filepath.Dir(current)) {
+		return false
+	}
+	parent, directory, err := openParent(prior)
+	if err != nil {
+		return false
+	}
+	defer parent.Close()
+	fd, err := unix.Openat(int(parent.Fd()), "agent-bot-keyd", unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return false
+	}
+	f := os.NewFile(uintptr(fd), prior)
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 16<<20 {
+		return false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(stat.Uid) != uid || stat.Mode&07777 != 0700 || stat.Nlink != 1 {
+		return false
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, io.LimitReader(f, 16<<20)); err != nil || hex.EncodeToString(h.Sum(nil)) != digest {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if verifyCode(ctx, directory, "agent-bot-keyd", deviceKeydRequirement) != nil {
+		return false
+	}
+	var named, after unix.Stat_t
+	if unix.Fstatat(int(parent.Fd()), "agent-bot-keyd", &named, unix.AT_SYMLINK_NOFOLLOW) != nil ||
+		unix.Fstat(int(f.Fd()), &after) != nil || named.Dev != stat.Dev || named.Ino != stat.Ino ||
+		after.Dev != stat.Dev || after.Ino != stat.Ino || named.Size != stat.Size || after.Size != stat.Size {
+		return false
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return false
+	}
+	h.Reset()
+	_, err = io.Copy(h, io.LimitReader(f, 16<<20))
+	return err == nil && hex.EncodeToString(h.Sum(nil)) == digest
+}
 
 var macPackagePrefixes = [...]string{"/opt/homebrew", "/usr/local"}
 
@@ -318,7 +383,7 @@ func inspectPackageServices(prefix string, caller Caller, readJob func(int, stri
 
 // Both products use the same keyd label and may select the same binary and
 // arguments. Only Machine's exact plist establishes who installed that job.
-func inspectServiceLifecycle(caller Caller, root, executable, verb string, readJob func(int, string, string) ([]byte, bool, error)) (serviceUnitReview, error) {
+func inspectServiceLifecycle(caller Caller, root, executable, verb string, readJob func(int, string, string) ([]byte, bool, error), priorKeydPath, priorKeydSHA string) (serviceUnitReview, error) {
 	if filepath.Clean(root) != filepath.Clean(caller.RegisteredHome) || !filepath.IsAbs(executable) || filepath.Clean(executable) != executable {
 		return serviceUnitReview{}, errors.New("cannot identify the Machine executable or registered service home")
 	}
@@ -354,6 +419,10 @@ func inspectServiceLifecycle(caller Caller, root, executable, verb string, readJ
 			}
 		}
 		if isKeyd && program == keyd || !isKeyd && program == executable {
+			return true
+		}
+		if isKeyd && verb == "start" && priorKeydSHA != "" && program == priorKeydPath &&
+			approvedPriorKeyd(program, keyd, priorKeydSHA, caller.UID) {
 			return true
 		}
 		for _, prefix := range macPackagePrefixes {
@@ -412,16 +481,30 @@ func inspectUserServices(caller Caller, readJob func(int, string, string) ([]byt
 					Args []string `xml:"string"`
 				} `xml:"dict>array"`
 			}
-			if xml.Unmarshal(data, &plist) != nil || len(plist.Arrays) == 0 || len(plist.Arrays[0].Args) == 0 {
+			if xml.Unmarshal(data, &plist) != nil || len(plist.Arrays) == 0 {
 				return nil, errors.New("preserving an unrecognized Machine LaunchAgent")
 			}
-			program := plist.Arrays[0].Args[0]
+			var program string
+			for _, array := range plist.Arrays {
+				args := array.Args
+				valid := keyd && len(args) == 4 && args[1] == "serve" && args[2] == "--state-dir" && args[3] == state ||
+					!keyd && len(args) == 3 && args[1] == "daemon" && args[2] == "run"
+				if valid {
+					if program != "" {
+						return nil, errors.New("preserving an unrecognized Machine LaunchAgent")
+					}
+					program = args[0]
+				}
+			}
+			if program == "" {
+				return nil, errors.New("preserving an unrecognized Machine LaunchAgent")
+			}
 			var managed bool
 			if keyd {
 				// Installation and removal recognize the same exact Machine releases.
 				managed = machineKeydRegistration(data, state)
 			} else {
-				managed = string(data) == darwinAgent(caller.RegisteredHome, program)
+				managed = machineAgentRegistration(string(data), caller.RegisteredHome, program)
 			}
 			// Identity publishes its own bin/label registration after its plist.
 			// Only a Machine-only teardown can leave that separate service alone.

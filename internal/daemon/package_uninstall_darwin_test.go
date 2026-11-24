@@ -1,6 +1,9 @@
 package daemon
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -15,6 +18,89 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+func TestApprovedPriorKeydExactFileAndRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		mutate     func(t *testing.T, prior string)
+		changeArg  func(prior, current, digest string, uid int) (string, string, string, int)
+		verifyFail bool
+		want       bool
+	}{
+		{name: "exact adjacent signed file", want: true},
+		{name: "wrong digest", changeArg: func(p, c, d string, u int) (string, string, string, int) { return p, c, strings.Repeat("a", 64), u }},
+		{name: "wrong UID", changeArg: func(p, c, d string, u int) (string, string, string, int) { return p, c, d, u + 1 }},
+		{name: "other staging parent", changeArg: func(p, c, d string, u int) (string, string, string, int) {
+			return p, filepath.Join(filepath.Dir(filepath.Dir(c)), "other", "new", "agent-bot-keyd"), d, u
+		}},
+		{name: "wrong basename", changeArg: func(p, c, d string, u int) (string, string, string, int) {
+			return filepath.Join(filepath.Dir(p), "foreign"), c, d, u
+		}},
+		{name: "wrong mode", mutate: func(t *testing.T, p string) {
+			if err := os.Chmod(p, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "symlink leaf", mutate: func(t *testing.T, p string) {
+			if err := os.Rename(p, p+".saved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(p+".saved", p); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "signature refusal", verifyFail: true},
+		{name: "changed content after signature", mutate: nil, changeArg: nil},
+		{name: "replaced inode after signature", mutate: nil, changeArg: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			prior := filepath.Join(root, "stage", "old", "agent-bot-keyd")
+			current := filepath.Join(root, "stage", "new", "agent-bot-keyd")
+			if err := os.MkdirAll(filepath.Dir(prior), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(prior, []byte("signed fixture"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			sum := sha256.Sum256([]byte("signed fixture"))
+			digest := hex.EncodeToString(sum[:])
+			uid := os.Getuid()
+			if tc.mutate != nil {
+				tc.mutate(t, prior)
+			}
+			if tc.changeArg != nil {
+				prior, current, digest, uid = tc.changeArg(prior, current, digest, uid)
+			}
+			openParent := func(path string) (*os.File, string, error) {
+				dir := filepath.Dir(path)
+				f, err := os.Open(dir)
+				return f, dir, err
+			}
+			verify := func(_ context.Context, dir, name, requirement string) error {
+				if dir != filepath.Dir(prior) || name != "agent-bot-keyd" || requirement != deviceKeydRequirement {
+					t.Fatal("changed code-signature target")
+				}
+				switch tc.name {
+				case "changed content after signature":
+					return os.WriteFile(prior, []byte("changed fixture"), 0700)
+				case "replaced inode after signature":
+					if err := os.Rename(prior, prior+".saved"); err != nil {
+						return err
+					}
+					return os.WriteFile(prior, []byte("signed fixture"), 0700)
+				}
+				if tc.verifyFail {
+					return errors.New("invalid signature")
+				}
+				return nil
+			}
+			if got := approvedPriorKeydWithChecks(prior, current, digest, uid, openParent, verify); got != tc.want {
+				t.Fatalf("approvedPriorKeydWithChecks = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
 
 func absentPackageServices() packageObservers {
 	return packageObservers{grantAbsent: func() error { return nil }, job: func(int, string, string) ([]byte, bool, error) { return nil, false, nil }, processes: func(int) ([]byte, error) { return nil, nil }}

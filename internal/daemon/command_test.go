@@ -147,6 +147,20 @@ func TestDaemonUsage(t *testing.T) {
 	}
 }
 
+func TestPriorKeydRecoverySelectorRequiresExactPairAndStart(t *testing.T) {
+	for _, args := range [][]string{
+		{"start", "--prior-keyd-path", "/private/tmp/agent-bot-keyd"},
+		{"start", "--prior-keyd-sha256", strings.Repeat("a", 64)},
+		{"start", "--prior-keyd-path", "relative/agent-bot-keyd", "--prior-keyd-sha256", strings.Repeat("a", 64)},
+		{"stop", "--prior-keyd-path", "/private/tmp/agent-bot-keyd", "--prior-keyd-sha256", strings.Repeat("a", 64)},
+	} {
+		result := run(owner(t.TempDir()), cli.Context{}, args)
+		if result.Diagnostic == nil || result.Diagnostic.ID != diag.Usage {
+			t.Fatalf("%q: expected usage refusal, got %#v", args, result)
+		}
+	}
+}
+
 func TestDaemonPairAndUnpair(t *testing.T) {
 	t.Setenv(channelEnv, t.TempDir())
 	root := t.TempDir()
