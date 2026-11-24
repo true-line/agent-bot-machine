@@ -115,6 +115,9 @@ func TestDarwinAgentIncludesBackgroundSessionAndHome(t *testing.T) {
 }
 
 func TestSortedPilotServiceRegistrationsAreExact(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("exact macOS plist bytes and absolute paths")
+	}
 	const home = "/Users/admin"
 	const machine = "/private/var/db/managed-machine/stage2a-pilot/machine-f19d8303-package/managed-machine"
 	const keyd = "/private/var/db/managed-machine/stage2a-pilot/machine-9776d7d0-package/agent-bot-keyd"

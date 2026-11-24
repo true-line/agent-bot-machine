@@ -199,6 +199,9 @@ func run(deps Deps, ctx cli.Context, args []string) (result cli.Result) {
 		if identitySet && (caller.PrefixOwner == "" || !caller.DarwinAdmin) {
 			return ownerPairRefused("paired foreground startup requires the macOS prefix administrator")
 		}
+		if priorKeydSet && (caller.PrefixOwner == "" || !caller.DarwinAdmin) {
+			return ownerPairRefused("prior keyd recovery requires the macOS Homebrew prefix administrator")
+		}
 		switch verb {
 		case "pair":
 			if enrollSet || owner.pinSet {

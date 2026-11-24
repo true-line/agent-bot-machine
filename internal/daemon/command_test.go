@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/user"
@@ -158,6 +159,38 @@ func TestPriorKeydRecoverySelectorRequiresExactPairAndStart(t *testing.T) {
 		if result.Diagnostic == nil || result.Diagnostic.ID != diag.Usage {
 			t.Fatalf("%q: expected usage refusal, got %#v", args, result)
 		}
+	}
+}
+
+func TestPriorKeydRecoveryRequiresPrefixAdministratorBeforeLifecycle(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		caller Caller
+	}{
+		{name: "no prefix owner", caller: Caller{Username: "admin", UID: 501, DarwinAdmin: true}},
+		{name: "not macOS admin", caller: Caller{Username: "admin", UID: 501, PrefixOwner: "admin"}},
+		{name: "foreign prefix owner", caller: Caller{Username: "admin", UID: 501, PrefixOwner: "other", DarwinAdmin: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			caller := tc.caller
+			caller.Home, caller.RegisteredHome = root, root
+			deps := owner(root)
+			deps.Caller = func() (Caller, error) { return caller, nil }
+			lifecycleEntered := false
+			deps.LockLifecycle = func(string, int) (io.Closer, error) {
+				lifecycleEntered = true
+				return nil, nil
+			}
+			deps.Root = func() (string, error) {
+				lifecycleEntered = true
+				return root, nil
+			}
+			result := run(deps, cli.Context{}, []string{"start", "--prior-keyd-path", "/private/tmp/agent-bot-keyd", "--prior-keyd-sha256", strings.Repeat("a", 64)})
+			if result.Diagnostic == nil || result.Diagnostic.ID != diag.DaemonCallerRefused || lifecycleEntered {
+				t.Fatalf("recovery authorization must refuse before service lifecycle: %#v, entered=%t", result.Diagnostic, lifecycleEntered)
+			}
+		})
 	}
 }
 

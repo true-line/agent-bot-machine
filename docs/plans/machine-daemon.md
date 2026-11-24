@@ -5,7 +5,7 @@ overview: >-
   for macOS, Linux and Windows. It installs only pinned items from the signed
   admin catalog and reports signed status. agent-daemon is the local control
   plane and the only client.
-related_prs: [386, 395, 396, 397, 398, 399, 400, 401, 402, 403, 404, 405, 406, 408, 409, 410, 411, 413, 414, 415, 416, 417, 418, 419, 420, 421, 422, 423, 424, 426, 427, 429]
+related_prs: [386, 395, 396, 397, 398, 399, 400, 401, 402, 403, 404, 405, 406, 408, 409, 410, 411, 413, 414, 415, 416, 417, 418, 419, 420, 421, 422, 423, 424, 426, 427, 429, 719]
 related_issues:
   - true-line/agent-bot-machine#442
   - true-line/agent-bot-machine#446
@@ -439,6 +439,29 @@ no session list. If activation fails after migration, rollback restores that
 previous registration. The native regression test exercises both registration
 formats and checks the restored plist byte for byte.
 
+For a reviewed recovery of an older Machine keyd still registered in an
+adjacent staged package, macOS `daemon start` accepts both
+`--prior-keyd-path ABSOLUTE_PATH` and `--prior-keyd-sha256 SHA256`. This
+selector is limited to `start`; normal service preflight still requires the
+exact Machine and keyd LaunchAgent plists and loaded jobs. Before acquiring
+the service lifecycle lock or changing either unit, the caller must own an
+existing Homebrew prefix and be a macOS administrator. The prior keyd must be
+the exact registered and loaded executable, with a protected no-follow path,
+the administrator's UID, regular 0700 single-link file, the supplied digest,
+and Machine's strict Apple code-signing requirement. Machine rechecks the
+named inode and opened bytes after signature verification. The resulting
+service uses the current bundled keyd; the selector never copies signing
+keys or delegates protected work to another account.
+
+This source permission is separate from permission to run it on a host.
+Recovery replay requires an exact reviewed command, a stopped clone and
+pre-command readback of both plists, loaded jobs, binary paths and hashes,
+PIDs, sockets and health. Collect the same readback after success or failure:
+a health failure can follow activation, and restoring plist bytes alone does
+not prove launchd restored the prior job. If service identity or health is
+uncertain, preserve evidence and restore the verified stopped clone under a
+separately reviewed rollback action.
+
 Acceptance: install and uninstall are idempotent, run from the owner's account,
 and refuse agent accounts, root/SYSTEM, foreign-HOME callers, and a caller
 that does not own the shared prefix when that prefix exists; the AGENTS.md
@@ -450,6 +473,11 @@ before stopping either. It recognizes the exact Machine keyd registration from
 both before and after background login support, including the original state
 directory and executable in the verified package. An independently managed keyd
 makes that check refuse.
+The prior-keyd selector must refuse before lifecycle entry when the prefix
+owner is absent or differs from the caller, or the caller lacks macOS admin
+membership. It must also refuse changed digest, path, ownership, mode, link
+count, signature, post-verification bytes or inode, and unrelated job/plist
+registrations. Acceptance tests exercise exact matching and each refusal.
 The [macOS uninstall procedure](../../README.md#uninstall-on-macos) covers both cases.
 
 On Linux, a brew, an npm and a uv row each install from inside the unit's
