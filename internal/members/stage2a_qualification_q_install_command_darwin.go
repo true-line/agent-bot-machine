@@ -82,7 +82,8 @@ func RunStage2aQualificationQInstall(deps ApplyDeps, args []string) error {
 		candidate.InstallationID != review.InstallationID || candidate.InstalledPlanDigest != review.InstalledPlanDigest ||
 		candidate.TestPlan != review.TestPlan || request.TestProvider.ConfigPath != review.Provider.Path ||
 		request.TestProvider.ConfigSHA != review.Provider.SHA256 ||
-		request.Runner.BinaryPath != plan.Install.Source.Path || request.Runner.BinarySHA != plan.Install.Source.SHA256 {
+		request.Runner.BinaryPath != plan.Install.Source.Path || request.Runner.BinarySHA != plan.Install.Source.SHA256 ||
+		request.Runner.SourcePath == "" || verifyQualificationRunnerReviewFile(request) != nil {
 		return errStage2aReservationAuthority
 	}
 	if review.DriverBaselineOnly {

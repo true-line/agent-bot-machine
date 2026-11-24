@@ -54,6 +54,40 @@ func TestQualificationRequestStrictShape(t *testing.T) {
 	}
 }
 
+func TestQualificationCandidateQRunnerReviewsPendingSource(t *testing.T) {
+	r := validQualificationRequest()
+	r.SchemaVersion = 2
+	r.Candidate = &qualificationCandidatePlan{
+		HostUUID:       "A0000000-0000-0000-0000-000000000001",
+		InstallationID: "inst_0000000000000001", InstalledPlanDigest: strings.Repeat("a", 64),
+		RuntimeInventorySHA: strings.Repeat("b", 64), ComponentID: "adapter",
+		Manifest: qualificationFile{"/private/tmp/manifest.json", strings.Repeat("c", 64)},
+		TestPlan: qualificationFile{"/private/tmp/gate-plan.json", strings.Repeat("d", 64)},
+	}
+	r.Runner.BinaryPath = filepath.Join(stage2aQualificationQHome, "qualification-runner.mjs")
+	r.Runner.SourcePath = "/private/var/db/managed-machine/pending-q/runner.mjs"
+	if err := validateQualificationRequest(r); err != nil {
+		t.Fatalf("reviewed pending Q source refused: %v", err)
+	}
+	f, staged := qualificationRunnerReviewFile(r)
+	if !staged || f.Path != r.Runner.SourcePath || f.SHA256 != r.Runner.BinarySHA {
+		t.Fatal("planner tried to hash the uncreated Q destination")
+	}
+	for name, change := range map[string]func(*QualificationRequest){
+		"missing pending source":    func(v *QualificationRequest) { v.Runner.SourcePath = "" },
+		"source in Q home":          func(v *QualificationRequest) { v.Runner.SourcePath = stage2aQualificationQHome + "/source.mjs" },
+		"source equals destination": func(v *QualificationRequest) { v.Runner.SourcePath = v.Runner.BinaryPath },
+		"alternate destination":     func(v *QualificationRequest) { v.Runner.BinaryPath = "/private/tmp/other.mjs" },
+		"legacy source":             func(v *QualificationRequest) { v.SchemaVersion = 1; v.Candidate = nil },
+	} {
+		bad := r
+		change(&bad)
+		if err := validateQualificationRequest(bad); err == nil {
+			t.Errorf("accepted %s", name)
+		}
+	}
+}
+
 func TestQualificationRequestAcceptsEmptyArgvAndRequiresSingleClosure(t *testing.T) {
 	r := validQualificationRequest()
 	if err := validateQualificationRequest(r); err != nil {

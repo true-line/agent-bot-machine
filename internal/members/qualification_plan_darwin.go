@@ -10,6 +10,19 @@ func verifyQualificationExecutable(path, digest string) error {
 	return verifyHarnessExecutableLimit(path, digest, 2<<30)
 }
 
+func verifyQualificationPendingQSource(f qualificationFile) error {
+	if !qualificationDigest.MatchString(f.SHA256) ||
+		trustedPath(OSHost{}, f.Path, false) != nil ||
+		checkDarwinACLs(pathAncestry(f.Path)) != nil {
+		return errStage2aReservationAuthority
+	}
+	raw, err := stage2aReadInstallSource(f.Path, 256<<10)
+	if err != nil || stage2aQualificationSHA256(raw) != "sha256:"+f.SHA256 {
+		return errStage2aReservationAuthority
+	}
+	return nil
+}
+
 // CheckDarwinHarnessQualification allows the paired HQ to request an owner
 // challenge for an exact review plan. It neither launches the candidate nor
 // treats the owner's approval as a reusable qualification.
@@ -46,8 +59,11 @@ func CheckDarwinHarnessQualification(saved Saved, owner string, uid int) error {
 		return errors.New("saved qualification plan no longer matches its review digest")
 	}
 	r := run.Request
+	if err := verifyQualificationRunnerReviewFile(r); err != nil {
+		return err
+	}
 	files := []qualificationFile{{r.Adapter.PackagePath, r.Adapter.PackageSHA},
-		{r.Runner.BinaryPath, r.Runner.BinarySHA}, {r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA}}
+		{r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA}}
 	for _, input := range r.Adapter.Launch.CodeInputs {
 		files = append(files, qualificationFile{input.Path, input.SHA256})
 	}

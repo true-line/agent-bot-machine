@@ -76,6 +76,7 @@ type QualificationRequest struct {
 		Version    string `json:"version"`
 		BinaryPath string `json:"binary_path"`
 		BinarySHA  string `json:"binary_sha256"`
+		SourcePath string `json:"source_path,omitempty"`
 	} `json:"runner"`
 	TestProvider struct {
 		ID         string `json:"id"`
@@ -104,6 +105,23 @@ func qualificationCandidateFiles(r QualificationRequest) []qualificationFile {
 		return nil
 	}
 	return []qualificationFile{r.Candidate.Manifest, r.Candidate.TestPlan}
+}
+
+// Schema-v2 Q plans review both the intended protected destination and the
+// root-owned pending source. Q's destination is created only at owner apply.
+func qualificationRunnerReviewFile(r QualificationRequest) (qualificationFile, bool) {
+	if r.Runner.SourcePath != "" {
+		return qualificationFile{r.Runner.SourcePath, r.Runner.BinarySHA}, true
+	}
+	return qualificationFile{r.Runner.BinaryPath, r.Runner.BinarySHA}, false
+}
+
+func verifyQualificationRunnerReviewFile(r QualificationRequest) error {
+	f, staged := qualificationRunnerReviewFile(r)
+	if staged {
+		return verifyQualificationPendingQSource(f)
+	}
+	return verifyQualificationFile(f)
 }
 
 type qualificationGate struct {
@@ -218,6 +236,13 @@ func validateQualificationRequest(r QualificationRequest) error {
 			return errors.New("candidate qualification needs the exact designated host, installed plan and sealed runtime")
 		}
 	}
+	qDestination := path.Join(stage2aQualificationQHome, "qualification-runner.mjs")
+	needsPending := r.SchemaVersion == 2 && r.Runner.BinaryPath == qDestination
+	if needsPending != (r.Runner.SourcePath != "") ||
+		(needsPending && (r.Runner.SourcePath == r.Runner.BinaryPath ||
+			strings.HasPrefix(r.Runner.SourcePath, stage2aQualificationQHome+"/"))) {
+		return errors.New("candidate Q runner requires a separate reviewed pending source")
+	}
 	for _, s := range textFields {
 		if strings.TrimSpace(s) == "" || hasASCIIControl(s) || len(s) > 256 {
 			return errors.New("qualification identity fields must be nonempty single-line values of at most 256 bytes")
@@ -229,6 +254,9 @@ func validateQualificationRequest(r QualificationRequest) error {
 		{r.Adapter.Harness.BinaryPath, r.Adapter.Harness.BinarySHA},
 		{r.Runner.BinaryPath, r.Runner.BinarySHA},
 		{r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA},
+	}
+	if needsPending {
+		files = append(files, qualificationFile{r.Runner.SourcePath, r.Runner.BinarySHA})
 	}
 	files = append(files, qualificationCandidateFiles(r)...)
 	for label, artifact := range map[string]qualificationFile{"code input manifest": r.Adapter.Launch.CodeInputManifest, "driver": r.Adapter.Launch.Driver} {
@@ -278,8 +306,11 @@ func qualificationRunPlan(raw []byte, r QualificationRequest, h Host) (Plan, *Qu
 	if err := checkQualificationRole(r.Target.Account, r.Target.UID, h); err != nil {
 		return Plan{}, nil, err
 	}
+	if err := verifyQualificationRunnerReviewFile(r); err != nil {
+		return Plan{}, nil, err
+	}
 	files := []qualificationFile{{r.Adapter.PackagePath, r.Adapter.PackageSHA},
-		{r.Runner.BinaryPath, r.Runner.BinarySHA}, {r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA}}
+		{r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA}}
 	for _, f := range append(files, qualificationCandidateFiles(r)...) {
 		if err := verifyQualificationFile(f); err != nil {
 			return Plan{}, nil, err

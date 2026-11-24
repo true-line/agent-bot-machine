@@ -377,6 +377,17 @@ command to execute. Large code closures may be represented by one pinned
 manifest artifact. The eventual runner must verify the installed tree against
 that manifest before executing it.
 
+For schema-v2 candidate Q setup, `runner.binary_path` is the fixed future
+`qualification-q/qualification-runner.mjs` destination and `runner.source_path`
+is a separate pending root-owned source outside Q home. Planning and the
+paired owner challenge rehash that source through a bounded no-follow read
+with trusted ancestry and ACL checks; the saved plan binds both paths and the
+same SHA-256. Owner Q install rechecks the pending source and embedded runner
+bytes against the saved digest, refuses an occupied Q destination, and creates
+Q home itself. Schema-v1 requests and other runner paths retain their existing
+file verification. The pending source must remain available until the one-use
+candidate admission rechecks the saved plan.
+
 This command only reviews and saves inputs. It does not run tests, issue a
 qualification, authorize installation, or open a persistent launch grant.
 `members apply` rejects this purpose before any host or approval work. The
