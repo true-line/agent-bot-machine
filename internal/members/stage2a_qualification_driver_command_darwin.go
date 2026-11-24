@@ -27,7 +27,7 @@ func RunStage2aQualificationOwnerDriver() error {
 	}
 	account, err := user.LookupId(strconv.Itoa(install.AdminUID))
 	self, selfErr := os.Executable()
-	if err != nil || selfErr != nil || self != review.Executable.Path || review.Socket != stage2aQualificationDriverPath(account.HomeDir) ||
+	if err != nil || selfErr != nil || self != review.Executable.Path || review.Socket != stage2aQualificationDriverPath(account.HomeDir, install.Review.InstallationID) ||
 		len(review.AuthorityArgv) == 0 || review.AuthorityArgv[0] != review.Authority.Path ||
 		verifyStage2aDriverAuthorityImage(review.Authority, install.AdminUID) != nil ||
 		!slices.Equal(os.Args, review.Argv) || verifyQualificationExecutable(review.Executable.Path, review.Executable.SHA256) != nil {

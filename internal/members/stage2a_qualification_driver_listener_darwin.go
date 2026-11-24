@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net"
@@ -18,7 +19,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const stage2aQualificationDriverSocketName = "qualification-driver.sock"
+func stage2aQualificationDriverSocketName(installationID string) string {
+	sum := sha256.Sum256([]byte("agent-bot-machine/stage2a-qualification-driver-installation/v1\x00" + installationID))
+	return fmt.Sprintf("qd-%x.sock", sum[:16])
+}
 
 // A owns this transport inside its existing private Machine state directory.
 // Creating a listener conveys no Q permission, observation verdict, or T credit.
@@ -41,13 +45,13 @@ type stage2aQualificationDriverPeer struct {
 	argv     []string
 }
 
-func stage2aQualificationDriverPath(home string) string {
-	return filepath.Join(home, ".config", "agent-machine", stage2aQualificationDriverSocketName)
+func stage2aQualificationDriverPath(home, installationID string) string {
+	return filepath.Join(home, ".config", "agent-machine", stage2aQualificationDriverSocketName(installationID))
 }
 
 // The caller must supply A's installed account identity and the exact
 // owner-reviewed driver executable/argv. The peer is authenticated at accept.
-func newStage2aQualificationDriverListener(adminHome string, adminUID, adminGID int) (*stage2aQualificationDriverListener, error) {
+func newStage2aQualificationDriverListener(adminHome, installationID string, adminUID, adminGID int) (*stage2aQualificationDriverListener, error) {
 	if os.Getuid() <= 0 || os.Getuid() != os.Geteuid() || os.Getuid() != adminUID ||
 		os.Getgid() != os.Getegid() || os.Getgid() != adminGID ||
 		adminHome == "" || filepath.Clean(adminHome) != adminHome || !filepath.IsAbs(adminHome) {
@@ -57,7 +61,8 @@ func newStage2aQualificationDriverListener(adminHome string, adminUID, adminGID 
 	if err != nil || account.HomeDir != adminHome || account.Gid != strconv.Itoa(adminGID) {
 		return nil, errStage2aReservationAuthority
 	}
-	path := stage2aQualificationDriverPath(adminHome)
+	path := stage2aQualificationDriverPath(adminHome, installationID)
+	name := stage2aQualificationDriverSocketName(installationID)
 	// Darwin's sockaddr_un.sun_path holds 104 bytes including the NUL.
 	if len(path) >= 104 {
 		return nil, errStage2aReservationAuthority
@@ -75,7 +80,7 @@ func newStage2aQualificationDriverListener(adminHome string, adminUID, adminGID 
 		return nil, errStage2aReservationAuthority
 	}
 	var prior unix.Stat_t
-	if err := unix.Fstatat(int(dir.Fd()), stage2aQualificationDriverSocketName, &prior, unix.AT_SYMLINK_NOFOLLOW); err != unix.ENOENT {
+	if err := unix.Fstatat(int(dir.Fd()), name, &prior, unix.AT_SYMLINK_NOFOLLOW); err != unix.ENOENT {
 		return nil, errStage2aReservationAuthority
 	}
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
@@ -93,7 +98,7 @@ func newStage2aQualificationDriverListener(adminHome string, adminUID, adminGID 
 	// no-follow leaf relative to the held directory, never a substituted
 	// symlink target outside it. The subsequent identity/probe checks still
 	// require the pathname to reach this listener.
-	if unix.Fchmodat(int(dir.Fd()), stage2aQualificationDriverSocketName, 0600, unix.AT_SYMLINK_NOFOLLOW) != nil {
+	if unix.Fchmodat(int(dir.Fd()), name, 0600, unix.AT_SYMLINK_NOFOLLOW) != nil {
 		return closeOnFailure()
 	}
 	var socket unix.Stat_t
