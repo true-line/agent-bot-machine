@@ -123,8 +123,18 @@ func (s *Stage2aService) armStage2aT03(hqUID int, epoch string, q Stage2aT03ArmR
 }
 
 func (s *Stage2aService) checkStage2aT03Sibling(p stage2aT03Review, primary SoulRunner, hqUID int, epoch string) error {
-	if p.SiblingInstallationID == primary.InstallationID || p.SiblingUID == primary.UID {
+	sibling, err := s.findStage2aT03Sibling(p, primary, hqUID, epoch)
+	if err != nil || sibling.t03SiblingWitness == nil || sibling.t03SiblingWitness.First == nil ||
+		sibling.t03SiblingWitness.ExpectedDigest != p.SiblingCredentialMetadataSHA256 ||
+		sibling.t03SiblingWitness.Path != p.SiblingPath {
 		return errStage2aReservationAuthority
+	}
+	return nil
+}
+
+func (s *Stage2aService) findStage2aT03Sibling(p stage2aT03Review, primary SoulRunner, hqUID int, epoch string) (*stage2aLiveReservation, error) {
+	if p.SiblingInstallationID == primary.InstallationID || p.SiblingUID == primary.UID {
+		return nil, errStage2aReservationAuthority
 	}
 	accountName := soulRunnerName(p.SiblingInstallationID)
 	account, exists, err := (OSHost{}).Account(accountName)
@@ -132,16 +142,16 @@ func (s *Stage2aService) checkStage2aT03Sibling(p stage2aT03Review, primary Soul
 	if err != nil || !exists || account.DarwinRole != darwinSoulRunnerRoleName ||
 		account.UID != p.SiblingUID || account.GID != p.SiblingUID || account.Home != home ||
 		account.Shell != DarwinNoLoginShell {
-		return errStage2aReservationAuthority
+		return nil, errStage2aReservationAuthority
 	}
 	childState := filepath.Join(home, "state", "child-"+soulEndpointStartSlot(p.SiblingInstallationID, p.SiblingStartID))
 	if !strings.HasPrefix(p.SiblingPath, childState+"/") {
-		return errStage2aReservationAuthority
+		return nil, errStage2aReservationAuthority
 	}
 	var st unix.Stat_t
 	if unix.Lstat(home, &st) != nil || st.Uid != uint32(p.SiblingUID) || st.Gid != uint32(p.SiblingUID) ||
 		st.Mode != unix.S_IFDIR|0700 || checkDarwinACLs([]string{home}) != nil {
-		return errStage2aReservationAuthority
+		return nil, errStage2aReservationAuthority
 	}
 	for _, sibling := range s.active {
 		a := sibling.payload.Assignment
@@ -152,10 +162,10 @@ func (s *Stage2aService) checkStage2aT03Sibling(p stage2aT03Review, primary Soul
 			len(sibling.childReceiptEnvelope) != 0 && sibling.childPID > 1 &&
 			checkStage2aGrantedRoleProcess(sibling.childLauncherPID, a.RunnerUID, a.RunnerGID, "child", sibling.childLauncherProcess) == nil &&
 			checkStage2aGrantedRoleProcess(sibling.bridgePID, a.BridgeUID, a.BridgeGID, "bridge", sibling.bridgeProcess) == nil {
-			return nil
+			return sibling, nil
 		}
 	}
-	return errStage2aReservationAuthority
+	return nil, errStage2aReservationAuthority
 }
 
 func loadStage2aT03Review(testPlan qualificationFile) (stage2aT03Review, error) {

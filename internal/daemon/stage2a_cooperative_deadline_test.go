@@ -25,3 +25,26 @@ func TestCooperativeContainmentDeadlineIsBoundedWithoutChangingOtherVerbs(t *tes
 		}
 	}
 }
+
+func TestCooperativeQualificationVerbsReachStage2aHandler(t *testing.T) {
+	h := Hooks{Stage2a: func(Request) Response { return Response{OK: true, State: "routed"} }}
+	for _, verb := range []string{stage2aCooperativeQBeginVerb, stage2aCooperativeQFinishVerb,
+		stage2aCooperativeQWitnessBeginVerb, stage2aCooperativeQWitnessFinishVerb} {
+		if !knownVerb(verb) {
+			t.Fatalf("%s was rejected before dispatch", verb)
+		}
+		if got := h.reply(Request{Verb: verb}); !got.OK || got.State != "routed" {
+			t.Fatalf("%s did not reach Stage2a: %+v", verb, got)
+		}
+	}
+}
+
+func TestT03SiblingWitnessVerbReachesStage2aHandler(t *testing.T) {
+	h := Hooks{Stage2a: func(Request) Response { return Response{OK: true, State: "routed"} }}
+	if !knownVerb(stage2aT03SiblingWitnessVerb) || !isStage2aVerb(stage2aT03SiblingWitnessVerb) {
+		t.Fatal("sibling witness verb is unavailable to the paired Machine channel")
+	}
+	if got := h.reply(Request{Verb: stage2aT03SiblingWitnessVerb}); !got.OK || got.State != "routed" {
+		t.Fatalf("sibling witness did not reach Stage2a: %+v", got)
+	}
+}

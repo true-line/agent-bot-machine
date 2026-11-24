@@ -106,3 +106,56 @@ type Stage2aT03ProbeAttempt struct {
 	StartedAtMS          int64  `json:"started_at_ms"`
 	FinishedAtMS         int64  `json:"finished_at_ms"`
 }
+
+// A asks only the already launched sibling R child to observe its own private
+// credential canary. The signed Live lease binds the path and short challenge.
+type Stage2aT03SiblingCredentialProbe struct {
+	Schema                   string `json:"schema"`
+	ChallengeBase64URL       string `json:"challenge_base64url"`
+	PrimaryReservationSHA256 string `json:"primary_reservation_sha256"`
+	SiblingReservationSHA256 string `json:"sibling_reservation_sha256"`
+	SiblingInstallationID    string `json:"sibling_installation_id"`
+	SiblingStartID           string `json:"sibling_start_id"`
+	ChildReceiptSHA256       string `json:"child_receipt_sha256"`
+	LeaseSequence            uint64 `json:"lease_sequence"`
+	CredentialPath           string `json:"credential_path"`
+	ExpiresAtMS              int64  `json:"expires_at_ms"`
+}
+
+type Stage2aT03CredentialMetadata struct {
+	Schema        string `json:"schema"`
+	Path          string `json:"path"`
+	Device        string `json:"device"`
+	Inode         string `json:"inode"`
+	Generation    string `json:"generation"`
+	UID           uint32 `json:"uid"`
+	GID           uint32 `json:"gid"`
+	Mode          string `json:"mode"`
+	SizeBytes     string `json:"size_bytes"`
+	BirthSeconds  string `json:"birth_seconds"`
+	BirthNanos    string `json:"birth_nanos"`
+	ModifySeconds string `json:"modify_seconds"`
+	ModifyNanos   string `json:"modify_nanos"`
+	ChangeSeconds string `json:"change_seconds"`
+	ChangeNanos   string `json:"change_nanos"`
+}
+
+type Stage2aT03SiblingCredentialWitness struct {
+	Schema                   string                       `json:"schema"`
+	ChallengeBase64URL       string                       `json:"challenge_base64url"`
+	PrimaryReservationSHA256 string                       `json:"primary_reservation_sha256"`
+	SiblingReservationSHA256 string                       `json:"sibling_reservation_sha256"`
+	SiblingInstallationID    string                       `json:"sibling_installation_id"`
+	SiblingStartID           string                       `json:"sibling_start_id"`
+	ChildReceiptSHA256       string                       `json:"child_receipt_sha256"`
+	LeaseSequence            uint64                       `json:"lease_sequence"`
+	CredentialPath           string                       `json:"credential_path"`
+	Metadata                 Stage2aT03CredentialMetadata `json:"metadata"`
+	MetadataSHA256           string                       `json:"metadata_sha256"`
+	ObservedAtMS             int64                        `json:"observed_at_ms"`
+}
+
+type Stage2aT03SiblingCredentialWitnessRequest struct {
+	Stage2aStopRequest
+	Witness Stage2aT03SiblingCredentialWitness `json:"witness"`
+}

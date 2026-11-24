@@ -131,7 +131,47 @@ func TestStage2aT03DenialClassificationRequiresTargetAndConnect(t *testing.T) {
 		}
 	}
 	if errno, seen, class := stage2aT03ClassifyDenial("ipv4", "http://127.0.0.1:55111", nil,
-		[]byte("connect http://127.0.0.1:55112: operation not permitted")); errno != "EPERM" || seen || class != "connect_denied" {
+		[]byte("connect http://127.0.0.1:55112: operation not permitted")); errno != "" || seen || class != "unclassified" {
 		t.Fatalf("different target misclassified: %q %v %q", errno, seen, class)
+	}
+	for _, output := range []struct{ stdout, stderr string }{
+		{"http://127.0.0.1:55111\nconnect http://127.0.0.1:55112: EPERM", ""},
+		{"http://127.0.0.1:55111", "connect http://127.0.0.1:55112: EACCES"},
+		{"connect http://127.0.0.1:55111: EPERM and EACCES", ""},
+	} {
+		if errno, seen, class := stage2aT03ClassifyDenial("ipv4", "http://127.0.0.1:55111",
+			[]byte(output.stdout), []byte(output.stderr)); errno != "" || seen || class != "unclassified" {
+			t.Fatalf("mixed or ambiguous output counted as target denial: %q %v %q", errno, seen, class)
+		}
+	}
+}
+
+func TestStage2aT03SiblingCredentialProbeBindsSignedChildLease(t *testing.T) {
+	in, lease, _ := testStage2aT03Probe(t)
+	p := Stage2aT03SiblingCredentialProbe{
+		Schema:                   "agent-bot-machine/stage2a-t03-sibling-credential-probe/v1",
+		ChallengeBase64URL:       base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+		PrimaryReservationSHA256: "sha256:" + strings.Repeat("e", 64),
+		SiblingReservationSHA256: lease.ReservationSHA256,
+		SiblingInstallationID:    in.Request.InstallationID, SiblingStartID: in.Request.StartID,
+		ChildReceiptSHA256: lease.ChildReceiptSHA256, LeaseSequence: lease.Sequence,
+		CredentialPath: "/private/var/agent-bot/soul-one/state/credential", ExpiresAtMS: lease.ExpiresAtMS,
+	}
+	if !validStage2aT03SiblingCredentialProbe(p, lease, in, lease.ChildReceiptSHA256) {
+		t.Fatal("matching sibling probe refused")
+	}
+	for _, mutate := range []func(*Stage2aT03SiblingCredentialProbe){
+		func(v *Stage2aT03SiblingCredentialProbe) {
+			v.CredentialPath = "/private/var/agent-bot/other/credential"
+		},
+		func(v *Stage2aT03SiblingCredentialProbe) { v.LeaseSequence++ },
+		func(v *Stage2aT03SiblingCredentialProbe) { v.ChildReceiptSHA256 = v.PrimaryReservationSHA256 },
+		func(v *Stage2aT03SiblingCredentialProbe) { v.ExpiresAtMS++ },
+	} {
+		bad := p
+		mutate(&bad)
+		if validStage2aT03SiblingCredentialProbe(bad, lease, in, lease.ChildReceiptSHA256) {
+			t.Fatal("unbound sibling probe accepted")
+		}
 	}
 }

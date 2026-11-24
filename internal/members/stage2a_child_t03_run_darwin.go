@@ -78,6 +78,15 @@ func (c *stage2aT03ProbeCoordinator) onLease(lease Stage2aLiveLeasePayload) erro
 	if c.ctx.Err() != nil || time.Now().UnixMilli() >= lease.ExpiresAtMS {
 		return errStage2aReservationAuthority
 	}
+	if lease.T03SiblingCredentialProbe != nil {
+		if lease.T03Probe != nil || lease.T03ProbeGo != nil || c.directive != nil ||
+			!validStage2aT03SiblingCredentialProbe(*lease.T03SiblingCredentialProbe, lease,
+				c.in, c.receiptSHA256) {
+			return errStage2aReservationAuthority
+		}
+		probe := *lease.T03SiblingCredentialProbe
+		go c.reportSiblingCredential(probe)
+	}
 	if lease.T03Probe != nil {
 		if c.directive != nil || c.in.ChildExec == nil || c.in.ChildExec.RuntimeV3 == nil {
 			return errStage2aReservationAuthority
@@ -120,6 +129,51 @@ func (c *stage2aT03ProbeCoordinator) onLease(lease Stage2aLiveLeasePayload) erro
 		}
 	}
 	return nil
+}
+
+func validStage2aT03SiblingCredentialProbe(p Stage2aT03SiblingCredentialProbe,
+	lease Stage2aLiveLeasePayload, in Stage2aRoleInvocation, childReceipt string) bool {
+	if in.ChildExec == nil || p.Schema != "agent-bot-machine/stage2a-t03-sibling-credential-probe/v1" ||
+		!validStage2aLiveChallenge(p.ChallengeBase64URL) ||
+		!stage2aPrefixedDigest.MatchString(p.PrimaryReservationSHA256) ||
+		p.SiblingReservationSHA256 != in.ChildExec.ReservationSHA256 ||
+		p.SiblingInstallationID != in.Request.InstallationID || p.SiblingStartID != in.Request.StartID ||
+		p.ChildReceiptSHA256 != childReceipt || lease.ChildReceiptSHA256 != childReceipt ||
+		p.LeaseSequence != lease.Sequence || p.ExpiresAtMS != lease.ExpiresAtMS ||
+		!stage2aAbsolutePath(p.CredentialPath) {
+		return false
+	}
+	childState := filepath.Dir(in.ChildExec.Workdir)
+	return strings.HasPrefix(p.CredentialPath, childState+"/") && len(p.CredentialPath) <= 512
+}
+
+func (c *stage2aT03ProbeCoordinator) reportSiblingCredential(p Stage2aT03SiblingCredentialProbe) {
+	if c.ctx.Err() != nil || time.Now().UnixMilli() >= p.ExpiresAtMS {
+		c.cancel()
+		return
+	}
+	meta, digest, err := observeStage2aT03Credential(darwinSoulRunnerHome(c.in.Runner.Account),
+		p.CredentialPath, uint32(c.in.Runner.UID), uint32(c.in.Runner.GID))
+	if err != nil || c.ctx.Err() != nil || time.Now().UnixMilli() >= p.ExpiresAtMS {
+		c.cancel()
+		return
+	}
+	witness := Stage2aT03SiblingCredentialWitness{
+		Schema:                   "agent-bot-machine/stage2a-t03-sibling-credential-witness/v1",
+		ChallengeBase64URL:       p.ChallengeBase64URL,
+		PrimaryReservationSHA256: p.PrimaryReservationSHA256,
+		SiblingReservationSHA256: p.SiblingReservationSHA256,
+		SiblingInstallationID:    p.SiblingInstallationID, SiblingStartID: p.SiblingStartID,
+		ChildReceiptSHA256: p.ChildReceiptSHA256, LeaseSequence: p.LeaseSequence,
+		CredentialPath: p.CredentialPath, Metadata: meta, MetadataSHA256: digest,
+		ObservedAtMS: time.Now().UnixMilli(),
+	}
+	if c.reporter.write(struct {
+		Kind    string                             `json:"kind"`
+		Witness Stage2aT03SiblingCredentialWitness `json:"witness"`
+	}{"t03-sibling-credential-witness", witness}) != nil {
+		c.cancel()
+	}
 }
 
 func (c *stage2aT03ProbeCoordinator) stopped(timeout time.Duration) bool {
@@ -359,17 +413,25 @@ released:
 }
 
 func stage2aT03ClassifyDenial(kind, target string, stdout, stderr []byte) (string, bool, string) {
-	text := strings.ToLower(string(stdout) + "\n" + string(stderr))
-	errno := ""
-	if strings.Contains(text, "eperm") || strings.Contains(text, "operation not permitted") {
-		errno = "EPERM"
+	// One bounded output line is one denial record. A target printed elsewhere
+	// (including the other stream) cannot corroborate an unrelated error.
+	want := strings.ToLower(target)
+	for _, stream := range [][]byte{stdout, stderr} {
+		for _, raw := range strings.Split(string(stream), "\n") {
+			line := strings.ToLower(strings.TrimSuffix(raw, "\r"))
+			if !strings.Contains(line, want) || !strings.Contains(line, "connect") {
+				continue
+			}
+			perm := strings.Contains(line, "eperm") || strings.Contains(line, "operation not permitted")
+			access := strings.Contains(line, "eacces") || strings.Contains(line, "permission denied")
+			if perm == access { // no errno, or ambiguous errno
+				continue
+			}
+			if perm {
+				return "EPERM", true, "connect_denied"
+			}
+			return "EACCES", true, "connect_denied"
+		}
 	}
-	if strings.Contains(text, "eacces") || strings.Contains(text, "permission denied") {
-		errno = "EACCES"
-	}
-	class := "unclassified"
-	if errno != "" && strings.Contains(text, "connect") {
-		class = "connect_denied"
-	}
-	return errno, strings.Contains(text, strings.ToLower(target)), class
+	return "", false, "unclassified"
 }

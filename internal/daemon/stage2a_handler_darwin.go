@@ -151,6 +151,17 @@ func stage2aHandlerWithService(service *members.Stage2aService, dir, account str
 			body = struct {
 				SHA256 string `json:"sha256"`
 			}{digest}
+		case stage2aT03SiblingWitnessVerb:
+			state = "t03-sibling-credential-witnessed"
+			var digest string
+			var sequence uint64
+			digest, sequence, err = service.Stage2aT03AcceptSiblingWitness(req.peerUID, req.stage2aEpoch,
+				req.stage2aT03SiblingWitness)
+			body = struct {
+				Accepted       bool   `json:"accepted"`
+				MetadataSHA256 string `json:"metadata_sha256"`
+				LeaseSequence  uint64 `json:"lease_sequence"`
+			}{err == nil, digest, sequence}
 		case stage2aLiveVerb:
 			state = "live"
 			body, err = service.Live(req.peerUID, req.stage2aEpoch, req.stage2aLive)

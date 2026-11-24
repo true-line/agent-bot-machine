@@ -60,6 +60,7 @@ type stage2aLiveReservation struct {
 	t03Pending           *stage2aT03Pending
 	t03Positive          *Stage2aT03ArmRequest
 	t03PositivePeer      *stage2aT03PeerWitness
+	t03SiblingWitness    *stage2aT03SiblingWitnessState
 	hello                *stage2aHelloState
 	qT03                 *stage2aPendingT03
 }

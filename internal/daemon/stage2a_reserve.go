@@ -23,6 +23,7 @@ const stage2aLiveVerb = "stage2a-live"
 const stage2aT03PositiveVerb = "stage2a-t03-positive"
 const stage2aT03ReadyVerb = "stage2a-t03-ready"
 const stage2aT03CompleteVerb = "stage2a-t03-complete"
+const stage2aT03SiblingWitnessVerb = "stage2a-t03-sibling-credential-witness"
 const stage2aProviderVerb = "stage2a-provider"
 const stage2aChildReadyVerb = "stage2a-child-ready"
 const stage2aHelloStartVerb = "stage2a-hello-start"
@@ -55,7 +56,7 @@ type stage2aExecRequest struct {
 
 func isStage2aVerb(verb string) bool {
 	return verb == stage2aReserveVerb || verb == stage2aExecVerb || verb == stage2aT03PositiveVerb ||
-		verb == stage2aT03ReadyVerb || verb == stage2aT03CompleteVerb ||
+		verb == stage2aT03ReadyVerb || verb == stage2aT03CompleteVerb || verb == stage2aT03SiblingWitnessVerb ||
 		verb == stage2aVerifyBVerb || verb == stage2aLookupVerb || verb == stage2aListVerb || verb == stage2aPrepareBVerb || verb == stage2aStopVerb || verb == stage2aFinalizeBVerb || verb == stage2aLiveVerb || verb == stage2aProviderVerb || verb == stage2aChildReadyVerb ||
 		verb == stage2aHelloStartVerb || verb == stage2aHelloFinalizeVerb || verb == stage2aHelloAbortVerb ||
 		verb == stage2aPeerRoleVerb || verb == stage2aCooperativeReserveVerb ||
@@ -260,6 +261,14 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 			return diag.DaemonUndeclared, "invalid protected T03 completion record"
 		}
 		req.stage2aT03Complete = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aT03SiblingWitnessVerb {
+		parsed, err := members.ParseStage2aT03SiblingCredentialWitnessRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid protected T03 sibling credential witness"
+		}
+		req.stage2aT03SiblingWitness = parsed
 		return "", ""
 	}
 	if req.Verb == stage2aLiveVerb {

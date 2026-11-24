@@ -20,9 +20,28 @@ func (s *Stage2aService) captureStage2aT03(ctx context.Context, hqUID int, epoch
 	if err != nil {
 		return evidence, err
 	}
+	if err := paired(func() error {
+		return s.prepareStage2aT03SiblingWitness(hqUID, epoch, q, review, command.Challenge)
+	}); err != nil {
+		return evidence, err
+	}
+	defer s.clearStage2aT03SiblingWitness(q.ReservationSHA256, review, command.Challenge)
 	positive, err := s.waitStage2aT03Positive(ctx, hqUID, epoch, q)
 	if err != nil {
 		return evidence, err
+	}
+	witnessDeadline := time.UnixMilli(positive.Receipt.CompletedAtMS).Add(stage2aT03ReceiptLifetime)
+	witnessTicker := time.NewTicker(50 * time.Millisecond)
+	defer witnessTicker.Stop()
+	for !s.stage2aT03SiblingFirstWitness(hqUID, epoch, q, review, command.Challenge) {
+		if !time.Now().Before(witnessDeadline) {
+			return evidence, errStage2aReservationAuthority
+		}
+		select {
+		case <-ctx.Done():
+			return evidence, ctx.Err()
+		case <-witnessTicker.C:
+		}
 	}
 	err = paired(func() error { return s.armStage2aT03(hqUID, epoch, positive, command, review) })
 	if err != nil {
