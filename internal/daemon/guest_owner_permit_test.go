@@ -1,0 +1,132 @@
+package daemon
+
+import (
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/qwts/managed-machine/internal/members"
+)
+
+func TestGuestOwnerPermitActionIncludesSafeRetirement(t *testing.T) {
+	if !guestOwnerPermitAction(members.SoulProtectedLaunchRetirePurpose) ||
+		guestOwnerPermitAction(members.UpgradePurpose) ||
+		guestOwnerPermitAction("arbitrary") {
+		t.Fatal("guest permit action scope changed")
+	}
+}
+
+func guestPermitFixture(t *testing.T, now time.Time) (ed25519.PrivateKey, string, []byte, GuestTartObservation) {
+	t.Helper()
+	guestPub, guestPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerPublic := base64.StdEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), owner.X, owner.Y))
+	plan := "{\"purpose\":\"soul-runner-provision\",\"version\":3}\n"
+	digest := sha256.Sum256([]byte(plan))
+	body, err := json.Marshal(map[string]any{
+		"action": "soul-runner-provision", "machine_key": hex.EncodeToString(guestPub),
+		"hq_key": "1" + hex.EncodeToString(make([]byte, 31)) + "1", "owner_key": ownerPublic,
+		"plan_id": "plan-20260101T000000Z-abcd", "plan_digest": hex.EncodeToString(digest[:]),
+		"nonce": hex.EncodeToString(make([]byte, 32)), "expires_at": now.Unix() + 90,
+		"plan_canonical": plan,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := Response{OK: true, State: "challenged", Body: body,
+		Timestamp: now.Unix(), Nonce: "response-nonce", RequestNonce: "request-nonce"}
+	signResponse(guestPrivate, &frame)
+	line, err := json.Marshal(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line = append(line, '\n')
+	return guestPrivate, ownerPublic, line,
+		GuestTartObservation{VMName: "stage2a-rehearsal", MAC: "02:00:00:00:00:01", Build: "25G83",
+			WrapperSHA: hex.EncodeToString(make([]byte, 32)), AppSHA: hex.EncodeToString(make([]byte, 32)), Machine: guestPub}
+}
+
+func TestGuestOwnerPermitBindsIndependentTartKeyAndExactChallenge(t *testing.T) {
+	now := time.Unix(1795503600, 0)
+	_, owner, challenge, observed := guestPermitFixture(t, now)
+	hostPublic, hostPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permit, err := issueGuestOwnerPermit(hostPrivate, owner, challenge, observed, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if permit.HostMachineKey != hex.EncodeToString(hostPublic) || permit.GuestMachineKey != hex.EncodeToString(observed.Machine) ||
+		permit.Action != "soul-runner-provision" || permit.PlanID != "plan-20260101T000000Z-abcd" ||
+		permit.ExpiresAt != now.Unix()+90 || permit.GuestVMMAC != observed.MAC {
+		t.Fatalf("permit lost exact binding: %+v", permit)
+	}
+	sig, err := base64.StdEncoding.DecodeString(permit.Signature)
+	if err != nil || !ed25519.Verify(hostPublic, permit.signedBytes(), sig) {
+		t.Fatal("host permit signature failed")
+	}
+	challengeHash := sha256.Sum256(challenge[:len(challenge)-1])
+	if permit.ChallengeSHA256 != hex.EncodeToString(challengeHash[:]) {
+		t.Fatal("permit omitted exact signed frame digest")
+	}
+	changed := permit
+	changed.PlanDigest = hex.EncodeToString(make([]byte, 32))
+	if ed25519.Verify(hostPublic, changed.signedBytes(), sig) {
+		t.Fatal("changed plan retained host signature")
+	}
+	changed = permit
+	changed.TartWrapperSHA = hex.EncodeToString(make([]byte, 32))
+	changed.TartWrapperSHA = "1" + changed.TartWrapperSHA[1:]
+	if ed25519.Verify(hostPublic, changed.signedBytes(), sig) {
+		t.Fatal("changed Tart wrapper retained host signature")
+	}
+}
+
+func TestGuestOwnerPermitRefusesUnobservedOrChangedGuest(t *testing.T) {
+	now := time.Unix(1795503600, 0)
+	_, owner, challenge, observed := guestPermitFixture(t, now)
+	_, host, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong := observed
+	wrong.Machine = ed25519.PublicKey(make([]byte, ed25519.PublicKeySize))
+	if _, err := issueGuestOwnerPermit(host, owner, challenge, wrong, now); err == nil {
+		t.Fatal("unobserved guest key accepted")
+	}
+	if _, err := issueGuestOwnerPermit(host, "different-owner", challenge, observed, now); err == nil {
+		t.Fatal("other owner accepted")
+	}
+	if _, err := issueGuestOwnerPermit(host, owner, challenge, observed, now.Add(91*time.Second)); err == nil {
+		t.Fatal("expired challenge accepted")
+	}
+	changed := append([]byte(nil), challenge...)
+	for i := range changed {
+		if changed[i] == '1' {
+			changed[i] = '2'
+			break
+		}
+	}
+	if _, err := issueGuestOwnerPermit(host, owner, changed, observed, now); err == nil {
+		t.Fatal("changed signed challenge accepted")
+	}
+	wrong = observed
+	wrong.MAC = "invalid"
+	if _, err := issueGuestOwnerPermit(host, owner, challenge, wrong, now); err == nil {
+		t.Fatal("malformed VM MAC accepted")
+	}
+}

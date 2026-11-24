@@ -21,6 +21,7 @@ import (
 	"github.com/qwts/managed-machine/internal/daemon"
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/fleet"
+	"github.com/qwts/managed-machine/internal/guestowner"
 	"github.com/qwts/managed-machine/internal/install"
 	"github.com/qwts/managed-machine/internal/members"
 	"github.com/qwts/managed-machine/internal/provider"
@@ -110,6 +111,7 @@ func main() {
 			return currentCaller(os.Environ())
 		},
 		Root:          os.UserHomeDir,
+		ObserveGuest:  guestowner.ObserveTartGuest,
 		LockLifecycle: statedir.LockMacPackage,
 		ReadUserJob:   brew.ReadMachineUserJob,
 		Activate: func(path string) error {
