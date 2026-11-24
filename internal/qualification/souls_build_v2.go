@@ -124,6 +124,24 @@ func fixedSoulsDerivativeStatementV3(raw []byte, policy Policy, claim soulsBuild
 	return nil
 }
 
+// A v3 policy without derivative pins retains the signed npm package path.
+// The owner opts into the selected tar derivative by signing all three pins;
+// an unpinned policy cannot authorize that derivative.
+func fixedSoulsStatementForPolicy(raw []byte, policy Policy, claim soulsBuildRef, packageSHA string, version int) error {
+	if policy.SoulsBuildWorkflow == nil {
+		return ErrUnqualified
+	}
+	w := policy.SoulsBuildWorkflow
+	if version == 2 || version == 3 && w.SourceNPMSHA256 == "" &&
+		w.DerivativeBuilderSHA256 == "" && w.SelectedManifestSHA256 == "" {
+		return fixedSoulsBuildStatement(raw, policy, claim, packageSHA)
+	}
+	if version == 3 {
+		return fixedSoulsDerivativeStatementV3(raw, policy, claim, packageSHA)
+	}
+	return ErrUnqualified
+}
+
 func validSoulsDerivativeExclusions(paths []string) bool {
 	if len(paths) == 0 || len(paths) > 32 {
 		return false
@@ -240,15 +258,7 @@ func verifySoulsBuildReceipt(policy VerifiedPolicy, trustedRootJSON, bundleJSON 
 		}
 	}
 	statement := b.GetDsseEnvelope().GetPayload()
-	if version == 3 {
-		if fixedSoulsDerivativeStatementV3(statement, policy.value, claim, packageSHA) != nil {
-			return VerifiedSoulsBuild{}, ErrUnqualified
-		}
-	} else if version == 2 {
-		if fixedSoulsBuildStatement(statement, policy.value, claim, packageSHA) != nil {
-			return VerifiedSoulsBuild{}, ErrUnqualified
-		}
-	} else {
+	if fixedSoulsStatementForPolicy(statement, policy.value, claim, packageSHA, version) != nil {
 		return VerifiedSoulsBuild{}, ErrUnqualified
 	}
 	return VerifiedSoulsBuild{verified: true, build: claim}, nil

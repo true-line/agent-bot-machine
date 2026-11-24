@@ -178,8 +178,10 @@ For a v3 selected R runtime, the separate receipt may sign a content-addressed
 subject digest against the supplied `-souls-package` bytes and requires the
 signed predicate to name the source npm digest, derivative builder digest,
 selected manifest digest and a bounded, sorted list of excluded paths. The
-first three digests must match the owner-signed v3 policy's exact pins. The
-v2 receipt remains `.tgz` only. Receipt verification alone does not join the
+first three digests must match the owner-signed v3 policy's exact pins. A v3
+policy without those pins retains the signed npm `.tgz` path and cannot
+qualify the tar derivative. The v2 receipt remains `.tgz` only. Receipt
+verification alone does not join the
 signed selected manifest to an installed R snapshot or prove a physical run;
 Machine's reviewed R inventory, sealed bytes and live observations remain
 separate acceptance gates.
