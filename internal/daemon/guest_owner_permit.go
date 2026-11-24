@@ -84,7 +84,7 @@ type guestOwnerChallenge struct {
 
 func guestOwnerPermitAction(action string) bool {
 	switch action {
-	case members.HarnessAccountsPurpose, members.HarnessInstall, members.HarnessRetire,
+	case members.UpgradePurpose, members.HarnessAccountsPurpose, members.HarnessInstall, members.HarnessRetire,
 		members.HarnessQualificationPurpose, members.SoulRunnerAccountsPurpose,
 		members.SoulBridgeAccountsPurpose, members.SoulProtectedLaunchInstallPurpose,
 		members.SoulProtectedLaunchRetirePurpose, members.SoulCooperativeLaunchInstallPurpose:

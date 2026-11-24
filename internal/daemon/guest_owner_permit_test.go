@@ -15,15 +15,20 @@ import (
 	"github.com/qwts/managed-machine/internal/members"
 )
 
-func TestGuestOwnerPermitActionIncludesSafeRetirement(t *testing.T) {
+func TestGuestOwnerPermitActionIncludesHQUpgradeAndSafeRetirement(t *testing.T) {
 	if !guestOwnerPermitAction(members.SoulProtectedLaunchRetirePurpose) ||
-		guestOwnerPermitAction(members.UpgradePurpose) ||
+		!guestOwnerPermitAction(members.UpgradePurpose) ||
+		guestOwnerPermitAction("hq-service-recovery") ||
 		guestOwnerPermitAction("arbitrary") {
 		t.Fatal("guest permit action scope changed")
 	}
 }
 
 func guestPermitFixture(t *testing.T, now time.Time) (ed25519.PrivateKey, string, []byte, GuestTartObservation) {
+	return guestPermitFixtureForAction(t, now, members.SoulRunnerAccountsPurpose)
+}
+
+func guestPermitFixtureForAction(t *testing.T, now time.Time, action string) (ed25519.PrivateKey, string, []byte, GuestTartObservation) {
 	t.Helper()
 	guestPub, guestPrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -34,10 +39,10 @@ func guestPermitFixture(t *testing.T, now time.Time) (ed25519.PrivateKey, string
 		t.Fatal(err)
 	}
 	ownerPublic := base64.StdEncoding.EncodeToString(elliptic.Marshal(elliptic.P256(), owner.X, owner.Y))
-	plan := "{\"purpose\":\"soul-runner-provision\",\"version\":3}\n"
+	plan := "{\"purpose\":\"" + action + "\",\"version\":3}\n"
 	digest := sha256.Sum256([]byte(plan))
 	body, err := json.Marshal(map[string]any{
-		"action": "soul-runner-provision", "machine_key": hex.EncodeToString(guestPub),
+		"action": action, "machine_key": hex.EncodeToString(guestPub),
 		"hq_key": "1" + hex.EncodeToString(make([]byte, 31)) + "1", "owner_key": ownerPublic,
 		"plan_id": "plan-20260101T000000Z-abcd", "plan_digest": hex.EncodeToString(digest[:]),
 		"nonce": hex.EncodeToString(make([]byte, 32)), "expires_at": now.Unix() + 90,
@@ -57,6 +62,23 @@ func guestPermitFixture(t *testing.T, now time.Time) (ed25519.PrivateKey, string
 	return guestPrivate, ownerPublic, line,
 		GuestTartObservation{VMName: "stage2a-rehearsal", MAC: "02:00:00:00:00:01", Build: "25G83",
 			WrapperSHA: hex.EncodeToString(make([]byte, 32)), AppSHA: hex.EncodeToString(make([]byte, 32)), Machine: guestPub}
+}
+
+func TestGuestOwnerPermitIssuesExactHQUpgradeButRefusesRecovery(t *testing.T) {
+	now := time.Unix(1795503600, 0)
+	_, owner, challenge, observed := guestPermitFixtureForAction(t, now, members.UpgradePurpose)
+	_, host, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permit, err := issueGuestOwnerPermit(host, owner, challenge, observed, now)
+	if err != nil || permit.Action != members.UpgradePurpose {
+		t.Fatalf("exact HQ upgrade permit refused: %v", err)
+	}
+	_, owner, challenge, observed = guestPermitFixtureForAction(t, now, "hq-service-recovery")
+	if _, err := issueGuestOwnerPermit(host, owner, challenge, observed, now); err == nil {
+		t.Fatal("HQ recovery acquired a guest permit")
+	}
 }
 
 func TestGuestOwnerPermitBindsIndependentTartKeyAndExactChallenge(t *testing.T) {
