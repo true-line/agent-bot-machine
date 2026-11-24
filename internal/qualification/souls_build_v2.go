@@ -33,6 +33,29 @@ type soulsBuildStatement struct {
 	} `json:"predicate"`
 }
 
+type soulsDerivativeBuildStatement struct {
+	Type    string `json:"_type"`
+	Subject []struct {
+		Name   string            `json:"name"`
+		Digest map[string]string `json:"digest"`
+	} `json:"subject"`
+	PredicateType string `json:"predicateType"`
+	Predicate     struct {
+		SourceRepository     string   `json:"source_repository"`
+		SourceCommit         string   `json:"source_commit"`
+		SourceTree           string   `json:"source_tree"`
+		BuilderSHA           string   `json:"builder_sha256"`
+		ToolchainSHA         string   `json:"toolchain_sha256"`
+		Workflow             string   `json:"workflow"`
+		RunID                string   `json:"run_id"`
+		RunAttempt           uint64   `json:"run_attempt"`
+		SourceNPMSHA         string   `json:"source_npm_sha256"`
+		DerivativeBuilderSHA string   `json:"derivative_builder_sha256"`
+		SelectedManifestSHA  string   `json:"selected_manifest_sha256"`
+		ExcludedPaths        []string `json:"excluded_paths"`
+	} `json:"predicate"`
+}
+
 func fixedSoulsBuildStatement(raw []byte, policy Policy, claim soulsBuildRef, packageSHA string) error {
 	if policy.SoulsBuildWorkflow == nil {
 		return ErrUnqualified
@@ -65,6 +88,68 @@ func fixedSoulsBuildStatement(raw []byte, policy Policy, claim soulsBuildRef, pa
 	return nil
 }
 
+// The v3 selected R runtime is a separately signed tar derivative of the npm
+// source package. Its digest is the subject and the qualification package pin;
+// the source npm digest and derivation metadata remain inside the signed claim.
+// The installed R manifest and bytes still need their separate Machine checks.
+func fixedSoulsDerivativeStatementV3(raw []byte, policy Policy, claim soulsBuildRef, packageSHA string) error {
+	if policy.SoulsBuildWorkflow == nil || !validSHA(packageSHA) {
+		return ErrUnqualified
+	}
+	if _, err := strictObject(raw, MaxReportBytes); err != nil {
+		return ErrUnqualified
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	var statement soulsDerivativeBuildStatement
+	if d.Decode(&statement) != nil || d.Decode(new(any)) != io.EOF {
+		return ErrUnqualified
+	}
+	p := statement.Predicate
+	if statement.Type != statementType || statement.PredicateType != policy.SoulsBuildWorkflow.ReceiptPredicateType ||
+		len(statement.Subject) != 1 || statement.Subject[0].Name != "sha256-"+packageSHA[7:]+".tar" ||
+		len(statement.Subject[0].Digest) != 1 || statement.Subject[0].Digest["sha256"] != packageSHA[7:] ||
+		p.SourceRepository != claim.SourceRepository || p.SourceCommit != claim.SourceCommit ||
+		p.SourceTree != claim.SourceTree || p.BuilderSHA != claim.BuilderSHA ||
+		p.ToolchainSHA != claim.ToolchainSHA || p.Workflow != claim.Workflow ||
+		p.RunID != claim.RunID || p.RunAttempt != claim.RunAttempt ||
+		!validSHA(p.SourceNPMSHA) || p.SourceNPMSHA == packageSHA ||
+		!validSHA(p.DerivativeBuilderSHA) || !validSHA(p.SelectedManifestSHA) ||
+		p.SourceNPMSHA != policy.SoulsBuildWorkflow.SourceNPMSHA256 ||
+		p.DerivativeBuilderSHA != policy.SoulsBuildWorkflow.DerivativeBuilderSHA256 ||
+		p.SelectedManifestSHA != policy.SoulsBuildWorkflow.SelectedManifestSHA256 ||
+		!validSoulsDerivativeExclusions(p.ExcludedPaths) {
+		return ErrUnqualified
+	}
+	return nil
+}
+
+func validSoulsDerivativeExclusions(paths []string) bool {
+	if len(paths) == 0 || len(paths) > 32 {
+		return false
+	}
+	previous := ""
+	for _, path := range paths {
+		if path <= previous || len(path) > 256 || strings.HasPrefix(path, "/") ||
+			strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
+			return false
+		}
+		for _, segment := range strings.Split(path, "/") {
+			if segment == "" || segment == "." || segment == ".." {
+				return false
+			}
+			for _, c := range segment {
+				if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+					(c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') {
+					return false
+				}
+			}
+		}
+		previous = path
+	}
+	return true
+}
+
 func validSoulsPackageName(name string) bool {
 	if len(name) < 5 || !strings.HasSuffix(name, ".tgz") {
 		return false
@@ -88,8 +173,8 @@ func VerifySoulsBuildReceiptV2(policy VerifiedPolicy, trustedRootJSON, bundleJSO
 
 // VerifySoulsBuildReceiptV3 authenticates the same separately signed Souls
 // build claim in a v3 qualification. It does not verify the host reports,
-// Machine completed runs, or installed adapter inputs. The caller must hash
-// the exact delivered Souls tgz to supply packageSHA.
+// Machine completed runs, or installed R inputs. The caller must hash the
+// exact delivered, signed Souls package to supply packageSHA.
 func VerifySoulsBuildReceiptV3(policy VerifiedPolicy, trustedRootJSON, bundleJSON, qualificationJSON []byte, packageSHA string, now time.Time) (VerifiedSoulsBuild, error) {
 	_, _, claim, _, parseErr := qualificationObjectV3(qualificationJSON, now)
 	return verifySoulsBuildReceipt(policy, trustedRootJSON, bundleJSON, claim, packageSHA, now, parseErr, 3)
@@ -154,7 +239,16 @@ func verifySoulsBuildReceipt(policy VerifiedPolicy, trustedRootJSON, bundleJSON 
 			return VerifiedSoulsBuild{}, ErrUnqualified
 		}
 	}
-	if fixedSoulsBuildStatement(b.GetDsseEnvelope().GetPayload(), policy.value, claim, packageSHA) != nil {
+	statement := b.GetDsseEnvelope().GetPayload()
+	if version == 3 {
+		if fixedSoulsDerivativeStatementV3(statement, policy.value, claim, packageSHA) != nil {
+			return VerifiedSoulsBuild{}, ErrUnqualified
+		}
+	} else if version == 2 {
+		if fixedSoulsBuildStatement(statement, policy.value, claim, packageSHA) != nil {
+			return VerifiedSoulsBuild{}, ErrUnqualified
+		}
+	} else {
 		return VerifiedSoulsBuild{}, ErrUnqualified
 	}
 	return VerifiedSoulsBuild{verified: true, build: claim}, nil

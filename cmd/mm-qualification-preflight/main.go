@@ -62,7 +62,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	protectedCommitmentPath := fs.String("protected-commitment", "", "protected post-sign report commitment")
 	cooperativeCommitmentPath := fs.String("cooperative-commitment", "", "cooperative post-sign report commitment")
 	soulsBundlePath := fs.String("souls-build-bundle", "", "local signed Souls build receipt bundle")
-	soulsPackagePath := fs.String("souls-package", "", "exact delivered Souls package tgz")
+	soulsPackagePath := fs.String("souls-package", "", "exact signed Souls package (v2 tgz or v3 selected R tar)")
 	soulsRootPath := fs.String("souls-trusted-root", "", "owner-policy-pinned Souls Sigstore trusted root")
 	rootPath := fs.String("owner-root", "", "reviewed owner Ed25519 root as lowercase hex")
 	ownerKeyID := fs.String("owner-key-id", "", "owner root identifier")

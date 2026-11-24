@@ -173,6 +173,16 @@ root at `trust/qualification/souls-trusted-root.json`, with its exact SHA-256
 in the owner-signed v2 policy. The `-bridge-v2` preflight and offline verify
 commands require `-souls-build-bundle`, `-souls-package` and
 `-souls-trusted-root` local files; the package is hashed with a 256 MiB limit.
+For a v3 selected R runtime, the separate receipt may sign a content-addressed
+`.tar` derivative instead of the v2 npm `.tgz`. Machine checks the exact tar
+subject digest against the supplied `-souls-package` bytes and requires the
+signed predicate to name the source npm digest, derivative builder digest,
+selected manifest digest and a bounded, sorted list of excluded paths. The
+first three digests must match the owner-signed v3 policy's exact pins. The
+v2 receipt remains `.tgz` only. Receipt verification alone does not join the
+signed selected manifest to an installed R snapshot or prove a physical run;
+Machine's reviewed R inventory, sealed bytes and live observations remain
+separate acceptance gates.
 No production root or signed Souls receipt is present in this worktree.
 Private R2 storage, if used, transports release evidence before installation;
 it is not an HQ, Soul or Machine runtime dependency. Installed protected

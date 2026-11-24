@@ -64,19 +64,22 @@ type Policy struct {
 		TrustRootSHA256     string `json:"trust_root_sha256"`
 	} `json:"release_workflow"`
 	SoulsBuildWorkflow *struct {
-		ID                   string `json:"id"`
-		Repository           string `json:"repository"`
-		WorkflowPath         string `json:"workflow_path"`
-		SourceCommit         string `json:"source_commit"`
-		SourceTree           string `json:"source_tree"`
-		OIDCIssuer           string `json:"oidc_issuer"`
-		CertificateIdentity  string `json:"certificate_identity"`
-		TrustRootSHA256      string `json:"trust_root_sha256"`
-		BuilderSHA256        string `json:"builder_sha256"`
-		ToolchainSHA256      string `json:"toolchain_sha256"`
-		ReceiptPredicateType string `json:"receipt_predicate_type"`
-		BundleMediaType      string `json:"bundle_media_type"`
-		DSSEPayloadType      string `json:"dsse_payload_type"`
+		ID                      string `json:"id"`
+		Repository              string `json:"repository"`
+		WorkflowPath            string `json:"workflow_path"`
+		SourceCommit            string `json:"source_commit"`
+		SourceTree              string `json:"source_tree"`
+		OIDCIssuer              string `json:"oidc_issuer"`
+		CertificateIdentity     string `json:"certificate_identity"`
+		TrustRootSHA256         string `json:"trust_root_sha256"`
+		BuilderSHA256           string `json:"builder_sha256"`
+		ToolchainSHA256         string `json:"toolchain_sha256"`
+		SourceNPMSHA256         string `json:"source_npm_sha256,omitempty"`
+		DerivativeBuilderSHA256 string `json:"derivative_builder_sha256,omitempty"`
+		SelectedManifestSHA256  string `json:"selected_manifest_sha256,omitempty"`
+		ReceiptPredicateType    string `json:"receipt_predicate_type"`
+		BundleMediaType         string `json:"bundle_media_type"`
+		DSSEPayloadType         string `json:"dsse_payload_type"`
 	} `json:"souls_build_workflow,omitempty"`
 	FrozenSoulBuildWorkflow            *FrozenSoulBuildWorkflow `json:"frozen_soul_build_workflow,omitempty"`
 	FrozenSoulMapping                  *FrozenSoulMapping       `json:"frozen_soul_mapping,omitempty"`
@@ -473,6 +476,14 @@ func verifyOwnerPolicyVersion(envelope []byte, ownerKeyID string, root ed25519.P
 			!validSHA(build.TrustRootSHA256) || !validSHA(build.BuilderSHA256) || !validSHA(build.ToolchainSHA256) ||
 			build.ReceiptPredicateType != "https://true-line.ai/soul-contracts/adapter/v2/souls-build" ||
 			build.BundleMediaType != bundleMediaType || build.DSSEPayloadType != DSSEPayloadType {
+			return VerifiedPolicy{}, ErrUnqualified
+		}
+		derivativePinned := build.SourceNPMSHA256 != "" || build.DerivativeBuilderSHA256 != "" || build.SelectedManifestSHA256 != ""
+		if version == 2 && derivativePinned {
+			return VerifiedPolicy{}, ErrUnqualified
+		}
+		if version == 3 && derivativePinned &&
+			(!validSHA(build.SourceNPMSHA256) || !validSHA(build.DerivativeBuilderSHA256) || !validSHA(build.SelectedManifestSHA256)) {
 			return VerifiedPolicy{}, ErrUnqualified
 		}
 		for _, revoked := range zero.RevocationSnapshot.RevokedSoulsBuildWorkflowIDs {
