@@ -58,6 +58,8 @@ type stage2aLiveReservation struct {
 	childReceiptEnvelope []byte
 	liveSequence         uint64
 	t03Pending           *stage2aT03Pending
+	t03PrewriteSpent     bool
+	t03Prewrite          *stage2aT03PrewriteState
 	t03Positive          *Stage2aT03ArmRequest
 	t03PositivePeer      *stage2aT03PeerWitness
 	t03SiblingWitness    *stage2aT03SiblingWitnessState

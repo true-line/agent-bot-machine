@@ -4,6 +4,11 @@ package members
 
 import (
 	"crypto/ed25519"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"time"
@@ -11,10 +16,65 @@ import (
 
 const stage2aT03ReceiptLifetime = 30 * time.Second
 
+const stage2aT03CompletionSubkeyPurpose = "agent-bot-stage2a-b-completion-subkey-v1"
+const stage2aT03CompletionOriginPurpose = "agent-bot-stage2a-b-completion-origin-v1"
+
+type stage2aT03PrewriteState struct {
+	Record       Stage2aT03BrokerPrewrite
+	Peer         stage2aT03PeerWitness
+	Receipt      string
+	ObservedAtMS int64
+}
+
+// HQ forwards B's prepared-wire record under the paired Machine request
+// while B still owns the accepted Unix connection. The receipt is one-use;
+// only this live CLI observation can support the later B-authenticated write.
+func (s *Stage2aService) Stage2aT03AcceptPrewrite(hqUID int, epoch string,
+	q Stage2aT03PrewriteRequest) (string, error) {
+	if !validStage2aStopRequest(q.Stage2aStopRequest) || q.HQEpoch != epoch ||
+		!q.BrokerPrewrite.valid(epoch) ||
+		q.BrokerPrewrite.Selectors.stop(epoch) != q.Stage2aStopRequest ||
+		!stage2aPrefixedDigest.MatchString(q.ChildReceiptSHA256) {
+		return "", errStage2aReservationAuthority
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var receipt string
+	err := s.withStage2aT03Start(hqUID, epoch, q.Stage2aStopRequest,
+		func(r *stage2aLiveReservation, p stage2aInstalledPolicy, store stage2aAdminClaimStore, dir *os.File) error {
+			b := q.BrokerPrewrite
+			startClaim := soulStartClaimName(q.InstallationID, q.StartID)
+			if r.t03PrewriteSpent || r.t03Prewrite != nil || r.t03Positive != nil ||
+				r.proofDigest != stage2aReservationSHA256(r.bridgeProof[:]) ||
+				q.ChildReceiptSHA256 != stage2aReservationSHA256(r.childReceiptEnvelope) ||
+				b.BindReceiptSHA256 != r.bindReceiptSHA256 ||
+				b.RequestSHA256 != p.BridgeQualification.RequestSHA256 ||
+				b.Model != p.BridgeQualification.Model ||
+				stage2aCheckSpentClaim(dir, ".stage2a-provider-"+startClaim, store.uid, store.gid) != nil {
+				return errStage2aReservationAuthority
+			}
+			peer, err := observeStage2aT03RelayPeer(b.Peer, b.PeerSHA256, r, p)
+			if err != nil {
+				return err
+			}
+			var token [32]byte
+			if _, err := rand.Read(token[:]); err != nil {
+				return errStage2aReservationAuthority
+			}
+			receipt = hex.EncodeToString(token[:])
+			clear(token[:])
+			r.t03Prewrite = &stage2aT03PrewriteState{Record: b, Peer: peer,
+				Receipt: receipt, ObservedAtMS: time.Now().UnixMilli()}
+			r.t03PrewriteSpent = true
+			return nil
+		})
+	return receipt, err
+}
+
 // Stage2aT03AcceptPositive is called under the current HQ pairing lock. The
 // owner-driver session checks the additional reviewed T03 pins before arming.
 func (s *Stage2aService) Stage2aT03AcceptPositive(hqUID int, epoch string, q Stage2aT03ArmRequest) (string, error) {
-	if !q.Receipt.valid() || !q.providerMatchesStart() {
+	if !q.Receipt.valid() || !q.providerMatchesStart() || !q.BrokerCompletion.valid(q.HQEpoch) {
 		return "", errStage2aReservationAuthority
 	}
 	s.mu.Lock()
@@ -25,12 +85,18 @@ func (s *Stage2aService) Stage2aT03AcceptPositive(hqUID int, epoch string, q Sta
 			startClaim := soulStartClaimName(q.InstallationID, q.StartID)
 			_, configDigest, err := stage2aProviderConfig(p.BridgeQualification)
 			if err != nil || !stage2aT03PositiveMatches(q.Receipt, r, p.BridgeQualification, "sha256:"+configDigest, time.Now()) ||
+				r.t03Prewrite == nil || r.t03Positive != nil ||
+				r.proofDigest != stage2aReservationSHA256(r.bridgeProof[:]) ||
 				stage2aCheckSpentClaim(dir, ".stage2a-provider-"+startClaim, store.uid, store.gid) != nil {
 				return errStage2aReservationAuthority
 			}
-			peer, err := observeStage2aT03RelayPeer(q.Receipt, r, p)
-			if err != nil {
-				return err
+			prewrite := r.t03Prewrite
+			// A validly shaped completion gets one MAC attempt. A failed MAC or
+			// finalization cannot leave a reusable receipt or an HQ MAC oracle.
+			r.t03Prewrite = nil
+			if !stage2aT03CompletionMatches(q, prewrite) ||
+				!verifyStage2aT03CompletionOrigin(r.bridgeProof[:], q.BrokerCompletion, epoch) {
+				return errStage2aReservationAuthority
 			}
 			raw, err := marshalStage2aReservationJCS(q)
 			if err != nil {
@@ -40,6 +106,7 @@ func (s *Stage2aService) Stage2aT03AcceptPositive(hqUID int, epoch string, q Sta
 				return err
 			}
 			r.t03Positive = &q
+			peer := prewrite.Peer
 			r.t03PositivePeer = &peer
 			digest = stage2aReservationSHA256(raw)
 			return nil
@@ -48,8 +115,8 @@ func (s *Stage2aService) Stage2aT03AcceptPositive(hqUID int, epoch string, q Sta
 }
 
 // B's audit token identifies the accepted Unix peer. A independently checks
-// the still-live stock CLI image and its direct ACP parent, both against the
-// installed R generation. The returned witness is committed by live Q.
+// the still-live stock CLI image before B's final write. The witness persists
+// across normal CLI exit and is committed only after B authenticates completion.
 type stage2aT03PeerWitness struct {
 	Peer          Stage2aT03RelayPeer     `json:"peer"`
 	PeerSHA256    string                  `json:"peer_sha256"`
@@ -58,12 +125,11 @@ type stage2aT03PeerWitness struct {
 	CLIExecutable string                  `json:"cli_executable"`
 }
 
-func observeStage2aT03RelayPeer(receipt Stage2aT03PositiveReceipt, r *stage2aLiveReservation,
+func observeStage2aT03RelayPeer(peer Stage2aT03RelayPeer, peerSHA256 string, r *stage2aLiveReservation,
 	p stage2aInstalledPolicy) (stage2aT03PeerWitness, error) {
 	var empty stage2aT03PeerWitness
-	peer := receipt.Peer
 	child := r.childProcess
-	if !receipt.valid() || r.runtimeRefV3 == (stage2aDomainInventoryRefV3{}) ||
+	if r.runtimeRefV3 == (stage2aDomainInventoryRefV3{}) ||
 		peer.UID != uint32(p.Runner.UID) || peer.ParentPID != child.PID ||
 		peer.ParentUID != child.EffectiveUID || peer.ParentStartSeconds != child.StartSeconds ||
 		peer.ParentStartMicros != child.StartMicros || peer.PID == child.PID {
@@ -83,9 +149,60 @@ func observeStage2aT03RelayPeer(receipt Stage2aT03PositiveReceipt, r *stage2aLiv
 		stage2aRecheckExecutionCode(r, p) != nil {
 		return empty, errStage2aReservationAuthority
 	}
-	return stage2aT03PeerWitness{Peer: peer, PeerSHA256: receipt.PeerSHA256,
+	return stage2aT03PeerWitness{Peer: peer, PeerSHA256: peerSHA256,
 		ACPChild: stage2aLiveRoleIdentity(child), CLI: stage2aLiveRoleIdentity(observed.Kernel),
 		CLIExecutable: cli}, nil
+}
+
+func stage2aT03CompletionMatches(q Stage2aT03ArmRequest, prewrite *stage2aT03PrewriteState) bool {
+	if prewrite == nil {
+		return false
+	}
+	c := q.BrokerCompletion
+	if c.Selectors.stop(q.HQEpoch) != q.Stage2aStopRequest ||
+		c.Stage2aT03BrokerPrewrite != prewrite.Record || c.PrewriteReceipt != prewrite.Receipt ||
+		c.BindReceiptSHA256 != q.Receipt.BindReceiptSHA256 || c.Peer != q.Receipt.Peer ||
+		c.PeerSHA256 != q.Receipt.PeerSHA256 || c.RequestSHA256 != q.Receipt.RequestSHA256 ||
+		c.PromptSHA256 != q.Receipt.PromptSHA256 || c.Model != q.Receipt.Model ||
+		c.ResponseWireSHA256 != q.Receipt.ResponseWireSHA256 ||
+		c.ResponseWireBytes != q.Receipt.ResponseWireBytes || c.HTTPStatus != q.Receipt.HTTPStatus {
+		return false
+	}
+	started, e1 := time.Parse(time.RFC3339Nano, c.WriteStartedAt)
+	completed, e2 := time.Parse(time.RFC3339Nano, c.WriteCompletedAt)
+	return e1 == nil && e2 == nil && started.UnixMilli() >= prewrite.ObservedAtMS &&
+		completed.UnixMilli()-prewrite.ObservedAtMS <= stage2aT03ReceiptLifetime.Milliseconds() &&
+		completed.UnixMilli() == q.Receipt.CompletedAtMS
+}
+
+func verifyStage2aT03CompletionOrigin(bridgeProof []byte, c Stage2aT03BrokerCompletion, epoch string) bool {
+	if len(bridgeProof) != 32 || !c.valid(epoch) {
+		return false
+	}
+	want, err := stage2aT03CompletionOriginMAC(bridgeProof, c)
+	if err != nil {
+		return false
+	}
+	got, err := hex.DecodeString(c.CompletionOriginMAC)
+	return err == nil && subtle.ConstantTimeCompare(got, want) == 1
+}
+
+func stage2aT03CompletionOriginMAC(bridgeProof []byte, c Stage2aT03BrokerCompletion) ([]byte, error) {
+	if len(bridgeProof) != 32 {
+		return nil, errStage2aReservationAuthority
+	}
+	body, err := c.canonicalBody()
+	if err != nil {
+		return nil, err
+	}
+	keyMAC := hmac.New(sha256.New, bridgeProof)
+	_, _ = keyMAC.Write([]byte(stage2aT03CompletionSubkeyPurpose + "\x00" + c.Selectors.ReservationDigest))
+	completionKey := keyMAC.Sum(nil)
+	defer clear(completionKey)
+	mac := hmac.New(sha256.New, completionKey)
+	_, _ = mac.Write([]byte(stage2aT03CompletionOriginPurpose + "\x00"))
+	_, _ = mac.Write(body)
+	return mac.Sum(nil), nil
 }
 
 func stage2aT03PositiveMatches(q Stage2aT03PositiveReceipt, r *stage2aLiveReservation,

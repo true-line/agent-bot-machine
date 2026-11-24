@@ -138,6 +138,13 @@ func stage2aHandlerWithService(service *members.Stage2aService, dir, account str
 			body = struct {
 				SHA256 string `json:"sha256"`
 			}{digest}
+		case stage2aT03PrewriteVerb:
+			state = "t03-prewrite-peer-observed"
+			var receipt string
+			receipt, err = service.Stage2aT03AcceptPrewrite(req.peerUID, req.stage2aEpoch, req.stage2aT03Prewrite)
+			body = struct {
+				PrewriteReceipt string `json:"prewrite_receipt"`
+			}{receipt}
 		case stage2aT03ReadyVerb:
 			state = "t03-ready-observed"
 			err = service.Stage2aT03AcceptReady(req.peerUID, req.stage2aEpoch, req.stage2aT03Ready)

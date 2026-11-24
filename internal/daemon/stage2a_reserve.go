@@ -21,6 +21,7 @@ const stage2aStopVerb = "stage2a-stop"
 const stage2aFinalizeBVerb = "stage2a-finalize-b"
 const stage2aLiveVerb = "stage2a-live"
 const stage2aT03PositiveVerb = "stage2a-t03-positive"
+const stage2aT03PrewriteVerb = "stage2a-t03-prewrite-peer"
 const stage2aT03ReadyVerb = "stage2a-t03-ready"
 const stage2aT03CompleteVerb = "stage2a-t03-complete"
 const stage2aT03SiblingWitnessVerb = "stage2a-t03-sibling-credential-witness"
@@ -56,7 +57,7 @@ type stage2aExecRequest struct {
 }
 
 func isStage2aVerb(verb string) bool {
-	return verb == stage2aReserveVerb || verb == stage2aExecVerb || verb == stage2aT03PositiveVerb ||
+	return verb == stage2aReserveVerb || verb == stage2aExecVerb || verb == stage2aT03PositiveVerb || verb == stage2aT03PrewriteVerb ||
 		verb == stage2aT03ReadyVerb || verb == stage2aT03CompleteVerb || verb == stage2aT03SiblingWitnessVerb ||
 		verb == stage2aVerifyBVerb || verb == stage2aLookupVerb || verb == stage2aListVerb || verb == stage2aPrepareBVerb || verb == stage2aStopVerb || verb == stage2aFinalizeBVerb || verb == stage2aLiveVerb || verb == stage2aProviderVerb || verb == stage2aChildReadyVerb ||
 		verb == stage2aHelloStartVerb || verb == stage2aHelloFinalizeVerb || verb == stage2aHelloAbortVerb ||
@@ -246,6 +247,14 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 			return diag.DaemonUndeclared, "invalid protected T03 positive receipt"
 		}
 		req.stage2aT03Positive = parsed
+		return "", ""
+	}
+	if req.Verb == stage2aT03PrewriteVerb {
+		parsed, err := members.ParseStage2aT03PrewriteRequest(decoded)
+		if err != nil {
+			return diag.DaemonUndeclared, "invalid protected T03 broker prewrite"
+		}
+		req.stage2aT03Prewrite = parsed
 		return "", ""
 	}
 	if req.Verb == stage2aT03ReadyVerb {

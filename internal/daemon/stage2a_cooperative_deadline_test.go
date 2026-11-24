@@ -137,3 +137,13 @@ func TestT03SiblingWitnessVerbReachesStage2aHandler(t *testing.T) {
 		t.Fatalf("sibling witness did not reach Stage2a: %+v", got)
 	}
 }
+
+func TestT03PrewriteVerbReachesPairedStage2aHandler(t *testing.T) {
+	h := Hooks{Stage2a: func(Request) Response { return Response{OK: true, State: "routed"} }}
+	if !knownVerb(stage2aT03PrewriteVerb) || !isStage2aVerb(stage2aT03PrewriteVerb) {
+		t.Fatal("prewrite verb is unavailable to the paired Machine channel")
+	}
+	if got := h.reply(Request{Verb: stage2aT03PrewriteVerb}); !got.OK || got.State != "routed" {
+		t.Fatalf("prewrite did not reach Stage2a: %+v", got)
+	}
+}

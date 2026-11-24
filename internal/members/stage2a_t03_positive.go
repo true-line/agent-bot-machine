@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"strconv"
+	"time"
 
 	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 )
@@ -20,7 +21,108 @@ const stage2aT03ProviderAlgorithm = "agent-bot-stage2a-local-provider-v1"
 
 type Stage2aT03ArmRequest struct {
 	Stage2aStopRequest
-	Receipt Stage2aT03PositiveReceipt `json:"receipt"`
+	Receipt          Stage2aT03PositiveReceipt  `json:"receipt"`
+	BrokerCompletion Stage2aT03BrokerCompletion `json:"broker_completion"`
+}
+
+// B's six existing selector names are preserved across the HQ relay. In
+// particular reservation_digest is deliberately distinct from Machine's
+// reservation_sha256 spelling.
+type Stage2aT03BrokerSelectors struct {
+	InstallationID    string `json:"installation_id"`
+	StartID           string `json:"start_id"`
+	LaunchID          string `json:"launch_id"`
+	PlanID            string `json:"plan_id"`
+	PlanDigest        string `json:"plan_digest"`
+	ReservationDigest string `json:"reservation_digest"`
+}
+
+func (s Stage2aT03BrokerSelectors) stop(epoch string) Stage2aStopRequest {
+	return Stage2aStopRequest{ReservationSHA256: s.ReservationDigest,
+		InstallationID: s.InstallationID, StartID: s.StartID, LaunchID: s.LaunchID,
+		PlanID: s.PlanID, PlanDigest: s.PlanDigest, HQEpoch: epoch}
+}
+
+// This is B's exact ten-field prepared-wire record. HQ forwards it to A in
+// the paired prewrite-peer request while B still holds the CLI socket.
+type Stage2aT03BrokerPrewrite struct {
+	Selectors          Stage2aT03BrokerSelectors `json:"selectors"`
+	BindReceiptSHA256  string                    `json:"bind_receipt_sha256"`
+	Peer               Stage2aT03RelayPeer       `json:"peer"`
+	PeerSHA256         string                    `json:"peer_sha256"`
+	RequestSHA256      string                    `json:"request_sha256"`
+	PromptSHA256       string                    `json:"prompt_sha256"`
+	Model              string                    `json:"model"`
+	ResponseWireSHA256 string                    `json:"response_wire_sha256"`
+	ResponseWireBytes  int                       `json:"response_wire_bytes"`
+	HTTPStatus         int                       `json:"http_status"`
+}
+
+type Stage2aT03PrewriteRequest struct {
+	Stage2aStopRequest
+	ChildReceiptSHA256 string                   `json:"child_receipt_sha256"`
+	BrokerPrewrite     Stage2aT03BrokerPrewrite `json:"broker_prewrite"`
+}
+
+func ParseStage2aT03PrewriteRequest(raw []byte) (Stage2aT03PrewriteRequest, error) {
+	var q Stage2aT03PrewriteRequest
+	if decodeStage2aT03Request(raw, &q) != nil || !validStage2aStopRequest(q.Stage2aStopRequest) ||
+		!stage2aPrefixedDigest.MatchString(q.ChildReceiptSHA256) ||
+		!q.BrokerPrewrite.valid(q.HQEpoch) ||
+		q.BrokerPrewrite.Selectors.stop(q.HQEpoch) != q.Stage2aStopRequest {
+		return Stage2aT03PrewriteRequest{}, errors.New("invalid protected T03 broker prewrite")
+	}
+	return q, nil
+}
+
+func (q Stage2aT03BrokerPrewrite) valid(epoch string) bool {
+	if !validStage2aStopRequest(q.Selectors.stop(epoch)) || q.HTTPStatus != 200 ||
+		q.ResponseWireBytes <= 0 || q.ResponseWireBytes > 1<<20 ||
+		!stage2aBindingID.MatchString(q.Model) || !q.Peer.valid() {
+		return false
+	}
+	for _, value := range []string{q.BindReceiptSHA256, q.PeerSHA256,
+		q.RequestSHA256, q.PromptSHA256, q.ResponseWireSHA256} {
+		if !stage2aPrefixedDigest.MatchString(value) {
+			return false
+		}
+	}
+	canonical, err := stage2aT03PeerCanonical(q.Peer)
+	return err == nil && fmt.Sprintf("sha256:%x", sha256.Sum256(canonical)) == q.PeerSHA256
+}
+
+// B signs the exact thirteen-field object after the full HTTP/SSE write.
+// The lowercase MAC is added as a fourteenth field only for transmission.
+type Stage2aT03BrokerCompletion struct {
+	Stage2aT03BrokerPrewrite
+	WriteStartedAt      string `json:"write_started_at"`
+	WriteCompletedAt    string `json:"write_completed_at"`
+	PrewriteReceipt     string `json:"prewrite_receipt"`
+	CompletionOriginMAC string `json:"completion_origin_mac"`
+}
+
+func (c Stage2aT03BrokerCompletion) canonicalBody() ([]byte, error) {
+	raw, err := json.Marshal(struct {
+		Stage2aT03BrokerPrewrite
+		WriteStartedAt   string `json:"write_started_at"`
+		WriteCompletedAt string `json:"write_completed_at"`
+		PrewriteReceipt  string `json:"prewrite_receipt"`
+	}{c.Stage2aT03BrokerPrewrite, c.WriteStartedAt, c.WriteCompletedAt, c.PrewriteReceipt})
+	if err != nil {
+		return nil, err
+	}
+	return jsoncanonicalizer.Transform(raw)
+}
+
+func (c Stage2aT03BrokerCompletion) valid(epoch string) bool {
+	if !c.Stage2aT03BrokerPrewrite.valid(epoch) ||
+		!stage2aLowerHex64(c.PrewriteReceipt) || !stage2aLowerHex64(c.CompletionOriginMAC) {
+		return false
+	}
+	started, e1 := time.Parse(time.RFC3339Nano, c.WriteStartedAt)
+	completed, e2 := time.Parse(time.RFC3339Nano, c.WriteCompletedAt)
+	return e1 == nil && e2 == nil && !completed.Before(started) &&
+		completed.Sub(started) <= 30*time.Second
 }
 
 // The paired HQ request authenticates the relay completion and its provider
@@ -86,7 +188,8 @@ func stage2aT03PeerCanonical(p Stage2aT03RelayPeer) ([]byte, error) {
 func ParseStage2aT03ArmRequest(raw []byte) (Stage2aT03ArmRequest, error) {
 	var q Stage2aT03ArmRequest
 	if err := decodeStage2aT03Request(raw, &q); err != nil ||
-		!validStage2aStopRequest(q.Stage2aStopRequest) || !q.Receipt.valid() || !q.providerMatchesStart() {
+		!validStage2aStopRequest(q.Stage2aStopRequest) || !q.Receipt.valid() || !q.providerMatchesStart() ||
+		!q.BrokerCompletion.valid(q.HQEpoch) {
 		return Stage2aT03ArmRequest{}, errors.New("invalid protected T03 positive receipt")
 	}
 	return q, nil
