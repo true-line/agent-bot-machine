@@ -12,6 +12,7 @@ related_issues:
   - true-line/agent-bot-machine#442
   - true-line/agent-bot-machine#446
   - true-line/agent-bot-machine#458
+  - true-line/agent-bot-machine#573
 ---
 
 # Cross-account signed channel
@@ -300,6 +301,69 @@ the second Machine-signed delegation before operating on its matching key.
 | `whoami` | `whoami-proved` | Return a fresh DPoP proof for the enrolled device’s fixed Identity self-lookup, using its bound, unexpired session. |
 
 For `whoami`, both signed request transcripts append the label `session` and its value immediately after the epoch. The value is the RFC 7638 session thumbprint returned by `bind-access`. Keyd sets the method to `GET`, the URI to `https://agents.true-line.ai/api/daemon/whoami`, and the token hash to the value from the verified token receipt. Keyd generates the issuance time and proof JTI. The Machine-signed response carries `hq_epoch`, `session` and `proof`. HQ carries the HTTPS request and verifies Identity’s response signature and returned device ID.
+
+#### Paired notice custody proof of concept (#573)
+
+The custody component test exercises the existing Identity response signature
+format against a synthetic admin-store reservation for one take. It verifies
+the pinned Ed25519 key, signed status, exact body bytes and reserved proof JTI.
+A successful response for the reserved harness and policy revision commits
+the full response and exact live lease in a single store update that consumes
+the reservation. Durable notice identity and the content hash prevent changed
+content from replacing a prior delivery. Changing the paired HQ epoch makes
+the old lease ineligible and preserves the notice for re-delivery and dedup.
+If the store cannot commit, the lease stays ineligible for acknowledgement.
+
+The component uses the keyd item interface with a memory-backed fixture. The
+proposed persistent account is `notice-mailbox-v1` in keyd’s existing
+admin-only device Keychain service. A future entry point must create that
+item explicitly, read and update it with the same trusted pairing
+lock held, and exercise real Keychain durability under the packaged admin
+account. The proof of concept retains all content and dedup records and
+refuses writes beyond its storage bound. Compaction, owner-approved recovery,
+member delivery and acknowledgement settlement need their own reviewed path.
+
+**Decision requested.** Permit an owner-paired HQ to request two additional
+uses of its current, unexpired admin-bound access session. For the first
+slice, authorize only a one-notice take on a harness chosen by the owner and
+bound to the enrolled device and current upstream custody revision, and an
+acknowledgement of one still-current lease selected from the committed admin
+mailbox. HQ would carry the exact HTTPS exchange. Machine and keyd would
+verify local caller identity and current pairing, generate the proof JTI and
+derive the token hash under the admin account. The allowance would grant no
+release, peek, issuance lookup or caller-selected target.
+
+Before enabling those purposes, the Identity service and shared contract
+must specify and enforce the following:
+
+- Use fixed POST paths `/api/daemon/notices/take` and
+  `/api/daemon/notices/ack`. Both use the pinned Identity origin and reject
+  any query. Define a required `body_sha256` DPoP claim as unpadded base64url
+  of SHA-256 over the exact transmitted request bytes. Identity verifies it
+  before decoding or performing the action. There can be no fallback to
+  path-only proofs for the paired notice route.
+- Fix the take JSON fields to `harness`, `count` (one), `lease_seconds`
+  and `custody_revision`. Fix ack fields to `harness`, `ids` (one
+  keyd-selected lease) and `custody_revision`. Identity uses the authenticated
+  device and requires the revision to match the owner-configured custody
+  policy atomically, including empty takes. Keep the existing service checks
+  and isolate older unbound requests from migrated queues. The wire contract
+  must define the authenticated custody-policy data Machine can use offline
+  and how HQ can refresh it without extending its validity.
+- Keyd chooses the request bytes and durably reserves the current pair, device,
+  operation, expected queue scope, JTI and expiry before returning a take
+  proof. HQ sends those exact bytes and forwards the exact signed response
+  (status, body, key ID, request JTI and signature) over the signed local
+  Machine channel. Keyd correlates it to that reservation and verifies it
+  locally. The service signs matching status, bytes and JTI, including a
+  response scope that can be checked for empty takes. The component test uses
+  the current Identity response shape. The production route needs the approved
+  versioned contract and an integration test against the service.
+- Ack derives the exact lease from the current committed record during the
+  same paired admission check. Its signed response must name the result for
+  that lease. On an unknown response, recover from admin custody and the
+  issuer’s lease state. Pairing revocation or Machine outage prevents new
+  proofs. Retain notice identity and content through rollback and re-pairing.
 
 The signed channel transcript appends the lines `hq_epoch`, then its value,
 after the normal ten fields for every operation except `identity`. A fresh

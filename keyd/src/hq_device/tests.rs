@@ -659,7 +659,18 @@ fn binding_freshness_and_unavailable_purposes_fail_closed() {
     let at = Duration::from_secs(100);
     let (items, native, p) = (Memory::default(), Fake::default(), pair());
     initialize(&items, &native, p.clone()).unwrap();
-    for op in ["access-assertion", "sign", "rekey", "approval", "dpop"] {
+    for op in [
+        "access-assertion",
+        "sign",
+        "rekey",
+        "approval",
+        "dpop",
+        "notice-take",
+        "notice-commit-take",
+        "notice-ack",
+        "notice-release",
+        "notice-peek",
+    ] {
         assert!(run(&items, &native, &p, request(&p, op, 100), at).is_err());
     }
     for ts in [69, 131] {
