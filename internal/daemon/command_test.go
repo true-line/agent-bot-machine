@@ -186,7 +186,7 @@ func TestPriorKeydRecoveryRequiresPrefixAdministratorBeforeLifecycle(t *testing.
 				lifecycleEntered = true
 				return root, nil
 			}
-			result := run(deps, cli.Context{}, []string{"start", "--prior-keyd-path", "/private/tmp/agent-bot-keyd", "--prior-keyd-sha256", strings.Repeat("a", 64)})
+			result := run(deps, cli.Context{}, []string{"start", "--prior-keyd-path", filepath.Join(root, "agent-bot-keyd"), "--prior-keyd-sha256", strings.Repeat("a", 64)})
 			if result.Diagnostic == nil || result.Diagnostic.ID != diag.DaemonCallerRefused || lifecycleEntered {
 				t.Fatalf("recovery authorization must refuse before service lifecycle: %#v, entered=%t", result.Diagnostic, lifecycleEntered)
 			}
