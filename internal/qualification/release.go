@@ -42,6 +42,7 @@ type VerifiedRelease struct {
 	v4SoulsBuild        *soulsBuildRef
 	v4SoulArtifact      string
 	v4ExpiresAt         time.Time
+	v4StatementSHA256   string
 }
 
 func (r VerifiedRelease) HostReportDigests() []string {
@@ -246,7 +247,8 @@ func verifyReleaseAttestation(policy VerifiedPolicy, trustedRootJSON, bundleJSON
 		}
 		return VerifiedRelease{verified: true, bundleSHA256: expectedBundleSHA256, qualificationSHA256: qualificationSHA,
 			v4Reports: &reports, v4SoulsBuild: &build, v4SoulArtifact: soulArtifact, v4ExpiresAt: expires,
-			ownerKeyID: policy.value.OwnerKeyID, policyRevision: policy.value.PolicyRevision}, nil
+			v4StatementSHA256: digest(b.GetDsseEnvelope().GetPayload()),
+			ownerKeyID:        policy.value.OwnerKeyID, policyRevision: policy.value.PolicyRevision}, nil
 	}
 	if version == 3 {
 		qualification, qualificationReports, qualificationBuild, recorded, err := qualificationObjectV3(qualificationJSON, now)

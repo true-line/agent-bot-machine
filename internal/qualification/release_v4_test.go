@@ -235,24 +235,40 @@ func TestV4QualificationAndStatementContractBytes(t *testing.T) {
 	release := VerifiedRelease{verified: true, bundleSHA256: digest([]byte("synthetic bundle")),
 		qualificationSHA256: digest(qualified), ownerKeyID: policy.OwnerKeyID,
 		policyRevision: policy.PolicyRevision, v4Reports: &signedRefs,
-		v4SoulsBuild: &signedBuild, v4SoulArtifact: artifact, v4ExpiresAt: expires}
-	signedCheck := func(receipt VerifiedRelease) error {
-		return VerifyV4SignedReleaseCandidateClaims(receipt, verified, qualified, statement,
+		v4SoulsBuild: &signedBuild, v4SoulArtifact: artifact, v4ExpiresAt: expires,
+		v4StatementSHA256: digest(statement)}
+	signedCheck := func(receipt VerifiedRelease, statementRaw []byte) error {
+		return VerifyV4SignedReleaseCandidateClaims(receipt, verified, qualified, statementRaw,
 			[]byte(p.HostEnvelope), cNewHost, []byte(p.Completion), cNewCompletion,
 			[]byte(p.Commitment), cNewCommitment, VerifiedSoulsBuild{verified: true, build: build},
 			ed25519.PublicKey(key), now)
 	}
-	if err := signedCheck(release); err != nil {
+	if err := signedCheck(release, statement); err != nil {
 		t.Fatal("matching synthetic release receipt refused:", err)
+	}
+	var alteredStatement map[string]any
+	if json.Unmarshal(statement, &alteredStatement) != nil {
+		t.Fatal("decode synthetic signed Statement")
+	}
+	alteredStatement["predicate"].(map[string]any)["expires_at"] = expires.Add(time.Minute).UTC().Format(time.RFC3339)
+	alteredRaw, err := canonicalMarshalRecordV3(alteredStatement)
+	if err != nil || bytes.Equal(alteredRaw, statement) {
+		t.Fatal("build distinct canonical Statement:", err)
+	}
+	if err := check(alteredRaw, cNewCommitment); err != nil {
+		t.Fatal("alternate Statement must retain the same candidate claims:", err)
+	}
+	if signedCheck(release, alteredRaw) == nil {
+		t.Fatal("different Statement bytes accepted for signed release")
 	}
 	changedReceipt := release
 	changedReceipt.qualificationSHA256 = digest(qualification)
-	if signedCheck(changedReceipt) == nil {
+	if signedCheck(changedReceipt, statement) == nil {
 		t.Fatal("release receipt for other qualification bytes accepted")
 	}
 	changedReceipt = release
 	changedReceipt.v4Reports = &refs
-	if signedCheck(changedReceipt) == nil {
+	if signedCheck(changedReceipt, statement) == nil {
 		t.Fatal("release receipt for other host report bytes accepted")
 	}
 	if check(statement, []byte(p.Commitment)) == nil {

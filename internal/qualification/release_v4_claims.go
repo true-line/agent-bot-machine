@@ -16,6 +16,7 @@ func VerifyV4SignedReleaseCandidateClaims(release VerifiedRelease, policy Verifi
 	build VerifiedSoulsBuild, machineKey ed25519.PublicKey, now time.Time) error {
 	if !release.verified || !validSHA(release.bundleSHA256) || release.v4Reports == nil ||
 		release.v4SoulsBuild == nil || release.qualificationSHA256 != digest(qualificationJSON) ||
+		!validSHA(release.v4StatementSHA256) || release.v4StatementSHA256 != digest(statementRaw) ||
 		release.ownerKeyID != policy.value.OwnerKeyID || release.policyRevision != policy.value.PolicyRevision ||
 		!release.v4ExpiresAt.After(now) || !build.verified || *release.v4SoulsBuild != build.build {
 		return ErrUnqualified
