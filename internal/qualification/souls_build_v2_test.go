@@ -27,6 +27,9 @@ func TestSoulsBuildStatementPinsTreeAndPackage(t *testing.T) {
 	if err := fixedSoulsBuildStatement(statement, policy, claim, claim.PackageSHA); err != nil {
 		t.Fatal("decoded contract build statement refused", err)
 	}
+	if err := fixedSoulsStatementForPolicy(statement, policy, claim, claim.PackageSHA, 3); err != nil {
+		t.Fatal("unpinned v3 policy refused its signed npm package", err)
+	}
 	var changed map[string]any
 	if err := json.Unmarshal(statement, &changed); err != nil {
 		t.Fatal(err)
@@ -64,6 +67,7 @@ func TestSoulsV3DerivativeStatementPinsSignedTarAndSource(t *testing.T) {
 	if err := json.Unmarshal(statement, &value); err != nil {
 		t.Fatal(err)
 	}
+	npmClaim := claim
 	tarSHA := "sha256:" + strings.Repeat("b", 64)
 	claim.PackageSHA = tarSHA
 	value["subject"].([]any)[0].(map[string]any)["name"] = "sha256-" + tarSHA[7:] + ".tar"
@@ -87,6 +91,19 @@ func TestSoulsV3DerivativeStatementPinsSignedTarAndSource(t *testing.T) {
 	good := encode()
 	if err := fixedSoulsDerivativeStatementV3(good, policy, claim, tarSHA); err != nil {
 		t.Fatalf("signed R derivative refused: %v", err)
+	}
+	if err := fixedSoulsStatementForPolicy(good, policy, claim, tarSHA, 3); err != nil {
+		t.Fatalf("pinned v3 policy refused its signed R derivative: %v", err)
+	}
+	if fixedSoulsStatementForPolicy(statement, policy, npmClaim, npmClaim.PackageSHA, 3) == nil {
+		t.Fatal("pinned v3 policy accepted legacy npm receipt in place of tar")
+	}
+	unpinned := policy
+	bareWorkflow := *policy.SoulsBuildWorkflow
+	bareWorkflow.SourceNPMSHA256, bareWorkflow.DerivativeBuilderSHA256, bareWorkflow.SelectedManifestSHA256 = "", "", ""
+	unpinned.SoulsBuildWorkflow = &bareWorkflow
+	if fixedSoulsStatementForPolicy(good, unpinned, claim, tarSHA, 3) == nil {
+		t.Fatal("unpinned v3 policy accepted selected tar derivative")
 	}
 	if fixedSoulsBuildStatement(good, policy, claim, tarSHA) == nil {
 		t.Fatal("v2 accepted derivative Statement")
