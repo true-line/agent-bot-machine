@@ -5,6 +5,7 @@ package members
 import (
 	"crypto/ed25519"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -27,6 +28,10 @@ func (s *Stage2aService) Stage2aT03AcceptPositive(hqUID int, epoch string, q Sta
 				stage2aCheckSpentClaim(dir, ".stage2a-provider-"+startClaim, store.uid, store.gid) != nil {
 				return errStage2aReservationAuthority
 			}
+			peer, err := observeStage2aT03RelayPeer(q.Receipt, r, p)
+			if err != nil {
+				return err
+			}
 			raw, err := marshalStage2aReservationJCS(q)
 			if err != nil {
 				return err
@@ -35,10 +40,52 @@ func (s *Stage2aService) Stage2aT03AcceptPositive(hqUID int, epoch string, q Sta
 				return err
 			}
 			r.t03Positive = &q
+			r.t03PositivePeer = &peer
 			digest = stage2aReservationSHA256(raw)
 			return nil
 		})
 	return digest, err
+}
+
+// B's audit token identifies the accepted Unix peer. A independently checks
+// the still-live stock CLI image and its direct ACP parent, both against the
+// installed R generation. The returned witness is committed by live Q.
+type stage2aT03PeerWitness struct {
+	Peer          Stage2aT03RelayPeer     `json:"peer"`
+	PeerSHA256    string                  `json:"peer_sha256"`
+	ACPChild      Stage2aLiveRoleIdentity `json:"acp_child"`
+	CLI           Stage2aLiveRoleIdentity `json:"cli"`
+	CLIExecutable string                  `json:"cli_executable"`
+}
+
+func observeStage2aT03RelayPeer(receipt Stage2aT03PositiveReceipt, r *stage2aLiveReservation,
+	p stage2aInstalledPolicy) (stage2aT03PeerWitness, error) {
+	var empty stage2aT03PeerWitness
+	peer := receipt.Peer
+	child := r.childProcess
+	if !receipt.valid() || r.runtimeRefV3 == (stage2aDomainInventoryRefV3{}) ||
+		peer.UID != uint32(p.Runner.UID) || peer.ParentPID != child.PID ||
+		peer.ParentUID != child.EffectiveUID || peer.ParentStartSeconds != child.StartSeconds ||
+		peer.ParentStartMicros != child.StartMicros || peer.PID == child.PID {
+		return empty, errStage2aReservationAuthority
+	}
+	cli := filepath.Join(r.runtimeRefV3.Snapshot.Path, "runtime/bin/claude")
+	observed, err := observeStage2aQualificationProcess(peer.PID, cli, nil, true)
+	if err != nil || observed.Kernel.ParentPID != child.PID ||
+		observed.Kernel.RealUID != peer.UID || observed.Kernel.EffectiveUID != peer.UID ||
+		observed.Kernel.SavedUID != peer.UID ||
+		observed.Kernel.RealGID != uint32(p.Runner.GID) ||
+		observed.Kernel.PrimaryGroupGID != uint32(p.Runner.GID) ||
+		observed.Kernel.SavedGID != uint32(p.Runner.GID) ||
+		observed.Kernel.StartSeconds != peer.StartSeconds ||
+		observed.Kernel.StartMicros != peer.StartMicros ||
+		checkStage2aChildProcess(child.PID, r.childLauncherPID, p.Runner, p.LaunchInputs, child) != nil ||
+		stage2aRecheckExecutionCode(r, p) != nil {
+		return empty, errStage2aReservationAuthority
+	}
+	return stage2aT03PeerWitness{Peer: peer, PeerSHA256: receipt.PeerSHA256,
+		ACPChild: stage2aLiveRoleIdentity(child), CLI: stage2aLiveRoleIdentity(observed.Kernel),
+		CLIExecutable: cli}, nil
 }
 
 func stage2aT03PositiveMatches(q Stage2aT03PositiveReceipt, r *stage2aLiveReservation,

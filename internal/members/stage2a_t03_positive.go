@@ -24,27 +24,52 @@ type Stage2aT03ArmRequest struct {
 // observations together. A checks the receipt against the installed start
 // before it can authorize any direct qualification stimulus.
 type Stage2aT03PositiveReceipt struct {
-	Schema                 string `json:"schema"`
-	ChildReceiptSHA256     string `json:"child_receipt_sha256"`
-	FinalizationSHA256     string `json:"finalization_sha256"`
-	BindReceiptSHA256      string `json:"bind_receipt_sha256"`
-	RelaySocket            string `json:"relay_socket"`
-	ProviderConfigSHA256   string `json:"provider_config_sha256"`
-	ProviderIPv4URL        string `json:"provider_ipv4_url"`
-	ProviderIPv6URL        string `json:"provider_ipv6_url"`
-	RequestSHA256          string `json:"request_sha256"`
-	Model                  string `json:"model"`
-	PromptSHA256           string `json:"prompt_sha256"`
-	ProviderReplySHA256    string `json:"provider_reply_sha256"`
-	ResponseWireSHA256     string `json:"response_wire_sha256"`
-	ResponseWireBytes      int    `json:"response_wire_bytes"`
-	HTTPStatus             int    `json:"http_status"`
-	CompletedAtMS          int64  `json:"completed_at_ms"`
-	ProviderSelector       string `json:"provider_selector"`
-	ReachabilityIPv4SHA256 string `json:"reachability_ipv4_sha256"`
-	ReachabilityIPv6SHA256 string `json:"reachability_ipv6_sha256"`
-	IPv4RequestCount       uint64 `json:"ipv4_request_count"`
-	IPv6RequestCount       uint64 `json:"ipv6_request_count"`
+	Schema                 string              `json:"schema"`
+	ChildReceiptSHA256     string              `json:"child_receipt_sha256"`
+	FinalizationSHA256     string              `json:"finalization_sha256"`
+	BindReceiptSHA256      string              `json:"bind_receipt_sha256"`
+	RelaySocket            string              `json:"relay_socket"`
+	ProviderConfigSHA256   string              `json:"provider_config_sha256"`
+	ProviderIPv4URL        string              `json:"provider_ipv4_url"`
+	ProviderIPv6URL        string              `json:"provider_ipv6_url"`
+	RequestSHA256          string              `json:"request_sha256"`
+	Model                  string              `json:"model"`
+	PromptSHA256           string              `json:"prompt_sha256"`
+	ProviderReplySHA256    string              `json:"provider_reply_sha256"`
+	ResponseWireSHA256     string              `json:"response_wire_sha256"`
+	ResponseWireBytes      int                 `json:"response_wire_bytes"`
+	HTTPStatus             int                 `json:"http_status"`
+	CompletedAtMS          int64               `json:"completed_at_ms"`
+	ProviderSelector       string              `json:"provider_selector"`
+	ReachabilityIPv4SHA256 string              `json:"reachability_ipv4_sha256"`
+	ReachabilityIPv6SHA256 string              `json:"reachability_ipv6_sha256"`
+	IPv4RequestCount       uint64              `json:"ipv4_request_count"`
+	IPv6RequestCount       uint64              `json:"ipv6_request_count"`
+	Peer                   Stage2aT03RelayPeer `json:"peer"`
+	PeerSHA256             string              `json:"peer_sha256"`
+}
+
+// Stage2aT03RelayPeer is B's rechecked Darwin audit-token observation of the
+// accepted R-to-B socket peer and its direct parent. All fields are JSON
+// integers in B's canonical peer record; A independently observes the live
+// processes before accepting a protected positive receipt.
+type Stage2aT03RelayPeer struct {
+	UID                uint32 `json:"uid"`
+	PID                int    `json:"pid"`
+	PIDVersion         int    `json:"pid_version"`
+	StartSeconds       int64  `json:"start_seconds"`
+	StartMicros        int32  `json:"start_micros"`
+	ParentPID          int    `json:"parent_pid"`
+	ParentUID          uint32 `json:"parent_uid"`
+	ParentStartSeconds int64  `json:"parent_start_seconds"`
+	ParentStartMicros  int32  `json:"parent_start_micros"`
+}
+
+func (p Stage2aT03RelayPeer) valid() bool {
+	return p.UID >= 300 && p.UID <= 399 && p.PID > 1 && p.PIDVersion > 0 &&
+		p.StartSeconds > 0 && p.StartMicros >= 0 && p.StartMicros < 1_000_000 &&
+		p.ParentPID > 1 && p.ParentPID != p.PID && p.ParentUID == p.UID &&
+		p.ParentStartSeconds > 0 && p.ParentStartMicros >= 0 && p.ParentStartMicros < 1_000_000
 }
 
 func ParseStage2aT03ArmRequest(raw []byte) (Stage2aT03ArmRequest, error) {
@@ -66,10 +91,14 @@ func (r Stage2aT03PositiveReceipt) valid() bool {
 	}
 	for _, digest := range []string{r.ChildReceiptSHA256, r.FinalizationSHA256, r.BindReceiptSHA256,
 		r.ProviderConfigSHA256, r.RequestSHA256, r.PromptSHA256, r.ProviderReplySHA256, r.ResponseWireSHA256,
-		r.ReachabilityIPv4SHA256, r.ReachabilityIPv6SHA256} {
+		r.ReachabilityIPv4SHA256, r.ReachabilityIPv6SHA256, r.PeerSHA256} {
 		if !stage2aPrefixedDigest.MatchString(digest) {
 			return false
 		}
+	}
+	peer, err := marshalStage2aReservationJCS(r.Peer)
+	if err != nil || !r.Peer.valid() || stage2aReservationSHA256(peer) != r.PeerSHA256 {
+		return false
 	}
 	v4, ok4 := stage2aT03ParseLoopbackURL(r.ProviderIPv4URL, "127.0.0.1")
 	v6, ok6 := stage2aT03ParseLoopbackURL(r.ProviderIPv6URL, "::1")

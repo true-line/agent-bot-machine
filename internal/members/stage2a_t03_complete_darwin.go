@@ -21,19 +21,20 @@ func (s *Stage2aService) Stage2aT03AcceptComplete(hqUID int, epoch string, q Sta
 	err := s.withStage2aT03Start(hqUID, epoch, q.Stage2aStopRequest,
 		func(r *stage2aLiveReservation, policy stage2aInstalledPolicy, store stage2aAdminClaimStore, dir *os.File) error {
 			p := r.t03Pending
-			if p == nil || p.issuedLease == "" || len(p.complete) != 0 || !stage2aT03ResultMatches(q.Result, p) ||
+			if p == nil || r.t03PositivePeer == nil || p.issuedLease == "" || len(p.complete) != 0 || !stage2aT03ResultMatches(q.Result, p) ||
 				!stage2aT03NetworkMatches(q.Network, q.Result, p, time.Now()) ||
 				s.checkStage2aT03Sibling(p.review, policy.Runner, hqUID, epoch) != nil {
 				return errStage2aReservationAuthority
 			}
 			witness, err := marshalStage2aReservationJCS(struct {
 				Attempts                        []stage2aT03ObservedAttempt `json:"attempts"`
+				PositivePeer                    stage2aT03PeerWitness       `json:"positive_peer"`
 				SiblingInstallationID           string                      `json:"sibling_installation_id"`
 				SiblingStartID                  string                      `json:"sibling_start_id"`
 				SiblingUID                      int                         `json:"sibling_uid"`
 				SiblingHomeMode                 string                      `json:"sibling_home_mode"`
 				SiblingCredentialMetadataSHA256 string                      `json:"sibling_credential_metadata_sha256"`
-			}{p.attempts, p.review.SiblingInstallationID, p.review.SiblingStartID, p.review.SiblingUID,
+			}{p.attempts, *r.t03PositivePeer, p.review.SiblingInstallationID, p.review.SiblingStartID, p.review.SiblingUID,
 				"0700", p.review.SiblingCredentialMetadataSHA256})
 			if err != nil {
 				return err
