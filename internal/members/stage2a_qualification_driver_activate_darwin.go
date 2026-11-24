@@ -161,12 +161,12 @@ func runStage2aDriverChild(ctx context.Context, install stage2aQualificationQIns
 	account, err := user.LookupId(strconv.Itoa(install.AdminUID))
 	self, selfErr := os.Executable()
 	if err != nil || selfErr != nil || self != review.Authority.Path || !slices.Equal(os.Args, review.AuthorityArgv) ||
-		review.Socket != stage2aQualificationDriverPath(account.HomeDir) ||
+		review.Socket != stage2aQualificationDriverPath(account.HomeDir, install.Review.InstallationID) ||
 		!slices.Equal(review.Argv, []string{review.Executable.Path, "stage2a-qualification-owner-driver"}) ||
 		verifyQualificationExecutable(review.Executable.Path, review.Executable.SHA256) != nil {
 		return empty, nil, errStage2aReservationAuthority
 	}
-	listener, err := newStage2aQualificationDriverListener(account.HomeDir, install.AdminUID, install.AdminGID)
+	listener, err := newStage2aQualificationDriverListener(account.HomeDir, install.Review.InstallationID, install.AdminUID, install.AdminGID)
 	if err != nil {
 		return empty, nil, err
 	}

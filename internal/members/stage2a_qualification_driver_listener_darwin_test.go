@@ -107,6 +107,36 @@ func TestStage2aQualificationDriverClosePreservesOccupant(t *testing.T) {
 	}
 }
 
+func TestStage2aQualificationDriverTwoInstallationsDoNotReuseSocket(t *testing.T) {
+	dir := shortStage2aDriverTestDir(t)
+	first := filepath.Join(dir, stage2aQualificationDriverSocketName("pin-bootstrap-m1-20261124"))
+	second := filepath.Join(dir, stage2aQualificationDriverSocketName("pin-bootstrap-m2-20261124"))
+	if first == second {
+		t.Fatal("distinct reviewed installations selected the same driver socket")
+	}
+	bound, err := net.ListenUnix("unix", &net.UnixAddr{Name: first, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound.SetUnlinkOnClose(false)
+	(&stage2aQualificationDriverListener{listener: bound, path: first}).close()
+	if replay, err := net.ListenUnix("unix", &net.UnixAddr{Name: first, Net: "unix"}); err == nil {
+		replay.Close()
+		t.Fatal("same installation replayed a spent driver socket")
+	}
+	next, err := net.ListenUnix("unix", &net.UnixAddr{Name: second, Net: "unix"})
+	if err != nil {
+		t.Fatalf("second reviewed installation could not bind while first socket remains: %v", err)
+	}
+	defer next.Close()
+	if err := proveStage2aQualificationDriverListener(next, first); err == nil {
+		t.Fatal("second installation accepted the stale first installation socket")
+	}
+	if err := proveStage2aQualificationDriverListener(next, second); err != nil {
+		t.Fatalf("second installation refused its own socket: %v", err)
+	}
+}
+
 func shortStage2aDriverTestDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/private/tmp", "qdl-")
