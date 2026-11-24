@@ -132,7 +132,7 @@ type stage2aDirectHQStartReceiptV3 struct {
 	RunnerUID         int    `json:"runner_uid"`
 	RunnerGID         int    `json:"runner_gid"`
 	State             string `json:"state"`
-	Protected         bool   `json:"protected"`
+	Protected         *bool  `json:"protected"`
 }
 
 func stage2aDirectQStartReceiptV3(q Stage2aDirectQWitnessFinishRequestV3,
@@ -149,7 +149,7 @@ func stage2aDirectQStartReceiptV3(q Stage2aDirectQWitnessFinishRequestV3,
 	}
 	var start stage2aDirectHQStartReceiptV3
 	if json.Unmarshal(raw, &start) != nil || start.Plugin != "hq" || start.Kind != "hq.soul.started" || start.Seq == 0 ||
-		start.Profile != "managed-cooperative" || start.Protected || start.State != "running" ||
+		start.Profile != "managed-cooperative" || start.Protected == nil || *start.Protected || start.State != "running" ||
 		start.InstallationID != pre.InstallationID || start.StartID != pre.StartID || start.HQEpoch != pre.HQEpoch ||
 		start.ReservationSHA256 != pre.ReservationSHA256 || start.PID != live.runnerPID ||
 		start.RunnerUID != live.installed.Policy.Runner.UID || start.RunnerGID != live.installed.Policy.Runner.GID ||
