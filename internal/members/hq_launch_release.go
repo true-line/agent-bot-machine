@@ -133,6 +133,46 @@ func verifyDarwinRelease(s HQService, h Host) (string, error) {
 	return darwinControlCapability(meta)
 }
 
+// The ordinary launchd job has no authenticated selected-H preloader. A
+// private H candidate cannot start through that argv. Inspect its pin only
+// after the entire extraction has matched the approved archive; Build also
+// repeats this check when a saved plan is rebuilt before root apply.
+func checkUnselectedHQBootstrap(s HQService) error {
+	p := filepath.Join(s.ReleaseDir, "governance/soul-contracts.json")
+	f, err := os.Open(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil // older public HQ releases did not include the H pin
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return refuse(RefusedPath, "HQ H pin must be a bounded regular file")
+	}
+	var pin map[string]json.RawMessage
+	decoder := json.NewDecoder(io.LimitReader(f, (1<<20)+1))
+	if err := decoder.Decode(&pin); err != nil {
+		return refuse(RefusedPath, "invalid HQ H pin: %v", err)
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return refuse(RefusedPath, "trailing data in HQ H pin")
+	}
+	if pin == nil {
+		return refuse(RefusedPath, "HQ H pin must be a JSON object")
+	}
+	if value, present := pin["private_candidate"]; present && !bytes.Equal(bytes.TrimSpace(value), []byte("true")) {
+		return refuse(RefusedPath, "invalid HQ H private_candidate marker")
+	} else if present {
+		return refuse(RefusedList, "private H candidate requires authenticated selection; ordinary HQ service argv cannot start it")
+	}
+	return nil
+}
+
 func darwinControlCapability(meta []byte) (string, error) {
 	var record struct {
 		Target     string          `json:"target_platform"`

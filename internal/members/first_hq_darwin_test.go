@@ -150,3 +150,30 @@ func TestFirstHQPlanBindsOptionalVerifiedService(t *testing.T) {
 		t.Fatal("accepted the saved plan after the retained runtime changed")
 	}
 }
+
+func TestFirstHQPlanRefusesPrivateHBeforeAccountCreation(t *testing.T) {
+	for _, tc := range []struct {
+		name, pin, want string
+	}{
+		{"private", `{"private_candidate":true}`, "private H candidate requires authenticated selection"},
+		{"public", `{"schema_version":1,"tag":"v0.10.2"}`, ""},
+		{"malformed", `{"private_candidate":"true"}`, "invalid HQ H private_candidate marker"},
+		{"false marker", `{"private_candidate":false}`, "invalid HQ H private_candidate marker"},
+		{"null marker", `{"private_candidate":null}`, "invalid HQ H private_candidate marker"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			h := emptyHost()
+			h.accounts["operator"] = Account{Name: "operator", UID: 501}
+			s := makeTestHQRelease(t, h, base, launchControlV1, filepath.Join(base, "node"), "// fixture\n", tc.pin)
+			p, err := Build(Input{HQAccount: DarwinHQAccount, HQService: s, Platform: PlatformDarwin, Invoker: "operator"}, h)
+			if tc.want == "" {
+				if err != nil || len(p.Steps) != 2 || p.Steps[0].Kind != "hq-account" {
+					t.Fatalf("public first-HQ plan: %d steps, %v", len(p.Steps), err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.want) || len(p.Steps) != 0 {
+				t.Fatalf("first-HQ preflight: %+v, %v", p.Steps, err)
+			}
+		})
+	}
+}

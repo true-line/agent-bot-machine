@@ -104,6 +104,11 @@ func appendLaunchDaemon(p *Plan, in Input, h Host) error {
 	if err != nil {
 		return err
 	}
+	if s.Stage2a == nil {
+		if err := checkUnselectedHQBootstrap(*s); err != nil {
+			return err
+		}
+	}
 	rec := launchRecord{Service: *s, OwnerUID: owner.UID}
 	if s.Stage2a != nil {
 		rec.Stage2a, err = reviewHQStage2aService(in, h, owner, hq, capability)
