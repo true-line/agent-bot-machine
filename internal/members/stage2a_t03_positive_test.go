@@ -2,11 +2,49 @@ package members
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 )
+
+func TestStage2aT03DirectChildWitnessFrameIsExact(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	q := Stage2aT03DirectChildWitnessRequest{
+		Verb: "stage2a-t03-child-credential-witness",
+		Stage2aT03SiblingCredentialWitnessRequest: Stage2aT03SiblingCredentialWitnessRequest{
+			Stage2aStopRequest: Stage2aStopRequest{
+				ReservationSHA256: digest, InstallationID: "soul-one", StartID: "st_0123456789abcdef01234567",
+				LaunchID: "ln_0123456789abcdef01234567", PlanID: "plan-20261122T120000Z-abcd",
+				PlanDigest: strings.Repeat("b", 64), HQEpoch: strings.Repeat("c", 64)},
+			Witness: Stage2aT03SiblingCredentialWitness{
+				Schema:             "agent-bot-machine/stage2a-t03-sibling-credential-witness/v1",
+				ChallengeBase64URL: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("x", 32))), PrimaryReservationSHA256: digest,
+				SiblingReservationSHA256: digest, ChildReceiptSHA256: digest,
+				MetadataSHA256: digest, LeaseSequence: 7, CredentialPath: "/private/test/credential",
+				ObservedAtMS: 1000}}}
+	raw, err := json.Marshal(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseStage2aT03DirectChildWitnessRequest(raw); err != nil {
+		t.Fatalf("valid direct child witness refused: %v", err)
+	}
+	q.Verb = "stage2a-t03-sibling-credential-witness"
+	bad, _ := json.Marshal(q)
+	if _, err := ParseStage2aT03DirectChildWitnessRequest(bad); err == nil {
+		t.Fatal("paired HQ witness verb entered direct child route")
+	}
+	dup := append(raw[:len(raw)-1], []byte(`,"verb":"stage2a-t03-child-credential-witness"}`)...)
+	if _, err := ParseStage2aT03DirectChildWitnessRequest(dup); err == nil {
+		t.Fatal("duplicate direct verb accepted")
+	}
+	unknown := append(raw[:len(raw)-1], []byte(`,"sign_privileged_operation":true}`)...)
+	if _, err := ParseStage2aT03DirectChildWitnessRequest(unknown); err == nil {
+		t.Fatal("undeclared direct child field accepted")
+	}
+}
 
 func TestStage2aT03PositiveBindsExactStartAndDualStackBaseline(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)

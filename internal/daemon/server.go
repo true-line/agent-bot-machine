@@ -57,6 +57,34 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 	if err != nil {
 		res = refused(diag.DaemonTampered, err.Error())
 	} else {
+		// The sole unpaired qualification input is received directly from the
+		// existing world-reachable Machine socket. Its Darwin kernel peer is
+		// checked against the exact live sibling child wrapper by Stage2a.
+		var kind struct {
+			Verb string `json:"verb"`
+		}
+		if json.Unmarshal(line, &kind) == nil && kind.Verb == stage2aT03DirectChildWitnessVerb {
+			if hooks.Stage2a == nil || g == nil || g.Dir == "" {
+				res = refused(diag.DaemonUnimplemented, "protected T03 child witness is unavailable")
+			} else if uid < 0 {
+				res = refused(diag.DaemonPeerRefused, "protected T03 child witness requires a local peer")
+			} else if q, parseErr := members.ParseStage2aT03DirectChildWitnessRequest(line); parseErr != nil {
+				res = refused(diag.DaemonUndeclared, "invalid direct T03 child credential witness")
+			} else if pairing, pairErr := currentDevicePairing(g.Dir); pairErr != nil ||
+				!stage2aT03DirectPairingAllows(pairing, q.HQEpoch) ||
+				!dedicatedMembersPlanPeer(pairing.AgentDaemonUID) {
+				res = refused(diag.DaemonPeerRefused, "protected T03 child witness requires the current HQ pairing")
+			} else if pid, pidErr := stage2aPeerPID(conn); pidErr != nil {
+				res = refused(diag.DaemonPeerRefused, "protected T03 child witness requires a kernel peer PID")
+			} else {
+				res = hooks.reply(Request{Verb: kind.Verb, stage2aT03SiblingWitness: q,
+					stage2aEpoch: q.HQEpoch, peerUID: uid, peerPID: pid})
+			}
+			// This route only ingests a child observation. It never signs a
+			// Machine authority response or invokes a protected operation.
+			writeStage2aDirectReceipt(conn, res)
+			return
+		}
 		req, id, msg := g.verify(uid, line)
 		requestNonce = req.Nonce
 		if id != "" {
@@ -130,6 +158,20 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 		}
 	}
 	writeConnResponse(conn, priv, res, requestNonce)
+}
+
+func stage2aT03DirectPairingAllows(p Pairing, epoch string) bool {
+	return p.HQEpoch != "" && epoch == p.HQEpoch &&
+		devicePairAllows(p, p.AgentDaemonUID, p.AgentDaemon)
+}
+
+func writeStage2aDirectReceipt(conn net.Conn, res Response) {
+	line, err := formatLine(struct {
+		OK bool `json:"ok"`
+	}{res.OK})
+	if err == nil {
+		_, _ = conn.Write(line)
+	}
 }
 
 func writeConnResponse(conn net.Conn, priv ed25519.PrivateKey, res Response, requestNonce string) {
@@ -250,7 +292,7 @@ func (h Hooks) reply(req Request) Response {
 			return deviceUnavailable()
 		}
 		return h.HQDevice(req)
-	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aT03PositiveVerb, stage2aT03ReadyVerb, stage2aT03CompleteVerb, stage2aT03SiblingWitnessVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aCooperativeReserveVerb, stage2aCooperativeReserveResultVerb, stage2aCooperativeAttachVerb, stage2aCooperativeStopVerb, stage2aCooperativeProjectionVerb, stage2aCooperativeProviderVerb, stage2aCooperativeLookupVerb, stage2aCooperativeLiveVerb, stage2aCooperativeAbortVerb, stage2aCooperativeQBeginVerb, stage2aCooperativeQFinishVerb, stage2aCooperativeQWitnessBeginVerb, stage2aCooperativeQWitnessFinishVerb:
+	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aT03PositiveVerb, stage2aT03ReadyVerb, stage2aT03CompleteVerb, stage2aT03SiblingWitnessVerb, stage2aT03DirectChildWitnessVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aCooperativeReserveVerb, stage2aCooperativeReserveResultVerb, stage2aCooperativeAttachVerb, stage2aCooperativeStopVerb, stage2aCooperativeProjectionVerb, stage2aCooperativeProviderVerb, stage2aCooperativeLookupVerb, stage2aCooperativeLiveVerb, stage2aCooperativeAbortVerb, stage2aCooperativeQBeginVerb, stage2aCooperativeQFinishVerb, stage2aCooperativeQWitnessBeginVerb, stage2aCooperativeQWitnessFinishVerb:
 		if h.Stage2a == nil {
 			return refused(diag.DaemonUnimplemented, "Stage 2a reserve authority is unavailable")
 		}

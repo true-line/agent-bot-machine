@@ -159,3 +159,10 @@ type Stage2aT03SiblingCredentialWitnessRequest struct {
 	Stage2aStopRequest
 	Witness Stage2aT03SiblingCredentialWitness `json:"witness"`
 }
+
+// Only the live sibling R child launcher sends this frame directly to A's
+// existing cross-account Machine socket. HQ cannot supply its kernel peer.
+type Stage2aT03DirectChildWitnessRequest struct {
+	Verb string `json:"verb"`
+	Stage2aT03SiblingCredentialWitnessRequest
+}

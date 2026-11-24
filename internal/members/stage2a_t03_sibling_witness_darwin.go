@@ -10,9 +10,12 @@ import (
 )
 
 type stage2aT03SiblingWitnessReceipt struct {
-	Witness         Stage2aT03SiblingCredentialWitness
-	LeaseIssuedAtMS int64
-	ReceivedAtMS    int64
+	Witness            Stage2aT03SiblingCredentialWitness `json:"witness"`
+	LeaseIssuedAtMS    int64                              `json:"lease_issued_at_ms"`
+	ReceivedAtMS       int64                              `json:"received_at_ms"`
+	OriginPeerUID      int                                `json:"origin_peer_uid"`
+	OriginPeerPID      int                                `json:"origin_peer_pid"`
+	OriginReceivedAtMS int64                              `json:"origin_received_at_ms"`
 }
 
 type stage2aT03SiblingWitnessState struct {
@@ -23,6 +26,7 @@ type stage2aT03SiblingWitnessState struct {
 	IssuedSequence           uint64
 	IssuedAtMS               int64
 	ExpiresAtMS              int64
+	Direct                   *stage2aT03SiblingWitnessReceipt
 	First, Latest            *stage2aT03SiblingWitnessReceipt
 }
 
@@ -155,6 +159,71 @@ func stage2aT03WitnessMatchesIssued(state *stage2aT03SiblingWitnessState,
 	return err == nil && stage2aReservationSHA256(metadata) == w.MetadataSHA256
 }
 
+// This is reached only by a direct Unix connection whose UID and PID came
+// from Darwin kernel peer credentials. HQ cannot create that peer identity.
+func (s *Stage2aService) Stage2aT03ObserveDirectChildWitness(peerUID, peerPID int,
+	q Stage2aT03SiblingCredentialWitnessRequest) (string, uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.active[q.ReservationSHA256]
+	if r == nil || !stage2aMatchesStopSelectors(r, q.Stage2aStopRequest, r.payload.Assignment.HQUID) ||
+		q.HQEpoch != r.request.HQEpoch || !stage2aT03DirectPeerAllowed(r, peerUID, peerPID) {
+		return "", 0, errStage2aReservationAuthority
+	}
+	state := r.t03SiblingWitness
+	now := time.Now().UnixMilli()
+	if !stage2aT03WitnessMatchesIssued(state, q.Witness, q.Stage2aStopRequest,
+		stage2aReservationSHA256(r.childReceiptEnvelope), uint32(peerUID), now) {
+		return "", 0, errStage2aReservationAuthority
+	}
+	if err := s.recheckStage2aT03WitnessChild(r, r.payload.Assignment.HQUID, q.HQEpoch); err != nil {
+		return "", 0, err
+	}
+	state.Direct = &stage2aT03SiblingWitnessReceipt{Witness: q.Witness,
+		LeaseIssuedAtMS: state.IssuedAtMS, OriginPeerUID: peerUID,
+		OriginPeerPID: peerPID, OriginReceivedAtMS: now}
+	return q.Witness.MetadataSHA256, q.Witness.LeaseSequence, nil
+}
+
+func stage2aT03DirectPeerAllowed(r *stage2aLiveReservation, peerUID, peerPID int) bool {
+	return r != nil && r.t03SiblingWitness != nil && peerUID == r.payload.Assignment.RunnerUID &&
+		peerPID > 1 && peerPID == r.childLauncherPID && r.childPID > 1 && len(r.childReceiptEnvelope) != 0
+}
+
+// Caller holds s.mu. The forwarded bytes are usable only after A has itself
+// received the exact object from the verified sibling child process.
+func stage2aT03ForwardMatchesDirect(state *stage2aT03SiblingWitnessState,
+	w Stage2aT03SiblingCredentialWitness, now int64) bool {
+	return state != nil && state.Direct != nil && state.Direct.Witness == w &&
+		state.Direct.OriginReceivedAtMS <= now && now-state.Direct.OriginReceivedAtMS <= 5_000 &&
+		state.Direct.OriginPeerUID > 0 && state.Direct.OriginPeerPID > 1
+}
+
+func stage2aT03ConsumeDirectForward(state *stage2aT03SiblingWitnessState,
+	w Stage2aT03SiblingCredentialWitness, now int64) bool {
+	if !stage2aT03ForwardMatchesDirect(state, w, now) {
+		return false
+	}
+	receipt := *state.Direct
+	receipt.ReceivedAtMS = now
+	state.Direct = nil
+	if state.First == nil {
+		state.First = &receipt
+	}
+	state.Latest = &receipt
+	return true
+}
+
+func (s *Stage2aService) recheckStage2aT03WitnessChild(r *stage2aLiveReservation, hqUID int, epoch string) error {
+	p, raw, err := loadStage2aActiveExecutionPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, r)
+	if err != nil || stage2aReservationSHA256(raw) != r.policyDigest ||
+		checkStage2aGrantedRoleProcess(r.childLauncherPID, p.Runner.UID, p.Runner.GID, "child", r.childLauncherProcess) != nil ||
+		checkStage2aChildProcess(r.childPID, r.childLauncherPID, p.Runner, p.LaunchInputs, r.childProcess) != nil {
+		return errStage2aReservationAuthority
+	}
+	return nil
+}
+
 func (s *Stage2aService) Stage2aT03AcceptSiblingWitness(hqUID int, epoch string,
 	q Stage2aT03SiblingCredentialWitnessRequest) (string, uint64, error) {
 	s.mu.Lock()
@@ -168,19 +237,15 @@ func (s *Stage2aService) Stage2aT03AcceptSiblingWitness(hqUID int, epoch string,
 	state := r.t03SiblingWitness
 	now := time.Now().UnixMilli()
 	if !stage2aT03WitnessMatchesIssued(state, w, q.Stage2aStopRequest,
-		stage2aReservationSHA256(r.childReceiptEnvelope), uint32(r.payload.Assignment.RunnerUID), now) {
+		stage2aReservationSHA256(r.childReceiptEnvelope), uint32(r.payload.Assignment.RunnerUID), now) ||
+		!stage2aT03ForwardMatchesDirect(state, w, now) {
 		return "", 0, errStage2aReservationAuthority
 	}
-	p, raw, err := loadStage2aActiveExecutionPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, r)
-	if err != nil || stage2aReservationSHA256(raw) != r.policyDigest ||
-		checkStage2aGrantedRoleProcess(r.childLauncherPID, p.Runner.UID, p.Runner.GID, "child", r.childLauncherProcess) != nil ||
-		checkStage2aChildProcess(r.childPID, r.childLauncherPID, p.Runner, p.LaunchInputs, r.childProcess) != nil {
+	if err := s.recheckStage2aT03WitnessChild(r, hqUID, epoch); err != nil {
 		return "", 0, errStage2aReservationAuthority
 	}
-	receipt := &stage2aT03SiblingWitnessReceipt{Witness: w, LeaseIssuedAtMS: state.IssuedAtMS, ReceivedAtMS: now}
-	if state.First == nil {
-		state.First = receipt
+	if !stage2aT03ConsumeDirectForward(state, w, now) {
+		return "", 0, errStage2aReservationAuthority
 	}
-	state.Latest = receipt
 	return w.MetadataSHA256, w.LeaseSequence, nil
 }

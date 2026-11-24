@@ -32,6 +32,35 @@ func TestStage2aT03SiblingWitnessBindsIssuedLeaseAndReviewedMetadata(t *testing.
 	if !stage2aT03WitnessMatchesIssued(state, w, q, digest, 301, 2_000) {
 		t.Fatal("matching sibling observation refused")
 	}
+	if stage2aT03ForwardMatchesDirect(state, w, 2_000) {
+		t.Fatal("HQ-only forwarded witness accepted without a direct child origin")
+	}
+	state.Direct = &stage2aT03SiblingWitnessReceipt{Witness: w, LeaseIssuedAtMS: 1_000,
+		OriginPeerUID: 301, OriginPeerPID: 345, OriginReceivedAtMS: 1_900}
+	if !stage2aT03ForwardMatchesDirect(state, w, 2_000) {
+		t.Fatal("exact direct child witness refused")
+	}
+	spoof := w
+	spoof.LeaseSequence++
+	if stage2aT03ForwardMatchesDirect(state, spoof, 2_000) {
+		t.Fatal("HQ-fabricated later lease accepted without a direct child observation")
+	}
+	spoof = w
+	spoof.ObservedAtMS++
+	if stage2aT03ForwardMatchesDirect(state, spoof, 2_000) {
+		t.Fatal("HQ-fabricated observation time accepted")
+	}
+	if stage2aT03ForwardMatchesDirect(state, w, 6_901) {
+		t.Fatal("stale direct child observation replayed")
+	}
+	if !stage2aT03ConsumeDirectForward(state, w, 2_000) ||
+		state.First == nil || state.Latest == nil || state.Latest.OriginPeerPID != 345 ||
+		state.Latest.ReceivedAtMS != 2_000 {
+		t.Fatal("direct child observation was not bound into the paired witness receipt")
+	}
+	if stage2aT03ConsumeDirectForward(state, w, 2_001) {
+		t.Fatal("consumed direct child observation replayed")
+	}
 	for _, change := range []func(*Stage2aT03SiblingCredentialWitness){
 		func(v *Stage2aT03SiblingCredentialWitness) { v.CredentialPath += "-other" },
 		func(v *Stage2aT03SiblingCredentialWitness) { v.Metadata.Path += "-other" },
@@ -76,5 +105,26 @@ func TestStage2aT03SiblingWitnessBindsIssuedLeaseAndReviewedMetadata(t *testing.
 	}
 	if stage2aT03SecondWitnessMatches(state, review, primary, "challenge", 2_500, 7_601) {
 		t.Fatal("stale second witness accepted")
+	}
+}
+
+func TestStage2aT03DirectPeerRequiresExactActiveChildWrapper(t *testing.T) {
+	r := &stage2aLiveReservation{t03SiblingWitness: &stage2aT03SiblingWitnessState{},
+		childLauncherPID: 345, childPID: 346, childReceiptEnvelope: []byte("receipt")}
+	r.payload.Assignment.RunnerUID = 301
+	if !stage2aT03DirectPeerAllowed(r, 301, 345) {
+		t.Fatal("exact child wrapper refused")
+	}
+	for _, peer := range [][2]int{{301, 347}, {302, 345}, {301, 0}} {
+		if stage2aT03DirectPeerAllowed(r, peer[0], peer[1]) {
+			t.Fatalf("wrong kernel peer accepted: %v", peer)
+		}
+	}
+	if stage2aT03DirectPeerAllowed(nil, 301, 345) {
+		t.Fatal("stopped reservation accepted")
+	}
+	r.childPID = 0
+	if stage2aT03DirectPeerAllowed(r, 301, 345) {
+		t.Fatal("stopped child accepted")
 	}
 }

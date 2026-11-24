@@ -1,9 +1,98 @@
 package daemon
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"net"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/qwts/managed-machine/internal/diag"
 )
+
+func TestRunnerPeerStillCannotUsePairedMachineVerbs(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &Gate{Pairing: Pairing{Live: pub, AgentDaemon: pub, AgentDaemonUID: 309,
+		AgentDaemonBound: true, OwnerPresenceRequired: true, HQEpoch: strings.Repeat("a", 64)}}
+	q := Request{Verb: stage2aLookupVerb,
+		Stage2aRequest: base64.RawURLEncoding.EncodeToString([]byte(`{"package_path":"/private/fixture"}`)),
+		Timestamp:      time.Now().Unix(), Nonce: "runner-witness-boundary"}
+	if err := Sign(priv, &q); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, id, _ := g.verify(301, raw); id != diag.DaemonPeerRefused {
+		t.Fatalf("R peer entered a paired Machine verb: %s", id)
+	}
+	q.Signature = ""
+	raw, _ = json.Marshal(q)
+	if _, id, _ := g.verify(301, raw); id != diag.DaemonUnsigned {
+		t.Fatalf("unsigned R request reached paired Machine verb: %s", id)
+	}
+}
+
+func TestDirectChildWitnessRequiresCurrentApprovedHQEpoch(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch := strings.Repeat("a", 64)
+	p := Pairing{Live: pub, AgentDaemon: pub, AgentDaemonUID: 309,
+		AgentDaemonBound: true, OwnerPresenceRequired: true, HQEpoch: epoch}
+	if !stage2aT03DirectPairingAllows(p, epoch) {
+		t.Fatal("current approved HQ epoch refused")
+	}
+	if stage2aT03DirectPairingAllows(p, strings.Repeat("b", 64)) {
+		t.Fatal("pre-restart HQ epoch accepted")
+	}
+	p.AgentDaemonBound = false
+	if stage2aT03DirectPairingAllows(p, epoch) {
+		t.Fatal("revoked HQ pairing accepted")
+	}
+	p.AgentDaemonBound = true
+	p.OwnerPresenceRequired = false
+	if stage2aT03DirectPairingAllows(p, epoch) {
+		t.Fatal("unapproved HQ pairing accepted")
+	}
+}
+
+func TestDirectChildWitnessReceiptCarriesNoMachineSignatureOrAuthorityBody(t *testing.T) {
+	if knownVerb(stage2aT03DirectChildWitnessVerb) || isStage2aVerb(stage2aT03DirectChildWitnessVerb) {
+		t.Fatal("direct R child input entered the paired HQ command set")
+	}
+	for _, accepted := range []bool{true, false} {
+		client, server := net.Pipe()
+		done := make(chan struct{})
+		go func() {
+			writeStage2aDirectReceipt(server, Response{OK: accepted, State: "privileged-state", Body: []byte(`{"secret":"never"}`)})
+			server.Close()
+			close(done)
+		}()
+		got, err := io.ReadAll(client)
+		client.Close()
+		<-done
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "{\"ok\":true}\n"
+		if !accepted {
+			want = "{\"ok\":false}\n"
+		}
+		if string(got) != want {
+			t.Fatalf("direct receipt exposed authority fields: %q", got)
+		}
+	}
+}
 
 func TestCooperativeContainmentDeadlineIsBoundedWithoutChangingOtherVerbs(t *testing.T) {
 	start := time.Date(2026, 11, 23, 1, 0, 0, 0, time.UTC)

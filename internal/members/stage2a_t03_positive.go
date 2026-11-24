@@ -156,18 +156,32 @@ func ParseStage2aT03ReadyRequest(raw []byte) (Stage2aT03ReadyRequest, error) {
 
 func ParseStage2aT03SiblingCredentialWitnessRequest(raw []byte) (Stage2aT03SiblingCredentialWitnessRequest, error) {
 	var q Stage2aT03SiblingCredentialWitnessRequest
-	if err := decodeStage2aT03Request(raw, &q); err != nil || !validStage2aStopRequest(q.Stage2aStopRequest) ||
-		q.Witness.Schema != "agent-bot-machine/stage2a-t03-sibling-credential-witness/v1" ||
-		!validStage2aLiveChallenge(q.Witness.ChallengeBase64URL) ||
-		!stage2aPrefixedDigest.MatchString(q.Witness.PrimaryReservationSHA256) ||
-		!stage2aPrefixedDigest.MatchString(q.Witness.SiblingReservationSHA256) ||
-		!stage2aPrefixedDigest.MatchString(q.Witness.ChildReceiptSHA256) ||
-		!stage2aPrefixedDigest.MatchString(q.Witness.MetadataSHA256) ||
-		q.Witness.LeaseSequence == 0 || q.Witness.LeaseSequence > (1<<53)-1 ||
-		!stage2aAbsolutePath(q.Witness.CredentialPath) || q.Witness.ObservedAtMS <= 0 {
+	if err := decodeStage2aT03Request(raw, &q); err != nil || !validStage2aT03SiblingWitnessRequest(q) {
 		return Stage2aT03SiblingCredentialWitnessRequest{}, errors.New("invalid protected T03 sibling credential witness")
 	}
 	return q, nil
+}
+
+func ParseStage2aT03DirectChildWitnessRequest(raw []byte) (Stage2aT03SiblingCredentialWitnessRequest, error) {
+	var direct Stage2aT03DirectChildWitnessRequest
+	if err := decodeStage2aT03Request(raw, &direct); err != nil ||
+		direct.Verb != "stage2a-t03-child-credential-witness" ||
+		!validStage2aT03SiblingWitnessRequest(direct.Stage2aT03SiblingCredentialWitnessRequest) {
+		return Stage2aT03SiblingCredentialWitnessRequest{}, errors.New("invalid direct T03 child credential witness")
+	}
+	return direct.Stage2aT03SiblingCredentialWitnessRequest, nil
+}
+
+func validStage2aT03SiblingWitnessRequest(q Stage2aT03SiblingCredentialWitnessRequest) bool {
+	return validStage2aStopRequest(q.Stage2aStopRequest) &&
+		q.Witness.Schema == "agent-bot-machine/stage2a-t03-sibling-credential-witness/v1" &&
+		validStage2aLiveChallenge(q.Witness.ChallengeBase64URL) &&
+		stage2aPrefixedDigest.MatchString(q.Witness.PrimaryReservationSHA256) &&
+		stage2aPrefixedDigest.MatchString(q.Witness.SiblingReservationSHA256) &&
+		stage2aPrefixedDigest.MatchString(q.Witness.ChildReceiptSHA256) &&
+		stage2aPrefixedDigest.MatchString(q.Witness.MetadataSHA256) &&
+		q.Witness.LeaseSequence > 0 && q.Witness.LeaseSequence <= (1<<53)-1 &&
+		stage2aAbsolutePath(q.Witness.CredentialPath) && q.Witness.ObservedAtMS > 0
 }
 
 func decodeStage2aT03Request(raw []byte, q any) error {

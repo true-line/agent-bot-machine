@@ -168,6 +168,11 @@ func (c *stage2aT03ProbeCoordinator) reportSiblingCredential(p Stage2aT03Sibling
 		CredentialPath: p.CredentialPath, Metadata: meta, MetadataSHA256: digest,
 		ObservedAtMS: time.Now().UnixMilli(),
 	}
+	if sendStage2aT03DirectChildWitness(c.in, p.ExpiresAtMS,
+		Stage2aT03SiblingCredentialWitnessRequest{Stage2aStopRequest: stage2aT03ChildStopSelectors(c.in), Witness: witness}) != nil {
+		c.cancel()
+		return
+	}
 	if c.reporter.write(struct {
 		Kind    string                             `json:"kind"`
 		Witness Stage2aT03SiblingCredentialWitness `json:"witness"`
