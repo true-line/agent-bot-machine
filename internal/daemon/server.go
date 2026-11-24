@@ -61,7 +61,7 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 		} else if isStage2aVerb(req.Verb) && hooks.Stage2a != nil {
 			// Cooperative stop may wait for its untrusted R child to exit. Give
 			// only the cutoff verbs enough time for a bounded cancel and signature;
-			// all other daemon requests retain the five-second deadline.
+			// other Stage 2a requests retain the five-second deadline.
 			if req.Verb == stage2aCooperativeStopVerb || req.Verb == stage2aCooperativeAbortVerb {
 				_ = conn.SetDeadline(stage2aConnDeadline(started, req.Verb))
 			}
@@ -79,7 +79,10 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 				res = hooks.reply(req)
 			}
 		} else {
-			if req.Verb == stage2aCooperativeRecoveryVerb {
+			if req.Verb == stage2aCooperativeRecoveryVerb || req.Verb == upgradeVerb ||
+				req.Verb == recoveryVerb {
+				// A service plan rebuild can inspect the protected HQ signer and
+				// release bytes. Keep its response below HQ's ten-second limit.
 				_ = conn.SetDeadline(stage2aConnDeadline(started, req.Verb))
 			}
 			res = hooks.reply(req)
@@ -110,7 +113,7 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 
 func stage2aConnDeadline(started time.Time, verb string) time.Time {
 	if verb == stage2aCooperativeStopVerb || verb == stage2aCooperativeAbortVerb ||
-		verb == stage2aCooperativeRecoveryVerb {
+		verb == stage2aCooperativeRecoveryVerb || verb == upgradeVerb || verb == recoveryVerb {
 		return started.Add(9 * time.Second)
 	}
 	return started.Add(5 * time.Second)
