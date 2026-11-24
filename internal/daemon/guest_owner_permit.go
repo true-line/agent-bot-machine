@@ -94,6 +94,41 @@ func guestOwnerPermitAction(action string) bool {
 	}
 }
 
+// The dedicated HQ service upgrade predates typed plan purposes. Its saved
+// canonical plan has no purpose field, even though the signed challenge names
+// hq-service-upgrade. Admit only that exact Machine plan shape here; every
+// newer guest operation must continue to carry its matching purpose.
+func guestOwnerPermitPlanAction(action string, fields map[string]json.RawMessage, canonical string) bool {
+	if raw, ok := fields["purpose"]; ok {
+		var purpose string
+		return json.Unmarshal(raw, &purpose) == nil && purpose == action
+	}
+	if action != members.UpgradePurpose || len(fields) != 5 {
+		return false
+	}
+	for _, name := range []string{"version", "hq_account", "dir", "members", "steps"} {
+		if _, ok := fields[name]; !ok {
+			return false
+		}
+	}
+	var plan members.Plan
+	if json.Unmarshal([]byte(canonical), &plan) != nil {
+		return false
+	}
+	roundTrip, err := plan.Canonical()
+	if err != nil || string(roundTrip) != canonical || plan.Version != members.PlanVersion ||
+		plan.HQAccount != members.DarwinHQAccount || plan.Dir != members.DarwinDir ||
+		len(plan.Members) != 0 || len(plan.Steps) != 2 {
+		return false
+	}
+	account, service := plan.Steps[0], plan.Steps[1]
+	return account.Kind == members.KindHQAccount && account.Target == members.DarwinHQAccount &&
+		account.Action == members.ActionNone && account.Group == members.DarwinHQAccount && account.Mode == "0700" &&
+		service.Kind == members.KindService && service.Target == "ai.true-line.agent-bot-hq" &&
+		service.Action == "upgrade" && service.Owner != "" && service.Owner != "root" &&
+		service.Owner != members.DarwinHQAccount && service.Content != ""
+}
+
 func parseGuestOwnerChallenge(raw []byte, now time.Time) (Response, guestOwnerChallenge, []byte, error) {
 	var frame Response
 	var body guestOwnerChallenge
@@ -127,10 +162,9 @@ func parseGuestOwnerChallenge(raw []byte, now time.Time) (Response, guestOwnerCh
 	}
 	digest := sha256.Sum256([]byte(body.PlanCanonical))
 	var plan map[string]json.RawMessage
-	var purpose string
 	if !strings.HasSuffix(body.PlanCanonical, "\n") ||
 		json.Unmarshal([]byte(body.PlanCanonical), &plan) != nil ||
-		json.Unmarshal(plan["purpose"], &purpose) != nil || purpose != body.Action {
+		!guestOwnerPermitPlanAction(body.Action, plan, body.PlanCanonical) {
 		return frame, body, nil, errGuestOwnerPermit
 	}
 	guestKey, err := hex.DecodeString(body.MachineKey)

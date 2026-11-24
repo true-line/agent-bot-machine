@@ -81,6 +81,65 @@ func TestGuestOwnerPermitIssuesExactHQUpgradeButRefusesRecovery(t *testing.T) {
 	}
 }
 
+func TestGuestOwnerPermitAcceptsOnlyDedicatedHQUpgradeWithoutPurpose(t *testing.T) {
+	now := time.Unix(1795503600, 0)
+	guest, owner, original, observed := guestPermitFixtureForAction(t, now, members.UpgradePurpose)
+	_, host, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := members.Plan{Version: members.PlanVersion, HQAccount: members.DarwinHQAccount,
+		Dir: members.DarwinDir, Members: []string{}, Steps: []members.Step{
+			{Kind: members.KindHQAccount, Target: members.DarwinHQAccount,
+				Action: members.ActionNone, Group: members.DarwinHQAccount, Mode: "0700"},
+			{Kind: members.KindService, Target: "ai.true-line.agent-bot-hq",
+				Action: "upgrade", Owner: "admin", Content: "{}"},
+		}}
+	challengeFor := func(plan members.Plan) []byte {
+		t.Helper()
+		canonical, err := plan.Canonical()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var frame Response
+		if err := json.Unmarshal(original, &frame); err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(frame.Body, &body); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(canonical)
+		body["plan_canonical"] = string(canonical)
+		body["plan_digest"] = hex.EncodeToString(digest[:])
+		frame.Body, err = json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signResponse(guest, &frame)
+		line, err := json.Marshal(frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return append(line, '\n')
+	}
+	if permit, err := issueGuestOwnerPermit(host, owner, challengeFor(plan), observed, now); err != nil ||
+		permit.Action != members.UpgradePurpose {
+		t.Fatalf("dedicated HQ upgrade plan refused: %v", err)
+	}
+	wrong := plan
+	wrong.Steps = append([]members.Step(nil), plan.Steps...)
+	wrong.Steps[1].Target = "other-service"
+	if _, err := issueGuestOwnerPermit(host, owner, challengeFor(wrong), observed, now); err == nil {
+		t.Fatal("different service acquired an HQ upgrade permit")
+	}
+	wrong = plan
+	wrong.Members = []string{"_other"}
+	if _, err := issueGuestOwnerPermit(host, owner, challengeFor(wrong), observed, now); err == nil {
+		t.Fatal("account-bearing plan acquired an HQ upgrade permit")
+	}
+}
+
 func TestGuestOwnerPermitBindsIndependentTartKeyAndExactChallenge(t *testing.T) {
 	now := time.Unix(1795503600, 0)
 	_, owner, challenge, observed := guestPermitFixture(t, now)
