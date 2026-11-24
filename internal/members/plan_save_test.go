@@ -53,8 +53,14 @@ func TestSavedPlanFlushesNewDirectoriesAndRenamedFile(t *testing.T) {
 	if err := saveWith(dir, s, ops); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"dir:" + state, "dir:" + filepath.Join(state, "members"),
-		"file", "close", "rename", "dir:" + dir}
+	var want []string
+	for parent := filepath.Dir(dir); ; parent = filepath.Dir(parent) {
+		want = append(want, "dir:"+parent)
+		if filepath.Dir(parent) == parent {
+			break
+		}
+	}
+	want = append(want, "file", "close", "rename", "dir:"+dir)
 	if !reflect.DeepEqual(stages, want) {
 		t.Fatalf("durability stages = %q, want %q", stages, want)
 	}
@@ -130,6 +136,57 @@ func TestSavedPlanRefusesUnflushedNewDirectory(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, s.PlanID+".json")); !os.IsNotExist(err) {
 		t.Fatalf("unflushed directory exposed a saved plan: %v", err)
 	}
+}
+
+func TestSavedPlanRetryRepeatsFailedParentBarrier(t *testing.T) {
+	refused := errors.New("injected parent directory sync failure")
+	for _, name := range []string{"state", "members"} {
+		t.Run(name, func(t *testing.T) {
+			state := t.TempDir()
+			dir := filepath.Join(state, "members", "plans")
+			failedAt := state
+			if name == "members" {
+				failedAt = filepath.Join(state, "members")
+			}
+			s := Saved{PlanID: "plan-20261124T010000Z-abcd"}
+			ops := planSaveTestOps()
+			realSyncDir := ops.syncDir
+			failed := false
+			ops.syncDir = func(path string) error {
+				if path == failedAt && !failed {
+					failed = true
+					return refused
+				}
+				return realSyncDir(path)
+			}
+			if err := saveWith(dir, s, ops); !errors.Is(err, refused) {
+				t.Fatalf("first save = %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, s.PlanID+".json")); !os.IsNotExist(err) {
+				t.Fatalf("failed parent barrier exposed final plan: %v", err)
+			}
+			var retried []string
+			ops.syncDir = func(path string) error {
+				retried = append(retried, path)
+				return realSyncDir(path)
+			}
+			if err := saveWith(dir, s, ops); err != nil {
+				t.Fatalf("retry = %v", err)
+			}
+			if !containsPlanDir(retried, failedAt) {
+				t.Fatalf("retry skipped failed parent %q: %q", failedAt, retried)
+			}
+		})
+	}
+}
+
+func containsPlanDir(paths []string, want string) bool {
+	for _, path := range paths {
+		if path == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMembersPlanDoesNotReportAnUnsavedID(t *testing.T) {

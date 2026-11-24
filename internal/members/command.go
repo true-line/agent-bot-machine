@@ -635,26 +635,18 @@ type savedPlanIO struct {
 }
 
 func saveWith(dir string, s Saved, ops savedPlanIO) error {
-	// A newly made plans directory also needs its name committed in its
-	// parent. Record every missing component before MkdirAll creates it.
-	var missing []string
-	for path := dir; ; path = filepath.Dir(path) {
-		if _, err := os.Stat(path); err == nil {
-			break
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-		missing = append(missing, path)
-		if filepath.Dir(path) == path {
-			return errors.New("no existing plan directory ancestor")
-		}
-	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	for i := len(missing) - 1; i >= 0; i-- {
-		if err := ops.syncDir(filepath.Dir(missing[i])); err != nil {
+	// Sync the whole ancestry on every attempt. If a previous attempt failed
+	// after MkdirAll, those directories still exist but their names may not
+	// have reached stable storage. A retry must not skip their barriers.
+	for parent := filepath.Dir(dir); ; parent = filepath.Dir(parent) {
+		if err := ops.syncDir(parent); err != nil {
 			return err
+		}
+		if filepath.Dir(parent) == parent {
+			break
 		}
 	}
 	var raw []byte

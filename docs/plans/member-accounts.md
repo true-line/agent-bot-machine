@@ -74,8 +74,9 @@ remaining changes.
 
 Before reporting a usable plan ID, the planner syncs the private temporary
 file, closes it, atomically renames it, and syncs the plans directory. On macOS
-the file barrier uses `F_FULLFSYNC`; newly created plan-directory names are
-also synced through their parents. A failed write, close, rename, or barrier
+the file barrier uses `F_FULLFSYNC`; the plan-directory ancestry is synced
+on every attempt, including a retry after a failed parent barrier. A failed
+write, close, rename, or barrier
 returns a plan failure. Before exporting an owner challenge on a disposable
 guest, read back the exact saved plan and digest after a clean stop and restart.
 The earlier missing first-HQ plan in [#709](https://github.com/true-line/agent-bot-machine/issues/709)
