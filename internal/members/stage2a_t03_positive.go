@@ -6,10 +6,13 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/url"
 	"strconv"
+
+	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 )
 
 const stage2aT03PositiveSchema = "agent-bot/stage2a-t03-positive-receipt/v1"
@@ -72,6 +75,14 @@ func (p Stage2aT03RelayPeer) valid() bool {
 		p.ParentStartSeconds > 0 && p.ParentStartMicros >= 0 && p.ParentStartMicros < 1_000_000
 }
 
+func stage2aT03PeerCanonical(p Stage2aT03RelayPeer) ([]byte, error) {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+	return jsoncanonicalizer.Transform(raw)
+}
+
 func ParseStage2aT03ArmRequest(raw []byte) (Stage2aT03ArmRequest, error) {
 	var q Stage2aT03ArmRequest
 	if err := decodeStage2aT03Request(raw, &q); err != nil ||
@@ -96,8 +107,8 @@ func (r Stage2aT03PositiveReceipt) valid() bool {
 			return false
 		}
 	}
-	peer, err := marshalStage2aReservationJCS(r.Peer)
-	if err != nil || !r.Peer.valid() || stage2aReservationSHA256(peer) != r.PeerSHA256 {
+	peer, err := stage2aT03PeerCanonical(r.Peer)
+	if err != nil || !r.Peer.valid() || fmt.Sprintf("sha256:%x", sha256.Sum256(peer)) != r.PeerSHA256 {
 		return false
 	}
 	v4, ok4 := stage2aT03ParseLoopbackURL(r.ProviderIPv4URL, "127.0.0.1")

@@ -1,7 +1,9 @@
 package members
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -17,7 +19,7 @@ func TestStage2aT03PositiveBindsExactStartAndDualStackBaseline(t *testing.T) {
 	peer := Stage2aT03RelayPeer{UID: 310, PID: 800, PIDVersion: 2,
 		StartSeconds: 100, StartMicros: 123, ParentPID: 700, ParentUID: 310,
 		ParentStartSeconds: 99, ParentStartMicros: 456}
-	peerBytes, err := marshalStage2aReservationJCS(peer)
+	peerBytes, err := stage2aT03PeerCanonical(peer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +33,7 @@ func TestStage2aT03PositiveBindsExactStartAndDualStackBaseline(t *testing.T) {
 		ProviderConfigSHA256: digest, ProviderIPv4URL: v4, ProviderIPv6URL: v6, RequestSHA256: digest,
 		Model: "fixture-model", PromptSHA256: digest, ProviderReplySHA256: digest, ResponseWireSHA256: digest,
 		ResponseWireBytes: 100, CompletedAtMS: 100, ReachabilityIPv4SHA256: digest, ReachabilityIPv6SHA256: digest, IPv4RequestCount: 1,
-		Peer: peer, PeerSHA256: stage2aReservationSHA256(peerBytes),
+		Peer: peer, PeerSHA256: fmt.Sprintf("sha256:%x", sha256.Sum256(peerBytes)),
 	}}
 	raw, err := json.Marshal(q)
 	if err != nil {
