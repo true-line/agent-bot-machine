@@ -126,7 +126,8 @@ func stage2aOpenSourceFile(rootFD int, relative string, uid, gid uint32,
 			return nil, zero, openErr
 		}
 		fd = child
-		st, checkErr := stage2aCheckedSourceNode(fd, uid, gid, mutable)
+		current := strings.Join(parts[:i+1], "/")
+		st, checkErr := stage2aCheckedSourceNodeAt(fd, uid, gid, mutable, current)
 		if checkErr != nil {
 			unix.Close(fd)
 			return nil, zero, checkErr
@@ -136,7 +137,7 @@ func stage2aOpenSourceFile(rootFD int, relative string, uid, gid uint32,
 			return nil, zero, errors.New("Stage 2a source parent is not a directory")
 		}
 	}
-	st, err := stage2aCheckedSourceNode(fd, uid, gid, mutable)
+	st, err := stage2aCheckedSourceNodeAt(fd, uid, gid, mutable, relative)
 	if err != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || approved.Size == nil ||
 		uint64(st.Size) != *approved.Size || stage2aRecordMode(st.Mode, mutable) != approved.Mode {
 		unix.Close(fd)

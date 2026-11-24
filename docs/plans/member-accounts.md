@@ -731,6 +731,13 @@ effective profile/config, macOS image constraints, sandbox digest and all
 eight named component digests. It rejects missing host JSON records, unlisted
 named digests, path aliases, writable files and unbounded nested JSON. Its
 synthetic byte vector matches the distinct launch-input domain. The helper
+implements the exact stock Claude external-file exception recorded in
+[Platform Discussion #124](https://github.com/true-line/agent-bot-platform/discussions/124):
+the selected `runtime/bin/claude` tuple is accepted through the physical
+no-follow observation and copy path, while other external files and the
+separate frozen `Contents/` closure retain their existing bounds. The tuple
+does not grant a start; the paired owner-reviewed plan still pins every byte.
+The helper
 does not prove that the projected files or selected process actually have
 those bytes or that the claimed system images are loaded. A protected caller
 must compare every value with the installed root-receipted plan and live

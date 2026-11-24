@@ -74,6 +74,50 @@ func stage2aObservedFixture(t *testing.T) (string, []Stage2aDefinitionRecord) {
 	return root, records
 }
 
+func TestStage2aExternalClaudeDescriptorBound(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "claude-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if err := file.Truncate(stage2aClaudeExternalSize); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Chmod(0550); err != nil {
+		t.Fatal(err)
+	}
+	uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
+	if _, err := stage2aCheckedSourceNodeAt(int(file.Fd()), uid, gid, false, stage2aClaudeExternalPath); err != nil {
+		t.Fatalf("exact external path rejected before hashing: %v", err)
+	}
+	for _, path := range []string{"", "Contents/opt/claude", "runtime/bin/other"} {
+		if _, err := stage2aCheckedSourceNodeAt(int(file.Fd()), uid, gid, false, path); err == nil {
+			t.Fatalf("large file accepted under %q", path)
+		}
+	}
+	if err := file.Chmod(0440); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stage2aCheckedSourceNodeAt(int(file.Fd()), uid, gid, false, stage2aClaudeExternalPath); err == nil {
+		t.Fatal("large CLI with a different mode accepted")
+	}
+	if err := file.Chmod(0550); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(stage2aClaudeExternalSize + 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stage2aCheckedSourceNodeAt(int(file.Fd()), uid, gid, false, stage2aClaudeExternalPath); err == nil {
+		t.Fatal("large CLI with a different size accepted")
+	}
+	if err := file.Truncate(stage2aClaudeExternalLimit + 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stage2aCheckedSourceNodeAt(int(file.Fd()), uid, gid, false, stage2aClaudeExternalPath); err == nil {
+		t.Fatal("file above approved external ceiling accepted")
+	}
+}
+
 func TestStage2aRuntimeSnapshotPublishesImplicitDirectories(t *testing.T) {
 	source := t.TempDir()
 	parent := t.TempDir()
