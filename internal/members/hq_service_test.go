@@ -98,6 +98,9 @@ func TestHQServiceAcceptsOnlyInstalledDarwinReleaseSpace(t *testing.T) {
 	if err := s.validate(); err != nil {
 		t.Fatalf("installed Darwin release refused: %v", err)
 	}
+	if err := appendHQService(&Plan{}, Input{HQService: &s}, nil); err == nil || !strings.Contains(err.Error(), "space-free systemd") {
+		t.Fatalf("Linux service accepted Darwin path: %v", err)
+	}
 	for _, path := range []string{
 		"/Library/Other Support/ai.true-line.agent-bot-hq/releases/daf7c958/node",
 		"/Library/Application Support/other/releases/daf7c958/node",

@@ -188,6 +188,9 @@ func appendHQService(p *Plan, in Input, h Host) error {
 	if s.Archive != "" {
 		return refuse(RefusedList, "archive is used only by the macOS installer")
 	}
+	if !systemdPath.MatchString(s.ReleaseDir) || !systemdPath.MatchString(s.Node) {
+		return refuse(RefusedPath, "Linux HQ service paths must be space-free systemd arguments")
+	}
 	if in.Platform != "" || p.HQAccount != DefaultHQAccount || p.SharedHQAdvice() != "" || in.Invoker == DefaultHQAccount || !accountName.MatchString(in.Invoker) {
 		return refuse(RefusedAccount, "the Linux HQ service needs the dedicated HQ account and a separate owner")
 	}
