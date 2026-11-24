@@ -8,6 +8,7 @@ import (
 	"github.com/qwts/managed-machine/internal/target"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -64,7 +65,7 @@ func TestQualificationCandidateQRunnerReviewsPendingSource(t *testing.T) {
 		Manifest: qualificationFile{"/private/tmp/manifest.json", strings.Repeat("c", 64)},
 		TestPlan: qualificationFile{"/private/tmp/gate-plan.json", strings.Repeat("d", 64)},
 	}
-	r.Runner.BinaryPath = filepath.Join(stage2aQualificationQHome, "qualification-runner.mjs")
+	r.Runner.BinaryPath = path.Join(stage2aQualificationQHome, "qualification-runner.mjs")
 	r.Runner.SourcePath = "/private/var/db/managed-machine/pending-q/runner.mjs"
 	if err := validateQualificationRequest(r); err != nil {
 		t.Fatalf("reviewed pending Q source refused: %v", err)
