@@ -16,12 +16,18 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
 
 const maxReleaseBytes = 256 << 20
+
+var publicHPinRepository = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git$`)
+var publicHPinTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+var publicHPinCommit = regexp.MustCompile(`^[a-f0-9]{40}$`)
 
 type installedHQEntry struct {
 	Entry
@@ -169,6 +175,39 @@ func checkUnselectedHQBootstrap(s HQService) error {
 		return refuse(RefusedPath, "invalid HQ H private_candidate marker")
 	} else if present {
 		return refuse(RefusedList, "private H candidate requires authenticated selection; ordinary HQ service argv cannot start it")
+	}
+	// A present pin with a missing or misspelled marker must not be mistaken
+	// for an older release without a pin. Match the public pin shape that HQ
+	// checks at startup, including unknown fields, before creating the role.
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	var public struct {
+		SchemaVersion   int      `json:"schema_version"`
+		Repository      string   `json:"repository"`
+		Tag             string   `json:"tag"`
+		Commit          string   `json:"commit"`
+		Paths           []string `json:"paths"`
+		DigestAlgorithm string   `json:"digest_algorithm"`
+		Digest          string   `json:"digest"`
+		Files           int      `json:"files"`
+	}
+	check := json.NewDecoder(io.LimitReader(f, (1<<20)+1))
+	check.DisallowUnknownFields()
+	if err := check.Decode(&public); err != nil {
+		return refuse(RefusedPath, "invalid public HQ H pin: %v", err)
+	}
+	if public.SchemaVersion != 1 || !publicHPinRepository.MatchString(public.Repository) ||
+		!publicHPinTag.MatchString(public.Tag) || !publicHPinCommit.MatchString(public.Commit) ||
+		len(public.Paths) == 0 || !sort.StringsAreSorted(public.Paths) ||
+		public.DigestAlgorithm != "sha256-manifest-v1" || !strings.HasPrefix(public.Digest, "sha256:") ||
+		!digestHex.MatchString(strings.TrimPrefix(public.Digest, "sha256:")) || public.Files < 1 {
+		return refuse(RefusedPath, "invalid public HQ H pin fields")
+	}
+	for i, p := range public.Paths {
+		if p == "" || (i > 0 && p == public.Paths[i-1]) {
+			return refuse(RefusedPath, "invalid public HQ H pin paths")
+		}
 	}
 	return nil
 }

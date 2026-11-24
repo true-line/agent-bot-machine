@@ -152,11 +152,15 @@ func TestFirstHQPlanBindsOptionalVerifiedService(t *testing.T) {
 }
 
 func TestFirstHQPlanRefusesPrivateHBeforeAccountCreation(t *testing.T) {
+	publicPin := fmt.Sprintf(`{"schema_version":1,"repository":"https://github.com/true-line/soul-contracts.git","tag":"v0.10.2","commit":"%s","paths":["errors","fixtures","schemas"],"digest_algorithm":"sha256-manifest-v1","digest":"sha256:%s","files":469}`, strings.Repeat("a", 40), strings.Repeat("b", 64))
 	for _, tc := range []struct {
 		name, pin, want string
 	}{
 		{"private", `{"private_candidate":true}`, "private H candidate requires authenticated selection"},
-		{"public", `{"schema_version":1,"tag":"v0.10.2"}`, ""},
+		{"public", publicPin, ""},
+		{"empty object", `{}`, "invalid public HQ H pin fields"},
+		{"misspelled private marker", strings.Replace(publicPin, `"tag":"v0.10.2"`, `"private_canidate":true`, 1), "invalid public HQ H pin"},
+		{"missing commit", strings.Replace(publicPin, `"commit":"`+strings.Repeat("a", 40)+`",`, "", 1), "invalid public HQ H pin fields"},
 		{"malformed", `{"private_candidate":"true"}`, "invalid HQ H private_candidate marker"},
 		{"false marker", `{"private_candidate":false}`, "invalid HQ H private_candidate marker"},
 		{"null marker", `{"private_candidate":null}`, "invalid HQ H private_candidate marker"},

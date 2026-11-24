@@ -1628,8 +1628,10 @@ The ordinary first-HQ LaunchDaemon has no authenticated selected-H preloader.
 After checking the retained archive against its complete extraction, Machine
 reads `governance/soul-contracts.json` when present. A pin with
 `private_candidate: true` cannot be planned for this service: that candidate
-requires authenticated H selection before startup. A malformed pin is also
-refused. The same preflight runs when Machine rebuilds the saved plan before
+requires authenticated H selection before startup. A present public pin must
+have the expected schema, repository, tag, commit, paths and digest fields;
+missing, misspelled or malformed fields are refused. The same preflight runs
+when Machine rebuilds the saved plan before
 root apply, before account or service changes. Older public releases without
 the pin and public pins remain eligible. Private H uses the separately
 reviewed Stage 2a paired upgrade and guarded launch argv after bootstrap.
