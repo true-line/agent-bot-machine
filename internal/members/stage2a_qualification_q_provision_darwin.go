@@ -122,7 +122,7 @@ func provisionStage2aQualificationQ(machineAccount, launcherSHA, planID string,
 		}
 		undo = append(undo, func() error { return os.Remove(path) })
 	}
-	savedPath := filepath.Join(stage2aQualificationQHome, "saved-plan.json")
+	savedPath := stage2aQualificationQPlanPath
 	if err := writeUpgradeFile(savedPath, saved, 0600, true); err != nil {
 		return err
 	}

@@ -243,6 +243,10 @@ func validateQualificationRequest(r QualificationRequest) error {
 			strings.HasPrefix(r.Runner.SourcePath, stage2aQualificationQHome+"/"))) {
 		return errors.New("candidate Q runner requires a separate reviewed pending source")
 	}
+	if r.SchemaVersion == 2 && (len(r.Adapter.Launch.CodeInputs) == 0 ||
+		len(r.Adapter.Launch.CodeInputs) > 512 || r.Adapter.Launch.CodeInputManifest != (qualificationFile{})) {
+		return errors.New("schema-2 candidate qualification requires 1–512 explicit code inputs from the sealed R inventory")
+	}
 	for _, s := range textFields {
 		if strings.TrimSpace(s) == "" || hasASCIIControl(s) || len(s) > 256 {
 			return errors.New("qualification identity fields must be nonempty single-line values of at most 256 bytes")
@@ -303,38 +307,11 @@ func validateQualificationRequest(r QualificationRequest) error {
 }
 
 func qualificationRunPlan(raw []byte, r QualificationRequest, h Host) (Plan, *QualificationRun, error) {
-	if err := checkQualificationRole(r.Target.Account, r.Target.UID, h); err != nil {
+	if err := checkQualificationTarget(r, h); err != nil {
 		return Plan{}, nil, err
 	}
-	if err := verifyQualificationRunnerReviewFile(r); err != nil {
+	if err := verifyQualificationReviewFiles(r); err != nil {
 		return Plan{}, nil, err
-	}
-	files := []qualificationFile{{r.Adapter.PackagePath, r.Adapter.PackageSHA},
-		{r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA}}
-	for _, f := range append(files, qualificationCandidateFiles(r)...) {
-		if err := verifyQualificationFile(f); err != nil {
-			return Plan{}, nil, err
-		}
-	}
-	for _, f := range r.Adapter.Launch.CodeInputs {
-		if err := verifyQualificationFile(qualificationFile{Path: f.Path, SHA256: f.SHA256}); err != nil {
-			return Plan{}, nil, err
-		}
-	}
-	if r.Adapter.Launch.CodeInputManifest.Path != "" {
-		if err := verifyQualificationFile(r.Adapter.Launch.CodeInputManifest); err != nil {
-			return Plan{}, nil, err
-		}
-	}
-	if r.Adapter.Launch.Driver.Path != "" {
-		if err := verifyQualificationFile(r.Adapter.Launch.Driver); err != nil {
-			return Plan{}, nil, err
-		}
-	}
-	for _, executable := range []qualificationFile{{r.Adapter.Launch.Executable, r.Adapter.Launch.ExecutableSHA}, {r.Adapter.Harness.BinaryPath, r.Adapter.Harness.BinarySHA}} {
-		if err := verifyQualificationExecutable(executable.Path, executable.SHA256); err != nil {
-			return Plan{}, nil, err
-		}
 	}
 	sum := sha256.Sum256(raw)
 	run := &QualificationRun{RequestSHA256: hex.EncodeToString(sum[:]), Request: r, MemberState: "disposable", OneUse: true, Gates: fixedQualificationGates()}
@@ -347,6 +324,58 @@ func qualificationRunPlan(raw []byte, r QualificationRequest, h Host) (Plan, *Qu
 		return Plan{}, nil, errors.New("qualification plan exceeds the bounded review size")
 	}
 	return p, run, nil
+}
+
+// The installed schema-2 adapter belongs to A's sealed R inventory. The
+// owner planner can hash review sources, while A verifies the installed code
+// closure against that inventory before issuing a reservation.
+func verifyQualificationReviewFiles(r QualificationRequest) error {
+	files := []qualificationFile{{r.Adapter.PackagePath, r.Adapter.PackageSHA},
+		{r.TestProvider.ConfigPath, r.TestProvider.ConfigSHA}}
+	if err := verifyQualificationRunnerReviewFile(r); err != nil {
+		return err
+	}
+	files = append(files, qualificationCandidateFiles(r)...)
+	if r.SchemaVersion == 1 {
+		for _, f := range r.Adapter.Launch.CodeInputs {
+			files = append(files, qualificationFile{Path: f.Path, SHA256: f.SHA256})
+		}
+	}
+	if r.Adapter.Launch.CodeInputManifest.Path != "" {
+		files = append(files, r.Adapter.Launch.CodeInputManifest)
+	}
+	if r.Adapter.Launch.Driver.Path != "" {
+		files = append(files, r.Adapter.Launch.Driver)
+	}
+	for _, f := range files {
+		if err := verifyQualificationFile(f); err != nil {
+			return err
+		}
+	}
+	if r.SchemaVersion == 1 {
+		if err := verifyQualificationExecutable(r.Adapter.Launch.Executable, r.Adapter.Launch.ExecutableSHA); err != nil {
+			return err
+		}
+	}
+	return verifyQualificationExecutable(r.Adapter.Harness.BinaryPath, r.Adapter.Harness.BinarySHA)
+}
+
+func checkQualificationTarget(request QualificationRequest, h Host) error {
+	if request.SchemaVersion == 1 {
+		return checkQualificationRole(request.Target.Account, request.Target.UID, h)
+	}
+	const invalid = "candidate qualification target must be the existing Soul runner for this installation with its exact UID"
+	if request.SchemaVersion != 2 || request.Candidate == nil ||
+		!soulInstallationID.MatchString(request.Candidate.InstallationID) ||
+		request.Target.Account != soulRunnerName(request.Candidate.InstallationID) {
+		return errors.New(invalid)
+	}
+	uids := make(map[int]string)
+	step, err := soulRunnerAccountStep(request.Target.Account, h, uids)
+	if err != nil || step.Action != ActionNone || uids[request.Target.UID] != request.Target.Account {
+		return errors.New(invalid)
+	}
+	return nil
 }
 
 // Qualification cannot repair a changed role. Require the ordinary account
