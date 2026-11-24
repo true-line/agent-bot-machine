@@ -70,6 +70,12 @@ func handleConn(conn net.Conn, g *Gate, priv ed25519.PrivateKey, peer func(net.C
 				res = refused(diag.DaemonPeerRefused, "Stage 2a requires the current protected HQ pairing")
 			} else {
 				defer unlock()
+				if req.Verb == stage2aReserveVerb {
+					// HQ allows ten seconds after sending a reservation request.
+					// Keep the initial read budget distinct from A's local
+					// qualification and response budget.
+					_ = conn.SetWriteDeadline(time.Now().Add(9 * time.Second))
+				}
 				res = hooks.reply(req)
 			}
 		} else {

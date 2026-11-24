@@ -85,6 +85,14 @@ func RunStage2aQualificationQInstall(deps ApplyDeps, args []string) error {
 		request.Runner.BinaryPath != plan.Install.Source.Path || request.Runner.BinarySHA != plan.Install.Source.SHA256 {
 		return errStage2aReservationAuthority
 	}
+	if review.DriverBaselineOnly {
+		driver, err := loadStage2aQualificationDriverReview(review.TestPlan)
+		if err != nil || !stage2aQualificationPrintable(driver.CohortID, 128) ||
+			driver.SuiteRevision != request.SuiteRevision || driver.Policy.SHA256 != request.Host.EnforcementPolicySHA ||
+			verifyQualificationFile(driver.Policy) != nil {
+			return errStage2aReservationAuthority
+		}
+	}
 	canonical, err := saved.CanonicalForReview()
 	if err != nil || stage2aQualificationSHA256(canonical) != "sha256:"+saved.PlanDigest {
 		return errStage2aReservationAuthority

@@ -89,6 +89,7 @@ type stage2aQualificationPreSignArtifactsV1 struct {
 	WirePath, WireSHA256             string
 	IndexPath, IndexSHA256           string
 	EOFReceiptPath, EOFReceiptSHA256 string
+	DriverPath, DriverSHA256         string
 }
 
 // issueStage2aQualificationPreSignV1 prepares two distinct A-signed records
@@ -224,6 +225,13 @@ func publishStage2aQualificationPreSign(store stage2aAdminClaimStore,
 	session stage2aQualificationSessionResultV1, reservation []byte,
 	launchChallengeSHA256 string, now time.Time, machineKey ed25519.PublicKey,
 	sign func([]byte) ([]byte, error)) (stage2aQualificationPreSignArtifactsV1, error) {
+	return publishStage2aQualificationPreSignWithDriver(store, session, reservation, launchChallengeSHA256, now, machineKey, sign, nil)
+}
+
+func publishStage2aQualificationPreSignWithDriver(store stage2aAdminClaimStore,
+	session stage2aQualificationSessionResultV1, reservation []byte,
+	launchChallengeSHA256 string, now time.Time, machineKey ed25519.PublicKey,
+	sign func([]byte) ([]byte, error), driver *stage2aDriverPhaseCapture) (stage2aQualificationPreSignArtifactsV1, error) {
 	var empty stage2aQualificationPreSignArtifactsV1
 	dir, err := store.open()
 	if err != nil {
@@ -256,8 +264,18 @@ func publishStage2aQualificationPreSign(store stage2aAdminClaimStore,
 		EOFReceiptPath:   filepath.Join(store.path, prefix+"-eof.json"),
 		EOFReceiptSHA256: stage2aQualificationSHA256(eofReceipt),
 	}
+	var driverArchive []byte
+	if driver != nil {
+		driverArchive, err = marshalStage2aDriverArchive(*driver, session, result, now, machineKey, sign)
+		if err != nil {
+			return empty, errStage2aReservationAuthority
+		}
+		result.DriverPath = filepath.Join(store.path, prefix+"-driver.json")
+		result.DriverSHA256 = stage2aQualificationSHA256(driverArchive)
+	}
 	if commitStage2aReservation(dir, filepath.Base(result.WirePath), wire) != nil ||
 		commitStage2aReservation(dir, filepath.Base(result.IndexPath), index) != nil ||
+		(driver != nil && commitStage2aReservation(dir, filepath.Base(result.DriverPath), driverArchive) != nil) ||
 		commitStage2aReservation(dir, filepath.Base(result.EOFReceiptPath), eofReceipt) != nil {
 		return empty, errStage2aReservationAuthority
 	}
