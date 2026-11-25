@@ -234,8 +234,15 @@ During migration, configure the manual gate and verify its required reviewer bef
 
 ## Replay
 
-1. Merge a change to main and inspect the generated version PR.
-2. Merge the reviewed version PR. Confirm Sign and both CI workflows ran on its merge SHA.
+1. Merge a change to main and inspect the generated version PR. When the
+   version PR was closed without merging and the release should proceed from
+   current main, review a change to `.github/machine-release-version` that
+   selects a new unused version. The workflow preserves the closed PR and
+   creates a new review branch from protected main.
+2. Merge the reviewed version PR. Confirm Sign and both CI workflows ran on its
+   merge SHA. A GitHub Actions rerun uses the original commit's workflow.
+   To use a signing workflow that has changed, start a fresh run on the
+   current reviewed release commit.
 3. Confirm the tag points to that SHA and the public release has the five archives, checksums, five platform reports and the verified Homebrew formula.
 
 The published support matrix includes a Darwin table with the SHA-256 of the
