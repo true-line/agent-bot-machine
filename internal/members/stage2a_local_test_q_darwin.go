@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	stage2aLocalTestQPurpose             = "stage2a-observed-body-local-test-qualification/v1"
+	stage2aLocalTestQPurpose             = Stage2aLocalTestQPurpose
 	stage2aLocalTestQSchema              = "agent-bot-machine/stage2a-observed-body-local-test-q/v1"
 	stage2aLocalTestInstallReceiptSchema = "agent-bot-machine/stage2a-observed-body-local-test-install-receipt/v1"
 )

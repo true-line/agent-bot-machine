@@ -48,6 +48,7 @@ type Request struct {
 	stage2aCooperativeStop           members.Stage2aStopRequest
 	stage2aCooperativeProjection     members.Stage2aStopRequest
 	stage2aCooperativeRecovery       members.Stage2aStopRequest
+	stage2aLocalTestQPlanID          string
 	stage2aExec                      stage2aExecRequest
 	stage2aChildReady                members.Stage2aChildReadyRequest
 	stage2aVerifyB                   members.Stage2aVerifyBRequest
@@ -300,8 +301,11 @@ func terminalVerb(verb string) bool {
 }
 
 func knownVerb(verb string) bool {
+	if verb == stage2aLocalTestQIssueVerb {
+		return true
+	}
 	switch verb {
-	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose, members.SoulCooperativeLaunchInstallPurpose, stage2aCooperativeRecoveryVerb, deviceVerb, approveMembersVerb, stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aLiveVerb, stage2aT03PositiveVerb, stage2aT03PrewriteVerb, stage2aT03ReadyVerb, stage2aT03CompleteVerb, stage2aT03SiblingWitnessVerb, stage2aFinalizeBVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aCooperativeReserveVerb, stage2aCooperativeReserveResultVerb, stage2aCooperativeAttachVerb, stage2aCooperativeStopVerb, stage2aCooperativeProjectionVerb, stage2aCooperativeProviderVerb, stage2aCooperativeLookupVerb, stage2aCooperativeLiveVerb, stage2aCooperativeAbortVerb, stage2aCooperativeQBeginVerb, stage2aCooperativeQFinishVerb, stage2aCooperativeQWitnessBeginVerb, stage2aCooperativeQWitnessFinishVerb, "bootstrap":
+	case "status", "receipts", "plan", "apply", "update", "catalog", membersPlansVerb, recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose, members.SoulCooperativeLaunchInstallPurpose, members.Stage2aLocalTestQPurpose, stage2aCooperativeRecoveryVerb, deviceVerb, approveMembersVerb, stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aLiveVerb, stage2aT03PositiveVerb, stage2aT03PrewriteVerb, stage2aT03ReadyVerb, stage2aT03CompleteVerb, stage2aT03SiblingWitnessVerb, stage2aFinalizeBVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aCooperativeReserveVerb, stage2aCooperativeReserveResultVerb, stage2aCooperativeAttachVerb, stage2aCooperativeStopVerb, stage2aCooperativeProjectionVerb, stage2aCooperativeLookupVerb, stage2aCooperativeLiveVerb, stage2aCooperativeAbortVerb, stage2aCooperativeQBeginVerb, stage2aCooperativeQFinishVerb, stage2aCooperativeQWitnessBeginVerb, stage2aCooperativeQWitnessFinishVerb, "bootstrap":
 		return true
 	default:
 		return false

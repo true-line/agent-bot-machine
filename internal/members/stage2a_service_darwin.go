@@ -30,6 +30,7 @@ type Stage2aService struct {
 	cooperativeActive map[string]*soulCooperativeLiveV3
 	candidateGrantsV3 stage2aCandidateGrantRegistryV3
 	candidateBeginV3  func(int, string, Stage2aReserveRequest) error
+	localTestQPair    func(string, string, string, func() error) error
 	reserveV3         func(int, string, Stage2aReserveRequest, *stage2aSignedCandidateGrantV3) (stage2aReservation, stage2aReservationWorkerReplyV3, error)
 }
 
@@ -87,6 +88,7 @@ func NewStage2aCandidateService(key ed25519.PrivateKey,
 	checkPair func(string, string, string, func() error) error) *Stage2aService {
 	s := NewStage2aService(key)
 	if checkPair != nil {
+		s.localTestQPair = checkPair
 		s.candidateBeginV3 = func(uid int, epoch string, selector Stage2aReserveRequest) error {
 			return s.beginInstalledCandidateV3(uid, epoch, selector, checkPair)
 		}

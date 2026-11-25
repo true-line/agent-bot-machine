@@ -5,8 +5,10 @@ package members
 import (
 	"bytes"
 	"crypto/ed25519"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
@@ -15,6 +17,38 @@ import (
 )
 
 const stage2aLocalTestQDriverPlanLimit = 64 << 10
+
+const stage2aLocalTestContractsTag = "v0.10.3"
+const stage2aLocalTestContractsCommit = "896b693b23219444dcbe4af4083fd1bc4b9f178c"
+const stage2aLocalTestContractsDigest = "sha256:e72bee1f4471c127a5557fd45756511595aa2e4c2423ed76be52373d46d8a2f3"
+const stage2aLocalTestContractsFiles = 658
+
+type stage2aLocalTestContractsPin struct {
+	Repository      string   `json:"repository"`
+	Tag             string   `json:"tag"`
+	Commit          string   `json:"commit"`
+	Paths           []string `json:"paths"`
+	DigestAlgorithm string   `json:"digest_algorithm"`
+	Digest          string   `json:"digest"`
+	Files           int      `json:"files"`
+}
+
+type stage2aLocalTestQDriverPlan struct {
+	Schema          string                       `json:"schema"`
+	ContractsSource stage2aLocalTestContractsPin `json:"contracts_source"`
+	Driver          json.RawMessage              `json:"driver"`
+}
+
+func (p stage2aLocalTestQDriverPlan) pinned() bool {
+	c := p.ContractsSource
+	return p.Schema == "agent-bot-machine/stage2a-observed-body-local-test-driver-plan/v1" &&
+		c.Repository == "https://github.com/true-line/soul-contracts.git" &&
+		c.Tag == stage2aLocalTestContractsTag && c.Commit == stage2aLocalTestContractsCommit &&
+		slices.Equal(c.Paths, []string{"errors", "fixtures", "schemas"}) &&
+		c.DigestAlgorithm == "sha256-manifest-v1" &&
+		c.Digest == stage2aLocalTestContractsDigest && c.Files == stage2aLocalTestContractsFiles &&
+		len(p.Driver) >= 2 && p.Driver[0] == '{' && stage2aStrictJSON(p.Driver) == nil
+}
 
 // The future A producer pins this A-private claim directory from the enrolled
 // account. The Q ID then selects one fixed file inside that same directory.
@@ -47,6 +81,10 @@ func stage2aLocalTestQReviewedDriverSHA(state, planID string, uid, gid uint32) (
 	}
 	canonical, err := jsoncanonicalizer.Transform(raw)
 	if err != nil || !bytes.Equal(canonical, raw) {
+		return "", errStage2aReservationAuthority
+	}
+	var reviewed stage2aLocalTestQDriverPlan
+	if stage2aDecodeExact(raw, &reviewed) != nil || !reviewed.pinned() {
 		return "", errStage2aReservationAuthority
 	}
 	return stage2aReservationSHA256(canonical), nil

@@ -2,7 +2,9 @@
 
 package daemon
 
-func currentPairedServicePlan(verb, home, owner, id, digest string, uid int) (string, error) {
+import "crypto/ed25519"
+
+func currentPairedServicePlan(verb, home, owner, id, digest string, uid int, machine ed25519.PublicKey) (string, error) {
 	return "", errRecoveryPlan
 }
 

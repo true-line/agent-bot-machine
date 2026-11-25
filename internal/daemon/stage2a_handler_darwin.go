@@ -42,6 +42,9 @@ func stage2aHandlerWithService(service *members.Stage2aService, dir, account str
 		var err error
 		state := "reserved"
 		switch req.Verb {
+		case stage2aLocalTestQIssueVerb:
+			state = "local-test-q-issued"
+			body, err = service.IssueLocalTestQApproval(req.peerUID, req.stage2aEpoch, req.stage2aLocalTestQPlanID)
 		case stage2aListVerb:
 			state = "listed"
 			body, err = service.List(req.peerUID, req.stage2aEpoch)

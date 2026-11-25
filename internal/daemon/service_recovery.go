@@ -29,7 +29,7 @@ const harnessRetireVerb = members.HarnessRetire
 const harnessQualificationVerb = members.HarnessQualificationPurpose
 
 func pairedServiceVerb(verb string) bool {
-	return verb == harnessAccountsVerb || verb == soulRunnerAccountsVerb || verb == soulBridgeAccountsVerb || verb == recoveryVerb || verb == upgradeVerb || verb == members.HarnessInstall || verb == members.HarnessRetire || verb == harnessQualificationVerb || verb == members.SoulProtectedLaunchInstallPurpose || verb == members.SoulProtectedLaunchRetirePurpose || verb == members.SoulCooperativeLaunchInstallPurpose || verb == stage2aCooperativeRecoveryVerb
+	return verb == harnessAccountsVerb || verb == soulRunnerAccountsVerb || verb == soulBridgeAccountsVerb || verb == recoveryVerb || verb == upgradeVerb || verb == members.HarnessInstall || verb == members.HarnessRetire || verb == harnessQualificationVerb || verb == members.SoulProtectedLaunchInstallPurpose || verb == members.SoulProtectedLaunchRetirePurpose || verb == members.SoulCooperativeLaunchInstallPurpose || verb == members.Stage2aLocalTestQPurpose || verb == stage2aCooperativeRecoveryVerb
 }
 
 // This record never contains plan contents. UID is a local pairing property.

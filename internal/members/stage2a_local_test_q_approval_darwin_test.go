@@ -16,6 +16,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const stage2aLocalTestQDriverFixture = `{"contracts_source":{"commit":"` + stage2aLocalTestContractsCommit + `","digest":"` + stage2aLocalTestContractsDigest + `","digest_algorithm":"sha256-manifest-v1","files":658,"paths":["errors","fixtures","schemas"],"repository":"https://github.com/true-line/soul-contracts.git","tag":"v0.10.3"},"driver":{"kind":"fixture"},"schema":"agent-bot-machine/stage2a-observed-body-local-test-driver-plan/v1"}`
+
 func stage2aLocalTestQApprovalFixture(t *testing.T) (stage2aLocalTestQPlan, Approval,
 	ed25519.PrivateKey, string, string, time.Time) {
 	t.Helper()
@@ -35,7 +37,7 @@ func stage2aLocalTestQApprovalFixture(t *testing.T) (stage2aLocalTestQPlan, Appr
 		InstallationID: "inst.fixture", InstalledPlanID: "plan-20261124T120000Z-abcd",
 		InstalledPlanDigest: strings.Repeat("3", 64), OwnerPlanSHA256: ownerSHA,
 		SourceRevision: owner.Revision, CandidateManifestSHA256: owner.Members[0].AdapterManifestSHA256,
-		DriverPlanSHA256: stage2aReservationSHA256([]byte(`{"driver":"fixture"}`)),
+		DriverPlanSHA256: stage2aReservationSHA256([]byte(stage2aLocalTestQDriverFixture)),
 		AKeyID:           stage2aReservationSHA256(key.Public().(ed25519.PublicKey)), ExpiresAt: owner.ExpiresAt,
 	}
 	qRaw, err := marshalStage2aReservationJCS(q)
@@ -154,7 +156,7 @@ func TestStage2aLocalTestQApprovalClaimBeforeSign(t *testing.T) {
 				t.Fatal(err)
 			}
 			driverPath, err := stage2aLocalTestQDriverPlanPath(physicalName, approval.PlanID)
-			if err != nil || os.WriteFile(driverPath, []byte(`{"driver":"fixture"}`), 0600) != nil {
+			if err != nil || os.WriteFile(driverPath, []byte(stage2aLocalTestQDriverFixture), 0600) != nil {
 				t.Fatal("cannot stage fixed reviewed driver plan")
 			}
 			dir, err := os.Open(physicalName)
@@ -227,6 +229,20 @@ func TestStage2aLocalTestQDriverProvenanceBeforeSpend(t *testing.T) {
 			q.DriverPlanSHA256 = "sha256:" + strings.Repeat("b", 64)
 			return ""
 		},
+		"wrong contracts source": func(t *testing.T, path string, q *stage2aLocalTestQPlan) string {
+			t.Helper()
+			var reviewed stage2aLocalTestQDriverPlan
+			if err := stage2aDecodeExact([]byte(stage2aLocalTestQDriverFixture), &reviewed); err != nil {
+				t.Fatal(err)
+			}
+			reviewed.ContractsSource.Tag = "v0.10.2"
+			raw, err := marshalStage2aReservationJCS(reviewed)
+			if err != nil || os.WriteFile(path, raw, 0600) != nil {
+				t.Fatal("cannot stage changed contracts pin")
+			}
+			q.DriverPlanSHA256 = stage2aReservationSHA256(raw)
+			return ""
+		},
 		"alternate A-owned directory": func(t *testing.T, path string, _ *stage2aLocalTestQPlan) string {
 			t.Helper()
 			other := filepath.Join(filepath.Dir(filepath.Dir(path)), "other-claims")
@@ -238,7 +254,7 @@ func TestStage2aLocalTestQDriverProvenanceBeforeSpend(t *testing.T) {
 				t.Fatal(err)
 			}
 			otherDriver := filepath.Join(physicalOther, filepath.Base(path))
-			if err := os.WriteFile(otherDriver, []byte(`{"driver":"fixture"}`), 0600); err != nil {
+			if err := os.WriteFile(otherDriver, []byte(stage2aLocalTestQDriverFixture), 0600); err != nil {
 				t.Fatal(err)
 			}
 			return physicalOther
@@ -254,7 +270,7 @@ func TestStage2aLocalTestQDriverProvenanceBeforeSpend(t *testing.T) {
 				t.Fatal(err)
 			}
 			driverPath, err := stage2aLocalTestQDriverPlanPath(physicalClaim, approval.PlanID)
-			if err != nil || os.WriteFile(driverPath, []byte(`{"driver":"fixture"}`), 0600) != nil {
+			if err != nil || os.WriteFile(driverPath, []byte(stage2aLocalTestQDriverFixture), 0600) != nil {
 				t.Fatal("cannot write driver fixture")
 			}
 			candidate := q

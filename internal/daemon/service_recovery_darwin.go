@@ -1,11 +1,18 @@
 package daemon
 
-import "github.com/qwts/managed-machine/internal/members"
+import (
+	"crypto/ed25519"
+
+	"github.com/qwts/managed-machine/internal/members"
+)
 
 var checkPackageLaunchGrant = members.CheckDarwinHarnessLaunchRemoval
 var unusedMachineSocket = members.CheckDetachedDarwinSocket
 
-func currentPairedServicePlan(verb, home, owner, id, digest string, uid int) (string, error) {
+func currentPairedServicePlan(verb, home, owner, id, digest string, uid int, machine ed25519.PublicKey) (string, error) {
+	if verb == members.Stage2aLocalTestQPurpose {
+		return members.ReviewStage2aLocalTestQPlan(home, owner, id, digest, uid, machine)
+	}
 	dir, err := openMembersPlans(home)
 	if err != nil {
 		return "", err
