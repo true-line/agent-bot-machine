@@ -180,6 +180,8 @@ elevate_as_user_with_github_auth() {
     if [[ ! -f "$helper" ]]; then
         local cand
         for cand in "${REPO_ROOT:-}/lib/brew-github-auth-run" \
+                    /opt/homebrew/opt/agent-bot-machine/libexec/legacy/lib/brew-github-auth-run \
+                    /usr/local/opt/agent-bot-machine/libexec/legacy/lib/brew-github-auth-run \
                     /opt/homebrew/opt/managed-machine/libexec/legacy/lib/brew-github-auth-run \
                     /usr/local/opt/managed-machine/libexec/legacy/lib/brew-github-auth-run; do
             if [[ -f "$cand" ]]; then
@@ -282,6 +284,8 @@ elevate_plan_runner_path() {
     fi
     local cand
     for cand in "${REPO_ROOT:-}/lib/elevate-plan-run" \
+                /opt/homebrew/opt/agent-bot-machine/libexec/legacy/lib/elevate-plan-run \
+                /usr/local/opt/agent-bot-machine/libexec/legacy/lib/elevate-plan-run \
                 /opt/homebrew/opt/managed-machine/libexec/legacy/lib/elevate-plan-run \
                 /usr/local/opt/managed-machine/libexec/legacy/lib/elevate-plan-run; do
         if [[ -f "$cand" ]]; then

@@ -65,8 +65,12 @@ install_formula() {
     if [[ ! -d "$dir" ]]; then
         "$brew" tap "$tap" "$repo_url"
     fi
+    if [[ -f "$dir/Formula/agent-bot-machine.rb" ]]; then
+        formula="$tap/agent-bot-machine"
+    fi
     formulae="$("$brew" list -1 --formula --full-name)"
-    if grep -Fxq "$formula" <<<"$formulae"; then
+    if grep -Fxq "$formula" <<<"$formulae" ||
+       { [[ "$formula" == "$tap/agent-bot-machine" ]] && grep -Fxq "$tap/managed-machine" <<<"$formulae"; }; then
         # Homebrew treats a current formula as a successful upgrade. A pin
         # can also skip an upgrade, so confirm that no update is outstanding.
         "$brew" upgrade "$formula"
@@ -77,11 +81,13 @@ install_formula() {
 
     # A current keg can retain its opt link after brew unlink removes its
     # commands. Check all formula-owned bin names before asking brew to link.
-    local prefix name command target needs_link=false
+    local prefix name command target keg linked_keg needs_link=false
     prefix="$("$brew" --prefix)"
+    keg="$prefix/opt/${formula##*/}"
+    linked_keg="$prefix/var/homebrew/linked/${formula##*/}"
     for name in managed-machine agent-machine agent-bot-keyd; do
         command="$prefix/bin/$name"
-        target="$prefix/opt/managed-machine/bin/$name"
+        target="$keg/bin/$name"
         [[ -f "$target" && -x "$target" ]] || die "The installed Machine package is missing $name."
         if [[ -e "$command" || -L "$command" ]]; then
             [[ "$command" -ef "$target" ]] || die "$command is occupied. Resolve the conflict and rerun the installer."
@@ -93,13 +99,12 @@ install_formula() {
         # Homebrew skips link when its record still points at this keg, even
         # after an individual command disappears. Let Homebrew clear its own
         # links only after checking every command name for conflicts above.
-        local linked_keg="$prefix/var/homebrew/linked/managed-machine"
-        if [[ -L "$linked_keg" && "$linked_keg" -ef "$prefix/opt/managed-machine" ]]; then
+        if [[ -L "$linked_keg" && "$linked_keg" -ef "$keg" ]]; then
             "$brew" unlink "$formula"
         fi
         "$brew" link "$formula"
         for name in managed-machine agent-machine agent-bot-keyd; do
-            [[ "$prefix/bin/$name" -ef "$prefix/opt/managed-machine/bin/$name" ]] ||
+            [[ "$prefix/bin/$name" -ef "$keg/bin/$name" ]] ||
                 die "Homebrew did not link $name. Check the formula links and rerun the installer."
         done
     fi
@@ -134,7 +139,9 @@ run_install() {
 
 # A packaged --update resumes setup in the same Homebrew installation.
 check_update_keg() {
-    if [[ "$packaged_update" == true && ! "$0" -ef "$1/opt/managed-machine/libexec/install.sh" ]]; then
+    if [[ "$packaged_update" == true &&
+          ! "$0" -ef "$1/opt/agent-bot-machine/libexec/install.sh" &&
+          ! "$0" -ef "$1/opt/managed-machine/libexec/install.sh" ]]; then
         die "This updater is outside Homebrew's current Machine keg. Run the public installer."
     fi
 }
@@ -188,6 +195,9 @@ main() {
     fi
     run_install
     local installed="$prefix/opt/managed-machine/bin/managed-machine"
+    if [[ "$prefix/bin/managed-machine" -ef "$prefix/opt/agent-bot-machine/bin/managed-machine" ]]; then
+        installed="$prefix/opt/agent-bot-machine/bin/managed-machine"
+    fi
     local version
     version="$("$installed" --version)"
     echo "Machine $version installed. To check it again, run $installed --version."

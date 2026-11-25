@@ -70,11 +70,14 @@ if [ "$*" != --prefix ]; then
     [ "${HOMEBREW_NO_AUTO_UPDATE:-}" = 1 ] && [ "${GIT_TERMINAL_PROMPT:-}" = 0 ] || exit 92
 fi
 if [ "${BREW_FAIL:-}" = "$1" ]; then exit 13; fi
-record="$PREFIX/var/homebrew/linked/managed-machine"
+FORMULA="${BREW_FIXTURE_FORMULA:-$FORMULA}"
+formula_name="${FORMULA##*/}"
+record="$PREFIX/var/homebrew/linked/$formula_name"
+opt="$PREFIX/opt/$formula_name"
 case "$*" in
   --prefix|--repository) echo "$PREFIX" ;;
   'commands --quiet') echo trust ;;
-  'list -1 --formula --full-name') [ ! -e "$PREFIX/installed" ] || echo "$FORMULA" ;;
+  'list -1 --formula --full-name') [ ! -e "$PREFIX/installed" ] || echo "${BREW_INSTALLED_FORMULA:-$FORMULA}" ;;
   "outdated --formula --quiet $FORMULA") if [ "${PINNED:-0}" = 1 ]; then echo "$FORMULA"; exit 1; fi ;;
   "trust $ORIGIN") echo "$*" >> "$LOG" ;;
   "tap true-line/agent-bot-machine $ORIGIN")
@@ -85,9 +88,9 @@ case "$*" in
   "install $FORMULA")
      echo "$*" >> "$LOG"
      : > "$PREFIX/installed"
-     keg="$PREFIX/opt/managed-machine/bin"
+     keg="$opt/bin"
      mkdir -p "$keg" "$(dirname "$record")"
-     ln -s "$PREFIX/opt/managed-machine" "$record"
+     ln -s "$opt" "$record"
      printf '#!/bin/sh\necho 0.12.0\n' > "$keg/managed-machine"
      chmod +x "$keg/managed-machine"
      ln -s managed-machine "$keg/agent-machine"
@@ -96,24 +99,24 @@ case "$*" in
   "upgrade $FORMULA")
      echo "$*" >> "$LOG"
      if [ -n "${NEXT_KEG:-}" ]; then
-         rm "$PREFIX/opt/managed-machine"
-         ln -s "$NEXT_KEG" "$PREFIX/opt/managed-machine"
+         rm "$opt"
+         ln -s "$NEXT_KEG" "$opt"
      fi ;;
   "unlink $FORMULA")
      echo "$*" >> "$LOG"
-     test "$record" -ef "$PREFIX/opt/managed-machine"
+     test "$record" -ef "$opt"
      for name in managed-machine agent-machine agent-bot-keyd; do
          cmd="$PREFIX/bin/$name"
-         if [ -L "$cmd" ] && [ "$cmd" -ef "$PREFIX/opt/managed-machine/bin/$name" ]; then rm "$cmd"; fi
+         if [ -L "$cmd" ] && [ "$cmd" -ef "$opt/bin/$name" ]; then rm "$cmd"; fi
      done
      rm "$record" ;;
   "link $FORMULA")
      echo "$*" >> "$LOG"
      if [ -L "$record" ] || [ "${LINK_NOOP:-0}" = 1 ]; then exit 0; fi
      for name in managed-machine agent-machine agent-bot-keyd; do
-         ln -s "$PREFIX/opt/managed-machine/bin/$name" "$PREFIX/bin/$name"
+         ln -s "$opt/bin/$name" "$PREFIX/bin/$name"
      done
-     ln -s "$PREFIX/opt/managed-machine" "$record" ;;
+     ln -s "$opt" "$record" ;;
   *) echo "unexpected brew invocation: $*" >&2; exit 9 ;;
 esac
 STUB
@@ -358,6 +361,52 @@ if ACCOUNT_GROUPS=staff bash "$TEST_DIR/install.sh" >"$TEST_DIR/result" 2>&1; th
 : > "$LOG"
 bash "$TEST_DIR/install.sh"
 cmp "$LOG" "$TEST_DIR/expected"
+
+# The verified tap can offer the new formula name after the supported release.
+(
+    original_formula="$FORMULA"
+    export PREFIX="$TEST_DIR/renamed-homebrew"
+    export TAPDIR="$PREFIX/Library/Taps/true-line/homebrew-agent-bot-machine"
+    export FORMULA="true-line/agent-bot-machine/agent-bot-machine"
+    export BREW_FIXTURE_FORMULA="$FORMULA"
+    mkdir -p "$PREFIX/bin" "$UPSTREAM/Formula"
+    cp "$TEST_DIR/homebrew-fixture" "$PREFIX/bin/brew"
+    printf '# fixture for the renamed Homebrew package\n' > "$UPSTREAM/Formula/agent-bot-machine.rb"
+    /usr/bin/git -C "$UPSTREAM" add Formula/agent-bot-machine.rb
+    /usr/bin/git -C "$UPSTREAM" commit -qm rename
+    sed -e "s|\"/Library/Application Support|\"$FIXTURE_LIBRARY/Application Support|g" -e "s|/opt/homebrew|$PREFIX|g" \
+        -e "s|/usr/bin/osascript|$TEST_DIR/bin/osascript|g" -e "s|/usr/bin/git|$TEST_DIR/bin/git|g" \
+        -e "s|/usr/bin/stat|$TEST_DIR/bin/stat|g" "$ROOT/install.sh" > "$TEST_DIR/install-renamed.sh"
+    : > "$LOG"
+    bash "$TEST_DIR/install-renamed.sh" > "$TEST_DIR/renamed-result"
+    grep -Fxq "install $FORMULA" "$LOG"
+    grep -Fq "$PREFIX/opt/agent-bot-machine/bin/managed-machine" "$TEST_DIR/renamed-result"
+    : > "$LOG"
+    BREW_INSTALLED_FORMULA="$original_formula" bash "$TEST_DIR/install-renamed.sh" --update
+    grep -Fxq "upgrade $FORMULA" "$LOG"
+
+    opt="$PREFIX/opt/agent-bot-machine"
+    rack="$PREFIX/Cellar/agent-bot-machine"
+    mkdir -p "$rack"
+    mv "$opt" "$rack/old"
+    cp -R "$rack/old" "$rack/new"
+    ln -s "$rack/old" "$opt"
+    for keg in "$rack/old" "$rack/new"; do
+        legacy="$keg/libexec/legacy"
+        mkdir -p "$legacy/scripts" "$legacy/lib"
+        sed "s|/opt/homebrew|$PREFIX|g" "$ROOT/legacy/scripts/update" > "$legacy/scripts/update"
+        chmod +x "$legacy/scripts/update"
+        cp "$TEST_DIR/install-renamed.sh" "$keg/libexec/install.sh"
+        touch "$keg/libexec/RELEASE_COMMIT"
+        cat > "$legacy/lib/install.sh" <<'LIB'
+managed_machine_agent_session() { return 1; }
+managed_machine_config_selected() { return 1; }
+LIB
+        printf 'echo "renamed setup resumed in %s"; exit 0\n' "${keg##*/}" > "$legacy/lib/bootstrap.sh"
+    done
+    NEXT_KEG="$rack/new" "$rack/old/libexec/legacy/scripts/update" > "$TEST_DIR/renamed-resume"
+    grep -Fxq 'renamed setup resumed in new' "$TEST_DIR/renamed-resume"
+)
 
 # Private configuration and credential management are optional legacy workflows.
 if grep -nE 'qwts/|(^|[[:space:]])gh[[:space:]]|--bootstrap|local-bin' "$ROOT/install.sh"; then

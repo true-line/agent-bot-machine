@@ -15,6 +15,19 @@ if managed_machine_agent_session && [[ -z "${MANAGED_MACHINE_UPDATE_REEXECED:-}"
     exit "${MANAGED_MACHINE_SKIPPED_EXIT:-76}"
 fi
 
+homebrew_update_entry() {
+    local prefix="$1" name entry
+    for name in agent-bot-machine managed-machine; do
+        entry="$prefix/opt/$name/libexec/legacy/scripts/update"
+        if [[ -x "$entry" ]]; then
+            printf '%s\n' "$entry"
+            return
+        fi
+    done
+    echo "Cannot find the active Machine updater under $prefix/opt. Run the public installer." >&2
+    return 1
+}
+
 # 1. Update Homebrew and upgrade Machine. A configured fleet checkout
 # stays in user-owned storage outside the Homebrew installation.
 #
@@ -46,15 +59,17 @@ if [[ -z "${MANAGED_MACHINE_UPDATE_REEXECED:-}" ]]; then
         /bin/bash "$ROOT/../install.sh" --update || exit $?
         if [[ -n "$resume_brew" ]]; then
             prefix="$("$resume_brew" --prefix)"
-            exec "$prefix/opt/managed-machine/libexec/legacy/scripts/update" "$@"
+            update_entry="$(homebrew_update_entry "$prefix")"
+            exec "$update_entry" "$@"
         fi
         exec "$ROOT/scripts/update" "$@"
     fi
     update_entry="$ROOT/scripts/update"
     brew_bin="$(command -v brew || true)"
+    package_prefix=""
     if [[ -f "$ROOT/../RELEASE_COMMIT" && -n "$brew_bin" ]]; then
-        prefix="$("$brew_bin" --prefix)"
-        update_entry="$prefix/opt/managed-machine/libexec/legacy/scripts/update"
+        package_prefix="$("$brew_bin" --prefix)"
+        update_entry="$(homebrew_update_entry "$package_prefix")"
         if [[ ! "$update_entry" -ef "$ROOT/scripts/update" ]]; then
             echo "This updater is outside Homebrew's current Machine keg. Run the public installer." >&2
             exit 1
@@ -86,6 +101,9 @@ fi
     fi
     # Re-exec by path, not $0: the upgrade may have replaced this very script.
     export MANAGED_MACHINE_UPDATE_REEXECED=1
+    if [[ -n "$package_prefix" ]]; then
+        update_entry="$(homebrew_update_entry "$package_prefix")"
+    fi
     exec "$update_entry" "$@"
 fi
 
@@ -119,7 +137,7 @@ trap cleanup_update EXIT
 chmod 600 "$status_tmp"
 {
     echo 'schema_version=1'
-    printf 'version=%s\n' "$(brew list --versions managed-machine 2>/dev/null | awk 'NR==1{print $2}')"
+    printf 'version=%s\n' "$(brew_machine_version)"
     printf 'started_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } >"$status_tmp"
 
