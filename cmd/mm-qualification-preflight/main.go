@@ -144,46 +144,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, qualification.ErrUnqualified)
 			return 1
 		}
-		proof, err := qualification.VerifyHostReportsForReleaseV3(policy, qualificationJSON,
+		_, err = qualification.VerifyHostReportsForReleaseV3(policy, qualificationJSON,
 			protectedEnvelope, cooperativeEnvelope, pe, ce, pc, cc, build, machineRoot, now)
 		if err != nil {
 			fmt.Fprintln(stderr, qualification.ErrUnqualified)
 			return 1
 		}
-		var envelope qualification.Envelope
-		if json.Unmarshal(policyEnvelope, &envelope) != nil {
-			fmt.Fprintln(stderr, qualification.ErrUnqualified)
-			return 1
-		}
-		sha := func(raw []byte) string { sum := sha256.Sum256(raw); return "sha256:" + hex.EncodeToString(sum[:]) }
-		type run struct {
-			Profile                   string `json:"profile"`
-			ReportSHA256              string `json:"report_sha256"`
-			EnvelopeSHA256            string `json:"envelope_sha256"`
-			ExecutionCompletionSHA256 string `json:"execution_completion_sha256"`
-			CompletedRunSHA256        string `json:"completed_run_sha256"`
-		}
-		result := struct {
-			SchemaVersion          int    `json:"schema_version"`
-			VerificationContract   string `json:"verification_contract"`
-			QualificationSHA256    string `json:"qualification_sha256"`
-			PolicyEnvelopeSHA256   string `json:"policy_envelope_sha256"`
-			PolicySHA256           string `json:"policy_sha256"`
-			Protected              run    `json:"protected"`
-			Cooperative            run    `json:"cooperative"`
-			SoulArtifactSHA256     string `json:"soul_artifact_sha256"`
-			SoulsBuildBundleSHA256 string `json:"souls_build_bundle_sha256"`
-			SoulsPackageSHA256     string `json:"souls_package_sha256"`
-			SoulsSourceTree        string `json:"souls_source_tree"`
-		}{3, "agent-bot/machine-qualification-preflight/v3", sha(qualificationJSON), sha(policyEnvelope), envelope.PolicySHA256,
-			run{"managed-protected", proof.ProtectedReportSHA256, proof.ProtectedEnvelopeSHA256, proof.ProtectedExecutionCompletionSHA256, proof.ProtectedCompletedRunSHA256},
-			run{"managed-cooperative", proof.CooperativeReportSHA256, proof.CooperativeEnvelopeSHA256, proof.CooperativeExecutionCompletionSHA256, proof.CooperativeCompletedRunSHA256},
-			proof.SoulArtifactSHA256, proof.SoulsBuildBundleSHA256, proof.SoulsPackageSHA256, proof.SoulsSourceTree}
-		if json.NewEncoder(stdout).Encode(result) != nil {
-			fmt.Fprintln(stderr, qualification.ErrUnqualified)
-			return 1
-		}
-		return 0
+		// The signed chains are a diagnostic component, not a releasable
+		// physical result. Until the same command authenticates segment
+		// attestations, raw Q/ACP/OS evidence and measured installed bytes,
+		// never emit a producer preflight success for the v3 workflow.
+		fmt.Fprintln(stderr, qualification.ErrUnqualified)
+		return 1
 	}
 	if *bridgeV2 {
 		build, err := qualification.VerifySoulsBuildReceiptV2(policy, soulsRoot, soulsBundle, qualificationJSON, soulsPackageSHA, now)

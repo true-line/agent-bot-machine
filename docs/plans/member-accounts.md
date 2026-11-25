@@ -489,9 +489,22 @@ turn a referenced run into a verified one.
 The source-only `mm-qualification-preflight --host-v3` path requires an owner
 v3 policy, a release-pinned Machine public key, two distinct signed pre-sign
 execution completions and post-sign report commitments, both signed host
-envelopes, and the authenticated Souls build bundle. Its JSON binds the exact
-qualification, policy, report, envelope, completion, completed-run, Soul
-artifact, Souls build and source-tree digests for a future Statement builder.
+envelopes, and the authenticated Souls build bundle. Even when those signed
+chains verify, the command returns unqualified and emits no producer JSON:
+the earlier diagnostic digest record is not a release result. The protected
+segment verifier independently joins signed Q pre-sign index and clean EOF,
+the launch challenge, raw ACP and OS objects and installed identity; a replay,
+changed object or mismatched cohort must be refused. Serialized Q paths use
+canonical absolute POSIX syntax on every verifier host; object resolution
+remains fail-closed where the secure object resolver is unsupported.
+For supplemental protected starts, the authenticated reservation binding must
+match the anchor's complete installed cohort, including v3 H descriptor, R
+inventory and components, adapter and broker; only start ID, launch ID and HQ
+epoch may differ. Candidate and ordinary bindings cannot be mixed. A v3
+anchor must retain its exact signed raw binding through the segment and gate
+records and derive the report's exact v2 projection from those authenticated
+bytes; a v2 anchor must match the report binding directly. These joins do not
+authenticate the remaining physical observations or grant release authority.
 The record builders accept an A signer callback only after their caller has
 authenticated the physical observation, installed bytes and one-use
 lifecycle. There is no such production A caller or independent physical
