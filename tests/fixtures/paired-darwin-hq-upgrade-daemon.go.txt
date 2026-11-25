@@ -83,7 +83,7 @@ func RunHostedUpgradeFixture(fp string) error {
 		HQDevice:     func(r Request) Response { return requestHQDevice(ctx, u.HomeDir, key, r, time.Now, provider) },
 		ServiceRecovery: func(r Request) Response {
 			return recoverHQService(dir, key.Public().(ed25519.PublicKey), r, time.Now, func(id, digest string, uid int) (string, error) {
-				return currentPairedServicePlan(r.Verb, u.HomeDir, u.Username, id, digest, uid)
+				return currentPairedServicePlan(r.Verb, u.HomeDir, u.Username, id, digest, uid, key.Public().(ed25519.PublicKey))
 			})
 		},
 	}
