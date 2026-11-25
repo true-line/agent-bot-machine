@@ -18,6 +18,14 @@ type qFixtureV3 struct {
 	now                           time.Time
 }
 
+// qAggregateConfigV3 is test-only material for complete report-path fixtures.
+type qAggregateConfigV3 struct {
+	private   ed25519.PrivateKey
+	binding   map[string]any
+	session   string
+	candidate bool
+}
+
 func qJSONFixtureV3(t *testing.T, value any) []byte {
 	t.Helper()
 	raw, err := json.Marshal(value)
@@ -59,6 +67,10 @@ func makeQFixtureV3(t *testing.T, observationSequence int, cleanEOF bool, launch
 }
 
 func makeQFixtureContractV3(t *testing.T, observationSequence int, cleanEOF bool, launchMatches bool, contract string, version int, purpose string, attempt map[string]any, roleUIDs ...int) qFixtureV3 {
+	return makeQFixtureWithConfigV3(t, observationSequence, cleanEOF, launchMatches, contract, version, purpose, attempt, nil, roleUIDs...)
+}
+
+func makeQFixtureWithConfigV3(t *testing.T, observationSequence int, cleanEOF bool, launchMatches bool, contract string, version int, purpose string, attempt map[string]any, cfg *qAggregateConfigV3, roleUIDs ...int) qFixtureV3 {
 	t.Helper()
 	runnerUID, bridgeUID := 310, 311
 	if len(roleUIDs) == 2 {
@@ -71,12 +83,21 @@ func makeQFixtureContractV3(t *testing.T, observationSequence int, cleanEOF bool
 		t.Fatal(err)
 	}
 	const schema = qSessionSchemaV3
-	const session = "1234567890abcdef1234567890abcdef"
+	session := "1234567890abcdef1234567890abcdef"
 	const cohort = "fixture-cohort"
-	const install = "fixture-install"
-	const soul = "agent_12345678-1234-1234-1234-1234567890ab"
-	const start = "st_1234567890abcdef12345678"
-	const host = "fixture-host"
+	install := "fixture-install"
+	soul := "agent_12345678-1234-1234-1234-1234567890ab"
+	start := "st_1234567890abcdef12345678"
+	host := "fixture-host"
+	if cfg != nil {
+		priv = cfg.private
+		pub = priv.Public().(ed25519.PublicKey)
+		session = cfg.session
+		install = cfg.binding["installation_id"].(string)
+		soul = cfg.binding["soul_id"].(string)
+		start = cfg.binding["start_id"].(string)
+		host = cfg.binding["host_id"].(string)
+	}
 	const profile = "managed-protected"
 	challenge := bytes.Repeat([]byte{0x42}, 32)
 	launch := digest([]byte("launch challenge"))
@@ -107,6 +128,18 @@ func makeQFixtureContractV3(t *testing.T, observationSequence int, cleanEOF bool
 			"launch_input_measurement": digest([]byte("launch inputs")),
 			"snapshots":                map[string]any{"definition": snapshot("/tmp/definition", "2"), "launch_inputs": snapshot("/tmp/launch-inputs", "3")},
 		},
+	}
+	if cfg != nil {
+		reservationPayload["measurement_binding"] = cfg.binding
+		a := reservationPayload["assignment"].(map[string]any)
+		for _, name := range []string{"launch_id", "plan_id", "hq_epoch"} {
+			a[name] = cfg.binding[name]
+		}
+		a["plan_digest"] = cfg.binding["installed_plan_digest"]
+		a["h_service_descriptor_digest"] = cfg.binding["h_service_descriptor_digest"]
+		a["r_inventory_digest"] = cfg.binding["r_inventory"].(map[string]any)["inventory_digest"]
+		reservationPayload["issued_at"] = "2026-11-22T11:59:50Z"
+		reservationPayload["expires_at"] = "2026-11-22T12:00:15Z"
 	}
 	if attempt != nil {
 		reservationPayload["kind"] = "stage2a-qualification-candidate-reservation"

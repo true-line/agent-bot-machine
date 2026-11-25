@@ -459,6 +459,14 @@ the launch challenge, raw ACP and OS objects and installed identity; a replay,
 changed object or mismatched cohort must be refused. Serialized Q paths use
 canonical absolute POSIX syntax on every verifier host; object resolution
 remains fail-closed where the secure object resolver is unsupported.
+For supplemental protected starts, the authenticated reservation binding must
+match the anchor's complete installed cohort, including v3 H descriptor, R
+inventory and components, adapter and broker; only start ID, launch ID and HQ
+epoch may differ. Candidate and ordinary bindings cannot be mixed. A v3
+anchor must retain its exact signed raw binding through the segment and gate
+records and derive the report's exact v2 projection from those authenticated
+bytes; a v2 anchor must match the report binding directly. These joins do not
+authenticate the remaining physical observations or grant release authority.
 The record builders accept an A signer callback only after their caller has
 authenticated the physical observation, installed bytes and one-use
 lifecycle. There is no such production A caller or independent physical

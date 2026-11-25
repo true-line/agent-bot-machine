@@ -49,6 +49,8 @@ type physicalSegmentV3 struct {
 type ResolvedProtectedSegmentChainV3 struct {
 	resolved                                                                         bool
 	binding                                                                          measurementBinding
+	cohortBindingSHA256                                                              string
+	reportBindingSHA256                                                              string
 	Gate, SegmentID, CohortID, InstallationID, SoulID, StartID, LaunchID, QSessionID string
 	ManifestSHA256, AttestationSHA256, MeasurementBindingSHA256                      string
 	QIndexSHA256, QEOFReceiptSHA256                                                  string
@@ -109,6 +111,8 @@ func segmentRoleMaxV3(role string) int64 {
 
 type protectedAChainV3 struct {
 	binding               measurementBinding
+	cohortBindingSHA256   string
+	reportBindingSHA256   string
 	reservationSHA256     string
 	finalizationSHA256    string
 	stopSHA256            string
@@ -244,7 +248,44 @@ func verifyProtectedAChainV3(reservation, finalization, stop []byte,
 			return zero, ErrUnqualified
 		}
 	}
-	return protectedAChainV3{binding: binding, reservationSHA256: digest(reservation), finalizationSHA256: digest(finalization), stopSHA256: digest(stop), launchChallengeSHA256: reserved.AdmissionChallengeSHA256, stopAt: stopAt}, nil
+	cohortBinding, err := protectedCohortBindingV3(reserved.MeasurementBinding)
+	if err != nil {
+		return zero, ErrUnqualified
+	}
+	reportBinding := reserved.MeasurementBinding
+	if purpose != qReservationPurposeV3 {
+		fields, fieldErr := canonicalBytes(reserved.MeasurementBinding, MaxReportBytes)
+		if fieldErr != nil {
+			return zero, ErrUnqualified
+		}
+		reportBinding, _, err = candidateReportProjectionV3(fields)
+		if err != nil {
+			return zero, ErrUnqualified
+		}
+	}
+	return protectedAChainV3{binding: binding, cohortBindingSHA256: cohortBinding, reportBindingSHA256: digest(reportBinding), reservationSHA256: digest(reservation), finalizationSHA256: digest(finalization), stopSHA256: digest(stop), launchChallengeSHA256: reserved.AdmissionChallengeSHA256, stopAt: stopAt}, nil
+}
+
+// Compare every signed binding field across starts, excluding only the
+// explicitly per-start identity. In particular, v2 and v3 cannot be mixed:
+// the v2 projection cannot authenticate the v3 H/R, adapter and broker fields.
+func protectedCohortBindingV3(raw []byte) (string, error) {
+	fields, err := canonicalBytes(raw, MaxReportBytes)
+	if err != nil {
+		return "", ErrUnqualified
+	}
+	delete(fields, "start_id")
+	delete(fields, "launch_id")
+	delete(fields, "hq_epoch")
+	stable, err := json.Marshal(fields)
+	if err != nil {
+		return "", ErrUnqualified
+	}
+	return digest(stable), nil
+}
+
+func sameProtectedCohortV3(want, got string) bool {
+	return want != "" && got == want
 }
 
 // A supplemental start may have a new launch ID, HQ epoch and Q session, but
@@ -369,6 +410,7 @@ func ResolveSignedProtectedSegmentsV3(reportEnvelope []byte, policy VerifiedPoli
 	result := make(map[string][]ResolvedProtectedSegmentChainV3, 3)
 	seenStarts := map[string]bool{}
 	seenSessions := map[string]bool{}
+	cohortBinding := ""
 	anchors := 0
 	for _, gateName := range []string{"T01", "T02", "T03"} {
 		raw := gateBytes[gateName]
@@ -382,9 +424,14 @@ func ResolveSignedProtectedSegmentsV3(reportEnvelope []byte, policy VerifiedPoli
 				seenStarts[verified.InstallationID+"/"+verified.StartID] || seenSessions[verified.QSessionID] {
 				return nil, ErrUnqualified
 			}
+			if cohortBinding == "" {
+				cohortBinding = verified.cohortBindingSHA256
+			} else if !sameProtectedCohortV3(cohortBinding, verified.cohortBindingSHA256) {
+				return nil, ErrUnqualified
+			}
 			if segment.ReportAnchor {
 				anchors++
-				if verified.ReservationSHA256 != run.RunEvidence.Reservation.SHA256 || verified.FinalizationSHA256 != run.RunEvidence.Finalization.SHA256 || verified.LaunchChallengeSHA256 != run.RunEvidence.ChallengeSHA256 || verified.MeasurementBindingSHA256 != digest(binding) {
+				if verified.ReservationSHA256 != run.RunEvidence.Reservation.SHA256 || verified.FinalizationSHA256 != run.RunEvidence.Finalization.SHA256 || verified.LaunchChallengeSHA256 != run.RunEvidence.ChallengeSHA256 || verified.reportBindingSHA256 != digest(binding) {
 					return nil, ErrUnqualified
 				}
 			}
@@ -433,5 +480,5 @@ func resolveProtectedSegmentV3(root string, gate gateManifestV3, segment gateSeg
 	if verifyPhysicalAttestationV3(attestation, manifestRaw, manifest, chain, q, manifest.Artifacts, objects["q_eof"], key, now) != nil {
 		return zero, ErrUnqualified
 	}
-	return ResolvedProtectedSegmentChainV3{resolved: true, binding: chain.binding, Gate: manifest.Gate, SegmentID: manifest.SegmentID, CohortID: manifest.CohortID, InstallationID: manifest.InstallationID, SoulID: manifest.SoulID, StartID: manifest.StartID, LaunchID: manifest.LaunchID, QSessionID: manifest.QSessionID, ManifestSHA256: digest(manifestRaw), AttestationSHA256: digest(attestation), MeasurementBindingSHA256: manifest.MeasurementBindingSHA256, QIndexSHA256: q.IndexSHA256, QEOFReceiptSHA256: q.EOFReceiptSHA256, ReservationSHA256: chain.reservationSHA256, FinalizationSHA256: chain.finalizationSHA256, LaunchChallengeSHA256: chain.launchChallengeSHA256}, nil
+	return ResolvedProtectedSegmentChainV3{resolved: true, binding: chain.binding, cohortBindingSHA256: chain.cohortBindingSHA256, reportBindingSHA256: chain.reportBindingSHA256, Gate: manifest.Gate, SegmentID: manifest.SegmentID, CohortID: manifest.CohortID, InstallationID: manifest.InstallationID, SoulID: manifest.SoulID, StartID: manifest.StartID, LaunchID: manifest.LaunchID, QSessionID: manifest.QSessionID, ManifestSHA256: digest(manifestRaw), AttestationSHA256: digest(attestation), MeasurementBindingSHA256: manifest.MeasurementBindingSHA256, QIndexSHA256: q.IndexSHA256, QEOFReceiptSHA256: q.EOFReceiptSHA256, ReservationSHA256: chain.reservationSHA256, FinalizationSHA256: chain.finalizationSHA256, LaunchChallengeSHA256: chain.launchChallengeSHA256}, nil
 }

@@ -20,6 +20,94 @@ type protectedSegmentFixtureV3 struct {
 	refs    map[string]gateObjectRefV3
 }
 
+func TestSignedProtectedCohortBindingV3(t *testing.T) {
+	ordinary, err := os.ReadFile("testdata/stage2a-hr-binding-v3-synthetic.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		raw       []byte
+		candidate bool
+	}{{"ordinary", ordinary, false}, {"candidate", candidateContractBindingV3(t), true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			readSigned := func(binding map[string]any) string {
+				t.Helper()
+				envelope := qSignFixtureV3(t, map[string]any{"measurement_binding": binding}, "fixture/cohort", 1, private)
+				payload, err := qSignedRecordV3(envelope, "fixture/cohort", 1, public)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var signed struct {
+					Binding json.RawMessage `json:"measurement_binding"`
+				}
+				if err := json.Unmarshal(payload, &signed); err != nil {
+					t.Fatal(err)
+				}
+				if tc.candidate {
+					_, err = parseCandidateMeasurementBindingV3(signed.Binding)
+				} else {
+					_, err = parseHRMeasurementBindingV3(signed.Binding)
+				}
+				if err != nil {
+					t.Fatalf("signed binding invalid: %v", err)
+				}
+				got, err := protectedCohortBindingV3(signed.Binding)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return got
+			}
+			decode := func() map[string]any {
+				var v map[string]any
+				if err := json.Unmarshal(tc.raw, &v); err != nil {
+					t.Fatal(err)
+				}
+				return v
+			}
+			want := readSigned(decode())
+			changedStart := decode()
+			changedStart["start_id"] = "st_aaaaaaaaaaaaaaaaaaaaaaaa"
+			changedStart["launch_id"] = "ln_aaaaaaaaaaaaaaaaaaaaaaaa"
+			changedStart["hq_epoch"] = strings.Repeat("a", 64)
+			if !sameProtectedCohortV3(want, readSigned(changedStart)) {
+				t.Fatal("new start in same cohort refused")
+			}
+			for name, mutate := range map[string]func(map[string]any){
+				"H descriptor": func(v map[string]any) { v["h_service_descriptor_digest"] = digest([]byte("other H")) },
+				"R inventory": func(v map[string]any) {
+					v["r_inventory"].(map[string]any)["snapshot"].(map[string]any)["inode"] = "999999"
+				},
+				"R component": func(v map[string]any) {
+					v["r_components"].([]any)[0].(map[string]any)["source_commit"] = strings.Repeat("a", 40)
+				},
+				"adapter": func(v map[string]any) {
+					key := "adapter_release"
+					if tc.candidate {
+						key = "candidate_adapter"
+					}
+					v[key].(map[string]any)["executable_sha256"] = digest([]byte("other adapter"))
+				},
+				"broker": func(v map[string]any) {
+					v["broker_executable"].(map[string]any)["sha256"] = digest([]byte("other broker"))
+				},
+			} {
+				t.Run(name, func(t *testing.T) {
+					changed := decode()
+					mutate(changed)
+					if sameProtectedCohortV3(want, readSigned(changed)) {
+						t.Fatal("different signed cohort accepted")
+					}
+				})
+			}
+		})
+	}
+}
+
 func qWriteBlobFixtureV3(t *testing.T, root, role string, raw []byte) gateObjectRefV3 {
 	t.Helper()
 	sha := digest(raw)
@@ -35,6 +123,10 @@ func qWriteBlobFixtureV3(t *testing.T, root, role string, raw []byte) gateObject
 }
 
 func makeProtectedSegmentFixtureV3(t *testing.T, stopIdle bool, attestationQDigestMatches bool, roleUIDs ...int) protectedSegmentFixtureV3 {
+	return makeProtectedSegmentWithConfigV3(t, stopIdle, attestationQDigestMatches, nil, roleUIDs...)
+}
+
+func makeProtectedSegmentWithConfigV3(t *testing.T, stopIdle bool, attestationQDigestMatches bool, cfg *qAggregateConfigV3, roleUIDs ...int) protectedSegmentFixtureV3 {
 	t.Helper()
 	runnerUID, bridgeUID := 310, 311
 	if len(roleUIDs) == 2 {
@@ -43,16 +135,35 @@ func makeProtectedSegmentFixtureV3(t *testing.T, stopIdle bool, attestationQDige
 		t.Fatal("role UID fixture requires both R and B")
 	}
 	q := makeQFixtureV3(t, 1, true, true, runnerUID, bridgeUID)
-	const installation = "fixture-install"
-	const soul = "agent_12345678-1234-1234-1234-1234567890ab"
-	const start = "st_1234567890abcdef12345678"
-	const launch = "ln_1234567890abcdef12345678"
-	const plan = "plan-20261122T120000Z-abcd"
-	const planDigest = "1111111111111111111111111111111111111111111111111111111111111111"
-	const epoch = "2222222222222222222222222222222222222222222222222222222222222222"
-	const session = "1234567890abcdef1234567890abcdef"
+	installation := "fixture-install"
+	soul := "agent_12345678-1234-1234-1234-1234567890ab"
+	start := "st_1234567890abcdef12345678"
+	launch := "ln_1234567890abcdef12345678"
+	plan := "plan-20261122T120000Z-abcd"
+	planDigest := "1111111111111111111111111111111111111111111111111111111111111111"
+	epoch := "2222222222222222222222222222222222222222222222222222222222222222"
+	session := "1234567890abcdef1234567890abcdef"
+	host := "fixture-host"
+	if cfg != nil {
+		purpose := qOrdinaryReservationPurposeV3
+		var attempt map[string]any
+		if cfg.candidate {
+			purpose = qCandidateReservationPurposeV3
+			attempt = map[string]any{"test_plan_sha256": digest([]byte("plan")), "suite_revision": strings.Repeat("1", 40)}
+		}
+		q = makeQFixtureWithConfigV3(t, 1, true, true, "machine/v3", 3, purpose, attempt, cfg, runnerUID, bridgeUID)
+		installation = cfg.binding["installation_id"].(string)
+		soul = cfg.binding["soul_id"].(string)
+		start = cfg.binding["start_id"].(string)
+		launch = cfg.binding["launch_id"].(string)
+		plan = cfg.binding["plan_id"].(string)
+		planDigest = cfg.binding["installed_plan_digest"].(string)
+		epoch = cfg.binding["hq_epoch"].(string)
+		session = cfg.session
+		host = cfg.binding["host_id"].(string)
+	}
 	const suite = "1111111111111111111111111111111111111111"
-	reservationPayload, err := qSignedRecordV3(q.reservation, qReservationPurposeV3, 2, q.key)
+	reservationPayload, _, err := qReservationRecordV3(q.reservation, q.key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +202,7 @@ func makeProtectedSegmentFixtureV3(t *testing.T, stopIdle bool, attestationQDige
 	ownerPlan := digest([]byte("owner plan"))
 	manifest := physicalSegmentV3{
 		SchemaVersion: 1, Kind: "stage2a-physical-segment", Gate: "T01", Profile: "managed-protected",
-		HostID: "fixture-host", CohortID: "fixture-cohort", SuiteRevision: suite,
+		HostID: host, CohortID: "fixture-cohort", SuiteRevision: suite,
 		OwnerPlanSHA256: ownerPlan, SegmentID: "fixture-segment", Purpose: "initial", ReportAnchor: true,
 		TerminalState: "stopped", InstallationID: installation, SoulID: soul, StartID: start, LaunchID: launch,
 		MeasurementBindingSHA256: bindingSHA, QSessionStatus: "completed", QSessionID: session,
@@ -122,7 +233,7 @@ func makeProtectedSegmentFixtureV3(t *testing.T, stopIdle bool, attestationQDige
 	attestation := qSignFixtureV3(t, attest, physicalSegmentPurposeV3, 1, q.private)
 	attestationRef := qWriteBlobFixtureV3(t, root, "segment_attestation", attestation)
 	gate := gateManifestV3{SchemaVersion: 1, Kind: "stage2a-physical-gate-manifest", Gate: "T01",
-		Profile: "managed-protected", HostID: "fixture-host", CohortID: "fixture-cohort",
+		Profile: "managed-protected", HostID: host, CohortID: "fixture-cohort",
 		SuiteRevision: suite, OwnerPlanSHA256: ownerPlan, PrimaryMeasurementBindingSHA256: bindingSHA,
 		PrimarySegmentID: "fixture-segment"}
 	segment := gateSegmentV3{Sequence: 0, SegmentID: "fixture-segment", Purpose: "initial", ReportAnchor: true,
@@ -232,6 +343,26 @@ func TestResolveCompletedProtectedSegmentV3(t *testing.T) {
 			t.Fatal("missing Q EOF accepted")
 		}
 	})
+}
+
+func TestResolveConfiguredV3Segment(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("secure object resolver unavailable")
+	}
+	raw, err := os.ReadFile("testdata/stage2a-hr-binding-v3-synthetic.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var binding map[string]any
+	if err := json.Unmarshal(raw, &binding); err != nil {
+		t.Fatal(err)
+	}
+	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("a", ed25519.SeedSize)))
+	cfg := &qAggregateConfigV3{private: key, binding: binding, session: "1234567890abcdef1234567890abcdef"}
+	f := makeProtectedSegmentWithConfigV3(t, true, true, cfg, 331, 332)
+	if _, err := resolveProtectedSegmentV3(f.root, f.gate, f.segment, f.key, f.now.now); err != nil {
+		t.Fatalf("configured v3 segment: %v", err)
+	}
 }
 
 func TestProtectedSegmentV3ReservationWireContracts(t *testing.T) {
