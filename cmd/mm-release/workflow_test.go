@@ -35,6 +35,7 @@ type workflowJob struct {
 }
 
 type workflowStep struct {
+	ID   string            `yaml:"id"`
 	If   string            `yaml:"if"`
 	Name string            `yaml:"name"`
 	Uses string            `yaml:"uses"`
@@ -90,6 +91,15 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		}
 		var allowed int
 		switch e.Name() {
+		case "ci.yml", "go-core.yml":
+			var doc workflowDoc
+			if err := tree.Decode(&doc); err != nil {
+				t.Fatal(err)
+			}
+			push, ok := doc.On["push"].(map[string]any)
+			if !ok || !reflect.DeepEqual(push["branches"], []any{"main"}) || push["tags"] != nil {
+				t.Errorf("%s must run on main pushes only, got %v", e.Name(), push)
+			}
 		case "sign.yml":
 			allowed = 5 // TestSignWorkflowContract checks each reference and its location.
 		case "version-cut.yml", "prepare-release.yml":
@@ -258,8 +268,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	if gatesJob.Uses != "./.github/workflows/go-core.yml" {
 		t.Errorf("gates.uses = %q, want ./.github/workflows/go-core.yml", gatesJob.Uses)
 	}
-	if gatesJob.If != "" {
-		t.Errorf("gates.if = %q, want empty so gates always run on workflow_dispatch", gatesJob.If)
+	if gatesJob.If != "github.event_name == 'workflow_dispatch'" {
+		t.Errorf("gates.if = %q, want native rebuilds only on manual dispatch", gatesJob.If)
 	}
 	if len(gatesJob.Permissions) != 0 {
 		t.Errorf("gates.permissions = %v, want empty (inherits contents: read)", gatesJob.Permissions)
@@ -276,8 +286,9 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 	if pubJob.RunsOn != "macos-15" {
 		t.Errorf("publish.runs-on = %q, want macos-15", pubJob.RunsOn)
 	}
-	if len(pubJob.Permissions) != 1 || pubJob.Permissions["contents"] != "write" {
-		t.Errorf("publish.permissions = %v, want {contents: write}", pubJob.Permissions)
+	wantPermissions := map[string]string{"actions": "read", "contents": "write"}
+	if !reflect.DeepEqual(pubJob.Permissions, wantPermissions) {
+		t.Errorf("publish.permissions = %v, want %v", pubJob.Permissions, wantPermissions)
 	}
 	smoke := rel.Jobs["public-homebrew"]
 	if len(rel.Jobs) != 3 || smoke.Needs != "publish" || smoke.If != "" || smoke.RunsOn != "macos-15" ||
@@ -295,7 +306,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		sawDistDownload    bool
 		sawGateDownload    bool
 		sawMatrix          bool
-		sawTagVerifyStep   bool
+		sawEvidenceSource  bool
+		sawDistVerify      bool
 		sawSignedVerify    bool
 		sawDraftSnapshot   bool
 		sawPublicPublisher bool
@@ -310,7 +322,19 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 				t.Errorf("publish step %d checkout persist-credentials = %v, want false", i+1, v)
 			}
 		}
+		if step.ID == "evidence" {
+			sawEvidenceSource = sawCheckout &&
+				strings.Contains(step.Run, "refs/tags/$tag^{commit}") &&
+				strings.Contains(step.Run, "v$(cat VERSION)") &&
+				strings.Contains(step.Run, "event=push&branch=main&head_sha=$cut") &&
+				strings.Contains(step.Run, "scripts/version-cut.py ci") &&
+				step.Env["GH_TOKEN"] == "${{ github.token }}"
+		}
 		if strings.HasPrefix(step.Uses, "actions/download-artifact@") {
+			if !sawEvidenceSource || step.With["run-id"] != "${{ steps.evidence.outputs.run }}" ||
+				step.With["github-token"] != "${{ github.token }}" {
+				t.Errorf("publish step %d must download from the selected release evidence run", i+1)
+			}
 			switch {
 			case step.With["name"] == "dist":
 				sawDistDownload = true
@@ -320,10 +344,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 				sawMatrix = true
 			}
 		}
-		if strings.Contains(step.Run, "git tag --points-at HEAD") &&
-			strings.Contains(step.Run, "v$(cat VERSION)") &&
-			strings.Contains(step.Run, "mm-release verify -dist dist") {
-			sawTagVerifyStep = true
+		if strings.Contains(step.Run, "mm-release verify -dist dist") {
+			sawDistVerify = sawDistDownload
 		}
 		if strings.Contains(step.Run, "verify-public-draft.py downloaded") {
 			sawDraftSnapshot = true
@@ -367,8 +389,8 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		t.Errorf("publish job artifact downloads: dist=%v release-gate=%v support-matrix=%v",
 			sawDistDownload, sawGateDownload, sawMatrix)
 	}
-	if !sawTagVerifyStep {
-		t.Errorf("publish job missing tag + mm-release verify -dist dist step")
+	if !sawEvidenceSource || !sawDistVerify {
+		t.Errorf("publish must verify the exact tag, select its evidence run and check the downloaded dist")
 	}
 	if !sawSignedVerify {
 		t.Errorf("publish job missing exact %q invocation", wantSignedVerify)
@@ -694,6 +716,8 @@ type workflowContext struct {
 	EventName     string
 	Ref           string
 	InputsPublish bool
+	GatesResult   string
+	Cancelled     bool
 }
 
 func TestReleasePublishJobIfExpression(t *testing.T) {
@@ -709,8 +733,9 @@ func TestReleasePublishJobIfExpression(t *testing.T) {
 	if err := yaml.Unmarshal(relRaw, &rel); err != nil {
 		t.Fatal(err)
 	}
-	ifExpr := strings.TrimSpace(rel.Jobs["publish"].If)
-	const wantExpr = "(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish)"
+	ifExpr := strings.Join(strings.Fields(rel.Jobs["publish"].If), " ")
+	const wantExpr = "!cancelled() && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.gates.result == 'skipped') || " +
+		"(github.event_name == 'workflow_dispatch' && inputs.publish && needs.gates.result == 'success'))"
 	if ifExpr != wantExpr {
 		t.Fatalf("publish.if = %q, want %q", ifExpr, wantExpr)
 	}
@@ -722,37 +747,47 @@ func TestReleasePublishJobIfExpression(t *testing.T) {
 	}{
 		{
 			name: "workflow_dispatch with publish=false on a branch runs gates and skips publish",
-			ctx:  workflowContext{EventName: "workflow_dispatch", Ref: "refs/heads/main", InputsPublish: false},
+			ctx:  workflowContext{EventName: "workflow_dispatch", Ref: "refs/heads/main", GatesResult: "success"},
 			want: false,
 		},
 		{
 			name: "workflow_dispatch with publish=false on release branch skips publish",
-			ctx:  workflowContext{EventName: "workflow_dispatch", Ref: "refs/heads/release/v0.9.0", InputsPublish: false},
+			ctx:  workflowContext{EventName: "workflow_dispatch", Ref: "refs/heads/release/v0.9.0", GatesResult: "success"},
 			want: false,
 		},
 		{
 			name: "workflow_dispatch with publish=false on a tag ref still skips publish (dry run)",
-			ctx:  workflowContext{EventName: "workflow_dispatch", Ref: "refs/tags/v0.9.0", InputsPublish: false},
+			ctx:  workflowContext{EventName: "workflow_dispatch", Ref: "refs/tags/v0.9.0", GatesResult: "success"},
 			want: false,
 		},
 		{
-			name: "workflow_dispatch with publish=true runs publish",
-			ctx:  workflowContext{EventName: "workflow_dispatch", Ref: "refs/tags/v0.9.0", InputsPublish: true},
+			name: "workflow_dispatch with publish=true and passing gates runs publish",
+			ctx:  workflowContext{EventName: "workflow_dispatch", Ref: "refs/tags/v0.9.0", InputsPublish: true, GatesResult: "success"},
 			want: true,
 		},
 		{
-			name: "push of v* tag runs publish",
-			ctx:  workflowContext{EventName: "push", Ref: "refs/tags/v0.9.0", InputsPublish: false},
+			name: "push of v* tag runs publish after skipping duplicate gates",
+			ctx:  workflowContext{EventName: "push", Ref: "refs/tags/v0.9.0", GatesResult: "skipped"},
 			want: true,
+		},
+		{
+			name: "manual publication with failing gates skips publish",
+			ctx:  workflowContext{EventName: "workflow_dispatch", Ref: "refs/tags/v0.9.0", InputsPublish: true, GatesResult: "failure"},
+			want: false,
+		},
+		{
+			name: "cancelled tag push skips publish",
+			ctx:  workflowContext{EventName: "push", Ref: "refs/tags/v0.9.0", GatesResult: "skipped", Cancelled: true},
+			want: false,
 		},
 		{
 			name: "push of branch skips publish",
-			ctx:  workflowContext{EventName: "push", Ref: "refs/heads/main", InputsPublish: false},
+			ctx:  workflowContext{EventName: "push", Ref: "refs/heads/main", GatesResult: "skipped"},
 			want: false,
 		},
 		{
 			name: "push of non-v tag skips publish",
-			ctx:  workflowContext{EventName: "push", Ref: "refs/tags/test-1", InputsPublish: false},
+			ctx:  workflowContext{EventName: "push", Ref: "refs/tags/test-1", GatesResult: "skipped"},
 			want: false,
 		},
 	}
@@ -766,7 +801,7 @@ func TestReleasePublishJobIfExpression(t *testing.T) {
 
 // evalPublishIf evaluates the boolean workflow `if:` expression grammar used by
 // jobs.publish (`||`, `&&`, parenthesized groups, `==` string comparisons,
-// `startsWith(a, b)`, and boolean context `inputs.publish`).
+// `startsWith(a, b)`, `!cancelled()`, and boolean context `inputs.publish`).
 func evalPublishIf(expr string, ctx workflowContext) bool {
 	expr = strings.TrimSpace(expr)
 	if parts := splitTopLevel(expr, "||"); len(parts) > 1 {
@@ -801,6 +836,9 @@ func evalPublishIf(expr string, ctx workflowContext) bool {
 	if expr == "inputs.publish" {
 		return ctx.InputsPublish
 	}
+	if expr == "!cancelled()" {
+		return !ctx.Cancelled
+	}
 	return false
 }
 
@@ -814,6 +852,8 @@ func evalStringAtom(atom string, ctx workflowContext) string {
 		return ctx.EventName
 	case "github.ref":
 		return ctx.Ref
+	case "needs.gates.result":
+		return ctx.GatesResult
 	}
 	return atom
 }

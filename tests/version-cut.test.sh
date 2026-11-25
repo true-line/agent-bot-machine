@@ -143,21 +143,8 @@ refuses run existing "$later" "$tag"
 (
     cd "$(dirname "$script")/.."
     ruby -ryaml -e '
-      def workflow(name)
-        YAML.load_file(".github/workflows/#{name}.yml")
-      end
-      %w[ci go-core].each do |name|
-        config = workflow(name)
-        events = config.fetch("on") { config.fetch(true) }
-        abort "#{name} still runs on tag push" if events.fetch("push").key?("tags")
-      end
-      jobs = workflow("release").fetch("jobs")
-      abort "automatic publication still calls Go core" unless
-        jobs.fetch("gates").fetch("if") == "github.event_name == '\''workflow_dispatch'\''"
+      jobs = YAML.load_file(".github/workflows/release.yml").fetch("jobs")
       steps = jobs.fetch("publish").fetch("steps")
-      downloads = steps.select { |step| step["uses"]&.start_with?("actions/download-artifact@") }
-      abort "release downloads must use the validated run" unless downloads.size == 3 &&
-        downloads.all? { |step| step.fetch("with")["run-id"] == "${{ steps.evidence.outputs.run }}" }
       print steps.find { |step| step["id"] == "evidence" }.fetch("run")
     ' > "$tmp/release-evidence.sh"
 
