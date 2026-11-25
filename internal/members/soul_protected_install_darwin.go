@@ -20,10 +20,12 @@ import (
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/output"
+	"github.com/qwts/managed-machine/internal/plan"
 )
 
 const stage2aInstallSchema = "agent-bot-machine/soul-protected-launch-install/v1"
 const stage2aRuntimeInstallSchemaV3 = "agent-bot-machine/soul-protected-launch-install/v3"
+const stage2aLocalTestInstallSchema = "agent-bot-machine/soul-protected-launch-install-local-test/v1"
 
 var stage2aMessagesQuery = regexp.MustCompile(`^[a-zA-Z0-9._=&%-]{0,128}$`)
 
@@ -38,8 +40,11 @@ func decodeSoulProtectedLaunch(raw []byte) (*SoulProtectedLaunchInstall, error) 
 		return nil, errors.New("invalid protected Soul launch request")
 	}
 	legacy := request.Schema == stage2aInstallSchema && request.RuntimeV3 == nil
-	v3 := request.Schema == stage2aRuntimeInstallSchemaV3 && request.RuntimeV3 != nil
-	if (!legacy && !v3) || !stage2aAbsolutePath(request.ArtifactSource) ||
+	v3 := request.Schema == stage2aRuntimeInstallSchemaV3 && request.RuntimeV3 != nil && request.LocalTestQPlanID == ""
+	localTest := request.Schema == stage2aLocalTestInstallSchema && request.RuntimeV3 != nil &&
+		plan.ValidID(request.LocalTestQPlanID)
+	if (!legacy && !v3 && !localTest) || legacy && request.LocalTestQPlanID != "" ||
+		!stage2aAbsolutePath(request.ArtifactSource) ||
 		!stage2aAbsolutePath(request.BridgeBinarySource) ||
 		!stage2aAbsolutePath(request.DefinitionSource) || !stage2aAbsolutePath(request.LaunchInputsSource) ||
 		len(request.Policy) == 0 || len(request.Policy) > 40<<10 {
@@ -145,6 +150,23 @@ func buildSoulProtectedLaunch(in Input, h Host) (Plan, error) {
 		policy.ArtifactPath != stage2aArtifactPath(policy.Binding.InstallationID) ||
 		!stage2aAbsolutePath(policy.Runner.PackageRoot) ||
 		policy.Node == "" || policy.Entry == "" {
+		return Plan{}, invalid
+	}
+	localTest := r.Schema == stage2aLocalTestInstallSchema
+	if localTest {
+		approvedUntil, err := time.Parse(time.RFC3339Nano, policy.ApprovedUntil)
+		if err != nil || policy.LocalTestQPlanID != r.LocalTestQPlanID ||
+			policy.ObservedBodyLocalTestReceipt != nil {
+			return Plan{}, invalid
+		}
+		ownerPlan, _, err := parseStage2aLocalTestOwnerPlan(policy.ObservedBodyLocalTest,
+			policy.BridgeQualification, approvedUntil)
+		if err != nil || ownerPlan.RunnerHomeLexical != darwinSoulRunnerHome(policy.Runner.Account) {
+			return Plan{}, invalid
+		}
+	} else if policy.LocalTestQPlanID != "" ||
+		!stage2aPreApplyJSONEmpty(policy.ObservedBodyLocalTest) ||
+		policy.ObservedBodyLocalTestReceipt != nil {
 		return Plan{}, invalid
 	}
 	namespace, err := stage2aFrozenNamespace(policy.Binding.InstallationID)

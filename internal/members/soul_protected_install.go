@@ -16,6 +16,7 @@ type SoulProtectedLaunchInstall struct {
 	DefinitionSource   string                   `json:"definition_source"`
 	LaunchInputsSource string                   `json:"launch_inputs_source"`
 	RuntimeV3          *stage2aRuntimeV3Install `json:"runtime_v3,omitempty"`
+	LocalTestQPlanID   string                   `json:"local_test_q_plan_id,omitempty"`
 	Policy             json.RawMessage          `json:"policy"`
 }
 

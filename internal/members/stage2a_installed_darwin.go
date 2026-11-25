@@ -46,35 +46,45 @@ type stage2aInstalledDirectory struct {
 }
 
 type stage2aInstalledPolicy struct {
-	Schema              string                       `json:"schema"`
-	MachineAccount      string                       `json:"machine_account"`
-	MachineUID          int                          `json:"machine_uid"`
-	MachineGID          int                          `json:"machine_gid"`
-	PlanOwner           string                       `json:"plan_owner"`
-	HQUID               int                          `json:"hq_uid"`
-	ApprovedUntil       string                       `json:"approved_until"`
-	Plan                json.RawMessage              `json:"canonical_plan"`
-	Receipt             json.RawMessage              `json:"root_receipt"`
-	Claims              stage2aInstalledDirectory    `json:"claims"`
-	SnapshotNamespace   stage2aInstalledDirectory    `json:"snapshot_namespace"`
-	RelayParent         stage2aInstalledDirectory    `json:"relay_parent"`
-	LegacySpent         []string                     `json:"legacy_spent_start_ids"`
-	LauncherSHA256      string                       `json:"launcher_sha256"`
-	ArtifactPath        string                       `json:"artifact_path"`
-	Runner              SoulRunner                   `json:"runner"`
-	Bridge              SoulBridge                   `json:"bridge"`
-	Binding             Stage2aMeasurementBinding    `json:"measurement_binding"`
-	Definition          []Stage2aDefinitionRecord    `json:"definition"`
-	LaunchInputs        Stage2aLaunchInputRecords    `json:"launch_inputs"`
-	Node                string                       `json:"node"`
-	Entry               string                       `json:"entry"`
-	BridgeExecutable    HarnessArtifact              `json:"bridge_executable"`
-	BridgeQualification Stage2aBridgeQualification   `json:"bridge_qualification"`
-	RuntimeV3           *stage2aDomainInventoryRefV3 `json:"runtime_v3,omitempty"`
+	Schema                       string                          `json:"schema"`
+	MachineAccount               string                          `json:"machine_account"`
+	MachineUID                   int                             `json:"machine_uid"`
+	MachineGID                   int                             `json:"machine_gid"`
+	PlanOwner                    string                          `json:"plan_owner"`
+	HQUID                        int                             `json:"hq_uid"`
+	ApprovedUntil                string                          `json:"approved_until"`
+	Plan                         json.RawMessage                 `json:"canonical_plan"`
+	Receipt                      json.RawMessage                 `json:"root_receipt"`
+	Claims                       stage2aInstalledDirectory       `json:"claims"`
+	SnapshotNamespace            stage2aInstalledDirectory       `json:"snapshot_namespace"`
+	RelayParent                  stage2aInstalledDirectory       `json:"relay_parent"`
+	LegacySpent                  []string                        `json:"legacy_spent_start_ids"`
+	LauncherSHA256               string                          `json:"launcher_sha256"`
+	ArtifactPath                 string                          `json:"artifact_path"`
+	Runner                       SoulRunner                      `json:"runner"`
+	Bridge                       SoulBridge                      `json:"bridge"`
+	Binding                      Stage2aMeasurementBinding       `json:"measurement_binding"`
+	Definition                   []Stage2aDefinitionRecord       `json:"definition"`
+	LaunchInputs                 Stage2aLaunchInputRecords       `json:"launch_inputs"`
+	Node                         string                          `json:"node"`
+	Entry                        string                          `json:"entry"`
+	BridgeExecutable             HarnessArtifact                 `json:"bridge_executable"`
+	BridgeQualification          Stage2aBridgeQualification      `json:"bridge_qualification"`
+	RuntimeV3                    *stage2aDomainInventoryRefV3    `json:"runtime_v3,omitempty"`
+	ObservedBodyLocalTest        json.RawMessage                 `json:"observed_body_local_test,omitempty"`
+	LocalTestQPlanID             string                          `json:"local_test_q_plan_id,omitempty"`
+	ObservedBodyLocalTestReceipt *stage2aLocalTestInstallReceipt `json:"observed_body_local_test_receipt,omitempty"`
 }
 
 func stage2aReadRootFile(path string, maximum int64, modes ...uint16) ([]byte, error) {
-	dir, err := openStage2aAdminDirectory(filepath.Dir(path), 0)
+	return stage2aReadProtectedFileForUID(path, maximum, 0, 0, modes...)
+}
+
+// The production root reader fixes uid/gid to 0. The parameterized internal
+// form lets source tests exercise the same descriptor, no-follow, ACL and
+// identity checks with files owned by the test account.
+func stage2aReadProtectedFileForUID(path string, maximum int64, uid, gid uint32, modes ...uint16) ([]byte, error) {
+	dir, err := openStage2aAdminDirectory(filepath.Dir(path), uid)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +96,7 @@ func stage2aReadRootFile(path string, maximum int64, modes ...uint16) ([]byte, e
 	f := os.NewFile(uintptr(fd), path)
 	defer f.Close()
 	var st unix.Stat_t
-	if unix.Fstat(fd, &st) != nil || st.Uid != 0 || st.Gid != 0 || st.Nlink != 1 ||
+	if unix.Fstat(fd, &st) != nil || st.Uid != uid || st.Gid != gid || st.Nlink != 1 ||
 		st.Mode&unix.S_IFMT != unix.S_IFREG || !slices.Contains(modes, st.Mode&07777) ||
 		st.Size <= 0 || st.Size > maximum || checkDarwinACLs([]string{path}) != nil {
 		return nil, errStage2aReservationAuthority
@@ -227,6 +237,9 @@ func loadStage2aInstalledPolicyWithLease(key ed25519.PublicKey, hqUID int, epoch
 	if err != nil || !stage2aInstalledReceiptMatchesRoot(p.Receipt, installedReceipt) {
 		return p, nil, errStage2aReservationAuthority
 	}
+	if _, _, _, err := stage2aVerifyLocalTestRootReceipt(p, receipt, key); err != nil {
+		return p, nil, errStage2aReservationAuthority
+	}
 	if p.RuntimeV3 != nil {
 		ref := p.RuntimeV3
 		if receipt.Stage2aRuntimeV3 == nil || *receipt.Stage2aRuntimeV3 != *ref ||
@@ -355,9 +368,12 @@ func (p stage2aInstalledPolicy) verifyRunnerGroup() error {
 // unrelated root receipt appear to approve changed launch bytes or roles.
 func stage2aInstalledPolicyMatchesPlan(p stage2aInstalledPolicy, approved Plan, pub ed25519.PublicKey) bool {
 	r := approved.SoulProtectedLaunch
-	if r == nil || (r.Schema != stage2aInstallSchema && r.Schema != stage2aRuntimeInstallSchemaV3) ||
-		(r.Schema == stage2aRuntimeInstallSchemaV3) != (r.RuntimeV3 != nil) ||
-		(r.Schema == stage2aRuntimeInstallSchemaV3) != (p.RuntimeV3 != nil) ||
+	if r == nil || (r.Schema != stage2aInstallSchema && r.Schema != stage2aRuntimeInstallSchemaV3 &&
+		r.Schema != stage2aLocalTestInstallSchema) ||
+		(r.Schema != stage2aInstallSchema) != (r.RuntimeV3 != nil) ||
+		(r.Schema != stage2aInstallSchema) != (p.RuntimeV3 != nil) ||
+		(r.Schema == stage2aLocalTestInstallSchema) != (p.LocalTestQPlanID != "") ||
+		r.LocalTestQPlanID != p.LocalTestQPlanID ||
 		p.Binding.PlanID == "" || p.Binding.InstalledPlanDigest == "" ||
 		p.ArtifactPath != stage2aArtifactPath(p.Binding.InstallationID) {
 		return false
@@ -368,6 +384,7 @@ func stage2aInstalledPolicyMatchesPlan(p stage2aInstalledPolicy, approved Plan, 
 	}
 	template := p
 	template.Plan, template.Receipt = nil, nil
+	template.ObservedBodyLocalTestReceipt = nil
 	template.RuntimeV3 = nil
 	template.Claims, template.SnapshotNamespace = stage2aInstalledDirectory{}, stage2aInstalledDirectory{}
 	template.RelayParent = stage2aInstalledDirectory{}

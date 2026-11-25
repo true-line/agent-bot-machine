@@ -4,7 +4,10 @@ package members
 
 import (
 	"bytes"
+	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/qwts/managed-machine/internal/cli"
 	"github.com/qwts/managed-machine/internal/diag"
@@ -70,6 +74,46 @@ func runSoulProtectedLaunchApply(s Saved, a Approval, owner string, h Host, deps
 	if err := authorize(nil); err != nil {
 		return refused(err)
 	}
+	var localTestOwner stage2aLocalTestOwnerPlan
+	var localTestOwnerSHA string
+	var localTestQ stage2aLocalTestQPlan
+	var localTestQRef stage2aLocalTestQApprovalReference
+	var localTestQEnvelope []byte
+	if request.Schema == stage2aLocalTestInstallSchema {
+		approvedUntil, parseErr := time.Parse(time.RFC3339Nano, policy.ApprovedUntil)
+		if parseErr != nil {
+			return refused(errStage2aReservationAuthority)
+		}
+		localTestOwner, localTestOwnerSHA, err = parseStage2aLocalTestOwnerPlan(
+			policy.ObservedBodyLocalTest, policy.BridgeQualification, approvedUntil)
+		if err != nil || policy.LocalTestQPlanID != request.LocalTestQPlanID {
+			return refused(errStage2aReservationAuthority)
+		}
+		qPath, pathErr := stage2aLocalTestQRootEnvelopePathForPlan(request.LocalTestQPlanID)
+		if pathErr != nil {
+			return refused(pathErr)
+		}
+		localTestQEnvelope, err = stage2aReadRootFile(qPath, stage2aV3EnvelopeLimit, 0400)
+		if err != nil {
+			return refused(errStage2aReservationAuthority)
+		}
+		localTestQ, localTestQRef, err = stage2aLocalTestQApprovalForInstall(
+			localTestQEnvelope, ed25519.PublicKey(key), s.PlanID, s.PlanDigest,
+			request.LocalTestQPlanID, policy.Binding.InstallationID, localTestOwnerSHA,
+			localTestOwner.Revision, localTestOwner.Members[0].AdapterManifestSHA256,
+			a.MachineFingerprint, a.PairCommitment, deps.Time())
+		if err != nil {
+			return refused(err)
+		}
+		lead := localTestOwner.Members[0]
+		if _, err := stage2aLocalTestInstallReceiptFor(localTestOwner, localTestOwnerSHA,
+			localTestQ, "sha256:"+localTestQRef.PlanDigest, localTestQRef,
+			stage2aLocalTestMeasuredLead{AdapterManifestSHA256: lead.AdapterManifestSHA256,
+				CommandSHA256: lead.CommandSHA256, AdjacentCLISHA256: lead.AdjacentCLISHA256},
+			s.PlanID, s.PlanDigest, policy.Binding.InstallationID, ed25519.PublicKey(key)); err != nil {
+			return refused(errStage2aReservationAuthority)
+		}
+	}
 	if err := checkStage2aLegacyClaimsEmpty(); err != nil {
 		return refused(err)
 	}
@@ -117,12 +161,47 @@ func runSoulProtectedLaunchApply(s Saved, a Approval, owner string, h Host, deps
 	if err != nil {
 		return refused(err)
 	}
-	installErr := authorize(func() error {
-		return stage2aInstallFiles(s, request, &policy, uint32(ownerUID), key, manager, artifact, bridgeBinary)
-	})
+	var installErr error
+	if request.Schema == stage2aLocalTestInstallSchema {
+		installErr = authorize(func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			spent, err := loadAndSpendStage2aLocalTestQRootApproval(ctx,
+				localTestQ, localTestQRef, localTestOwnerSHA, a.MachineFingerprint,
+				a.PairCommitment, ed25519.PublicKey(key), deps.Time())
+			if err != nil || spent.ApprovalEnvelopeSHA256 != stage2aReservationSHA256(localTestQEnvelope) {
+				return errStage2aReservationAuthority
+			}
+			spentRaw, err := marshalStage2aReservationJCS(spent)
+			if err != nil {
+				return errStage2aReservationAuthority
+			}
+			receipt.Stage2aLocalTestQSpend = spentRaw
+			return nil
+		})
+	}
+	if installErr == nil {
+		installErr = authorize(func() error {
+			return stage2aInstallFiles(s, request, &policy, uint32(ownerUID), key, manager, artifact, bridgeBinary)
+		})
+	}
 	committed := false
 	if installErr == nil {
 		installErr = authorize(func() error {
+			if request.Schema == stage2aLocalTestInstallSchema {
+				localReceipt, err := stage2aLocalTestReceiptFromSealedRuntime(policy,
+					localTestOwner, localTestOwnerSHA, localTestQ, localTestQRef, ed25519.PublicKey(key))
+				if err != nil {
+					return err
+				}
+				localRaw, err := marshalStage2aReservationJCS(localReceipt)
+				if err != nil {
+					return err
+				}
+				policy.ObservedBodyLocalTestReceipt = &localReceipt
+				receipt.Stage2aLocalTestReceipt = localRaw
+				receipt.Stage2aLocalTestQApprovalEnvelope = base64.RawURLEncoding.EncodeToString(localTestQEnvelope)
+			}
 			receipt.Result = "applied"
 			receipt.FinishedAt = deps.Time().UTC().Format(approvalTime)
 			receipt.Stage2aRuntimeV3 = policy.RuntimeV3

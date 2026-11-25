@@ -3,6 +3,7 @@
 package members
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"time"
@@ -33,7 +34,8 @@ func stage2aLoadInstalledRuntimeV3(key ed25519.PublicKey, hqUID int, epoch,
 	}
 	var approved Plan
 	if json.Unmarshal(p.Plan, &approved) != nil || approved.SoulProtectedLaunch == nil ||
-		approved.SoulProtectedLaunch.Schema != stage2aRuntimeInstallSchemaV3 ||
+		(approved.SoulProtectedLaunch.Schema != stage2aRuntimeInstallSchemaV3 &&
+			approved.SoulProtectedLaunch.Schema != stage2aLocalTestInstallSchema) ||
 		approved.SoulProtectedLaunch.RuntimeV3 == nil {
 		return empty, errStage2aReservationAuthority
 	}
@@ -62,6 +64,39 @@ func stage2aLoadInstalledRuntimeV3(key ed25519.PublicKey, hqUID int, epoch,
 		stage2aRecheckVerifiedDomainV3(verified) != nil ||
 		!stage2aSelectedCommandRecordedV3(p, inv) {
 		return empty, errStage2aReservationAuthority
+	}
+	if approved.SoulProtectedLaunch.Schema == stage2aLocalTestInstallSchema {
+		var root Receipt
+		if json.Unmarshal(p.Receipt, &root) != nil {
+			return empty, errStage2aReservationAuthority
+		}
+		owner, q, approval, err := stage2aVerifyLocalTestRootReceipt(p, root, key)
+		if err != nil {
+			return empty, errStage2aReservationAuthority
+		}
+		qExpires, qErr := time.Parse(time.RFC3339Nano, q.ExpiresAt)
+		ownerExpires, ownerErr := time.Parse(time.RFC3339Nano, owner.ExpiresAt)
+		if qErr != nil || ownerErr != nil || !time.Now().Before(qExpires) ||
+			!time.Now().Before(ownerExpires) {
+			return empty, errStage2aReservationAuthority
+		}
+		measured, err := stage2aLocalTestMeasuredLeadFromRuntime(owner, ref, inv)
+		if err != nil {
+			return empty, errStage2aReservationAuthority
+		}
+		want, err := stage2aLocalTestInstallReceiptFor(owner,
+			p.ObservedBodyLocalTestReceipt.OwnerPlanSHA256, q,
+			"sha256:"+approval.PlanDigest, approval, measured,
+			p.Binding.PlanID, p.Binding.InstalledPlanDigest, installationID, key)
+		if err != nil || want != *p.ObservedBodyLocalTestReceipt {
+			return empty, errStage2aReservationAuthority
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		hostErr := observeStage2aQualificationHost(ctx, q.HostUUID)
+		cancel()
+		if hostErr != nil {
+			return empty, errStage2aReservationAuthority
+		}
 	}
 	return stage2aInstalledRuntimeV3{Policy: p, PolicyRaw: raw,
 		Plan: spec, Inventory: inv, VerifiedR: verified}, nil
