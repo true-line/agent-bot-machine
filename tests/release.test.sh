@@ -3,6 +3,7 @@ set -euo pipefail
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ALLOW_PROTOCOL=file
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_RECIPE="$(bash "$ROOT/scripts/machine-homebrew-formula" "$ROOT")"
 TEST_DIR="$(mktemp -d)"
 FIXTURE="$TEST_DIR/repo"
 REMOTE="$TEST_DIR/origin.git"
@@ -49,7 +50,7 @@ chmod +x "$STUB_BIN/ssh-keygen-signer"
 export PATH="$STUB_BIN:$PATH"
 
 # The tap can trail VERSION while the signed release is being published.
-FORMULA_VERSION="$(sed -nE 's/^[[:space:]]*version "([0-9.]+)"$/\1/p' "$ROOT/Formula/managed-machine.rb" | head -1)"
+FORMULA_VERSION="$(sed -nE 's/^[[:space:]]*version "([0-9.]+)"$/\1/p' "$ROOT/$ROOT_RECIPE" | head -1)"
 python3 - "$FORMULA_VERSION" "$(cat "$ROOT/VERSION")" <<'PYTEST'
 import sys
 assert tuple(map(int, sys.argv[1].split("."))) <= tuple(map(int, sys.argv[2].split(".")))
@@ -60,7 +61,7 @@ PYTEST
 # check passes; case 6 narrows it again.
 seed_fixture() {
     mkdir -p "$1/Formula" "$1/skills/managed-machine"
-    cp "$ROOT/Formula/managed-machine.rb" "$1/Formula/"
+    cp "$ROOT/$ROOT_RECIPE" "$1/Formula/managed-machine.rb"
     cp "$ROOT/VERSION" "$1/"
     sed -E 's|^([[:space:]]*qwts-versions:[[:space:]]*)"[^"]*"|\1">=7.0.0 <10.0.0"|' \
         "$ROOT/skills/managed-machine/SKILL.md" >"$1/skills/managed-machine/SKILL.md"

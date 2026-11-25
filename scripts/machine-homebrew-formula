@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Print the single Machine recipe in a tap or release checkout.
+set -euo pipefail
+if [[ "$#" != 1 ]]; then
+    echo "Usage: machine-homebrew-formula CHECKOUT" >&2
+    exit 2
+fi
+found=
+for path in Formula/agent-bot-machine.rb Formula/managed-machine.rb; do
+    if [[ -e "$1/$path" || -L "$1/$path" ]]; then
+        if [[ -n "$found" || ! -f "$1/$path" || -L "$1/$path" ]]; then
+            echo "Expected one regular Machine Homebrew recipe in $1" >&2
+            exit 1
+        fi
+        found="$path"
+    fi
+done
+if [[ -z "$found" ]]; then
+    echo "No Machine Homebrew recipe in $1" >&2
+    exit 1
+fi
+printf '%s\n' "$found"

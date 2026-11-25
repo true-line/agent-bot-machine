@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-FORMULA = "Formula/managed-machine.rb"
+FORMULAS = ("Formula/managed-machine.rb", "Formula/agent-bot-machine.rb")
 LEGACY = ("0.12.4", "e98ea0d764b13e9b30c714bb9b299fff80ec1f07cbcd30e4037f3bdb795a2b6e")
 
 
@@ -34,7 +34,12 @@ def pin(text):
 def at(revision):
     if not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("expected an immutable push commit")
-    return pin(subprocess.check_output(["git", "show", f"{revision}:{FORMULA}"], text=True))
+    recipes = subprocess.check_output(["git", "ls-tree", "--name-only", revision, "--", *FORMULAS],
+                                      text=True).splitlines()
+    if len(recipes) != 1:
+        raise ValueError("expected one Machine recipe at the release revision")
+    recipe = recipes[0]
+    return (*pin(subprocess.check_output(["git", "show", f"{revision}:{recipe}"], text=True)), recipe)
 
 
 def published_mode(current):
@@ -48,9 +53,9 @@ def published_mode(current):
 def qualification(previous, current):
     if previous == current:
         return "unchanged"
-    if previous[0] == current[0]:
+    if previous[0] == current[0] and previous[1] != current[1]:
         raise ValueError("a published Homebrew version changed its archive checksum")
-    return published_mode(current)
+    return published_mode(current[:2])
 
 
 def push_selection(env, read=at):

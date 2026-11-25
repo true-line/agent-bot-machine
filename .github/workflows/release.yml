@@ -171,17 +171,19 @@ jobs:
       - name: Render the Homebrew pin from the verified signed archive
         id: render
         run: |
+          formula="$(bash scripts/machine-homebrew-formula .)"
           git worktree add --quiet --detach "$RUNNER_TEMP/formula" HEAD
           (cd "$RUNNER_TEMP/formula" &&
             "$GITHUB_WORKSPACE/scripts/release" render "v$(cat VERSION)" "$GITHUB_WORKSPACE/dist" "$GITHUB_WORKSPACE/signed")
-          cp "$RUNNER_TEMP/formula/Formula/managed-machine.rb" Formula/managed-machine.rb
+          cp "$RUNNER_TEMP/formula/$formula" "$formula"
+          echo "MACHINE_RELEASE_FORMULA=$formula" >> "$GITHUB_ENV"
           version="$(cat VERSION)"
           echo "source_commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "archive_digest=$(shasum -a 256 "signed/managed-machine_${version}_darwin_arm64.tar.gz" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "formula_digest=$(shasum -a 256 Formula/managed-machine.rb | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "formula_digest=$(shasum -a 256 "$formula" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
       - name: Verify the signed dist against the deterministic build and the formula pin
-        run: go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -require-keyd -formula Formula/managed-machine.rb -require-pin
+        run: go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -require-keyd -formula "$MACHINE_RELEASE_FORMULA" -require-pin
           -darwin-gate release-gate-darwin-arm64.json -source-revision "$GITHUB_SHA" >> support-matrix.md
       - name: Verify both public publishers in the downloaded Darwin archive
         run: bash scripts/verify-public-darwin-publisher --archive "signed/managed-machine_$(cat VERSION)_darwin_arm64.tar.gz"
@@ -194,7 +196,7 @@ jobs:
             bash scripts/verify-release-draft "$TAG" "$RELEASE_ID" >/dev/null
           }
           check_draft
-          gh release upload "$TAG" support-matrix.md release-gate-*.json Formula/managed-machine.rb --clobber
+          gh release upload "$TAG" support-matrix.md release-gate-*.json "$MACHINE_RELEASE_FORMULA" --clobber
           check_draft
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" |
             python3 scripts/verify-public-draft.py publish "${TAG#v}" "$RUNNER_TEMP/public-assets.json" > "$RUNNER_TEMP/public-release-notes.md"

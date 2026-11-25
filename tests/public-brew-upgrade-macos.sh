@@ -26,13 +26,13 @@ uid="$(id -u)"
 [[ "$prefix" == /opt/homebrew && "$cellar" == "$prefix/Cellar" &&
    "$uid" != 0 && "$(stat -f %u "$prefix")" == "$uid" ]] || exit 1
 tap=mm-gate/public-upgrade
-formula="$tap/managed-machine"
 tapdir="$("$brew" --repository "$tap")"
-for path in "$tapdir" "$cellar/managed-machine" "$prefix/opt/managed-machine" "$prefix/bin/managed-machine" "$prefix/bin/agent-bot-keyd"; do
+for path in "$tapdir" "$cellar/managed-machine" "$prefix/opt/managed-machine" "$cellar/agent-bot-machine" \
+    "$prefix/opt/agent-bot-machine" "$prefix/bin/managed-machine" "$prefix/bin/agent-bot-keyd"; do
   [[ ! -e "$path" && ! -L "$path" ]] || exit 1
 done
 
-machine="$prefix/opt/managed-machine/bin/managed-machine"
+machine="$prefix/bin/managed-machine"
 channel="$prefix/var/agent-machine"
 labels=(dev.qwts.agent-machine dev.qwts.agent-bot.keyd)
 for path in "$channel" "$HOME/.config/agent-machine" "$HOME/.local/state/agent-bot/keyd"; do
@@ -56,18 +56,29 @@ export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
 mkdir -p "$HOMEBREW_CACHE" "$HOMEBREW_LOGS" "$HOMEBREW_TEMP"
 
 phase='public release pin history'
-recipe=Formula/managed-machine.rb
+recipes=(Formula/managed-machine.rb Formula/agent-bot-machine.rb)
+recipe_at() {
+  local recipe
+  recipe="$(git ls-tree --name-only "$1" -- "${recipes[@]}")"
+  [[ "$recipe" == "${recipes[0]}" || "$recipe" == "${recipes[1]}" ]] || return 1
+  printf '%s\n' "$recipe"
+}
+slug_of() { local basename="${1##*/}"; printf '%s\n' "${basename%.rb}"; }
 version_of() { sed -nE 's/^  version "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' "$1"; }
+recipe="$(recipe_at HEAD)"
+slug="$(slug_of "$recipe")"
 git show "HEAD:$recipe" > "$work/current.rb"
 current="$(version_of "$work/current.rb")"
 [[ -n "$current" ]] || exit 1
 prior=''
 while read -r revision; do
-  git show "$revision:$recipe" > "$work/prior.rb"
+  prior_recipe="$(recipe_at "$revision")"
+  git show "$revision:$prior_recipe" > "$work/prior.rb"
   prior="$(version_of "$work/prior.rb")"
-  if [[ -n "$prior" && "$prior" != "$current" ]]; then break; fi
-done < <(git log --first-parent --format=%H HEAD -- "$recipe")
-[[ -n "$prior" && "$prior" != "$current" ]] || exit 1
+  if [[ -n "$prior" && ( "$prior_recipe" != "$recipe" || "$prior" != "$current" ) ]]; then break; fi
+done < <(git log --first-parent --format=%H HEAD -- "${recipes[@]}")
+[[ -n "$prior" && ( "$prior_recipe" != "$recipe" || "$prior" != "$current" ) ]] || exit 1
+prior_slug="$(slug_of "$prior_recipe")"
 
 phase='disposable tap creation'
 "$brew" tap-new --no-git "$tap"
@@ -75,38 +86,38 @@ if "$brew" commands --quiet | grep -x trust >/dev/null; then "$brew" trust --tap
 mkdir -p "$tapdir/Formula"
 
 check_release() {
-  local version="$1" filename url digest helper_pin
+  local version="$1" path="$2" name="$3" filename url digest helper_pin
   filename="managed-machine_${version}_darwin_arm64.tar.gz"
   url="https://github.com/true-line/agent-bot-machine/releases/download/v$version"
-  grep -Fq "tag:   \"v$version\"" "$tapdir/$recipe"
-  grep -Fq "url \"$url/$filename\"" "$tapdir/$recipe"
+  grep -Fq "tag:   \"v$version\"" "$tapdir/$path"
+  grep -Fq "url \"$url/$filename\"" "$tapdir/$path"
   curl -qfsSL --proto '=https' --proto-redir '=https' --retry 3 "$url/$filename" -o "$work/$filename"
   curl -qfsSL --proto '=https' --proto-redir '=https' --retry 3 "$url/SHA256SUMS" -o "$work/SHA256SUMS"
   digest="$(shasum -a 256 "$work/$filename" | cut -d' ' -f1)"
   grep -Fxq "$digest  $filename" "$work/SHA256SUMS"
-  grep -Fq "sha256 \"$digest\"" "$tapdir/$recipe"
+  grep -Fq "sha256 \"$digest\"" "$tapdir/$path"
 
   helper_pin="$(git show "v$version:keyd/Cargo.toml" | sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p')"
-  verify_public_brew_keg "$prefix" "$cellar" "$version" "$helper_pin" "$work/$filename" "$uid"
+  verify_public_brew_keg "$prefix" "$cellar" "$version" "$helper_pin" "$work/$filename" "$uid" "$name"
 }
 
 phase='install previous release'
-cp "$work/prior.rb" "$tapdir/$recipe"
-"$brew" install --formula "$formula"
-check_release "$prior"
+cp "$work/prior.rb" "$tapdir/$prior_recipe"
+"$brew" install --formula "$tap/$prior_slug"
+check_release "$prior" "$prior_recipe" "$prior_slug"
 echo 'PASS: previous public release installed' >&3
 
 check_services() {
-  local version="$1" helper_pin
+  local version="$1" name="$2" helper_pin
   helper_pin="$("$prefix/bin/agent-bot-keyd" --version)"
   python3 -I tests/fixtures/public-brew-services-macos.py "$prefix" \
-    "$cellar/managed-machine/$version" "${helper_pin#agent-bot-keyd }"
+    "$cellar/$name/$version" "${helper_pin#agent-bot-keyd }"
 }
 
 phase='install and check previous Machine and keyd LaunchAgents'
 services_started=true
 "$machine" daemon install
-check_services "$prior" > "$work/previous-pids"
+check_services "$prior" "$prior_slug" > "$work/previous-pids"
 [[ -f "$channel/daemon.pub" && ! -L "$channel/daemon.pub" &&
    "$(stat -f '%u:%z' "$channel/daemon.pub")" == "$uid:32" ]] || exit 1
 cp "$channel/daemon.pub" "$work/previous.pub"
@@ -114,13 +125,20 @@ echo 'PASS: both previous release LaunchAgents served under the prefix owner' >&
 
 phase='upgrade installed release'
 cp "$work/current.rb" "$tapdir/$recipe"
-"$brew" upgrade --formula "$formula"
-[[ -d "$cellar/managed-machine/$prior" && -d "$cellar/managed-machine/$current" ]] || exit 1
-phase='clean previous keg and verify current links and bytes'
-"$brew" cleanup "$formula"
-[[ ! -e "$cellar/managed-machine/$prior" ]] || exit 1
-check_release "$current"
-echo 'PASS: upgrade and old-keg cleanup preserved the public release and stable links' >&3
+if [[ "$prior_recipe" != "$recipe" ]]; then
+  git show HEAD:formula_renames.json > "$tapdir/formula_renames.json"
+  rm "$tapdir/$prior_recipe"
+  "$brew" migrate --formula "$tap/$prior_slug"
+fi
+if [[ "$prior" != "$current" ]]; then
+  "$brew" upgrade --formula "$tap/$slug"
+  [[ -d "$cellar/$slug/$prior" && -d "$cellar/$slug/$current" ]] || exit 1
+  phase='clean previous keg and verify current links and bytes'
+  "$brew" cleanup "$tap/$slug"
+  [[ ! -e "$cellar/$slug/$prior" ]] || exit 1
+fi
+check_release "$current" "$recipe" "$slug"
+echo 'PASS: package transition preserved the public release and stable links' >&3
 
 phase='restart installed services after old-keg cleanup'
 # Both old processes were left running across the transaction.
@@ -138,7 +156,7 @@ done
 [[ "$old_running" == false ]] || exit 1
 "$machine" daemon start
 phase='verify both current LaunchAgents and preserved Machine identity'
-check_services "$current" > /dev/null
+check_services "$current" "$slug" > /dev/null
 [[ -f "$channel/daemon.pub" && ! -L "$channel/daemon.pub" &&
    "$(stat -f '%u:%z' "$channel/daemon.pub")" == "$uid:32" ]] || exit 1
 cmp -s "$work/previous.pub" "$channel/daemon.pub"
