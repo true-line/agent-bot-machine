@@ -4,6 +4,8 @@ on:
     branches: [main]
     paths:
       - Formula/managed-machine.rb
+      - Formula/agent-bot-machine.rb
+      - scripts/machine-homebrew-formula
       - .github/workflows/homebrew-device-release.yml
       - .github/workflows/darwin-hq-install.yml
       - tests/fixtures/homebrew-device-pin.py
@@ -14,6 +16,8 @@ on:
   pull_request:
     paths:
       - Formula/managed-machine.rb
+      - Formula/agent-bot-machine.rb
+      - scripts/machine-homebrew-formula
       - .github/workflows/homebrew-device-release.yml
       - .github/workflows/darwin-hq-install.yml
       - tests/fixtures/homebrew-device-pin.py

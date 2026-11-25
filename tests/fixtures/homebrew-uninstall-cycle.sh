@@ -1,14 +1,15 @@
 #!/bin/bash
 # Exercise an installed source fixture through its public CLI on a disposable runner.
 set -euo pipefail
-[[ "$#" == 2 && "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
+[[ ( "$#" == 2 || "$#" == 3 ) && "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
    "${MM_KEYD_CUSTODY_TEST:-}" == 1 && "$(uname -sm)" == 'Darwin arm64' &&
    "$(id -u)" != 0 && "$(stat -f %u /opt/homebrew)" == "$(id -u)" ]] || exit 1
-version=$1 unpack=$2
+version=$1 unpack=$2 slug="${3:-managed-machine}"
+[[ "$slug" == managed-machine || "$slug" == agent-bot-machine ]] || exit 1
 prefix=/opt/homebrew
 brew=$prefix/bin/brew
 mm=$prefix/bin/managed-machine
-formula=true-line/agent-bot-machine/managed-machine
+formula="true-line/agent-bot-machine/$slug"
 channel=$prefix/var/agent-machine
 private=$HOME/.config/agent-machine
 keyd=$HOME/.local/state/agent-bot/keyd
@@ -20,7 +21,7 @@ trap 'rm -rf "$work"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 absent() { [[ ! -e "$1" && ! -L "$1" ]]; }
 units() {
-    python3 "$(dirname "$0")/homebrew-launch-agents.py" "$1" "$agents" "$prefix/Cellar/managed-machine/$version" "$work"
+    python3 "$(dirname "$0")/homebrew-launch-agents.py" "$1" "$agents" "$prefix/Cellar/$slug/$version" "$work"
 }
 endpoints_absent() {
     local endpoint
@@ -53,7 +54,7 @@ wait_for() {
 
 [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ && "${HOMEBREW_NO_AUTO_UPDATE:-}" == 1 ]] || exit 1
 verify_package() {
-    local keg="$prefix/Cellar/managed-machine/$version"
+    local keg="$prefix/Cellar/$slug/$version"
     [[ "$("$mm" --version)" == "$version" ]] &&
         cmp "$unpack/managed-machine" "$keg/bin/managed-machine" &&
         cmp "$unpack/agent-bot-keyd" "$keg/bin/agent-bot-keyd" &&
@@ -62,7 +63,7 @@ verify_package() {
 verify_package >/dev/null 2>&1 || fail 'installed package identity'
 verify_package_absent() {
     local file
-    for file in "$prefix/Cellar/managed-machine/$version" "$prefix/opt/managed-machine" "$mm" "$prefix/bin/agent-machine" "$prefix/bin/agent-bot-keyd"; do
+    for file in "$prefix/Cellar/$slug/$version" "$prefix/opt/$slug" "$mm" "$prefix/bin/agent-machine" "$prefix/bin/agent-bot-keyd"; do
         absent "$file" || fail 'package files remain after uninstall'
     done
     "$brew" list --formula --full-name > "$work/formulae"

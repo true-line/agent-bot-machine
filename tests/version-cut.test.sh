@@ -138,6 +138,44 @@ run tag "$cut" "$tag"
 [[ "$(run existing "$cut" "$tag")" == same ]]
 refuses run existing "$later" "$tag"
 
+# Publication uses the successful main push for its own exact tag. Only the
+# Actions API is mocked; the workflow reads the real tag and checkout.
+(
+    cd "$(dirname "$script")/.."
+    ruby -ryaml -e '
+      jobs = YAML.load_file(".github/workflows/release.yml").fetch("jobs")
+      steps = jobs.fetch("publish").fetch("steps")
+      print steps.find { |step| step["id"] == "evidence" }.fetch("run")
+    ' > "$tmp/release-evidence.sh"
+
+    git -C "$tmp/work" worktree add --quiet --detach "$tmp/release-work" "$cut"
+    cd "$tmp/release-work"
+    mkdir scripts
+    cp "$script" scripts/version-cut.py
+    export GITHUB_REPOSITORY="$repo" GITHUB_REF_TYPE=tag GITHUB_REF_NAME="$tag" GITHUB_EVENT_NAME=push
+    export GITHUB_OUTPUT="$tmp/release-evidence-output"
+    export RELEASE_RUNS="$ci" EXPECTED_CUT="$cut"
+    gh() {
+        [[ "$*" == "api repos/$GITHUB_REPOSITORY/actions/workflows/go-core.yml/runs?event=push&branch=main&head_sha=$EXPECTED_CUT&per_page=100" ]] || return 1
+        printf '{"workflow_runs":[%s]}\n' "$RELEASE_RUNS"
+    }
+    export -f gh
+    bash "$tmp/release-evidence.sh"
+    [[ "$(cat "$GITHUB_OUTPUT")" == run=12 ]]
+    rm "$GITHUB_OUTPUT"
+    GITHUB_REF_NAME=v0.12.1 refuses bash "$tmp/release-evidence.sh"
+    INPUT_TAG=v0.12.1 refuses bash "$tmp/release-evidence.sh"
+    RELEASE_RUNS="${ci/main/$tag}" refuses bash "$tmp/release-evidence.sh"
+    RELEASE_RUNS="${ci/success/failure}" refuses bash "$tmp/release-evidence.sh"
+    RELEASE_RUNS="${ci/$cut/$later}" refuses bash "$tmp/release-evidence.sh"
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_RUN_ID=99 RELEASE_RUNS='' bash "$tmp/release-evidence.sh"
+    [[ "$(cat "$GITHUB_OUTPUT")" == run=99 ]]
+    rm "$GITHUB_OUTPUT"
+    git switch -q --detach "$later"
+    EXPECTED_CUT="$later" refuses bash "$tmp/release-evidence.sh"
+    test ! -e "$GITHUB_OUTPUT"
+)
+
 # A lightweight, conflicting, or superseded remote tag is never replaced.
 git --git-dir="$tmp/origin" update-ref -d "refs/tags/$tag"
 git --git-dir="$tmp/origin" update-ref "refs/tags/$tag" "$cut"

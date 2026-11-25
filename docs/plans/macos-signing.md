@@ -175,6 +175,20 @@ are rejected. With
 
 ### Release automation
 
+The tag starts the Release workflow. Publication downloads the deterministic
+archives, five native release receipts, and support matrix from the successful
+Go core push on `main` for the exact tagged commit. The standalone CI and Go
+core workflows run on main pushes and pull requests. A manual Release run
+rebuilds the native evidence and can be used for a dry run or to resume an
+unpublished release after the original artifacts expire.
+
+The Machine release checkout supplies exactly one Homebrew recipe. Release
+uses that recipe's filename for the published formula attachment, and tap
+updates verify the attachment and apply only the reviewed archive pin to
+their current recipe. The signed Darwin archive keeps the
+`managed-machine_VERSION_darwin_arm64.tar.gz` name and binary identifiers
+across the formula rename.
+
 The public Darwin release requires a pinned Developer ID Application
 certificate from Team `Z5DM34QS5U` on both executables. The pin in
 `.github/macos-public-publisher-sha256` identifies the complete certificate

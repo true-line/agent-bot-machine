@@ -10,6 +10,7 @@ PATH = Path(__file__).parent / "fixtures" / "homebrew-device-pin.py"
 spec = importlib.util.spec_from_file_location("homebrew_device_pin", PATH)
 pins = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pins)
+FORMULA = next((PATH.parents[2] / name for name in pins.FORMULAS if (PATH.parents[2] / name).is_file()))
 
 
 class HomebrewDevicePinTest(unittest.TestCase):
@@ -17,7 +18,7 @@ class HomebrewDevicePinTest(unittest.TestCase):
         before, after = "1" * 40, "2" * 40
         event = dict(GITHUB_EVENT_NAME="push", GITHUB_REPOSITORY="true-line/agent-bot-machine",
                      GITHUB_REF="refs/heads/main", PROTECTED="true", BEFORE=before, AFTER=after, GITHUB_SHA=after)
-        formula = (Path(__file__).resolve().parents[1] / pins.FORMULA).read_text()
+        formula = FORMULA.read_text()
         version, sha = pins.pin(formula)
         edited = formula.replace('desc "', 'desc "Edited ')
         self.assertEqual(pins.pin(edited), (version, sha))
@@ -28,6 +29,7 @@ class HomebrewDevicePinTest(unittest.TestCase):
             (("0.12.1", "a" * 64), pins.LEGACY, "package"),
             (pins.LEGACY, ("0.12.5", "b" * 64), "custody"),
             (("0.12.5", "a" * 64), ("0.12.6", "c" * 64), "custody"),
+            (("0.12.7", "b" * 64, pins.FORMULAS[0]), ("0.12.7", "b" * 64, pins.FORMULAS[1]), "custody"),
         ]
         for previous, current, expected in cases:
             self.assertEqual(pins.push_selection(event, {before: previous, after: current}.__getitem__),
@@ -82,7 +84,7 @@ class HomebrewDevicePinTest(unittest.TestCase):
         subprocess.run([*git, "commit", "-qm", "workflow", "--allow-empty"], check=True)
         workflow_commit = subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip()
         self.assertNotEqual(workflow_commit, checkout)
-        template = (PATH.parents[2] / pins.FORMULA).read_text()
+        template = FORMULA.read_text()
         baseline_version, baseline_digest = pins.pin(template)
         script = """
             source "$1/stage-darwin-hq-device.sh"

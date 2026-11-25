@@ -1,11 +1,20 @@
 # Shared by the guarded disposable macOS release fixtures.
+homebrew_device_recipe() {
+    local brew="$1" tapdir selector
+    tapdir="$("$brew" --repository true-line/agent-bot-machine)" || return 1
+    selector="$(dirname "${BASH_SOURCE[0]}")/../../scripts/machine-homebrew-formula"
+    bash "$selector" "$tapdir"
+}
+
 tap_homebrew_device_release() (
     set -euo pipefail
     local brew="$1" prefix="$2"
     local tap=true-line/agent-bot-machine tapdir path
     [[ "$("$brew" --prefix)" == "$prefix" && "$("$brew" --cellar)" == "$prefix/Cellar" ]] || exit 1
     tapdir="$("$brew" --repository "$tap")"
-    for path in "$tapdir" "$prefix/Cellar/managed-machine" "$prefix/opt/managed-machine" "$prefix/bin/managed-machine" "$prefix/bin/agent-bot-keyd"; do
+    for path in "$tapdir" "$prefix/Cellar/managed-machine" "$prefix/opt/managed-machine" \
+        "$prefix/Cellar/agent-bot-machine" "$prefix/opt/agent-bot-machine" \
+        "$prefix/bin/managed-machine" "$prefix/bin/agent-bot-keyd"; do
         [[ ! -e "$path" && ! -L "$path" ]] || { echo 'Homebrew qualification requires a fresh installation' >&2; exit 1; }
     done
     # The surrounding temporary Keychain fixture uses 077. Install the public
@@ -24,27 +33,29 @@ tap_homebrew_device_release() (
 
 install_homebrew_device_release() (
     set -euo pipefail
-    local brew="$1" version="$2" digest="$3" tap=true-line/agent-bot-machine tapdir recipe
+    local brew="$1" version="$2" digest="$3" slug="$4" tap=true-line/agent-bot-machine tapdir recipe
     [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$digest" =~ ^[0-9a-f]{64}$ ]] || exit 1
     umask 022
     tapdir="$("$brew" --repository "$tap")"
-    recipe="$tapdir/Formula/managed-machine.rb"
+    recipe="$(homebrew_device_recipe "$brew")"
+    [[ "$recipe" == "Formula/$slug.rb" ]] || exit 1
+    recipe="$tapdir/$recipe"
     if [[ "$(python3 "$(dirname "${BASH_SOURCE[0]}")/homebrew-device-pin.py" "$recipe")" != "$version $digest" ]]; then
         echo 'The public Homebrew formula does not pin the requested release and archive' >&2
         exit 1
     fi
     if "$brew" commands --quiet | grep -x trust >/dev/null; then "$brew" trust --tap "$tap"; fi
-    "$brew" install --formula "$tap/managed-machine"
+    "$brew" install --formula "$tap/$slug"
     if [[ -n "${MM_HQ_TAP_REVISION:-}" ]]; then
         [[ "$(git -C "$tapdir" rev-parse HEAD)" == "$MM_HQ_TAP_REVISION" ]] || exit 1
     fi
 )
 
 verify_homebrew_device_binary() {
-    local prefix="$1" version="$2" name="$3" mode="$4" expected="$5"
-    local keg="$prefix/Cellar/managed-machine/$version/bin/$name"
+    local prefix="$1" version="$2" name="$3" mode="$4" expected="$5" slug="$6"
+    local keg="$prefix/Cellar/$slug/$version/bin/$name"
     [[ -f "$keg" && ! -L "$keg" && "$prefix/bin/$name" -ef "$keg" &&
-       "$prefix/opt/managed-machine/bin/$name" -ef "$keg" &&
+       "$prefix/opt/$slug/bin/$name" -ef "$keg" &&
        "$(stat -f '%u:%Mp%Lp' "$keg")" == "$(id -u):$mode" ]] && cmp -s "$expected" "$keg"
 }
 
@@ -72,9 +83,10 @@ download_device_release_asset() {
 
 use_published_device_formula() (
     set -euo pipefail
-    local version="$1" expected="$2" download="$3" recipe="$4"
+    local version="$1" expected="$2" download="$3" recipe="$4" asset="${5:-managed-machine.rb}"
     [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$expected" =~ ^[0-9a-f]{64}$ ]] || exit 1
-    download_device_release_asset "$version" managed-machine.rb "$download" || exit 1
+    [[ "$asset" == managed-machine.rb || "$asset" == agent-bot-machine.rb ]] || exit 1
+    download_device_release_asset "$version" "$asset" "$download" || exit 1
     [[ "$(shasum -a 256 "$download" | awk '{print $1}')" == "$expected" ]] || {
         echo 'The published Homebrew formula differs from the verified release recipe' >&2; exit 1
     }

@@ -91,6 +91,17 @@ class DraftTest(unittest.TestCase):
             for url in (repo + "/commits/v1.2.3", *(repo + "/releases/download/v1.2.3/" + name
                         for name in ("SHA256SUMS", "support-matrix.md", "managed-machine.rb"))):
                 self.assertIn("(" + url + ")", body)
+            legacy = root / "Formula/managed-machine.rb"
+            renamed = root / "Formula/agent-bot-machine.rb"
+            renamed.touch()
+            run("downloaded", rows, False)
+            legacy.rename(renamed)
+            run("downloaded", rows, False)
+            renamed_rows = [dict(row, name=renamed.name) if row["name"] == legacy.name else row
+                            for row in rows]
+            run("downloaded", renamed_rows, True)
+            self.assertIn("/agent-bot-machine.rb)", run("publish", renamed_rows, True))
+            renamed.rename(legacy)
             attribution = "Unreviewed change by @fixture-contributor"
             (root / "notes.md").write_text(attribution)
             self.assertEqual(run("publish", [dict(row, label="") for row in rows], True), body)

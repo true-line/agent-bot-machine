@@ -149,7 +149,7 @@ func verifySignedCmd(args []string, stdout io.Writer) error {
 	unsignedDir := fs.String("unsigned", "", "deterministic dist directory")
 	signedDir := fs.String("signed", "", "signed dist directory")
 	team := fs.String("team", "", "Developer ID Team ID the signatures must name")
-	formulaPath := fs.String("formula", "", "path to Formula/managed-machine.rb")
+	formulaPath := fs.String("formula", "", "path to the Machine Homebrew recipe")
 	requireKeyd := fs.Bool("require-keyd", false, "require the custody helper shipped by current Machine releases")
 	gate := fs.String("darwin-gate", "", "native release gate receipt for the published support matrix")
 	revision := fs.String("source-revision", "", "expected full Git revision of the native release gate")

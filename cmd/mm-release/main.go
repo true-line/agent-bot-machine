@@ -376,7 +376,7 @@ func verifyCmd(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	distDir := fs.String("dist", "", "directory containing SHA256SUMS and the five archives")
-	formulaPath := fs.String("formula", "", "path to Formula/managed-machine.rb")
+	formulaPath := fs.String("formula", "", "path to the Machine Homebrew recipe")
 	requirePin := fs.Bool("require-pin", false, "require the formula's tag, version and core sha256 to match")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -395,11 +395,14 @@ func verifyCmd(args []string, stdout io.Writer) error {
 	if *requirePin {
 		fp := *formulaPath
 		if strings.TrimSpace(fp) == "" {
-			fp = "Formula/managed-machine.rb"
-			if _, statErr := os.Stat(fp); statErr != nil {
+			fp, err = machineFormulaAt(".")
+			if errors.Is(err, os.ErrNotExist) {
 				if root, rootErr := findRepoRoot(); rootErr == nil {
-					fp = filepath.Join(root, "Formula", "managed-machine.rb")
+					fp, err = machineFormulaAt(root)
 				}
+			}
+			if err != nil {
+				return err
 			}
 		}
 		darwinArchive := fmt.Sprintf("managed-machine_%s_darwin_arm64.tar.gz", version)
@@ -412,6 +415,28 @@ func verifyCmd(args []string, stdout io.Writer) error {
 		}
 	}
 	return nil
+}
+
+func machineFormulaAt(root string) (string, error) {
+	var selected string
+	for _, name := range []string{"agent-bot-machine.rb", "managed-machine.rb"} {
+		path := filepath.Join(root, "Formula", name)
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if selected != "" || !info.Mode().IsRegular() {
+			return "", fmt.Errorf("expected one regular Machine Homebrew recipe in %s", root)
+		}
+		selected = path
+	}
+	if selected == "" {
+		return "", fmt.Errorf("Machine Homebrew recipe in %s: %w", root, os.ErrNotExist)
+	}
+	return selected, nil
 }
 
 func verifyDist(distDir string) (string, map[string]string, error) {
