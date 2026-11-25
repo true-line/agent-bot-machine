@@ -250,8 +250,21 @@ func runSoulProtectedLaunchApply(s Saved, a Approval, owner string, h Host, deps
 		}
 		return failure(diag.MembersApplyFailed, "protected Soul installation stopped: %v", installErr)
 	}
-	return cli.Result{Records: []*output.Record{output.New().Set("plan_id", s.PlanID).
-		Set("plan_digest", s.PlanDigest).Set("applied", true).Set("receipt", ReceiptPath(s.PlanID))}}
+	committedReceipt := encodeReceipt(receipt)
+	physicalReceipt := filepath.Join("/private"+DarwinReceiptsDir, s.PlanID+".json")
+	readback, readErr := stage2aReadRootFile(physicalReceipt, int64(len(committedReceipt)), 0644)
+	if readErr != nil || !bytes.Equal(readback, committedReceipt) {
+		return failure(diag.MembersApplyFailed, "protected Soul applied receipt failed root readback")
+	}
+	row := output.New().Set("plan_id", s.PlanID).Set("plan_digest", s.PlanDigest).
+		Set("applied", true).Set("receipt", ReceiptPath(s.PlanID)).
+		Set("receipt_sha256", stage2aReservationSHA256(readback))
+	if request.Schema == stage2aLocalTestInstallSchema {
+		row.Set("q_plan_id", request.LocalTestQPlanID).
+			Set("q_plan_sha256", "sha256:"+localTestQRef.PlanDigest).
+			Set("q_envelope_sha256", stage2aReservationSHA256(localTestQEnvelope))
+	}
+	return cli.Result{Records: []*output.Record{row}}
 }
 
 func stage2aInstallFiles(s Saved, request *SoulProtectedLaunchInstall, p *stage2aInstalledPolicy, ownerUID uint32,

@@ -35,6 +35,22 @@ If the curl installer fails because `Formula/managed-machine.rb` has no released
 
 ## CLI
 
+For the Stage 2a local-test Q installation handoff, first use the signed,
+notarized Machine build selected for the reviewed host and confirm its
+`members --help` lists both `local-test-q-plan` and `local-test-q-stage`.
+In secure A, after the
+protected install plan is saved, run
+`managed-machine members local-test-q-plan <install-plan-id> <physical-host-uuid> <canonical-driver-plan.json>`.
+Review its exact Q `plan_id` and `plan_sha256` under the separate
+`stage2a-observed-body-local-test-qualification/v1` paired owner approval.
+After HQ receives the signed `stage2a-local-test-q-issue-v1` body, the owner
+stages it with
+`sudo managed-machine members local-test-q-stage <install-plan-id> <q-issue-reply.json>`
+and applies with `sudo managed-machine members apply <install-plan-id>`.
+Check the staged root path, envelope SHA-256 and applied receipt SHA-256
+against the signed issue body. Stage output alone does not enable Provider.
+The exact fields and replay checks are in `docs/plans/member-accounts.md`.
+
 ```bash
 # Portable Go core commands (bin/managed-machine on all five targets):
 managed-machine software [name] [--available|--install|--refresh] [--category <name>] [--provider <name>|--recipe <id>] [--user|--global|--custom <path>] [--json|--human]

@@ -1035,6 +1035,49 @@ through the paired A service; its fixed Darwin entrypoint also dispatches
 `soul-child` to the same role launcher as `soul-run` and `soul-bridge`.
 Neither path accepts an arbitrary caller-selected executable or account.
 
+#### Local-test Q installation handoff
+
+**Intent.** Give the distinct observed-body local-test Q approval a callable,
+reviewable path from A's saved install plan to root apply. This path does not
+approve Provider access or a protected start by itself.
+
+**Target.** In secure A, after planning the local-test protected install, run
+`managed-machine members local-test-q-plan <install-plan-id> <physical-host-uuid> <canonical-driver-plan.json>`.
+The pinned driver plan must be canonical JSON for Contracts v0.10.3. Machine
+derives the Q plan ID, install digest, owner-plan hash, candidate manifest,
+expiry and A key from the saved install plan; it writes the driver and Q plan
+to fixed A-private `0600` files without replacing occupied bytes. The result
+reports `plan_id`, `plan_sha256`, `plan_path`, `driver_plan_sha256`,
+`installed_plan_id`, `installed_plan_digest`, `approval_purpose` and
+`approved:false`. The owner separately approves that exact Q plan under
+`stage2a-observed-body-local-test-qualification/v1`. HQ then asks paired
+Machine `stage2a-local-test-q-issue-v1` with only that Q plan ID. The successful
+signed response body contains the Q plan ID/digest and the Machine-signed
+approval envelope in base64url form with its SHA-256.
+
+From the owner's sudo session, save that body as a JSON file and run
+`sudo managed-machine members local-test-q-stage <install-plan-id> <q-issue-reply.json>`.
+Root checks the saved install plan, current pair, Machine key, signature,
+expiry, owner-plan and candidate joins, then writes only the fixed root-owned
+`0400` Q envelope. Its output reports `staged:true`, `applied:false`, the
+fixed `root_path`, and Q/installation digests. The owner then runs
+`sudo managed-machine members apply <install-plan-id>`. Apply alone spends
+the Q approval and publishes the installed local-test policy. Successful
+output includes the root receipt path and `receipt_sha256`, plus Q plan and
+envelope digests; root reopens the committed receipt before reporting success.
+
+**Acceptance.** Compare the three command outputs, the paired signed issue
+body, the fixed root Q envelope and the applied receipt by exact plan ID and
+SHA-256. Reject a changed host UUID, key, saved install digest, driver plan,
+Q envelope, pair or occupied file. A `staged:true` result is not an applied
+install. Reserve spends a separate one-use candidate attempt before B and
+Soul Hello; Provider activation remains a later independent spend.
+
+**Replay.** Capture the exact Machine/HQ/R/B source heads, signed Machine
+artifact, owner-reviewed install and Q plans, Q issue body, stage output,
+applied receipt and first signed Reserve/Hello responses. No source test or
+fixture count earns physical T01/T02/T03/T21 credit.
+
 `stage2a-stop` waits for both dedicated role UIDs to be kernel idle, revokes
 the B proof, retires the active claim, then signs and atomically publishes a
 cutoff receipt. Stop remains available after launch approval expiry. A
