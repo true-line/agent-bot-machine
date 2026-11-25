@@ -24,7 +24,11 @@ def check(phase, version, snapshot, rows):
     require(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version))
     targets = ("darwin_arm64", "linux_amd64", "linux_arm64", "windows_amd64", "windows_arm64")
     dist = {"SHA256SUMS": Path("signed/SHA256SUMS")}
-    metadata = {"support-matrix.md": Path("support-matrix.md"), "managed-machine.rb": Path("Formula/managed-machine.rb")}
+    recipes = [path for path in (Path("Formula/agent-bot-machine.rb"), Path("Formula/managed-machine.rb"))
+               if path.exists() or path.is_symlink()]
+    require(len(recipes) == 1 and recipes[0].is_file() and not recipes[0].is_symlink())
+    formula = recipes[0]
+    metadata = {"support-matrix.md": Path("support-matrix.md"), formula.name: formula}
     for target in targets:
         suffix = "zip" if target.startswith("windows_") else "tar.gz"
         archive = f"managed-machine_{version}_{target}.{suffix}"
@@ -61,7 +65,7 @@ def check(phase, version, snapshot, rows):
         print()
         print(f"See the [support matrix]({downloads}/support-matrix.md) for tested targets. "
               f"Verify downloads with the [SHA-256 checksums]({downloads}/SHA256SUMS). "
-              f"The [Homebrew formula]({downloads}/managed-machine.rb) pins the macOS archive.")
+              f"The [Homebrew formula]({downloads}/{formula.name}) pins the macOS archive.")
 
 
 if __name__ == "__main__":

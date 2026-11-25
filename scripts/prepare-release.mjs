@@ -3,17 +3,17 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const repo = 'true-line/agent-bot-machine';
 const bot = 'trueline-chores-dumb[bot]';
-const formula = 'Formula/managed-machine.rb';
 const skill = 'skills/managed-machine/SKILL.md';
 const api = 'https://api.github.com';
 const rest = '/repos/' + repo;
 const platformArchives = ['darwin_arm64.tar.gz', 'linux_amd64.tar.gz', 'linux_arm64.tar.gz', 'windows_amd64.zip', 'windows_arm64.zip'];
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
+const machineFormula = () => execFileSync('bash', ['scripts/machine-homebrew-formula', '.'], { encoding: 'utf8' }).trim();
 const requireState = (state, message) => { if (!state) throw new Error(message); };
 
 async function request(path, { method = 'GET', data, optional = false, binary = false } = {}) {
@@ -171,6 +171,7 @@ async function prepare(tap) {
   const sha = process.env.GITHUB_SHA;
   const current = git('show', 'HEAD:VERSION');
   if (tap) {
+    const formula = machineFormula();
     const release = await request(rest + '/releases/latest');
     const version = release.tag_name.slice(1);
     assert.match(version, semver);
@@ -179,7 +180,7 @@ async function prepare(tap) {
     const pinned = old.match(/^  version "([0-9.]+)"$/m)?.[1];
     if (!newer(version, pinned)) return;
     assert.equal(git('rev-parse', release.tag_name + '^{commit}'), git('merge-base', release.tag_name, sha));
-    const asset = release.assets.find(a => a.name === 'managed-machine.rb');
+    const asset = release.assets.find(a => a.name === basename(formula));
     assert.ok(asset?.state === 'uploaded', 'Published formula asset missing');
     const bytes = await request(rest + '/releases/assets/' + asset.id, {binary: true});
     assert.equal('sha256:' + createHash('sha256').update(bytes).digest('hex'), asset.digest);
@@ -216,7 +217,7 @@ async function main() {
   assert.equal(process.env.APP_SLUG + '[bot]', bot);
   const version = process.env.VERSION;
   assert.match(version, semver);
-  const files = tap ? [formula] : ['VERSION', skill];
+  const files = tap ? [machineFormula()] : ['VERSION', skill];
   assert.deepEqual(git('diff', '--name-only', 'HEAD').split('\n').sort(), files);
   git('add', '--', ...files);
   const tree = git('write-tree');

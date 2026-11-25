@@ -53,13 +53,14 @@ version="v${bare}"
 
 script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-formula="$root/Formula/managed-machine.rb"
 skill="$root/skills/managed-machine/SKILL.md"
 version_file="$root/VERSION"
-if [[ -z "$root" || ! -f "$formula" || ! -f "$skill" || ! -f "$version_file" ]]; then
+if [[ -z "$root" || ! -f "$skill" || ! -f "$version_file" ]]; then
     echo "Error: run from inside a managed-machine checkout" >&2
     exit 1
 fi
+formula="$root/$(bash "$script_root/scripts/machine-homebrew-formula" "$root")"
+reviewed_formula="$script_root/$(bash "$script_root/scripts/machine-homebrew-formula" "$script_root")"
 cd "$root"
 
 go_root="$root"
@@ -170,7 +171,7 @@ ensure_signed_dist() {
 
 write_formula() {
     local formula_path="$1" ver="$2" bare_ver="$3" core_sha="$4"
-    python3 - "$formula_path" "$ver" "$bare_ver" "$core_sha" "$script_root/Formula/managed-machine.rb" <<'PY' || return 1
+    python3 - "$formula_path" "$ver" "$bare_ver" "$core_sha" "$reviewed_formula" <<'PY' || return 1
 import re
 import sys
 
@@ -551,7 +552,7 @@ if [[ "$got_version_file" != "$bare" ]]; then
 fi
 
 if ! verify_formula_state "$formula" "$version_file" "$version" "$bare"; then
-    echo "Error: Formula/managed-machine.rb disagrees with $version" >&2
+    echo "Error: $formula disagrees with $version" >&2
     exit 1
 fi
 
@@ -566,7 +567,7 @@ if [[ "$(draft_state)" != "true" ]]; then
 fi
 download_signed_dist "$signed_dir"
 if ! verify_signed_dist "$dist_dir" "$signed_dir" -formula "$formula" -require-pin >/dev/null; then
-    echo "Error: Formula/managed-machine.rb core pin disagrees with the signed draft for $version" >&2
+    echo "Error: $formula core pin disagrees with the signed draft for $version" >&2
     exit 1
 fi
 

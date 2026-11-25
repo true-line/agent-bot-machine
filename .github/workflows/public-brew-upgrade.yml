@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - Formula/managed-machine.rb
+      - Formula/agent-bot-machine.rb
+      - formula_renames.json
       - tests/public-brew-upgrade-macos.sh
       - tests/public-brew-keg.test.sh
       - tests/fixtures/verify-public-brew-keg.sh
@@ -12,6 +14,8 @@ on:
     branches: [main]
     paths:
       - Formula/managed-machine.rb
+      - Formula/agent-bot-machine.rb
+      - formula_renames.json
       - tests/public-brew-upgrade-macos.sh
       - tests/public-brew-keg.test.sh
       - tests/fixtures/verify-public-brew-keg.sh

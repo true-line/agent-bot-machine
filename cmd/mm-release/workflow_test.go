@@ -313,7 +313,7 @@ func TestWorkflowsContractAndPermissions(t *testing.T) {
 		sawPublicPublisher bool
 		sawPublishedDraft  bool
 	)
-	const wantSignedVerify = `go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -require-keyd -formula Formula/managed-machine.rb -require-pin`
+	const wantSignedVerify = `go run ./cmd/mm-release verify-signed -unsigned dist -signed signed -team Z5DM34QS5U -require-keyd -formula "$MACHINE_RELEASE_FORMULA" -require-pin`
 	const wantPublish = `gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false`
 	for i, step := range pubJob.Steps {
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
