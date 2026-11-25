@@ -1,8 +1,10 @@
 package members
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path"
 	"regexp"
 	"slices"
@@ -29,7 +31,32 @@ const (
 )
 
 func hqStage2aBrokeredRelayRequired(s *hqStage2aService) bool {
-	return s != nil && slices.Equal(s.ExcludedHQReleasePaths, hqStage2aContractsFixturePathsV0102Brokered[:])
+	return s != nil && (slices.Equal(s.ExcludedHQReleasePaths, hqStage2aContractsFixturePathsV0102Brokered[:]) ||
+		hqStage2aV0103FixtureFreeExclusions(s.ExcludedHQReleasePaths))
+}
+
+// This digest commits to the sorted JSON array of all 495 fixture paths in
+// Contracts v0.10.3 at 896b693b23219444dcbe4af4083fd1bc4b9f178c.
+// The full and selected source digests remain separately checked at install.
+const hqStage2aV0103FixtureFreePathsSHA256 = "b4cc63113e9ad07fde525285b5ecaabac066dab7f1e61c713d74cacf8ee0961d"
+
+func hqStage2aV0103FixtureFreeExclusions(paths []string) bool {
+	if len(paths) != 495 || !slices.IsSorted(paths) {
+		return false
+	}
+	previous := ""
+	for _, path := range paths {
+		if path <= previous || !strings.HasPrefix(path, "vendor/soul-contracts/fixtures/") ||
+			!stage2aV3InventoryRecordPath(path) {
+			return false
+		}
+		previous = path
+	}
+	raw, err := json.Marshal(paths)
+	if err != nil {
+		return false
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(raw)) == hqStage2aV0103FixtureFreePathsSHA256
 }
 
 // hqStage2aService is an explicit request carried by the existing paired
@@ -331,7 +358,8 @@ func hqStage2aValidExclusions(paths []string) bool {
 		slices.Equal(paths, hqStage2aContractsFixturePathsV010[:]) ||
 		slices.Equal(paths, hqStage2aContractsFixturePathsV0101[:]) ||
 		slices.Equal(paths, hqStage2aContractsFixturePathsV0102[:]) ||
-		slices.Equal(paths, hqStage2aContractsFixturePathsV0102Brokered[:])
+		slices.Equal(paths, hqStage2aContractsFixturePathsV0102Brokered[:]) ||
+		hqStage2aV0103FixtureFreeExclusions(paths)
 }
 
 func hqStage2aValidExclusionsForTag(tag string, paths []string) bool {
@@ -343,6 +371,8 @@ func hqStage2aValidExclusionsForTag(tag string, paths []string) bool {
 	case "v0.10.2":
 		return slices.Equal(paths, hqStage2aContractsFixturePathsV0102[:]) ||
 			slices.Equal(paths, hqStage2aContractsFixturePathsV0102Brokered[:])
+	case "v0.10.3":
+		return hqStage2aV0103FixtureFreeExclusions(paths)
 	default:
 		return false
 	}

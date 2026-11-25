@@ -29,7 +29,7 @@ func stage2aValidateHSourceSelectionV3(inv stage2aDomainInventoryV3,
 		!stage2aPrefixedDigest.MatchString(nodeArtifactDigest) ||
 		len(sourceManifest) == 0 || len(sourceManifest) > 2<<20 ||
 		stage2aStrictJSONBounded(sourceManifest, 2<<20, stage2aV3MaxJSONNodes) != nil ||
-		len(excluded) > 128 {
+		(len(excluded) > 128 && !hqStage2aV0103FixtureFreeExclusions(excluded)) {
 		return invalid
 	}
 	sum := sha256.Sum256(sourceManifest)
