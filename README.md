@@ -108,6 +108,11 @@ managed-machine uninstall
 
 Machine unloads its two user services, removes their LaunchAgents and stale sockets, and invokes Homebrew to remove the formula and its command links. The dedicated HQ account and its home, the administrator’s keys, pairing and revocation history, and install receipts are retained. A retired standalone-signing authorization stays retired across uninstall and reinstall. Archives and Node runtimes staged separately by an operator remain at their original locations. Applications and accounts previously provisioned with Machine have their own lifecycles.
 
+Machine identifies the active keg and its installation receipt before asking
+Homebrew to remove it. The lifecycle accepts the `managed-machine` and
+`agent-bot-machine` Cellar layouts, including Homebrew's old-name links
+when they resolve to the same migrated keg.
+
 If Identity installed its own keyd LaunchAgent, the Homebrew uninstall can report `preserving a customized or unrelated Machine LaunchAgent`. It stops before unloading either job or removing the formula. Use `agent-bot keyd status` in the account that installed Identity to check its registration. If you also intend to retire that Identity service, use [Identity’s keyd uninstall procedure](https://github.com/true-line/agent-bot-identity/blob/c38360696ba82e7ca2b6d542d53aed4a9596bcec/docs/soul-credentials.md#L233-L237), then retry Machine removal. If Identity still needs the job, keep the formula installed.
 
 For a manually installed Machine executable with no bundled `agent-bot-keyd` beside it, run the manual executable by its full path as the Machine service owner. Replace the path below with the installed executable.

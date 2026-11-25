@@ -12,6 +12,8 @@ import (
 )
 
 const MachineTap = "true-line/agent-bot-machine"
+const MachineFormula = "agent-bot-machine"
+const LegacyMachineFormula = "managed-machine"
 const hqJob = "ai.true-line.agent-bot-hq"
 
 var ErrRemoveHQFirst = errors.New("managed HQ may still be installed or running; remove it first with sudo managed-machine members uninstall-hq PLAN_ID, then retry as the Homebrew prefix owner")
@@ -73,8 +75,11 @@ func VerifyMachineRemovalPrefix(prefix string, env []string) error {
 	return nil
 }
 
-func UninstallMachineFormula(prefix string, env []string) error {
-	cmd := exec.Command(filepath.Join(prefix, "bin", "brew"), "uninstall", "--formula", MachineTap+"/managed-machine")
+func UninstallMachineFormula(prefix, name string, env []string) error {
+	if name != MachineFormula && name != LegacyMachineFormula {
+		return errors.New("unknown Machine Homebrew formula")
+	}
+	cmd := exec.Command(filepath.Join(prefix, "bin", "brew"), "uninstall", "--formula", MachineTap+"/"+name)
 	cmd.Env = append(append(env, Env...), "HOMEBREW_NO_AUTOREMOVE=1")
 	if err := cmd.Run(); err != nil {
 		return errors.New("Homebrew could not remove the Machine formula; its user services were uninstalled")

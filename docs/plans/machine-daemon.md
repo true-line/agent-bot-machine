@@ -487,6 +487,25 @@ its lock in `~/.cache`.
 
 ### macOS package lifecycle coordination
 
+The Machine tap uses `agent-bot-machine` for the renamed formula and
+`managed-machine` for legacy installations. The linked commands continue to
+be `managed-machine`, `agent-machine` and `agent-bot-keyd`. Package removal
+selects the running CLI's active keg under the Homebrew prefix. It verifies
+the command links and the Machine tap in that keg's `INSTALL_RECEIPT.json`
+before invoking Homebrew with the selected formula's fully qualified name.
+For a migrated install, the old `opt/managed-machine` link may resolve to
+the same active keg under `Cellar/agent-bot-machine`. The old Cellar rack may
+also be a compatibility link to the same rack. A second or unlinked keg,
+an unrelated receipt, or a manually staged binary prevents package removal.
+
+Replay package removal against each layout: a legacy keg, a fresh renamed
+keg, and a renamed keg with Homebrew's old opt and Cellar aliases. Verify
+the original and background-session keyd plist forms in each layout. In
+each case remove any managed HQ service first, check that Homebrew receives
+the selected formula name, and verify that both Machine user services,
+their command links and the Machine kegs are gone. The native
+`TestHomebrewPackageUninstall` test covers these layouts and refusal cases.
+
 Machine service changes and root-managed HQ apply and removal coordinate
 through the registered administrator's `Library` directory. The per-owner
 `.managed-machine-lifecycle.lock` is a private empty file with one link.
