@@ -4,11 +4,32 @@
    "$DAEMON_ACCOUNT" == "$(id -un)" && "$(stat -f %u /opt/homebrew)" == "$(id -u)" ]] || exit 1
 sudo install -o root -g wheel -m 0644 "$ROOT/tests/fixtures/paired-darwin-hq-device.mjs" "$stage/device-check.mjs"
 sudo install -o root -g wheel -m 0644 "$ROOT/tests/fixtures/packaged-darwin-hq-device.mjs" "$stage/packaged-device.mjs"
+custody_phase() {
+    printf 'native HQ custody: %s\n' "$1" >&2
+}
+custody_command() {
+    local phase="$1"
+    shift
+    custody_phase "$phase"
+    python3 - "$phase" "$@" <<'PYTHON'
+import subprocess
+import sys
+
+phase, *command = sys.argv[1:]
+try:
+    result = subprocess.run(command, stdin=subprocess.DEVNULL, timeout=20)
+except subprocess.TimeoutExpired:
+    print(f"native HQ custody timed out: {phase}", file=sys.stderr)
+    sys.exit(124)
+sys.exit(result.returncode)
+PYTHON
+}
 packaged_reply() {
     local answer
     IFS= read -r -t 30 -u 6 answer && [[ "$answer" == "$1" ]] || fail "packaged HQ did not complete $1"
 }
 packaged_step() {
+    custody_phase "packaged HQ $1"
     printf '%s\n' "$1" >&5
     packaged_reply "$1"
 }
@@ -20,24 +41,29 @@ packaged_cleanup() {
 # The dedicated role has no ability to read or execute the administration helper.
 ! sudo -n -u "$role" test -r "$custody_dir/agent-bot-keyd" || fail 'role can read custody helper'
 ! sudo -n -u "$role" test -x "$custody_dir/agent-bot-keyd" || fail 'role can execute custody helper'
+custody_phase 'stopping Machine after service recovery'
 stop_fixture_machine
 [[ "$MM" == "$custody_dir/managed-machine" ]] || fail 'qualification changed the Machine binary after initial pairing'
-"$MM" daemon verify-identity | jq -e --arg pin "$machine_pin" '.state=="verified" and .fingerprint==$pin' >/dev/null
+custody_command 'verifying the paired Machine identity' "$MM" daemon verify-identity | jq -e --arg pin "$machine_pin" '.state=="verified" and .fingerprint==$pin' >/dev/null
 epoch="$(jq -er '.nonce' "$signer/pair.json")"
 role_check() {
     (cd / && sudo -n -H -u "$role" -- /usr/bin/env GITHUB_ACTIONS=true "$stage/node" "$stage/device-check.mjs" "$1" "$channel" "$epoch" "${2:-}")
 }
+custody_phase 'checking the stopped Machine channel'
 role_check outage
 # Explicit native initialization runs once as the prefix owner on a throwaway
 # runner/default Keychain. Failure (including unavailable hardware) fails the job.
-"$custody_dir/agent-bot-keyd" hq-device-init
+custody_command 'initializing the hardware device as the prefix owner' "$custody_dir/agent-bot-keyd" hq-device-init
+custody_phase 'starting Machine with the paired identity'
 start_fixture_machine --require-identity "$machine_pin"
 paired_status
+custody_phase 'reading the device identity and checking the first proof'
 thumb="$(role_check identity)"
 [[ "$thumb" =~ ^[A-Za-z0-9_-]{43}$ ]] || fail 'native device identity unavailable'
 proof_id_before="$(role_check prove "$thumb")" || fail 'native enrollment proof unavailable before restart'
 # Keep one actual packaged HQ process in its own private state through the
 # Machine transitions. The native verifier's thumbprint is the independent pin.
+custody_phase 'starting the packaged HQ proof fixture'
 mkfifo -m 0600 "$signer/packaged-commands" "$signer/packaged-results"
 (cd / && exec sudo -n -H -u "$role" -- /usr/bin/env -i PATH=/usr/bin:/bin HOME="$role_home" \
     GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted "$stage/node" "$stage/packaged-device.mjs" "$thumb") \
@@ -47,9 +73,11 @@ exec 5>"$signer/packaged-commands" 6<"$signer/packaged-results"
 trap packaged_cleanup EXIT
 packaged_reply ready
 packaged_step prove
+custody_phase 'stopping Machine for the restart check'
 stop_fixture_machine
 role_check outage
 packaged_step outage
+custody_phase 'restarting Machine and checking the second proof'
 start_fixture_machine --require-identity "$machine_pin"
 [[ "$(role_check identity)" == "$thumb" ]] || fail 'device identity changed after Machine restart'
 proof_id_after="$(role_check prove "$thumb")" || fail 'native enrollment proof unavailable after restart'
@@ -69,7 +97,7 @@ for ((i=0;i<120;i++)); do
     sleep 0.02
 done
 grep -qx connected "$signer/device-deferred" || fail 'role did not establish its pending connection'
-"$MM" daemon revoke-hq >/dev/null
+custody_command 'revoking HQ with its signed channel open' "$MM" daemon revoke-hq >/dev/null
 printf 'send\n' >&3
 wait "$waiting" || fail 'previously open request did not receive an authenticated refusal'
 exec 3>&-
