@@ -293,7 +293,7 @@ func loadStage2aActiveExecutionPolicy(key ed25519.PublicKey, hqUID int, epoch st
 		return stage2aInstalledPolicy{}, nil, errStage2aReservationAuthority
 	}
 	switch r.runModeV3 {
-	case stage2aQualifiedRunV3, stage2aCandidateRunV3:
+	case stage2aQualifiedRunV3, stage2aCandidateRunV3, stage2aLocalTestRunV1:
 		runtime, err := stage2aLoadInstalledRuntimeV3(key, hqUID, epoch, r.request.InstallationID)
 		if err != nil || runtime.VerifiedR.ref != r.runtimeRefV3 ||
 			stage2aValidateRuntimeExecutionRowsV3(runtime.Policy, runtime.VerifiedR.ref, runtime.Inventory) != nil {
@@ -326,7 +326,7 @@ func stage2aRecheckExecutionCode(r *stage2aLiveReservation, p stage2aInstalledPo
 	if r.runModeV3 == "" && p.RuntimeV3 == nil {
 		return stage2aAdapterChildEnv(p.LaunchInputs, &p.BridgeQualification, p.Binding.Snapshots.LaunchInputs.RootPath)
 	}
-	if r.runModeV3 != stage2aQualifiedRunV3 && r.runModeV3 != stage2aCandidateRunV3 {
+	if r.runModeV3 != stage2aQualifiedRunV3 && r.runModeV3 != stage2aCandidateRunV3 && r.runModeV3 != stage2aLocalTestRunV1 {
 		return errStage2aReservationAuthority
 	}
 	ref := r.runtimeRefV3

@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const stage2aLocalTestQDriverFixture = `{"contracts_source":{"commit":"` + stage2aLocalTestContractsCommit + `","digest":"` + stage2aLocalTestContractsDigest + `","digest_algorithm":"sha256-manifest-v1","files":658,"paths":["errors","fixtures","schemas"],"repository":"https://github.com/true-line/soul-contracts.git","tag":"v0.10.3"},"driver":{"kind":"fixture"},"schema":"agent-bot-machine/stage2a-observed-body-local-test-driver-plan/v1"}`
+const stage2aLocalTestQDriverFixture = `{"contracts_source":{"commit":"` + stage2aLocalTestContractsCommit + `","digest":"` + stage2aLocalTestContractsDigest + `","digest_algorithm":"sha256-manifest-v1","files":660,"paths":["errors","fixtures","schemas"],"repository":"https://github.com/true-line/soul-contracts.git","tag":"v0.10.4"},"driver":{"kind":"fixture"},"schema":"agent-bot-machine/stage2a-observed-body-local-test-driver-plan/v1"}`
 
 func stage2aLocalTestQApprovalFixture(t *testing.T) (stage2aLocalTestQPlan, Approval,
 	ed25519.PrivateKey, string, string, time.Time) {

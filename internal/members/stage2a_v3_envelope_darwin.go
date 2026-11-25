@@ -43,6 +43,8 @@ func stage2aV3PurposeKind(purpose string) string {
 		return "stage2a-h-service-descriptor"
 	case stage2aReservationPurposeV3:
 		return "stage2a-reservation"
+	case stage2aLocalTestReservationPurposeV1:
+		return "stage2a-observed-body-local-test-reservation"
 	case stage2aQualificationCandidatePurposeV3:
 		return "stage2a-qualification-candidate-reservation"
 	default:
@@ -60,8 +62,12 @@ func stage2aV3CanonicalPayload(raw []byte, purpose string) error {
 		return errStage2aReservationAuthority
 	}
 	var header stage2aV3PayloadHeader
-	if json.Unmarshal(raw, &header) != nil || header.Contract != "machine/v3" ||
-		header.Kind != stage2aV3PurposeKind(purpose) || header.SchemaVersion != 3 {
+	contract, version := "machine/v3", 3
+	if purpose == stage2aLocalTestReservationPurposeV1 {
+		contract, version = "machine/local-test-v1", 1
+	}
+	if json.Unmarshal(raw, &header) != nil || header.Contract != contract ||
+		header.Kind != stage2aV3PurposeKind(purpose) || header.SchemaVersion != version {
 		return errStage2aReservationAuthority
 	}
 	var object map[string]json.RawMessage
@@ -79,6 +85,9 @@ func stage2aV3CanonicalPayload(raw []byte, purpose string) error {
 	}
 	if purpose == stage2aQualificationCandidatePurposeV3 {
 		fields = append(fields, "qualification_attempt")
+	}
+	if purpose == stage2aLocalTestReservationPurposeV1 {
+		fields = append(fields, "start_scope")
 	}
 	if len(object) != len(fields) {
 		return errStage2aReservationAuthority
@@ -114,8 +123,12 @@ func signStage2aVerifiedEnvelopeV3(value stage2aVerifiedSigningPayloadV3,
 	if err != nil || !ed25519.Verify(key, preimage, signature) {
 		return nil, "", errStage2aReservationAuthority
 	}
+	version := 3
+	if value.purpose == stage2aLocalTestReservationPurposeV1 {
+		version = 1
+	}
 	envelope, err := marshalStage2aReservationJCS(stage2aSignedReservation{
-		SchemaVersion: 3, Purpose: value.purpose,
+		SchemaVersion: version, Purpose: value.purpose,
 		IssuerPublicKeyBase64URL: base64.RawURLEncoding.EncodeToString(key),
 		PayloadSHA256:            stage2aReservationSHA256(value.payload),
 		PayloadBase64URL:         base64.RawURLEncoding.EncodeToString(value.payload),
@@ -138,7 +151,11 @@ func verifyStage2aV3Envelope(raw []byte, purpose string,
 		return nil, "", errStage2aReservationAuthority
 	}
 	var envelope stage2aSignedReservation
-	if stage2aDecodeExact(raw, &envelope) != nil || envelope.SchemaVersion != 3 ||
+	version := 3
+	if purpose == stage2aLocalTestReservationPurposeV1 {
+		version = 1
+	}
+	if stage2aDecodeExact(raw, &envelope) != nil || envelope.SchemaVersion != version ||
 		envelope.Purpose != purpose || envelope.IssuerPublicKeyBase64URL !=
 		base64.RawURLEncoding.EncodeToString(enrolledKey) {
 		return nil, "", errStage2aReservationAuthority

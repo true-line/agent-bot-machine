@@ -1043,7 +1043,7 @@ approve Provider access or a protected start by itself.
 
 **Target.** In secure A, after planning the local-test protected install, run
 `managed-machine members local-test-q-plan <install-plan-id> <physical-host-uuid> <canonical-driver-plan.json>`.
-The pinned driver plan must be canonical JSON for Contracts v0.10.3. Machine
+The pinned driver plan must be canonical JSON for Contracts v0.10.4. Machine
 derives the Q plan ID, install digest, owner-plan hash, candidate manifest,
 expiry and A key from the saved install plan; it writes the driver and Q plan
 to fixed A-private `0600` files without replacing occupied bytes. The command
@@ -1075,8 +1075,22 @@ envelope digests; root reopens the committed receipt before reporting success.
 body, the fixed root Q envelope and the applied receipt by exact plan ID and
 SHA-256. Reject a changed host UUID, key, saved install digest, driver plan,
 Q envelope, pair or occupied file. A `staged:true` result is not an applied
-install. Reserve spends a separate one-use candidate attempt before B and
-Soul Hello; Provider activation remains a later independent spend.
+install. The local-test Reserve path spends the ordinary durable start and
+active claims before signing; Provider activation remains a later independent
+spend.
+
+The paired HQ uses the existing `stage2a-reserve` selectors. Only a local-test
+root receipt with a current, separately approved Q plan selects the
+`agent-bot/stage2a-observed-body-local-test-reservation/v1` signature purpose.
+Its `machine/local-test-v1` payload follows the pinned Contracts v0.10.4
+shape, names the exact one-use start claim, and binds the installed receipt,
+measured H/R inventories, selected adapter bytes and broker. A's worker
+rechecks the current pair, designated host, Q and owner expiries, root receipt
+and sealed R bytes before signing. This purpose does not qualify an ordinary
+released adapter. HQ can then use the existing `stage2a-hello-start` and
+`stage2a-hello-finalize` verbs with the live R/B and broker bind checks.
+The legacy `stage2a-provider` fixture remains closed for this mode; observed
+body local-test access requires its separate B authority and ingress path.
 
 **Replay.** Capture the exact Machine/HQ/R/B source heads, signed Machine
 artifact, owner-reviewed install and Q plans, Q issue body, stage output,

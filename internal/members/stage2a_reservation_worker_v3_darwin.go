@@ -35,12 +35,14 @@ type stage2aReservationWorkerAuthorityV3 struct {
 	store         stage2aAdminClaimStore
 	load          func(stage2aReservationRequest) (stage2aReservationEvidenceV3, error)
 	loadCandidate func(stage2aReservationRequest) (stage2aQualificationCandidateAuthorityV3, error)
+	localTest     *stage2aInstalledLocalTestV1
+	recheck       func() error
 }
 
 // The fixed A-only command accepts the live paired key resolver and the
 // owner-pair guard from Machine's daemon package. Its production authority
-// loader is limited to the root-installed one-use candidate plan; ordinary
-// qualified starts remain closed until a separate adapter attestation loader.
+// loader accepts only the root-installed candidate or distinct local-test Q;
+// ordinary qualified starts remain closed until an adapter attestation loader.
 func RunStage2aReservationWorkerV3(
 	keyForPair func(int, string, string) (ed25519.PrivateKey, func() error, error),
 	checkPair func(string, string, string, func() error) error) int {
@@ -48,6 +50,9 @@ func RunStage2aReservationWorkerV3(
 		return harnessRefused
 	}
 	load := func(runtime stage2aInstalledRuntimeV3, key ed25519.PublicKey) (stage2aReservationWorkerAuthorityV3, error) {
+		if runtime.LocalTest != nil {
+			return loadStage2aLocalTestWorkerAuthorityV1(runtime, key, checkPair)
+		}
 		return loadStage2aCandidateWorkerAuthorityV3(runtime, key, checkPair)
 	}
 	if runStage2aReservationWorkerV3(os.Stdin, os.Stdout, keyForPair, load) != nil {
@@ -67,8 +72,8 @@ func decodeStage2aReservationWorkerRequestV3(raw []byte) (stage2aReservationWork
 }
 
 // Production callers provide independently authenticated installed H/R and
-// selected-adapter authority. The current command accepts only the one-use
-// owner-reviewed candidate; an ordinary qualified loader remains unavailable.
+// selected-adapter authority. Candidate and local-test Q remain separate;
+// an ordinary qualified loader is unavailable.
 // The key resolver rechecks the paired HQ role and epoch before opening A's
 // local key. None of these inputs come from caller metadata.
 func runStage2aReservationWorkerV3(input io.Reader, output io.Writer,
@@ -120,6 +125,11 @@ func runStage2aReservationWorkerV3(input io.Reader, output io.Writer,
 		if stage2aRecheckVerifiedDomainV3(runtime.VerifiedR) != nil || !time.Now().Before(lease) {
 			return nil, errStage2aReservationAuthority
 		}
+		if authority.mode == stage2aLocalTestRunV1 &&
+			(authority.recheck == nil || authority.recheck() != nil || authority.localTest == nil ||
+				!stage2aLocalTestAuthorityUnexpired(*authority.localTest, time.Now())) {
+			return nil, errStage2aReservationAuthority
+		}
 		if authority.mode == stage2aCandidateRunV3 {
 			parent, err := observeSoulKernelProcess(os.Getppid())
 			if err != nil || verifyStage2aCandidateLiveGrantV3(q.CandidateGrant, q.HQUID, selector, parent, key, time.Now()) != nil {
@@ -143,6 +153,18 @@ func runStage2aReservationWorkerV3(input io.Reader, output io.Writer,
 			}
 			return e, nil
 		}, sign, time.Now)
+	case stage2aLocalTestRunV1:
+		if q.CandidateGrant != nil || authority.load == nil || authority.loadCandidate != nil || authority.localTest == nil {
+			return errStage2aReservationAuthority
+		}
+		purpose = stage2aLocalTestReservationPurposeV1
+		got, err = reserveStage2aLocalTestAdminStartV1(authority.store, request, func(req stage2aReservationRequest) (stage2aReservationEvidenceV3, error) {
+			e, err := authority.load(req)
+			if err != nil || e.r.ref != runtime.VerifiedR.ref {
+				return stage2aReservationEvidenceV3{}, errStage2aReservationAuthority
+			}
+			return e, nil
+		}, *authority.localTest, sign, time.Now)
 	case stage2aCandidateRunV3:
 		parent, parentErr := observeSoulKernelProcess(os.Getppid())
 		if parentErr != nil || verifyStage2aCandidateLiveGrantV3(q.CandidateGrant, q.HQUID, selector, parent, key, time.Now()) != nil ||

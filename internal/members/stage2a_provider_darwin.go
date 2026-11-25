@@ -24,6 +24,10 @@ func (s *Stage2aService) Provider(hqUID int, epoch string, q Stage2aProviderRequ
 		return reply, errStage2aReservationAuthority
 	}
 	r := s.active[q.ReservationSHA256]
+	// This legacy fixture Provider is not the observed-body local-test B path.
+	if r.runModeV3 == stage2aLocalTestRunV1 {
+		return reply, errStage2aReservationAuthority
+	}
 	p, raw, err := loadStage2aActiveExecutionPolicy(s.key.Public().(ed25519.PublicKey), hqUID, epoch, r)
 	if err != nil || stage2aReservationSHA256(raw) != r.policyDigest ||
 		q.Model != p.BridgeQualification.Model || q.PromptSHA256 != p.BridgeQualification.RequestSHA256 ||
