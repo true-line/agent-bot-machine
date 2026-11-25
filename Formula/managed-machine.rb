@@ -13,8 +13,8 @@ class ManagedMachine < Formula
   homepage "https://github.com/true-line/agent-bot-machine"
   url "https://github.com/true-line/agent-bot-machine.git",
       using: :git,
-      tag:   "v0.12.4"
-  version "0.12.4"
+      tag:   "v0.12.7"
+  version "0.12.7"
   license "MIT"
 
   depends_on arch: :arm64
@@ -23,8 +23,8 @@ class ManagedMachine < Formula
   # Prebuilt portable Go core binary for darwin/arm64 (S6 R04, S8 D3).
   # Installed as bin/managed-machine; legacy Bash tree staged under libexec/legacy.
   resource "core" do
-    url "https://github.com/true-line/agent-bot-machine/releases/download/v0.12.4/managed-machine_0.12.4_darwin_arm64.tar.gz"
-    sha256 "e98ea0d764b13e9b30c714bb9b299fff80ec1f07cbcd30e4037f3bdb795a2b6e"
+    url "https://github.com/true-line/agent-bot-machine/releases/download/v0.12.7/managed-machine_0.12.7_darwin_arm64.tar.gz"
+    sha256 "f4444e9e27add737fa547c5dbb476e7ffc8e18342803f6cb1b3c8238fadd69f6"
   end
 
   STANDALONE_MARKERS = "/Library/Application Support/ai.true-line.agent-bot-hq/standalone"
