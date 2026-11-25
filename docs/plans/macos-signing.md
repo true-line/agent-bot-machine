@@ -178,10 +178,9 @@ are rejected. With
 The tag starts the Release workflow. Publication downloads the deterministic
 archives, five native release receipts, and support matrix from the successful
 Go core push on `main` for the exact tagged commit. The standalone CI and Go
-core workflows run on main pushes and pull requests. A manual Release dry run
-can still repeat the native gates. If publication cannot retrieve the main
-artifacts within their 30-day retention, rerun Go core on the original main
-push to regenerate them for that commit and retry publication.
+core workflows run on main pushes and pull requests. A manual Release run
+rebuilds the native evidence and can be used for a dry run or to resume an
+unpublished release after the original artifacts expire.
 
 The public Darwin release requires a pinned Developer ID Application
 certificate from Team `Z5DM34QS5U` on both executables. The pin in

@@ -153,8 +153,7 @@ refuses run existing "$later" "$tag"
       end
       jobs = workflow("release").fetch("jobs")
       abort "automatic publication still calls Go core" unless
-        jobs.fetch("gates").fetch("if") == "github.event_name == '\''workflow_dispatch'\'' && !inputs.publish" &&
-        !jobs.fetch("publish").key?("needs")
+        jobs.fetch("gates").fetch("if") == "github.event_name == '\''workflow_dispatch'\''"
       steps = jobs.fetch("publish").fetch("steps")
       downloads = steps.select { |step| step["uses"]&.start_with?("actions/download-artifact@") }
       abort "release downloads must use the validated run" unless downloads.size == 3 &&
@@ -166,7 +165,7 @@ refuses run existing "$later" "$tag"
     cd "$tmp/release-work"
     mkdir scripts
     cp "$script" scripts/version-cut.py
-    export GITHUB_REPOSITORY="$repo" GITHUB_REF_TYPE=tag GITHUB_REF_NAME="$tag"
+    export GITHUB_REPOSITORY="$repo" GITHUB_REF_TYPE=tag GITHUB_REF_NAME="$tag" GITHUB_EVENT_NAME=push
     export GITHUB_OUTPUT="$tmp/release-evidence-output"
     export RELEASE_RUNS="$ci" EXPECTED_CUT="$cut"
     gh() {
@@ -182,6 +181,9 @@ refuses run existing "$later" "$tag"
     RELEASE_RUNS="${ci/main/$tag}" refuses bash "$tmp/release-evidence.sh"
     RELEASE_RUNS="${ci/success/failure}" refuses bash "$tmp/release-evidence.sh"
     RELEASE_RUNS="${ci/$cut/$later}" refuses bash "$tmp/release-evidence.sh"
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_RUN_ID=99 RELEASE_RUNS='' bash "$tmp/release-evidence.sh"
+    [[ "$(cat "$GITHUB_OUTPUT")" == run=99 ]]
+    rm "$GITHUB_OUTPUT"
     git switch -q --detach "$later"
     EXPECTED_CUT="$later" refuses bash "$tmp/release-evidence.sh"
     test ! -e "$GITHUB_OUTPUT"
