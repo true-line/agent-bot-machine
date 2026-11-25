@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -132,6 +133,12 @@ func makeProtectedSegmentFixtureV3(t *testing.T, stopIdle bool, attestationQDige
 func TestResolveCompletedProtectedSegmentV3(t *testing.T) {
 	f := makeProtectedSegmentFixtureV3(t, true, true)
 	got, err := resolveProtectedSegmentV3(f.root, f.gate, f.segment, f.key, f.now.now)
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		if err == nil || got.resolved {
+			t.Fatal("unsupported host accepted protected segment object resolution")
+		}
+		return
+	}
 	if err != nil || !got.resolved || got.QSessionID != "1234567890abcdef1234567890abcdef" {
 		t.Fatalf("signed segment component refused: %+v %v", got, err)
 	}

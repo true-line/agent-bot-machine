@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"path/filepath"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -191,8 +191,8 @@ func qExactObjectV3(raw []byte, keys ...string) bool {
 }
 
 func qPathV3(value string) bool {
-	if len(value) < 2 || len(value) > 4096 || !filepath.IsAbs(value) ||
-		filepath.Clean(value) != value || strings.Contains(value, "\\") ||
+	if len(value) < 2 || len(value) > 4096 || !path.IsAbs(value) ||
+		path.Clean(value) != value || strings.Contains(value, "\\") ||
 		strings.Contains(value, "//") {
 		return false
 	}

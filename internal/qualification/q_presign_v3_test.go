@@ -188,6 +188,21 @@ func makeQFixtureContractV3(t *testing.T, observationSequence int, cleanEOF bool
 		now: time.Date(2026, 11, 22, 12, 0, 10, 0, time.UTC)}
 }
 
+func TestQSerializedPOSIXPathsV3(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"/tmp/q", true}, {"/usr/local/bin/q", true},
+		{"/tmp/../q", false}, {"/tmp//q", false}, {"/tmp/q/", false},
+		{"C:/tmp/q", false}, {"/tmp/\\q", false}, {"relative", false}, {"/", false},
+	} {
+		if got := qPathV3(tc.path); got != tc.want {
+			t.Errorf("qPathV3(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestVerifyQPreSignV3(t *testing.T) {
 	good := makeQFixtureV3(t, 1, true, true)
 	got, err := VerifyQPreSignV3(good.wire, good.index, good.eof, good.reservation, good.key, good.now)

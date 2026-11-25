@@ -79,7 +79,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		((*bridgeV2 || *hostV3) && (*soulsBundlePath == "" || *soulsPackagePath == "" || *soulsRootPath == "")) ||
 		(!*bridgeV2 && !*hostV3 && (*soulsBundlePath != "" || *soulsPackagePath != "" || *soulsRootPath != "")) ||
 		(*hostV3 && (*machineRootPath == "" || *protectedExecutionPath == "" || *cooperativeExecutionPath == "" || *protectedCommitmentPath == "" || *cooperativeCommitmentPath == "")) ||
-		(!*hostV3 && (*machineRootPath != "" || *protectedExecutionPath != "" || *cooperativeExecutionPath != "" || *protectedCommitmentPath != "")) {
+		(!*hostV3 && (*machineRootPath != "" || *protectedExecutionPath != "" || *cooperativeExecutionPath != "" || *protectedCommitmentPath != "" || *cooperativeCommitmentPath != "")) {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}

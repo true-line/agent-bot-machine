@@ -31,4 +31,8 @@ func TestHostV3RequiresIndependentChainAndCannotMixModes(t *testing.T) {
 	check(append([]string{"-host-v3"}, base...), 2)
 	check(append(append([]string{"-host-v3", "-bridge-v2"}, base...), chain...), 2)
 	check(append(append([]string{"-host-v3"}, base...), chain...), 1)
+	check(append([]string{"-bridge-v2"}, base...), 1)
+	check(append(append([]string{"-bridge-v2"}, base...), "-cooperative-commitment", "/nonexistent/commitment"), 2)
+	check(append([]string{}, base[:len(base)-6]...), 1)
+	check(append(append([]string{}, base[:len(base)-6]...), "-cooperative-commitment", "/nonexistent/commitment"), 2)
 }
