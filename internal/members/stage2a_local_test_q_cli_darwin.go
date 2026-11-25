@@ -157,7 +157,7 @@ func runStage2aLocalTestQPlan(_ Deps, ctx cli.Context, args []string) cli.Result
 	canonical, err := jsoncanonicalizer.Transform(driverRaw)
 	if err != nil || !bytes.Equal(canonical, driverRaw) ||
 		stage2aDecodeExact(driverRaw, &driver) != nil || !driver.pinned() {
-		return failure(diag.MembersListInvalid, "Q driver plan must be canonical and pin Contracts v0.10.3")
+		return failure(diag.MembersListInvalid, "Q driver plan must be canonical and pin Contracts v0.10.4")
 	}
 	key, err := stage2aLocalTestQReviewedMachineKey(saved.SoulProtectedLaunch,
 		"", SoulAuthorityPin, 0, 0)

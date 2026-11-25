@@ -5,6 +5,7 @@ package members
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"time"
 )
@@ -17,6 +18,14 @@ type stage2aInstalledRuntimeV3 struct {
 	Plan      stage2aRuntimeV3Install
 	Inventory stage2aDomainInventoryV3
 	VerifiedR stage2aVerifiedDomainRefV3
+	LocalTest *stage2aInstalledLocalTestV1
+}
+
+type stage2aInstalledLocalTestV1 struct {
+	Owner                  stage2aLocalTestOwnerPlan
+	Q                      stage2aLocalTestQPlan
+	Approval               stage2aLocalTestQApprovalReference
+	ApprovalEnvelopeSHA256 string
 }
 
 func stage2aLoadInstalledRuntimeV3(key ed25519.PublicKey, hqUID int, epoch,
@@ -65,6 +74,7 @@ func stage2aLoadInstalledRuntimeV3(key ed25519.PublicKey, hqUID int, epoch,
 		!stage2aSelectedCommandRecordedV3(p, inv) {
 		return empty, errStage2aReservationAuthority
 	}
+	var localTest *stage2aInstalledLocalTestV1
 	if approved.SoulProtectedLaunch.Schema == stage2aLocalTestInstallSchema {
 		var root Receipt
 		if json.Unmarshal(p.Receipt, &root) != nil {
@@ -97,7 +107,13 @@ func stage2aLoadInstalledRuntimeV3(key ed25519.PublicKey, hqUID int, epoch,
 		if hostErr != nil {
 			return empty, errStage2aReservationAuthority
 		}
+		approvalEnvelope, err := base64.RawURLEncoding.Strict().DecodeString(root.Stage2aLocalTestQApprovalEnvelope)
+		if err != nil {
+			return empty, errStage2aReservationAuthority
+		}
+		localTest = &stage2aInstalledLocalTestV1{Owner: owner, Q: q, Approval: approval,
+			ApprovalEnvelopeSHA256: stage2aReservationSHA256(approvalEnvelope)}
 	}
 	return stage2aInstalledRuntimeV3{Policy: p, PolicyRaw: raw,
-		Plan: spec, Inventory: inv, VerifiedR: verified}, nil
+		Plan: spec, Inventory: inv, VerifiedR: verified, LocalTest: localTest}, nil
 }

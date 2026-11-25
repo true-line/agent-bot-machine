@@ -10,6 +10,7 @@ type stage2aReservationRunModeV3 string
 const (
 	stage2aQualifiedRunV3 stage2aReservationRunModeV3 = "qualified"
 	stage2aCandidateRunV3 stage2aReservationRunModeV3 = "qualification-candidate"
+	stage2aLocalTestRunV1 stage2aReservationRunModeV3 = "observed-body-local-test"
 )
 
 type stage2aReservationGuardV3 struct {
@@ -41,6 +42,13 @@ func verifyStage2aReservationModeV3(mode stage2aReservationRunModeV3, raw []byte
 			binding.Kind = "stage2a-measurement-binding"
 			return stage2aReservationGuardV3{p.Assignment, binding, p.MeasurementBinding.HDescriptorDigest,
 				p.MeasurementBinding.RInventory, p.MemberEndpoint,
+				stage2aReservationPayload{Contract: p.Contract, Kind: p.Kind, SchemaVersion: p.SchemaVersion, HostID: p.HostID, IssuedAt: p.IssuedAt, ExpiresAt: p.ExpiresAt, InstalledPlanReceiptSHA256: p.InstalledPlanReceiptSHA256, AdmissionChallengeSHA256: p.AdmissionChallengeSHA256, MemberEndpoint: p.MemberEndpoint}}, nil
+		}
+	case stage2aLocalTestRunV1:
+		var p stage2aLocalTestReservationV1
+		if stage2aDecodeExact(expected, &p) == nil && verifyStage2aLocalTestReservationV1(raw, digest, p, key, now) == nil {
+			return stage2aReservationGuardV3{p.Assignment, p.MeasurementBinding.Stage2aMeasurementBinding,
+				p.MeasurementBinding.HDescriptorDigest, p.MeasurementBinding.RInventory, p.MemberEndpoint,
 				stage2aReservationPayload{Contract: p.Contract, Kind: p.Kind, SchemaVersion: p.SchemaVersion, HostID: p.HostID, IssuedAt: p.IssuedAt, ExpiresAt: p.ExpiresAt, InstalledPlanReceiptSHA256: p.InstalledPlanReceiptSHA256, AdmissionChallengeSHA256: p.AdmissionChallengeSHA256, MemberEndpoint: p.MemberEndpoint}}, nil
 		}
 	}

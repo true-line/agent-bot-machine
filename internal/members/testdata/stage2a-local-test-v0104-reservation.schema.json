@@ -1,0 +1,1008 @@
+{
+  "$id": "https://true-line.ai/soul-contracts/machine/local-test-v1/stage2a-reservation-payload.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Source-enabling exact record shape; signed authority, cross-record joins, current lifetime and kernel observations require independent verification.",
+  "properties": {
+    "admission_challenge_sha256": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "assignment": {
+      "additionalProperties": false,
+      "properties": {
+        "admission": {
+          "additionalProperties": false,
+          "properties": {
+            "dir_mode": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "directory": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "group_gid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "owner_uid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "peer_uids": {
+              "items": false,
+              "maxItems": 1,
+              "minItems": 1,
+              "prefixItems": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "socket_mode": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "socket_path": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "dir_mode",
+            "directory",
+            "group_gid",
+            "owner_uid",
+            "peer_uids",
+            "socket_mode",
+            "socket_path"
+          ],
+          "type": "object"
+        },
+        "bridge_account": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "bridge_gid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bridge_uid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "broker": {
+          "additionalProperties": false,
+          "properties": {
+            "dir_mode": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "directory": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "group_gid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "owner_uid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "peer_uids": {
+              "items": false,
+              "maxItems": 1,
+              "minItems": 1,
+              "prefixItems": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "socket_mode": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "socket_path": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "dir_mode",
+            "directory",
+            "group_gid",
+            "owner_uid",
+            "peer_uids",
+            "socket_mode",
+            "socket_path"
+          ],
+          "type": "object"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "h_service_descriptor_digest": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "hq_epoch": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "hq_uid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "installation_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "launch_id": {
+          "pattern": "^(st|ln)_[0-9a-f]{24}$",
+          "type": "string"
+        },
+        "machine_uid": {
+          "maximum": 4294967295,
+          "minimum": 400,
+          "type": "integer"
+        },
+        "member": {
+          "additionalProperties": false,
+          "properties": {
+            "dir_mode": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "directory": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "group_gid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "owner_uid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "peer_uids": {
+              "items": false,
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "socket_mode": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "socket_path": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "dir_mode",
+            "directory",
+            "group_gid",
+            "owner_uid",
+            "peer_uids",
+            "socket_mode",
+            "socket_path"
+          ],
+          "type": "object"
+        },
+        "package_root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "package_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "plan_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "plan_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "r_inventory_digest": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "relay": {
+          "additionalProperties": false,
+          "properties": {
+            "dir_mode": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "directory": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "group_gid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "owner_uid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "peer_uids": {
+              "items": false,
+              "maxItems": 1,
+              "minItems": 1,
+              "prefixItems": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "socket_mode": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "socket_path": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "dir_mode",
+            "directory",
+            "group_gid",
+            "owner_uid",
+            "peer_uids",
+            "socket_mode",
+            "socket_path"
+          ],
+          "type": "object"
+        },
+        "runner_account": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "runner_gid": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runner_uid": {
+          "maximum": 399,
+          "minimum": 300,
+          "type": "integer"
+        },
+        "schema": {
+          "const": "agent-bot-machine/soul-start-assignment-local-test/v1"
+        },
+        "soul_artifact_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "soul_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "start_id": {
+          "pattern": "^(st|ln)_[0-9a-f]{24}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "admission",
+        "bridge_account",
+        "bridge_gid",
+        "bridge_uid",
+        "broker",
+        "expires_at",
+        "h_service_descriptor_digest",
+        "hq_epoch",
+        "hq_uid",
+        "installation_id",
+        "launch_id",
+        "machine_uid",
+        "member",
+        "package_root",
+        "package_sha256",
+        "plan_digest",
+        "plan_id",
+        "r_inventory_digest",
+        "relay",
+        "runner_account",
+        "runner_gid",
+        "runner_uid",
+        "schema",
+        "soul_artifact_sha256",
+        "soul_id",
+        "start_id"
+      ],
+      "type": "object"
+    },
+    "contract": {
+      "const": "machine/local-test-v1"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "host_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "installed_plan_receipt_sha256": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "issued_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "kind": {
+      "const": "stage2a-observed-body-local-test-reservation"
+    },
+    "measurement_binding": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_release": {
+          "additionalProperties": false,
+          "properties": {
+            "code_input_count": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "code_inputs_digest": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "component_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "executable_path": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "executable_sha256": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "package_sha256": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "release_attestation_sha256": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "release_manifest_sha256": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code_input_count",
+            "code_inputs_digest",
+            "component_id",
+            "executable_path",
+            "executable_sha256",
+            "package_sha256",
+            "release_attestation_sha256",
+            "release_manifest_sha256"
+          ],
+          "type": "object"
+        },
+        "broker_executable": {
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider_config_sha256": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "sha256": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "provider_config_sha256",
+            "sha256"
+          ],
+          "type": "object"
+        },
+        "claimed_definition_digest": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "contract": {
+          "const": "machine/local-test-v1"
+        },
+        "definition_measurement": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "h_service_descriptor_digest": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "host_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "hq_epoch": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "installation_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "installed_plan_digest": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "const": "stage2a-measurement-binding"
+        },
+        "launch_id": {
+          "pattern": "^(st|ln)_[0-9a-f]{24}$",
+          "type": "string"
+        },
+        "launch_input_measurement": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "package_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "plan_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "profile_in_force": {
+          "const": "managed-protected"
+        },
+        "r_components": {
+          "items": false,
+          "maxItems": 1,
+          "minItems": 1,
+          "prefixItems": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "component_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "release_artifact_sha256": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "release_manifest_sha256": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "source_commit": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "source_repository": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "component_id",
+                "release_artifact_sha256",
+                "release_manifest_sha256",
+                "source_commit",
+                "source_repository"
+              ],
+              "type": "object"
+            }
+          ],
+          "type": "array"
+        },
+        "r_inventory": {
+          "additionalProperties": false,
+          "properties": {
+            "contract": {
+              "const": "machine/v3"
+            },
+            "directory_count": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "domain": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "file_count": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "installation_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "inventory_digest": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "stage2a-inventory-ref"
+            },
+            "machine_uid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "owner_plan_digest": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "reader_gid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "reader_uid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "reviewed_source_inventory_digest": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "schema_version": {
+              "const": 3
+            },
+            "sidecar": {
+              "additionalProperties": false,
+              "properties": {
+                "birthtime_ns": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "device": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "generation": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "inode": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "mode": {
+                  "const": "0440"
+                },
+                "owner_gid": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "owner_uid": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "path": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "sha256": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "size_bytes": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "birthtime_ns",
+                "device",
+                "generation",
+                "inode",
+                "mode",
+                "owner_gid",
+                "owner_uid",
+                "path",
+                "sha256",
+                "size_bytes"
+              ],
+              "type": "object"
+            },
+            "snapshot": {
+              "additionalProperties": false,
+              "properties": {
+                "birthtime_ns": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "device": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "generation": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "inode": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "mode": {
+                  "const": "0555"
+                },
+                "owner_gid": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "owner_uid": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "path": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "birthtime_ns",
+                "device",
+                "generation",
+                "inode",
+                "mode",
+                "owner_gid",
+                "owner_uid",
+                "path"
+              ],
+              "type": "object"
+            },
+            "total_bytes": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "contract",
+            "directory_count",
+            "domain",
+            "file_count",
+            "installation_id",
+            "inventory_digest",
+            "kind",
+            "machine_uid",
+            "owner_plan_digest",
+            "reader_gid",
+            "reader_uid",
+            "reviewed_source_inventory_digest",
+            "schema_version",
+            "sidecar",
+            "snapshot",
+            "total_bytes"
+          ],
+          "type": "object"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "snapshots": {
+          "additionalProperties": false,
+          "properties": {
+            "definition": {
+              "additionalProperties": false,
+              "properties": {
+                "birthtime_ns": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "device": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "generation": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "inode": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "mode": {
+                  "const": "0555"
+                },
+                "owner_gid": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "owner_uid": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "root_path": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "birthtime_ns",
+                "device",
+                "generation",
+                "inode",
+                "mode",
+                "owner_gid",
+                "owner_uid",
+                "root_path"
+              ],
+              "type": "object"
+            },
+            "launch_inputs": {
+              "additionalProperties": false,
+              "properties": {
+                "birthtime_ns": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "device": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "generation": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "inode": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "mode": {
+                  "const": "0555"
+                },
+                "owner_gid": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "owner_uid": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "root_path": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "birthtime_ns",
+                "device",
+                "generation",
+                "inode",
+                "mode",
+                "owner_gid",
+                "owner_uid",
+                "root_path"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "definition",
+            "launch_inputs"
+          ],
+          "type": "object"
+        },
+        "soul_artifact_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "soul_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "start_id": {
+          "pattern": "^(st|ln)_[0-9a-f]{24}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "adapter_release",
+        "broker_executable",
+        "claimed_definition_digest",
+        "contract",
+        "definition_measurement",
+        "h_service_descriptor_digest",
+        "host_id",
+        "hq_epoch",
+        "installation_id",
+        "installed_plan_digest",
+        "kind",
+        "launch_id",
+        "launch_input_measurement",
+        "package_sha256",
+        "plan_id",
+        "profile_in_force",
+        "r_components",
+        "r_inventory",
+        "schema_version",
+        "snapshots",
+        "soul_artifact_sha256",
+        "soul_id",
+        "start_id"
+      ],
+      "type": "object"
+    },
+    "member_endpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "member_endpoint": {
+          "additionalProperties": false,
+          "properties": {
+            "dir_mode": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "directory": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "group_gid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "owner_uid": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "peer_uids": {
+              "items": false,
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "socket_mode": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "dir_mode",
+            "directory",
+            "group_gid",
+            "owner_uid",
+            "peer_uids",
+            "socket_mode"
+          ],
+          "type": "object"
+        },
+        "member_socket": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "member_endpoint",
+        "member_socket"
+      ],
+      "type": "object"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "start_scope": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "provider-pending-local-test/v1"
+        },
+        "one_use_start_claim_name": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "one_use_start_claim_name"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "admission_challenge_sha256",
+    "assignment",
+    "contract",
+    "expires_at",
+    "host_id",
+    "installed_plan_receipt_sha256",
+    "issued_at",
+    "kind",
+    "measurement_binding",
+    "member_endpoint",
+    "schema_version",
+    "start_scope"
+  ],
+  "title": "Stage 2a observed-body local-test stage2a reservation payload",
+  "type": "object"
+}

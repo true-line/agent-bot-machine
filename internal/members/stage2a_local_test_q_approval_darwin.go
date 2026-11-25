@@ -18,10 +18,10 @@ import (
 
 const stage2aLocalTestQDriverPlanLimit = 64 << 10
 
-const stage2aLocalTestContractsTag = "v0.10.3"
-const stage2aLocalTestContractsCommit = "896b693b23219444dcbe4af4083fd1bc4b9f178c"
-const stage2aLocalTestContractsDigest = "sha256:e72bee1f4471c127a5557fd45756511595aa2e4c2423ed76be52373d46d8a2f3"
-const stage2aLocalTestContractsFiles = 658
+const stage2aLocalTestContractsTag = "v0.10.4"
+const stage2aLocalTestContractsCommit = "99a597a9c372326e100ccf8d7a178afd4590586f"
+const stage2aLocalTestContractsDigest = "sha256:59c47bb7001523fc2a87f9ddfc694166aaea1473328bbfbf493b1bdb6b4cdada"
+const stage2aLocalTestContractsFiles = 660
 
 type stage2aLocalTestContractsPin struct {
 	Repository      string   `json:"repository"`

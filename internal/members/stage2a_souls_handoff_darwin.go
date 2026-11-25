@@ -38,13 +38,19 @@ func verifyStage2aRunnerReservation(run Stage2aRunnerExec, in Stage2aRoleInvocat
 	}
 	start := guard.assignment.SoulStartAssignment
 	binding := guard.binding
-	if start.Schema != stage2aAssignmentSchemaV3 || binding.Contract != "machine/v3" || binding.SchemaVersion != 3 {
+	mode := stage2aReservationRunModeV3(run.ReservationRunModeV3)
+	ordinary := start.Schema == stage2aAssignmentSchemaV3 && binding.Contract == "machine/v3" && binding.SchemaVersion == 3
+	localTest := mode == stage2aLocalTestRunV1 && start.Schema == stage2aLocalTestAssignmentSchemaV1 &&
+		binding.Contract == "machine/local-test-v1" && binding.SchemaVersion == 1
+	if !ordinary && !localTest {
 		return empty, invalid
 	}
 	start.Schema = in.Start.Schema
 	binding.Contract, binding.SchemaVersion = in.Binding.Contract, in.Binding.SchemaVersion
 	r := guard.r
-	if guard.payload.Contract != "machine/v3" || guard.payload.SchemaVersion != 3 ||
+	if !((guard.payload.Contract == "machine/v3" && guard.payload.SchemaVersion == 3) ||
+		(guard.payload.Contract == "machine/local-test-v1" && guard.payload.SchemaVersion == 1 &&
+			stage2aReservationRunModeV3(run.ReservationRunModeV3) == stage2aLocalTestRunV1)) ||
 		!reflect.DeepEqual(start, in.Start) || !reflect.DeepEqual(binding, in.Binding) ||
 		start.InstallationID != in.Request.InstallationID || start.StartID != in.Request.StartID ||
 		start.HQEpoch != in.Request.HQEpoch || start.PlanDigest != in.Request.PlanDigest ||

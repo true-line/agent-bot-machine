@@ -173,8 +173,17 @@ func (s *Stage2aService) Lookup(hqUID int, epoch string, q Stage2aLookupRequest)
 func (s *Stage2aService) Reserve(hqUID int, epoch string, request Stage2aReserveRequest) (Stage2aReserveReply, error) {
 	// Candidate begin spends the reviewed approval and registers its one-use
 	// grant before Reserve locks and consumes it for the offline worker.
-	if s.candidateBeginV3 != nil && s.candidateBeginV3(hqUID, epoch, request) != nil {
-		return Stage2aReserveReply{}, errStage2aReservationAuthority
+	if s.candidateBeginV3 != nil {
+		if len(s.key) != ed25519.PrivateKeySize {
+			return Stage2aReserveReply{}, errStage2aReservationAuthority
+		}
+		runtime, err := stage2aLoadInstalledRuntimeV3(s.key.Public().(ed25519.PublicKey), hqUID, epoch, request.InstallationID)
+		if err != nil {
+			return Stage2aReserveReply{}, errStage2aReservationAuthority
+		}
+		if runtime.LocalTest == nil && s.candidateBeginV3(hqUID, epoch, request) != nil {
+			return Stage2aReserveReply{}, errStage2aReservationAuthority
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -182,7 +191,7 @@ func (s *Stage2aService) Reserve(hqUID int, epoch string, request Stage2aReserve
 	if len(s.key) != ed25519.PrivateKeySize || s.reserveV3 == nil || epoch != request.HQEpoch || len(s.active) >= 128 {
 		return reply, errStage2aReservationAuthority
 	}
-	// The only positive route supplies authority from the fixed offline A
+	// Both candidate and local-test authority come from the fixed offline A
 	// worker. Its expected payload comes from installed evidence, not HQ.
 	grant, err := s.candidateGrantsV3.consume(hqUID, request, s.key, time.Now())
 	if err != nil {
@@ -201,9 +210,12 @@ func (s *Stage2aService) Reserve(hqUID int, epoch string, request Stage2aReserve
 	}
 	// A's installed opt-in consumes Q and captures the baseline after the
 	// durable reservation, before a bridge proof or live runner is published.
-	pendingQ, err := captureStage2aProtectedBaseline(hqUID, epoch, guard, got, result, key, s.sign)
-	if err != nil {
-		return reply, err
+	var pendingQ *stage2aPendingT03
+	if result.Mode != stage2aLocalTestRunV1 {
+		pendingQ, err = captureStage2aProtectedBaseline(hqUID, epoch, guard, got, result, key, s.sign)
+		if err != nil {
+			return reply, err
+		}
 	}
 	// Role plumbing still uses a legacy field projection. The guard authenticates
 	// the full v3 reservation and mode before any role can execute.
