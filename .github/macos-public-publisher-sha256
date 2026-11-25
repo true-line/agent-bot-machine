@@ -1,4 +1,5 @@
 # One lowercase SHA-256 digest per line, calculated over the complete DER of
-# a Developer ID Application leaf approved for public distribution. Inspect
-# every subject field and extension for personal information before adding
-# its digest by reviewed change. An empty list blocks public macOS releases.
+# a Developer ID Application leaf approved for public distribution.
+# An empty list blocks public macOS releases.
+# This leaf signed both executables in the published v0.12.4 Darwin archive.
+9e2238ed9c5035d9a8250102bda4342d627f974c1e70b0da37e0ebb6fb5a36ab
