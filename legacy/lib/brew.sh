@@ -75,6 +75,30 @@ brew_prefix_path() {
     return 1
 }
 
+brew_machine_version() {
+    command -v brew >/dev/null 2>&1 || return 0
+    local prefix name target versions
+    prefix="$(brew --prefix 2>/dev/null || true)"
+    for name in agent-bot-machine managed-machine; do
+        if [[ -n "$prefix" && -L "$prefix/opt/$name" ]]; then
+            target="$(readlink "$prefix/opt/$name" 2>/dev/null || true)"
+            case "$target" in
+                */Cellar/agent-bot-machine/*|*/Cellar/managed-machine/*)
+                    printf '%s\n' "${target##*/}"
+                    return ;;
+            esac
+        fi
+    done
+    for name in agent-bot-machine managed-machine; do
+        versions="$(brew list --versions "$name" 2>/dev/null || true)"
+        if [[ -n "$versions" ]]; then
+            awk 'NR == 1 {print $2}' <<<"$versions"
+            return
+        fi
+    done
+    return 0
+}
+
 resolve_brew_owner_name() {
     local owner="$1"
     local clean="${owner//[()]/}"

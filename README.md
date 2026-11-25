@@ -17,6 +17,9 @@ On an Apple Silicon Mac running macOS 15 or later, open Terminal and run the pub
 
 The installer downloads the public package from [true-line/agent-bot-machine](https://github.com/true-line/agent-bot-machine). If Homebrew already belongs to another administrator, macOS asks permission to run Homebrew in that account. A successful install prints a confirmation. The confirmation includes the installed version. Rerun the installer to upgrade Machine from its public tap.
 
+The installer selects the published formula from the verified tap. After an
+upgrade, Machine resumes setup using the active Homebrew keg.
+
 To pair a new HQ with Machine on macOS, the signed-in owner must approve its
 exact Machine challenge. Fresh approvals await a compatible unbundled
 owner-presence provider. Existing pairings continue to use their saved pins.

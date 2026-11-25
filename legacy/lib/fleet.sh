@@ -128,7 +128,7 @@ managed_machine_ref() {
         return
     fi
     if command -v brew >/dev/null 2>&1; then
-        version="$(brew list --versions managed-machine 2>/dev/null | awk 'NR == 1 { print $2 }')"
+        version="$(brew_machine_version)"
         if [[ -n "$version" ]]; then
             printf 'v%s\n' "$version"
             return
