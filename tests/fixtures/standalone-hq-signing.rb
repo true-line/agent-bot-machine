@@ -70,6 +70,12 @@ Dir.mktmpdir('standalone-machine') do |base|
   File.write(binary, 'public fixture')
   refused('standard Machine installation') { tool.operate(:declare) }
   File.unlink(binary)
+  %w[managed-machine agent-bot-machine].each do |name|
+    rack = File.join(prefix, 'Cellar', name)
+    FileUtils.mkdir_p(rack)
+    refused('standard Machine installation') { tool.operate(:declare) }
+    Dir.rmdir(rack)
+  end
   tool.operate(:declare)
   gate = File.join(dir, StandaloneHQSigning::GATE)
   raise unless File.stat(gate).mode & 0777 == 0640

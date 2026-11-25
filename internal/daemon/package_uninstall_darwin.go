@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/qwts/managed-machine/internal/provider/brew"
 	"golang.org/x/sys/unix"
 )
 
@@ -86,6 +87,12 @@ func approvedPriorKeydWithChecks(prior, current, digest string, uid int,
 }
 
 var macPackagePrefixes = [...]string{"/opt/homebrew", "/usr/local"}
+var machineFormulaNames = [...]string{brew.MachineFormula, brew.LegacyMachineFormula}
+
+type homebrewMachinePackage struct {
+	prefix string
+	name   string
+}
 
 func uninstallMacPackage(deps Deps) error {
 	executable, err := os.Executable()
@@ -106,10 +113,11 @@ func removeMacPackage(deps Deps, executable string, prefixes []string, observe p
 	if !caller.DarwinAdmin {
 		return errors.New("run uninstall as the macOS Homebrew prefix administrator")
 	}
-	prefix, err := activeMachinePackage(executable, prefixes)
+	pkg, err := activeMachinePackage(executable, prefixes)
 	if err != nil {
 		return err
 	}
+	prefix := pkg.prefix
 	owner, err := PrefixOwner(prefix)
 	if err != nil || (owner != caller.Username && owner != strconv.Itoa(caller.UID)) {
 		return errors.New("uninstall requires the owner of the active Homebrew prefix")
@@ -137,37 +145,39 @@ func removeMacPackage(deps Deps, executable string, prefixes []string, observe p
 	if err := observe.requireHQAbsent(); err != nil {
 		return err
 	}
-	if err := uninstallHomebrewFormula(prefix, caller.RegisteredHome); err != nil {
+	if err := uninstallHomebrewFormula(prefix, pkg.name, caller.RegisteredHome); err != nil {
 		return err
 	}
-	for _, path := range []string{"bin/managed-machine", "bin/agent-machine", "bin/agent-bot-keyd", "opt/managed-machine"} {
+	for _, path := range []string{"bin/managed-machine", "bin/agent-machine", "bin/agent-bot-keyd", "opt/managed-machine", "opt/agent-bot-machine"} {
 		if _, err := os.Lstat(filepath.Join(prefix, path)); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("Homebrew did not remove the Machine package links")
 		}
 	}
-	kegs, err := os.ReadDir(filepath.Join(prefix, "Cellar", "managed-machine"))
-	if !errors.Is(err, os.ErrNotExist) && (err != nil || len(kegs) != 0) {
-		return errors.New("Homebrew retained Machine kegs; inspect them before removing anything else")
+	for _, name := range machineFormulaNames {
+		kegs, err := os.ReadDir(filepath.Join(prefix, "Cellar", name))
+		if !errors.Is(err, os.ErrNotExist) && (err != nil || len(kegs) != 0) {
+			return errors.New("Homebrew retained Machine kegs; inspect them before removing anything else")
+		}
 	}
 	return lock.Close()
 }
 
-func activeMachinePackage(executable string, prefixes []string) (string, error) {
-	var selected string
+func activeMachinePackage(executable string, prefixes []string) (homebrewMachinePackage, error) {
+	var selected homebrewMachinePackage
 	for _, prefix := range prefixes {
-		opt := filepath.Join(prefix, "opt", "managed-machine")
-		if _, err := os.Lstat(opt); errors.Is(err, os.ErrNotExist) {
-			continue
-		} else if err != nil {
-			return "", err
+		name, keg, err := machinePackageOpt(prefix)
+		if err != nil {
+			return homebrewMachinePackage{}, err
 		}
-		keg, err := filepath.EvalSymlinks(opt)
-		if err != nil || filepath.Dir(keg) != filepath.Join(prefix, "Cellar", "managed-machine") {
-			return "", errors.New("cannot verify the active Homebrew Machine keg")
+		if keg == "" {
+			continue
 		}
 		entries, err := os.ReadDir(filepath.Dir(keg))
 		if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(keg) {
-			return "", errors.New("the Machine Cellar contains more than the active keg or cannot be inspected; reconcile old versions with Homebrew and retry")
+			return homebrewMachinePackage{}, errors.New("the Machine Cellar contains more than the active keg or cannot be inspected; reconcile old versions with Homebrew and retry")
+		}
+		if err := verifyOtherMachineRack(prefix, name, filepath.Dir(keg)); err != nil {
+			return homebrewMachinePackage{}, err
 		}
 		for _, name := range []string{"managed-machine", "agent-machine", "agent-bot-keyd"} {
 			link, err := os.Stat(filepath.Join(prefix, "bin", name))
@@ -175,28 +185,28 @@ func activeMachinePackage(executable string, prefixes []string) (string, error) 
 			if name == "agent-machine" {
 				alias, err := os.Readlink(targetPath)
 				if err != nil || alias != "managed-machine" {
-					return "", errors.New("cannot verify the Machine command alias")
+					return homebrewMachinePackage{}, errors.New("cannot verify the Machine command alias")
 				}
 				targetPath = filepath.Join(keg, "bin", "managed-machine")
 			}
 			target, targetErr := os.Lstat(targetPath)
 			if err != nil || targetErr != nil || !target.Mode().IsRegular() || !os.SameFile(link, target) {
-				return "", errors.New("cannot verify the active Homebrew Machine package links")
+				return homebrewMachinePackage{}, errors.New("cannot verify the active Homebrew Machine package links")
 			}
 		}
 		running, err := os.Stat(executable)
 		core, coreErr := os.Lstat(filepath.Join(keg, "bin", "managed-machine"))
-		if err != nil || coreErr != nil || !core.Mode().IsRegular() || !os.SameFile(running, core) || selected != "" {
-			return "", errors.New("run uninstall with the active Homebrew Machine executable; a staged, custom or second installation must be reconciled separately")
+		if err != nil || coreErr != nil || !core.Mode().IsRegular() || !os.SameFile(running, core) || selected.prefix != "" {
+			return homebrewMachinePackage{}, errors.New("run uninstall with the active Homebrew Machine executable; a staged, custom or second installation must be reconciled separately")
 		}
 		receipt := filepath.Join(keg, "INSTALL_RECEIPT.json")
 		info, err := os.Lstat(receipt)
 		if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
-			return "", errors.New("cannot verify the Machine Homebrew receipt")
+			return homebrewMachinePackage{}, errors.New("cannot verify the Machine Homebrew receipt")
 		}
 		f, err := os.Open(receipt)
 		if err != nil {
-			return "", err
+			return homebrewMachinePackage{}, err
 		}
 		var tab struct{ Source struct{ Tap string } }
 		dec := json.NewDecoder(io.LimitReader(f, 1<<20))
@@ -204,14 +214,61 @@ func activeMachinePackage(executable string, prefixes []string) (string, error) 
 		extra := dec.Decode(new(any))
 		f.Close()
 		if err != nil || extra != io.EOF || tab.Source.Tap != machineTap {
-			return "", errors.New("Homebrew receipt does not identify the Machine tap")
+			return homebrewMachinePackage{}, errors.New("Homebrew receipt does not identify the Machine tap")
 		}
-		selected = prefix
+		selected = homebrewMachinePackage{prefix: prefix, name: name}
 	}
-	if selected == "" {
-		return "", errors.New("no verified Homebrew installation; for a manually installed binary, uninstall its user services first and remove only the reviewed binary from its original install prefix")
+	if selected.prefix == "" {
+		return homebrewMachinePackage{}, errors.New("no verified Homebrew installation; for a manually installed binary, uninstall its user services first and remove only the reviewed binary from its original install prefix")
 	}
 	return selected, nil
+}
+
+func machinePackageOpt(prefix string) (name, keg string, err error) {
+	for _, candidate := range machineFormulaNames {
+		opt := filepath.Join(prefix, "opt", candidate)
+		if _, err := os.Lstat(opt); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return "", "", err
+		}
+		resolved, err := filepath.EvalSymlinks(opt)
+		if err != nil {
+			return "", "", errors.New("cannot verify the active Homebrew Machine keg")
+		}
+		// Homebrew keeps the old opt link pointing to the renamed keg.
+		if name == brew.MachineFormula && candidate == brew.LegacyMachineFormula && resolved == keg {
+			continue
+		}
+		if keg != "" || filepath.Dir(resolved) != filepath.Join(prefix, "Cellar", candidate) {
+			return "", "", errors.New("cannot verify one active Homebrew Machine keg")
+		}
+		name, keg = candidate, resolved
+	}
+	return name, keg, nil
+}
+
+func verifyOtherMachineRack(prefix, name, activeRack string) error {
+	other := brew.LegacyMachineFormula
+	if name == other {
+		other = brew.MachineFormula
+	}
+	rack := filepath.Join(prefix, "Cellar", other)
+	info, err := os.Lstat(rack)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err == nil && info.IsDir() {
+		if entries, err := os.ReadDir(rack); err == nil && len(entries) == 0 {
+			return nil
+		}
+	}
+	if err == nil && info.Mode()&os.ModeSymlink != 0 && other == brew.LegacyMachineFormula {
+		if resolved, err := filepath.EvalSymlinks(rack); err == nil && resolved == activeRack {
+			return nil
+		}
+	}
+	return errors.New("another Machine Homebrew rack exists or cannot be inspected; reconcile it with Homebrew before uninstalling")
 }
 
 func removeStoppedPackageSocket(original packageLeaf, uid int, unlinkStopped func(int, string, int, unix.Stat_t) error) error {
@@ -344,15 +401,22 @@ func isPackageProgram(prefix, program string, keyd bool) bool {
 		return false
 	}
 	dir := filepath.Dir(program)
-	if dir == filepath.Join(prefix, "bin") || dir == filepath.Join(prefix, "opt", "managed-machine", "bin") {
+	if dir == filepath.Join(prefix, "bin") {
 		return true
+	}
+	for _, name := range machineFormulaNames {
+		if dir == filepath.Join(prefix, "opt", name, "bin") {
+			return true
+		}
 	}
 	return isPackageKegBin(prefix, dir)
 }
 
 func isPackageKegBin(prefix, dir string) bool {
 	version := filepath.Dir(dir)
-	return filepath.Base(dir) == "bin" && filepath.Dir(version) == filepath.Join(prefix, "Cellar", "managed-machine") && homebrewKegVersion.MatchString(filepath.Base(version))
+	rack := filepath.Dir(version)
+	return filepath.Base(dir) == "bin" && filepath.Dir(rack) == filepath.Join(prefix, "Cellar") &&
+		slices.Contains(machineFormulaNames[:], filepath.Base(rack)) && homebrewKegVersion.MatchString(filepath.Base(version))
 }
 
 type packageObservers struct {

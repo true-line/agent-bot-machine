@@ -201,7 +201,9 @@ class StandaloneHQSigning
     @prefixes.each do |prefix|
       next unless status(prefix)
       raise 'cannot verify the standard Homebrew prefix' unless File.lstat(prefix).directory?
-      %w[bin/managed-machine bin/agent-machine bin/agent-bot-keyd opt/managed-machine Cellar/managed-machine var/agent-machine].each do |item|
+      %w[bin/managed-machine bin/agent-machine bin/agent-bot-keyd
+         opt/managed-machine opt/agent-bot-machine Cellar/managed-machine Cellar/agent-bot-machine
+         var/agent-machine].each do |item|
         raise 'standard Machine installation or pairing evidence exists' if status(File.join(prefix, item))
       end
       # The local prefix owner's registered home contains the private pair and its revocation.

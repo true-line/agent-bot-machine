@@ -469,6 +469,6 @@ const machineTap = brew.MachineTap
 func verifyHomebrewRemovalPrefix(prefix, home string) error {
 	return brew.VerifyMachineRemovalPrefix(prefix, minimalEnv(home, nil))
 }
-func uninstallHomebrewFormula(prefix, home string) error {
-	return brew.UninstallMachineFormula(prefix, minimalEnv(home, nil))
+func uninstallHomebrewFormula(prefix, name, home string) error {
+	return brew.UninstallMachineFormula(prefix, name, minimalEnv(home, nil))
 }

@@ -124,12 +124,20 @@ func TestHomebrewPackageUninstall(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			testHomebrewPackageUninstall(t, string(template))
+			t.Run("managed-machine", func(t *testing.T) {
+				testHomebrewPackageUninstall(t, string(template), "managed-machine", false)
+			})
+			t.Run("agent-bot-machine", func(t *testing.T) {
+				testHomebrewPackageUninstall(t, string(template), "agent-bot-machine", false)
+			})
+			t.Run("migrated", func(t *testing.T) {
+				testHomebrewPackageUninstall(t, string(template), "agent-bot-machine", true)
+			})
 		})
 	}
 }
 
-func testHomebrewPackageUninstall(t *testing.T, keydTemplate string) {
+func testHomebrewPackageUninstall(t *testing.T, keydTemplate, formula string, migrated bool) {
 	base, err := os.MkdirTemp("/private/tmp", "abu.")
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +145,7 @@ func testHomebrewPackageUninstall(t *testing.T, keydTemplate string) {
 	t.Cleanup(func() { os.RemoveAll(base) })
 	home := filepath.Join(base, "home")
 	prefix := filepath.Join(base, "prefix")
-	keg := filepath.Join(prefix, "Cellar", "managed-machine", "1.0.0")
+	keg := filepath.Join(prefix, "Cellar", formula, "1.0.0")
 	for _, p := range []string{filepath.Join(keg, "bin"), filepath.Join(prefix, "bin"), filepath.Join(prefix, "opt"), filepath.Join(home, "Library", "LaunchAgents")} {
 		if err := os.MkdirAll(p, 0700); err != nil {
 			t.Fatal(err)
@@ -149,8 +157,16 @@ func testHomebrewPackageUninstall(t *testing.T, keydTemplate string) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Symlink(keg, filepath.Join(prefix, "opt", "managed-machine")); err != nil {
+	if err := os.Symlink(keg, filepath.Join(prefix, "opt", formula)); err != nil {
 		t.Fatal(err)
+	}
+	if migrated {
+		if err := os.Symlink(keg, filepath.Join(prefix, "opt", "managed-machine")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Dir(keg), filepath.Join(prefix, "Cellar", "managed-machine")); err != nil {
+			t.Fatal(err)
+		}
 	}
 	core := filepath.Join(keg, "bin", "managed-machine")
 	put(core, "fixture", 0700)
@@ -169,6 +185,12 @@ func testHomebrewPackageUninstall(t *testing.T, keydTemplate string) {
 		t.Fatal("accepted another tap")
 	}
 	put(receipt, `{"source":{"tap":"true-line/agent-bot-machine"}}`, 0600)
+	if pkg, err := activeMachinePackage(core, []string{prefix}); err != nil || pkg.name != formula {
+		t.Fatalf("select active formula %s: %v %v", formula, pkg, err)
+	}
+	if !isPackageKegBin(prefix, filepath.Dir(core)) || !isPackageProgram(prefix, core, false) {
+		t.Fatal("did not recognize the verified Machine keg path")
+	}
 	older := filepath.Join(filepath.Dir(keg), "0.9.0")
 	if err := os.Mkdir(older, 0700); err != nil {
 		t.Fatal(err)
@@ -178,6 +200,22 @@ func testHomebrewPackageUninstall(t *testing.T, keydTemplate string) {
 	}
 	if err := os.Remove(older); err != nil {
 		t.Fatal(err)
+	}
+	if !migrated {
+		other := "managed-machine"
+		if formula == other {
+			other = "agent-bot-machine"
+		}
+		unlinked := filepath.Join(prefix, "Cellar", other, "1.0.0")
+		if err := os.MkdirAll(unlinked, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := activeMachinePackage(core, []string{prefix}); err == nil {
+			t.Fatal("accepted an unlinked keg under the other formula name")
+		}
+		if err := os.Remove(unlinked); err != nil {
+			t.Fatal(err)
+		}
 	}
 	manual := filepath.Join(base, "managed-machine")
 	put(manual, "fixture", 0700)
@@ -198,20 +236,22 @@ func testHomebrewPackageUninstall(t *testing.T, keydTemplate string) {
 		}
 		put(filepath.Join(home, "Library", "LaunchAgents", label+".plist"), text, 0600)
 	}
-	put(filepath.Join(prefix, "bin", "brew"), `#!/bin/sh
+	put(filepath.Join(prefix, "bin", "brew"), strings.ReplaceAll(`#!/bin/sh
 set -eu
 dir=$(cd "$(dirname "$0")/.." && pwd -P)
 case "$1" in
 --prefix) echo "$dir";;
 --cellar) echo "$dir/Cellar";;
 uninstall) test "$HOMEBREW_NO_AUTOREMOVE" = 1 || exit 1
- test "$#" = 3 && test "$2" = --formula && test "$3" = true-line/agent-bot-machine/managed-machine || exit 1
+ test "$#" = 3 && test "$2" = --formula && test "$3" = true-line/agent-bot-machine/{FORMULA} || exit 1
  test ! -e "$dir/refuse" || exit 1
- rm "$dir/bin/managed-machine" "$dir/bin/agent-machine" "$dir/bin/agent-bot-keyd" "$dir/opt/managed-machine"
- rm -r "$dir/Cellar/managed-machine";;
+ rm "$dir/bin/managed-machine" "$dir/bin/agent-machine" "$dir/bin/agent-bot-keyd" "$dir/opt/{FORMULA}"
+ if test -L "$dir/opt/managed-machine"; then rm "$dir/opt/managed-machine"; fi
+ if test -L "$dir/Cellar/managed-machine"; then rm "$dir/Cellar/managed-machine"; fi
+ rm -r "$dir/Cellar/{FORMULA}";;
 *) exit 1;;
 esac
-`, 0700)
+`, "{FORMULA}", formula), 0700)
 	for path, mode := range map[string]os.FileMode{home: 0750, filepath.Join(home, "Library"): 0755} {
 		if err := os.Chmod(path, mode); err != nil {
 			t.Fatal(err)
