@@ -175,16 +175,15 @@ are rejected. With
 
 ### Release automation
 
-The public Darwin release requires the organization publisher True Line AI LLC on
-both executables. Before enabling a new certificate, review its complete public
-DER for identifying personal information, including all subject fields and
-extensions. Add only its SHA-256 digest to `.github/macos-public-publisher-sha256`
-through a reviewed change. The existing Team ID and signing requirements still
-apply. An empty allowlist prevents public signing. Private
-local signing confers no release authorization.
+The public Darwin release requires a pinned Developer ID Application
+certificate from Team `Z5DM34QS5U` on both executables. The pin in
+`.github/macos-public-publisher-sha256` identifies the complete certificate
+DER by SHA-256. The initial pin is the certificate used by both executables
+in the published v0.12.4 archive. Review any certificate rotation before
+adding its digest. An empty list prevents public signing.
 
-The release workflow checks the embedded organization, full publisher name and
-reviewed leaf on the signed binaries before notarization, on the repacked
+The release workflow verifies the Apple signing chain, Team ID, executable
+identifier and pinned leaf on both binaries before notarization, on the repacked
 archive before draft upload, and on the bytes downloaded before publication.
 It verifies the complete draft asset inventory and digests immediately before
 publishing the checked release ID. Both a fresh publication and a retry require

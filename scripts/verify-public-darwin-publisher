@@ -8,16 +8,18 @@ refuse() { echo 'Public macOS publisher verification failed' >&2; exit 1; }
 [[ "$#" == 1 && "$1" == --configured ]] && exit 0
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-org='True Line AI LLC'
+team=Z5DM34QS5U
 if [[ "${1:-}" == --identity ]]; then
-    [[ "$#" == 3 && "$3" =~ ^[A-Z0-9]{10}$ ]] || refuse
-    label="Developer ID Application: $org ($3)"
+    [[ "$#" == 3 && "$3" == "$team" ]] || refuse
     # codesign selects identities by SHA-1. Link usable identities to the
     # approved SHA-256 of the same certificate in this release keychain.
     security find-identity -v -p codesigning "$2" 2>/dev/null |
-        awk -F '"' -v label="$label" '$2 == label { print $1 }' |
+        awk -F '"' -v suffix=" ($team)" '
+            index($2, "Developer ID Application: ") == 1 &&
+            substr($2, length($2) - length(suffix) + 1) == suffix { print $1 }
+        ' |
         awk '{print toupper($2)}' > "$work/identities" || refuse
-    identity="$(security find-certificate -a -Z -c "$label" "$2" 2>/dev/null |
+    identity="$(security find-certificate -a -Z "$2" 2>/dev/null |
         awk '
             FILENAME == ARGV[1] { pins[$0] = 1; next }
             FILENAME == ARGV[2] { usable[$0] = 1; next }
@@ -48,9 +50,7 @@ for name in managed-machine agent-bot-keyd; do
     if [[ "$name" == managed-machine ]]; then id=ai.true-line.agent-bot-machine
     else id=ai.true-line.agent-bot-keyd; fi
     bin="$tree/$name"
-    team="$(codesign -d --verbose=2 "$bin" 2>&1 | sed -n 's/^TeamIdentifier=//p')" || refuse
-    [[ "$team" =~ ^[A-Z0-9]{10}$ ]] || refuse
-    requirement="anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"$team\" and certificate leaf[subject.O] = \"$org\" and certificate leaf[subject.CN] = \"Developer ID Application: $org ($team)\" and identifier \"$id\""
+    requirement="anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"$team\" and identifier \"$id\""
     codesign --verify --strict "-R=$requirement" "$bin" >/dev/null 2>&1 || refuse
     prefix="$work/$name-cert"
     codesign -d --extract-certificates="$prefix" "$bin" >/dev/null 2>&1 || refuse
