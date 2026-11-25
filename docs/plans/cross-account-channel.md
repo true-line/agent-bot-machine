@@ -286,6 +286,12 @@ If macOS denies user interaction while reading existing device custody from
 Keychain or creating the Secure Enclave device key, the admin initialization
 command identifies which operation was refused and exits unsuccessfully. Requests from HQ receive the usual custody-unavailable refusal.
 
+The hosted signed-package qualification prints the native custody phases before
+running them. Standalone identity verification, device initialization and
+revocation each have a 20-second deadline. A foreground Machine that fails to
+stop within 10 seconds of SIGTERM fails the fixture. These deadlines apply to
+the disposable runner and leave the production command behavior intact.
+
 An authenticated `hq-device` request selects one of these operations. Each
 one binds the original request nonce and the kernel-authenticated HQ UID.
 Responses use the normal pinned Machine signature. The admin's keyd verifies

@@ -50,9 +50,18 @@ machine_pid=
 machine_socket_id=
 stop_fixture_machine() {
     [[ -n "$machine_pid" ]] || return 0
-    kill "$machine_pid" 2>/dev/null || true
-    wait "$machine_pid" 2>/dev/null || true
+    local pid="$machine_pid" attempt
     machine_pid=
+    kill "$pid" 2>/dev/null || true
+    for ((attempt=0; attempt<100; attempt++)); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+        fail 'the foreground Machine did not stop within 10 seconds of SIGTERM'
+    fi
+    wait "$pid" 2>/dev/null || true
     if [[ -n "$machine_socket_id" && ! -L "$channel" && -S "$channel" && "$(stat -f '%d:%i' "$channel")" == "$machine_socket_id" ]]; then
         rm "$channel"
     fi
