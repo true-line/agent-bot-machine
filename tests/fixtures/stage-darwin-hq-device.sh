@@ -8,17 +8,17 @@ verify_device_release_signature() {
 }
 
 verify_homebrew_device_install() {
-    local prefix="$1" version="$2" unpack="$3" source_commit="${4:-}" name mode identifier
+    local prefix="$1" version="$2" unpack="$3" source_commit="${4:-}" slug="${5:-managed-machine}" name mode identifier
     if [[ -n "$source_commit" ]]; then
-        local receipt="$prefix/Cellar/managed-machine/$version/libexec/RELEASE_COMMIT"
+        local receipt="$prefix/Cellar/$slug/$version/libexec/RELEASE_COMMIT"
         [[ "$source_commit" =~ ^[0-9a-f]{40}$ && -f "$receipt" && ! -L "$receipt" ]] &&
             cmp -s "$receipt" <(printf '%s\n' "$source_commit") || return 1
     fi
     for name in managed-machine agent-bot-keyd; do
         if [[ "$name" == managed-machine ]]; then mode=0555; identifier=ai.true-line.agent-bot-machine
         else mode=0700; identifier=ai.true-line.agent-bot-keyd; fi
-        verify_homebrew_device_binary "$prefix" "$version" "$name" "$mode" "$unpack/$name" || return 1
-        verify_device_release_signature "$prefix/Cellar/managed-machine/$version/bin/$name" "$identifier" || return 1
+        verify_homebrew_device_binary "$prefix" "$version" "$name" "$mode" "$unpack/$name" "$slug" || return 1
+        verify_device_release_signature "$prefix/Cellar/$slug/$version/bin/$name" "$identifier" || return 1
     done
     local installed_version
     installed_version="$("$prefix/bin/managed-machine" --version)" || return 1
@@ -29,15 +29,17 @@ verify_homebrew_device_install() {
 qualify_homebrew_device_release() (
     set -euo pipefail
     local brew="$1" prefix="$2" version="$3" digest="$4" unpack="$5" source_commit="${6:-}"
-    local formula=true-line/agent-bot-machine/managed-machine
+    local slug="${7:-managed-machine}"
+    [[ "$slug" == managed-machine || "$slug" == agent-bot-machine ]] || exit 1
+    local formula="true-line/agent-bot-machine/$slug"
     umask 022
-    install_homebrew_device_release "$brew" "$version" "$digest"
-    verify_homebrew_device_install "$prefix" "$version" "$unpack" "$source_commit" >/dev/null 2>&1 || {
+    install_homebrew_device_release "$brew" "$version" "$digest" "$slug"
+    verify_homebrew_device_install "$prefix" "$version" "$unpack" "$source_commit" "$slug" >/dev/null 2>&1 || {
         echo 'FAIL: installed Homebrew release verification' >&2; exit 1;
     }
     "$brew" test "$formula" >/dev/null 2>&1 || { echo 'FAIL: installed Homebrew formula test' >&2; exit 1; }
     "$brew" reinstall --formula "$formula" >/dev/null 2>&1 || { echo 'FAIL: Homebrew formula reinstall' >&2; exit 1; }
-    verify_homebrew_device_install "$prefix" "$version" "$unpack" "$source_commit" >/dev/null 2>&1 || {
+    verify_homebrew_device_install "$prefix" "$version" "$unpack" "$source_commit" "$slug" >/dev/null 2>&1 || {
         echo 'FAIL: reinstalled Homebrew release verification' >&2; exit 1;
     }
     "$brew" test "$formula" >/dev/null 2>&1 || { echo 'FAIL: reinstalled Homebrew formula test' >&2; exit 1; }
@@ -47,7 +49,7 @@ qualify_homebrew_device_release() (
 # Only the historical checksum-qualified archive predates the uninstall command.
 qualify_published_device_lifecycle() (
     set -euo pipefail
-    local recipe="$1" version="$2" unpack="$3" source_commit="$4" tapdir="$5" fixtures mode
+    local recipe="$1" version="$2" unpack="$3" source_commit="$4" tapdir="$5" slug="${6:-managed-machine}" fixtures mode
     fixtures="$(dirname "${BASH_SOURCE[0]}")"
     # The harness runs at the workflow revision. Check the release source in the detached tap.
     [[ "$source_commit" =~ ^[0-9a-f]{40}$ &&
@@ -67,7 +69,7 @@ qualify_published_device_lifecycle() (
     # verified publish commit as the expected receipt for both installations.
     printf '%s\n' "$source_commit" > "$unpack/RELEASE_COMMIT"
     MM_KEYD_CUSTODY_TEST=1 bash "$fixtures/with-keyd-test-keychain.sh" \
-        bash "$fixtures/homebrew-uninstall-cycle.sh" "$version" "$unpack"
+        bash "$fixtures/homebrew-uninstall-cycle.sh" "$version" "$unpack" "$slug"
 )
 
 # Called by the dedicated-role fixture before enrollment or key creation.
@@ -79,7 +81,10 @@ stage_signed_device_release() {
     unpack_signed_device_release "$MM_HQ_DEVICE_ARCHIVE" "$MM_HQ_DEVICE_SHA256" "$unpack" || fail 'invalid signed device release'
     if [[ "${MM_HQ_DEVICE_HOMEBREW:-false}" == true ]]; then
         tap_homebrew_device_release /opt/homebrew/bin/brew /opt/homebrew
-        qualify_homebrew_device_release /opt/homebrew/bin/brew /opt/homebrew "$MM_HQ_DEVICE_VERSION" "$MM_HQ_DEVICE_SHA256" "$unpack"
+        local formula
+        formula="$(homebrew_device_recipe /opt/homebrew/bin/brew)" || fail 'expected one Machine recipe'
+        formula="${formula##*/}"
+        qualify_homebrew_device_release /opt/homebrew/bin/brew /opt/homebrew "$MM_HQ_DEVICE_VERSION" "$MM_HQ_DEVICE_SHA256" "$unpack" "" "${formula%.rb}"
         custody_dir=/opt/homebrew/bin
         ok 'the active Homebrew Machine and private keyd match the reviewed signed release'
     else

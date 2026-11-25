@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths-ignore:
       - Formula/managed-machine.rb
+      - Formula/agent-bot-machine.rb
   workflow_run:
     workflows: [Release]
     types: [completed]

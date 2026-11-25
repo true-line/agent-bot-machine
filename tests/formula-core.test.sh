@@ -19,7 +19,7 @@ fail() {
 }
 
 [[ -n "$VERSION" ]] || fail "VERSION is empty"
-[[ -f "$ROOT/Formula/managed-machine.rb" ]] || fail "Formula/managed-machine.rb is missing"
+ROOT_RECIPE="$(bash "$ROOT/scripts/machine-homebrew-formula" "$ROOT")"
 
 # Stub brew, and use tests/fixtures/fake-gh for the signing calls, so neither
 # can ever run against the developer machine or GitHub.
@@ -46,7 +46,7 @@ git -C "$REPO" config user.email 'managed-machine-test@example.invalid'
 git -C "$REPO" config commit.gpgsign false
 git -C "$REPO" config tag.gpgsign false
 mkdir -p "$REPO/Formula" "$REPO/skills/managed-machine"
-cp "$ROOT/Formula/managed-machine.rb" "$REPO/Formula/"
+cp "$ROOT/$ROOT_RECIPE" "$REPO/Formula/"
 cp "$ROOT/VERSION" "$REPO/"
 # The skill range is pinned to the fixture's VERSION so prepare's range
 # check passes whether or not the repository has bumped VERSION yet.
@@ -59,12 +59,12 @@ git -C "$REPO" push --quiet -u origin main
 
 (cd "$REPO" && /bin/bash "$ROOT/scripts/release" prepare "$VERSION" >"$TEST_DIR/prepare.out")
 
-FORMULA="$REPO/Formula/managed-machine.rb"
-[[ -f "$FORMULA" ]] || fail "prepared Formula/managed-machine.rb is missing"
+FORMULA="$REPO/$ROOT_RECIPE"
+[[ -f "$FORMULA" ]] || fail "prepared $ROOT_RECIPE is missing"
 
 # A version pin changes release metadata only. The tagged source supplies the
 # complete installation policy, including the checks around keg creation.
-diff -u <(sed -n '/^  STANDALONE_MARKERS = /,$p' "$ROOT/Formula/managed-machine.rb") \
+diff -u <(sed -n '/^  STANDALONE_MARKERS = /,$p' "$ROOT/$ROOT_RECIPE") \
         <(sed -n '/^  STANDALONE_MARKERS = /,$p' "$FORMULA") ||
     fail "release preparation changed the standalone signing guard or formula behavior"
 
@@ -261,8 +261,8 @@ if pre_p01_test is not None:
 PY
 }
 
-pinned="$(sed -nE 's/^  version "([0-9.]+)"$/\1/p' "$ROOT/Formula/managed-machine.rb")"
-verify_formula_structure "$ROOT/Formula/managed-machine.rb" "$pinned"
+pinned="$(sed -nE 's/^  version "([0-9.]+)"$/\1/p' "$ROOT/$ROOT_RECIPE")"
+verify_formula_structure "$ROOT/$ROOT_RECIPE" "$pinned"
 verify_formula_structure "$FORMULA" "$VERSION"
 
 # Exercise `def install` and `test do` in Ruby for both the repository's
@@ -272,7 +272,7 @@ if command -v ruby >/dev/null 2>&1; then
     CORE_BIN="$TEST_DIR/core-managed-machine"
     (cd "$ROOT" && go build -ldflags "-X main.version=$VERSION" -o "$CORE_BIN" ./cmd/managed-machine)
 
-    for target_formula in "$ROOT/Formula/managed-machine.rb" "$FORMULA"; do
+    for target_formula in "$ROOT/$ROOT_RECIPE" "$FORMULA"; do
         ruby - "$target_formula" "$ROOT" "$TEST_DIR" "$CORE_BIN" "$VERSION" <<'RB'
 require "fileutils"
 require "open3"
@@ -281,6 +281,7 @@ require "tmpdir"
 
 formula_path, repo_root, test_dir, core_bin, version_str = ARGV
 formula_src = File.read(formula_path)
+formula_class = File.basename(formula_path, ".rb").split("-").map(&:capitalize).join
 has_guard = formula_src.include?('if File.exist?("legacy/bin/managed-machine")')
 ENV["HOME"] = File.join(test_dir, "home")
 ENV["GIT_TERMINAL_PROMPT"] = "0"
@@ -432,7 +433,7 @@ end
   brew = namespace.const_set(:Homebrew, Module.new)
   brew.const_set(:InstallSteps, Module.new).const_set(:DSL, dsl)
   namespace.module_eval(formula_src, formula_path)
-  recipe = namespace.const_get(:ManagedMachine, false)
+  recipe = namespace.const_get(formula_class, false)
   legacy = recipe.instance_methods(false).include?(:post_install)
   if capability == :complete
     raise "deprecated callback registered" if legacy
@@ -444,6 +445,7 @@ end
 end
 
 load formula_path
+recipe = Object.const_get(formula_class, false)
 
 # Branch 1: post-P01 layout (`legacy/bin/managed-machine` exists).
 post_build = Dir.mktmpdir("build-post-p01-", test_dir)
@@ -462,7 +464,7 @@ system("git", "-C", post_build, "add", ".seed")
 system("git", "-C", post_build, "commit", "--quiet", "-m", "seed")
 
 Dir.chdir(post_build) do
-  f = ManagedMachine.new(post_prefix, post_build, core_bin, version_str)
+  f = recipe.new(post_prefix, post_build, core_bin, version_str)
   f.install
   raise "expected libexec/legacy to exist in post-P01 install" unless (f.libexec / "legacy").exist?
   raise "expected libexec/legacy/bin/managed-machine to be executable" unless (f.libexec / "legacy/bin/managed-machine").executable?
@@ -483,13 +485,13 @@ Dir.chdir(post_build) do
   # The published 0.11.5 archive shipped only the Go executable.
   if source_is_go_only
     legacy_prefix = Dir.mktmpdir("go-only-prefix-", test_dir)
-    go_only = ManagedMachine.new(legacy_prefix, post_build, core_bin, version_str, with_helper: false)
+    go_only = recipe.new(legacy_prefix, post_build, core_bin, version_str, with_helper: false)
     go_only.install
     go_only.post_install
     raise "expected Go-only public install" unless (go_only.bin / "managed-machine").executable?
     raise "unexpected helper in Go-only install" if (go_only.bin / "agent-bot-keyd").exist?
   end
-  f.instance_eval(&ManagedMachine.test_block)
+  f.instance_eval(&recipe.test_block)
 end
 
 # Branch 2: pre-P01 layout (`bin/managed-machine` at root, no `legacy/`),
@@ -539,12 +541,12 @@ if has_guard
   system("git", "-C", pre_build, "commit", "--quiet", "-m", "seed")
 
   Dir.chdir(pre_build) do
-    f = ManagedMachine.new(pre_prefix, pre_build, core_bin, version_str)
+    f = recipe.new(pre_prefix, pre_build, core_bin, version_str)
     f.install
     raise "expected libexec/legacy NOT to exist in pre-P01 install" if (f.libexec / "legacy").exist?
     raise "expected libexec/core/managed-machine to be executable in pre-P01 install" unless (f.libexec / "core/managed-machine").executable?
     raise "expected libexec/setup-hostname to be executable in pre-P01 install" unless (f.libexec / "setup-hostname").executable?
-    f.instance_eval(&ManagedMachine.test_block)
+    f.instance_eval(&recipe.test_block)
   end
 end
 RB
