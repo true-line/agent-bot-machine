@@ -69,8 +69,14 @@ install_formula() {
         formula="$tap/agent-bot-machine"
     fi
     formulae="$("$brew" list -1 --formula --full-name)"
-    if grep -Fxq "$formula" <<<"$formulae" ||
-       { [[ "$formula" == "$tap/agent-bot-machine" ]] && grep -Fxq "$tap/managed-machine" <<<"$formulae"; }; then
+    if [[ "$formula" == "$tap/agent-bot-machine" ]] &&
+       ! grep -Fxq "$formula" <<<"$formulae" && grep -Fxq "$tap/managed-machine" <<<"$formulae"; then
+        # A Git refresh of the tap does not run Homebrew's rename migration.
+        "$brew" migrate --formula "$tap/managed-machine"
+        formulae="$("$brew" list -1 --formula --full-name)"
+        grep -Fxq "$formula" <<<"$formulae" || die "Homebrew did not migrate the Machine formula. Check the tap's rename mapping."
+    fi
+    if grep -Fxq "$formula" <<<"$formulae"; then
         # Homebrew treats a current formula as a successful upgrade. A pin
         # can also skip an upgrade, so confirm that no update is outstanding.
         "$brew" upgrade "$formula"

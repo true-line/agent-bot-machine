@@ -77,7 +77,7 @@ opt="$PREFIX/opt/$formula_name"
 case "$*" in
   --prefix|--repository) echo "$PREFIX" ;;
   'commands --quiet') echo trust ;;
-  'list -1 --formula --full-name') [ ! -e "$PREFIX/installed" ] || echo "${BREW_INSTALLED_FORMULA:-$FORMULA}" ;;
+  'list -1 --formula --full-name') [ ! -e "$PREFIX/installed" ] || cat "$PREFIX/installed" ;;
   "outdated --formula --quiet $FORMULA") if [ "${PINNED:-0}" = 1 ]; then echo "$FORMULA"; exit 1; fi ;;
   "trust $ORIGIN") echo "$*" >> "$LOG" ;;
   "tap true-line/agent-bot-machine $ORIGIN")
@@ -87,7 +87,7 @@ case "$*" in
      /usr/bin/git -C "$TAPDIR" remote set-url origin "$ORIGIN" ;;
   "install $FORMULA")
      echo "$*" >> "$LOG"
-     : > "$PREFIX/installed"
+     printf '%s\n' "$FORMULA" > "$PREFIX/installed"
      keg="$opt/bin"
      mkdir -p "$keg" "$(dirname "$record")"
      ln -s "$opt" "$record"
@@ -96,8 +96,20 @@ case "$*" in
      ln -s managed-machine "$keg/agent-machine"
      cp "$keg/managed-machine" "$keg/agent-bot-keyd"
      for name in managed-machine agent-machine agent-bot-keyd; do ln -s "$keg/$name" "$PREFIX/bin/$name"; done ;;
+  'migrate --formula true-line/agent-bot-machine/managed-machine')
+     echo "$*" >> "$LOG"
+     test "$FORMULA" = true-line/agent-bot-machine/agent-bot-machine
+     test "$(cat "$PREFIX/installed")" = true-line/agent-bot-machine/managed-machine
+     test -f "$TAPDIR/formula_renames.json"
+     test ! -e "$opt"
+     mv "$PREFIX/opt/managed-machine" "$opt"
+     ln -s "$opt" "$PREFIX/opt/managed-machine"
+     rm "$PREFIX/var/homebrew/linked/managed-machine"
+     ln -s "$opt" "$record"
+     printf '%s\n' "$FORMULA" > "$PREFIX/installed" ;;
   "upgrade $FORMULA")
      echo "$*" >> "$LOG"
+     test "$(cat "$PREFIX/installed")" = "$FORMULA"
      if [ -n "${NEXT_KEG:-}" ]; then
          rm "$opt"
          ln -s "$NEXT_KEG" "$opt"
@@ -365,25 +377,39 @@ cmp "$LOG" "$TEST_DIR/expected"
 # The verified tap can offer the new formula name after the supported release.
 (
     original_formula="$FORMULA"
-    export PREFIX="$TEST_DIR/renamed-homebrew"
-    export TAPDIR="$PREFIX/Library/Taps/true-line/homebrew-agent-bot-machine"
-    export FORMULA="true-line/agent-bot-machine/agent-bot-machine"
-    export BREW_FIXTURE_FORMULA="$FORMULA"
-    mkdir -p "$PREFIX/bin" "$UPSTREAM/Formula"
-    cp "$TEST_DIR/homebrew-fixture" "$PREFIX/bin/brew"
+    renamed_formula="true-line/agent-bot-machine/agent-bot-machine"
+    renamed_fixture_prefix() {
+        export PREFIX="$TEST_DIR/$1"
+        export TAPDIR="$PREFIX/Library/Taps/true-line/homebrew-agent-bot-machine"
+        mkdir -p "$PREFIX/bin"
+        cp "$TEST_DIR/homebrew-fixture" "$PREFIX/bin/brew"
+        sed -e "s|\"/Library/Application Support|\"$FIXTURE_LIBRARY/Application Support|g" -e "s|/opt/homebrew|$PREFIX|g" \
+            -e "s|/usr/bin/osascript|$TEST_DIR/bin/osascript|g" -e "s|/usr/bin/git|$TEST_DIR/bin/git|g" \
+            -e "s|/usr/bin/stat|$TEST_DIR/bin/stat|g" "$ROOT/install.sh" > "$TEST_DIR/install-renamed.sh"
+    }
+    renamed_fixture_prefix renamed-homebrew
+    BREW_FIXTURE_FORMULA="$original_formula" bash "$TEST_DIR/install-renamed.sh" > "$TEST_DIR/legacy-result"
+    [[ "$(cat "$PREFIX/installed")" == "$original_formula" && ! -e "$PREFIX/opt/agent-bot-machine" ]]
+
+    mkdir -p "$UPSTREAM/Formula"
     printf '# fixture for the renamed Homebrew package\n' > "$UPSTREAM/Formula/agent-bot-machine.rb"
-    /usr/bin/git -C "$UPSTREAM" add Formula/agent-bot-machine.rb
+    printf '{"managed-machine":"agent-bot-machine"}\n' > "$UPSTREAM/formula_renames.json"
+    /usr/bin/git -C "$UPSTREAM" add Formula/agent-bot-machine.rb formula_renames.json
     /usr/bin/git -C "$UPSTREAM" commit -qm rename
-    sed -e "s|\"/Library/Application Support|\"$FIXTURE_LIBRARY/Application Support|g" -e "s|/opt/homebrew|$PREFIX|g" \
-        -e "s|/usr/bin/osascript|$TEST_DIR/bin/osascript|g" -e "s|/usr/bin/git|$TEST_DIR/bin/git|g" \
-        -e "s|/usr/bin/stat|$TEST_DIR/bin/stat|g" "$ROOT/install.sh" > "$TEST_DIR/install-renamed.sh"
+    export BREW_FIXTURE_FORMULA="$renamed_formula"
     : > "$LOG"
-    bash "$TEST_DIR/install-renamed.sh" > "$TEST_DIR/renamed-result"
-    grep -Fxq "install $FORMULA" "$LOG"
+    if BREW_FAIL=migrate bash "$TEST_DIR/install-renamed.sh" --update > "$TEST_DIR/renamed-result" 2>&1; then
+        echo 'Installation continued after failed migration' >&2; exit 1
+    fi
+    [[ "$(cat "$PREFIX/installed")" == "$original_formula" && ! -e "$PREFIX/opt/agent-bot-machine" ]]
+    ! grep -q '^upgrade ' "$LOG"
+
+    : > "$LOG"
+    bash "$TEST_DIR/install-renamed.sh" --update > "$TEST_DIR/renamed-result"
+    printf '%s\n' "trust $ORIGIN" "migrate --formula $original_formula" "upgrade $renamed_formula" > "$TEST_DIR/renamed-expected"
+    cmp "$LOG" "$TEST_DIR/renamed-expected"
+    [[ "$(cat "$PREFIX/installed")" == "$renamed_formula" ]]
     grep -Fq "$PREFIX/opt/agent-bot-machine/bin/managed-machine" "$TEST_DIR/renamed-result"
-    : > "$LOG"
-    BREW_INSTALLED_FORMULA="$original_formula" bash "$TEST_DIR/install-renamed.sh" --update
-    grep -Fxq "upgrade $FORMULA" "$LOG"
 
     opt="$PREFIX/opt/agent-bot-machine"
     rack="$PREFIX/Cellar/agent-bot-machine"
@@ -406,6 +432,13 @@ LIB
     done
     NEXT_KEG="$rack/new" "$rack/old/libexec/legacy/scripts/update" > "$TEST_DIR/renamed-resume"
     grep -Fxq 'renamed setup resumed in new' "$TEST_DIR/renamed-resume"
+
+    renamed_fixture_prefix new-homebrew
+    : > "$LOG"
+    bash "$TEST_DIR/install-renamed.sh" > "$TEST_DIR/renamed-result"
+    grep -Fxq "install $renamed_formula" "$LOG"
+    ! grep -q '^migrate ' "$LOG"
+    grep -Fq "$PREFIX/opt/agent-bot-machine/bin/managed-machine" "$TEST_DIR/renamed-result"
 )
 
 # Private configuration and credential management are optional legacy workflows.
