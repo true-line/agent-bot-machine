@@ -1046,7 +1046,12 @@ approve Provider access or a protected start by itself.
 The pinned driver plan must be canonical JSON for Contracts v0.10.3. Machine
 derives the Q plan ID, install digest, owner-plan hash, candidate manifest,
 expiry and A key from the saved install plan; it writes the driver and Q plan
-to fixed A-private `0600` files without replacing occupied bytes. The result
+to fixed A-private `0600` files without replacing occupied bytes. The command
+uses the Machine public key fixed in the reviewed install plan, so a fresh
+host need not already have a Soul authority pin. If the root pin exists, it
+must match that key. The root stage also requires its fingerprint to match
+the separate paired install approval before accepting the signed Q envelope.
+The result
 reports `plan_id`, `plan_sha256`, `plan_path`, `driver_plan_sha256`,
 `installed_plan_id`, `installed_plan_digest`, `approval_purpose` and
 `approved:false`. The owner separately approves that exact Q plan under

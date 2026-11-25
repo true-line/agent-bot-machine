@@ -88,6 +88,33 @@ func stage2aLocalTestQWriteOrCheck(dir *os.File, name string, raw []byte, uid, g
 	return dir.Sync()
 }
 
+// The owner-reviewed install fixes the Machine key before root publishes the
+// Soul pin. An existing pin is an additional constraint, never a source for
+// replacing that reviewed key. Root staging also checks the separate paired
+// install approval's fingerprint before accepting a Q envelope.
+func stage2aLocalTestQReviewedMachineKey(request *SoulProtectedLaunchInstall,
+	fingerprint, pinPath string, uid, gid uint32) (ed25519.PublicKey, error) {
+	if request == nil {
+		return nil, errStage2aReservationAuthority
+	}
+	key, err := hex.DecodeString(request.MachinePublicKey)
+	if err != nil || len(key) != ed25519.PublicKeySize ||
+		hex.EncodeToString(key) != request.MachinePublicKey ||
+		(fingerprint != "" && fmt.Sprintf("%x", sha256.Sum256(key)) != fingerprint) {
+		return nil, errStage2aReservationAuthority
+	}
+	if _, err := os.Lstat(pinPath); errors.Is(err, os.ErrNotExist) {
+		return ed25519.PublicKey(key), nil
+	} else if err != nil {
+		return nil, errStage2aReservationAuthority
+	}
+	pin, err := stage2aReadProtectedFileForUID(pinPath, ed25519.PublicKeySize, uid, gid, 0444)
+	if err != nil || !bytes.Equal(pin, key) {
+		return nil, errStage2aReservationAuthority
+	}
+	return ed25519.PublicKey(key), nil
+}
+
 // local-test-q-plan runs only as A. The saved install plan already fixes the Q
 // ID, owner plan and candidate; the CLI derives those fields, never accepts
 // them from HQ or the caller's driver file.
@@ -132,9 +159,10 @@ func runStage2aLocalTestQPlan(_ Deps, ctx cli.Context, args []string) cli.Result
 		stage2aDecodeExact(driverRaw, &driver) != nil || !driver.pinned() {
 		return failure(diag.MembersListInvalid, "Q driver plan must be canonical and pin Contracts v0.10.3")
 	}
-	key, err := stage2aReadRootFile(SoulAuthorityPin, ed25519.PublicKeySize, 0444)
-	if err != nil || len(key) != ed25519.PublicKeySize {
-		return failure(diag.MembersPlanFailed, "A's installed Machine public key is unavailable")
+	key, err := stage2aLocalTestQReviewedMachineKey(saved.SoulProtectedLaunch,
+		"", SoulAuthorityPin, 0, 0)
+	if err != nil {
+		return failure(diag.MembersPlanFailed, "reviewed Machine key or existing root pin is invalid")
 	}
 	q, qRaw, digest, err := stage2aLocalTestQCLIPlan(saved, args[1],
 		stage2aReservationSHA256(driverRaw), ed25519.PublicKey(key), time.Now())
@@ -242,9 +270,9 @@ func runStage2aLocalTestQStage(deps Deps, ctx cli.Context, args []string) cli.Re
 		approval.PlanDigest != saved.PlanDigest {
 		return failure(diag.MembersNotApproved, "exact paired install approval is unavailable")
 	}
-	key, err := stage2aReadRootFile(SoulAuthorityPin, ed25519.PublicKeySize, 0444)
-	if err != nil || hex.EncodeToString(key) != saved.SoulProtectedLaunch.MachinePublicKey ||
-		fmt.Sprintf("%x", sha256.Sum256(key)) != approval.MachineFingerprint {
+	key, err := stage2aLocalTestQReviewedMachineKey(saved.SoulProtectedLaunch,
+		approval.MachineFingerprint, SoulAuthorityPin, 0, 0)
+	if err != nil {
 		return failure(diag.MembersNotApproved, "Machine key differs from reviewed owner approval")
 	}
 	replyRaw, err := readQualificationInput(args[1])
