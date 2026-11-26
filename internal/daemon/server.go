@@ -292,12 +292,12 @@ func (h Hooks) reply(req Request) Response {
 			return deviceUnavailable()
 		}
 		return h.HQDevice(req)
-	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aT03PositiveVerb, stage2aT03PrewriteVerb, stage2aT03ReadyVerb, stage2aT03CompleteVerb, stage2aT03SiblingWitnessVerb, stage2aT03DirectChildWitnessVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aCooperativeReserveVerb, stage2aCooperativeReserveResultVerb, stage2aCooperativeAttachVerb, stage2aCooperativeStopVerb, stage2aCooperativeProjectionVerb, stage2aCooperativeProviderVerb, stage2aCooperativeLookupVerb, stage2aCooperativeLiveVerb, stage2aCooperativeAbortVerb, stage2aCooperativeQBeginVerb, stage2aCooperativeQFinishVerb, stage2aCooperativeQWitnessBeginVerb, stage2aCooperativeQWitnessFinishVerb:
+	case stage2aReserveVerb, stage2aExecVerb, stage2aVerifyBVerb, stage2aLookupVerb, stage2aListVerb, stage2aPrepareBVerb, stage2aStopVerb, stage2aFinalizeBVerb, stage2aLiveVerb, stage2aT03PositiveVerb, stage2aT03PrewriteVerb, stage2aT03ReadyVerb, stage2aT03CompleteVerb, stage2aT03SiblingWitnessVerb, stage2aT03DirectChildWitnessVerb, stage2aProviderVerb, stage2aChildReadyVerb, stage2aHelloStartVerb, stage2aHelloFinalizeVerb, stage2aHelloAbortVerb, stage2aPeerRoleVerb, stage2aCooperativeReserveVerb, stage2aCooperativeReserveResultVerb, stage2aCooperativeAttachVerb, stage2aCooperativeStopVerb, stage2aCooperativeProjectionVerb, stage2aCooperativeProviderVerb, stage2aCooperativeLookupVerb, stage2aCooperativeLiveVerb, stage2aCooperativeAbortVerb, stage2aCooperativeQBeginVerb, stage2aCooperativeQFinishVerb, stage2aCooperativeQWitnessBeginVerb, stage2aCooperativeQWitnessFinishVerb, stage2aLocalTestQIssueVerb:
 		if h.Stage2a == nil {
 			return refused(diag.DaemonUnimplemented, "Stage 2a reserve authority is unavailable")
 		}
 		return h.Stage2a(req)
-	case recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose, members.SoulCooperativeLaunchInstallPurpose, stage2aCooperativeRecoveryVerb:
+	case recoveryVerb, upgradeVerb, harnessAccountsVerb, soulRunnerAccountsVerb, soulBridgeAccountsVerb, harnessInstallVerb, harnessRetireVerb, harnessQualificationVerb, members.SoulProtectedLaunchInstallPurpose, members.SoulProtectedLaunchRetirePurpose, members.SoulCooperativeLaunchInstallPurpose, members.Stage2aLocalTestQPurpose, stage2aCooperativeRecoveryVerb:
 		if h.ServiceRecovery == nil {
 			return refused(diag.DaemonUnimplemented, "service recovery is unavailable")
 		}

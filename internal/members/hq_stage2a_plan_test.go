@@ -215,6 +215,29 @@ func TestStage2aHQV0102BrokeredExcludesOnlyReviewedFixtures(t *testing.T) {
 	}
 }
 
+func TestStage2aHQV0103ExcludesExactlyAllFixtures(t *testing.T) {
+	raw, err := os.ReadFile("testdata/stage2a-h-v0103-fixture-free-exclusions.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	if err := json.Unmarshal(raw, &paths); err != nil {
+		t.Fatal(err)
+	}
+	if !hqStage2aValidExclusionsForTag("v0.10.3", paths) ||
+		!hqStage2aValidExclusions(paths) ||
+		hqStage2aValidExclusionsForTag("v0.10.2", paths) ||
+		!hqStage2aBrokeredRelayRequired(&hqStage2aService{ExcludedHQReleasePaths: paths}) {
+		t.Fatal("exact v0.10.3 fixture-free selection or brokered relay refused")
+	}
+	changed := slices.Clone(paths)
+	changed[0] = "vendor/soul-contracts/fixtures/README-other.md"
+	if hqStage2aValidExclusionsForTag("v0.10.3", changed) ||
+		hqStage2aValidExclusionsForTag("v0.10.3", paths[:494]) {
+		t.Fatal("changed or incomplete v0.10.3 fixture selection accepted")
+	}
+}
+
 func TestStage2aHQPlanRefusesFirstInstallAndLinux(t *testing.T) {
 	svc, _ := stage2aHQTestService(t)
 	for _, platform := range []string{PlatformDarwin, ""} {

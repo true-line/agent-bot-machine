@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -106,5 +107,32 @@ func TestStage2aHSourceV3SelectedExcludedClosure(t *testing.T) {
 	}
 	if err := stage2aValidateHSourceSelectionV3(inv, append([]byte(" "), raw...), digest, excluded, nodeDigest); err == nil {
 		t.Fatal("accepted noncanonical manifest")
+	}
+}
+
+func TestStage2aHSourceV3ExactV0103FixtureFreeBound(t *testing.T) {
+	rawPaths, err := os.ReadFile("testdata/stage2a-h-v0103-fixture-free-exclusions.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var excluded []string
+	if err := json.Unmarshal(rawPaths, &excluded); err != nil {
+		t.Fatal(err)
+	}
+	inv, rows, _, nodeDigest := stage2aHSourceTestSelection(t)
+	rows = rows[:3]
+	for _, path := range excluded {
+		rows = append(rows, stage2aHSourceManifestRowV3{Path: path,
+			SHA256: "sha256:" + strings.Repeat("5", 64)})
+	}
+	raw, digest := stage2aHSourceTestManifest(t, rows)
+	if err := stage2aValidateHSourceSelectionV3(inv, raw, digest, excluded, nodeDigest); err != nil {
+		t.Fatalf("exact fixture-free selection refused: %v", err)
+	}
+	changed := append([]string(nil), excluded...)
+	changed[0] = "vendor/soul-contracts/fixtures/README-other.md"
+	if stage2aValidateHSourceSelectionV3(inv, raw, digest, changed, nodeDigest) == nil ||
+		stage2aValidateHSourceSelectionV3(inv, raw, digest, excluded[:494], nodeDigest) == nil {
+		t.Fatal("accepted changed or incomplete fixture-free selection")
 	}
 }

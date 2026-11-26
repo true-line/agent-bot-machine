@@ -9,6 +9,7 @@ import (
 
 	"github.com/qwts/managed-machine/internal/diag"
 	"github.com/qwts/managed-machine/internal/members"
+	"github.com/qwts/managed-machine/internal/plan"
 )
 
 const stage2aReserveVerb = "stage2a-reserve"
@@ -46,6 +47,7 @@ const stage2aCooperativeQBeginVerb = "stage2a-cooperative-q-begin-v3"
 const stage2aCooperativeQFinishVerb = "stage2a-cooperative-q-finish-v3"
 const stage2aCooperativeQWitnessBeginVerb = "stage2a-cooperative-q-witness-begin-v3"
 const stage2aCooperativeQWitnessFinishVerb = "stage2a-cooperative-q-witness-finish-v3"
+const stage2aLocalTestQIssueVerb = "stage2a-local-test-q-issue-v1"
 
 var stage2aExecDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -67,7 +69,8 @@ func isStage2aVerb(verb string) bool {
 		verb == stage2aCooperativeLookupVerb || verb == stage2aCooperativeLiveVerb ||
 		verb == stage2aCooperativeAbortVerb || verb == stage2aCooperativeReserveResultVerb ||
 		verb == stage2aCooperativeQBeginVerb || verb == stage2aCooperativeQFinishVerb ||
-		verb == stage2aCooperativeQWitnessBeginVerb || verb == stage2aCooperativeQWitnessFinishVerb
+		verb == stage2aCooperativeQWitnessBeginVerb || verb == stage2aCooperativeQWitnessFinishVerb ||
+		verb == stage2aLocalTestQIssueVerb
 }
 
 func stage2aFields(req *Request, raw []byte) (string, string) {
@@ -103,6 +106,18 @@ func stage2aFields(req *Request, raw []byte) (string, string) {
 		if string(decoded) != "{}" {
 			return diag.DaemonUndeclared, "invalid Stage 2a installed list request"
 		}
+		return "", ""
+	}
+	if req.Verb == stage2aLocalTestQIssueVerb {
+		fields, ok := deviceObject(decoded)
+		var selector struct {
+			PlanID string `json:"plan_id"`
+		}
+		if !ok || !deviceKeys(fields, "plan_id") ||
+			json.Unmarshal(decoded, &selector) != nil || !plan.ValidID(selector.PlanID) {
+			return diag.DaemonUndeclared, "invalid local-test Q issue request"
+		}
+		req.stage2aLocalTestQPlanID = selector.PlanID
 		return "", ""
 	}
 	if req.Verb == stage2aReserveVerb {

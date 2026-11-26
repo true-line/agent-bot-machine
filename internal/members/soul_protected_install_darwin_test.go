@@ -28,6 +28,59 @@ func TestStage2aV2ProtectedApplyAndStartStayClosed(t *testing.T) {
 	}
 }
 
+func TestStage2aLocalTestInstallRequiresRootAndPair(t *testing.T) {
+	called := false
+	saved := Saved{SoulProtectedLaunch: &SoulProtectedLaunchInstall{
+		Schema: stage2aLocalTestInstallSchema, RuntimeV3: &stage2aRuntimeV3Install{},
+	}}
+	result := runSoulProtectedLaunchApply(saved, Approval{}, "", nil, Deps{},
+		func(Approval, func() error) error { called = true; return nil })
+	if called || result.Diagnostic == nil || result.Diagnostic.ID != diag.MembersNotApproved ||
+		!strings.Contains(result.Diagnostic.Message, "root, exact paired owner proof") {
+		t.Fatalf("local-test installer bypassed root and pair gate: %+v, paired=%v", result.Diagnostic, called)
+	}
+}
+
+func TestStage2aLocalTestInstalledTemplatePinsOwnerObjectAndQID(t *testing.T) {
+	key := ed25519.PublicKey(strings.Repeat("k", ed25519.PublicKeySize))
+	owner, _, _ := stage2aLocalTestOwnerPlanFixture(t)
+	ownerRaw, err := json.Marshal(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qID := "plan-20261124T120001Z-abcd"
+	p := stage2aInstalledPolicy{
+		Schema:                "agent-bot-machine/stage2a-installed-authority/v1",
+		ArtifactPath:          stage2aArtifactPath("inst.fixture"),
+		Binding:               Stage2aMeasurementBinding{InstallationID: "inst.fixture"},
+		LegacySpent:           []string{},
+		ObservedBodyLocalTest: ownerRaw, LocalTestQPlanID: qID,
+	}
+	template, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved := Plan{SoulProtectedLaunch: &SoulProtectedLaunchInstall{
+		Schema: stage2aLocalTestInstallSchema, MachinePublicKey: hex.EncodeToString(key),
+		RuntimeV3: &stage2aRuntimeV3Install{}, LocalTestQPlanID: qID, Policy: template,
+	}}
+	p.Binding.PlanID, p.Binding.InstalledPlanDigest = "plan-20261124T120000Z-abcd", strings.Repeat("a", 64)
+	p.RuntimeV3 = &stage2aDomainInventoryRefV3{}
+	p.ObservedBodyLocalTestReceipt = &stage2aLocalTestInstallReceipt{Schema: stage2aLocalTestInstallReceiptSchema}
+	if !stage2aInstalledPolicyMatchesPlan(p, approved, key) {
+		t.Fatal("exact reviewed local-test owner object and Q ID refused")
+	}
+	p.LocalTestQPlanID = "plan-20261124T120002Z-abcd"
+	if stage2aInstalledPolicyMatchesPlan(p, approved, key) {
+		t.Fatal("runtime substituted an unreviewed Q approval ID")
+	}
+	p.LocalTestQPlanID = qID
+	p.ObservedBodyLocalTest = json.RawMessage(`{"enabled":false}`)
+	if stage2aInstalledPolicyMatchesPlan(p, approved, key) {
+		t.Fatal("runtime substituted an unreviewed owner object")
+	}
+}
+
 func TestStage2aInstalledPolicyMustMatchReviewedTemplate(t *testing.T) {
 	key := ed25519.PublicKey(strings.Repeat("k", ed25519.PublicKeySize))
 	p := stage2aInstalledPolicy{

@@ -52,6 +52,8 @@ const usage = `Usage: managed-machine members plan [--hq-account <account>] (--h
        managed-machine members plan --harness-launch-install <adapters.json>
        managed-machine members plan --harness-launch-retire <installed-plan-id>
        managed-machine members plan --harness-qualification <request.json>
+	   managed-machine members local-test-q-plan <install-plan-id> <host-uuid> <driver-plan.json>
+	   sudo managed-machine members local-test-q-stage <install-plan-id> <q-issue-reply.json>
        sudo managed-machine members apply <plan-id>
 
 Plan the account HQ runs in, one OS account per harness credential, the broker
@@ -217,6 +219,12 @@ func fromConfig(raw []byte) (dir string, members []string, err error) {
 }
 
 func run(deps Deps, ctx cli.Context, args []string) cli.Result {
+	if len(args) > 0 && args[0] == "local-test-q-plan" {
+		return runStage2aLocalTestQPlan(deps, ctx, args[1:])
+	}
+	if len(args) > 0 && args[0] == "local-test-q-stage" {
+		return runStage2aLocalTestQStage(deps, ctx, args[1:])
+	}
 	if len(args) > 0 && args[0] == "uninstall-hq" {
 		return runUninstallHQ(deps, ctx, args[1:])
 	}
